@@ -1,8 +1,9 @@
+use genie_render::scene::Hue;
 use iced::widget::scrollable::{self, Rail, Scroller};
 use iced::widget::{button, container, text, text_input};
 use iced::{Border, Color, Shadow, Theme, Vector};
 
-use crate::theme::tokens;
+use crate::theme::{data, tokens};
 
 pub fn muted(theme: &Theme) -> text::Style {
     text::Style {
@@ -45,8 +46,28 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let tokens = tokens(theme);
     button::Style {
         background: is_active(status).then(|| tokens.line.into()),
-        text_color: tokens.text,
+        text_color: if status == button::Status::Disabled {
+            tokens.muted
+        } else {
+            tokens.text
+        },
         border: Border::default().rounded(6),
+        ..button::Style::default()
+    }
+}
+
+pub fn swatch(theme: &Theme, status: button::Status, hue: Hue, chosen: bool) -> button::Style {
+    let tokens = tokens(theme);
+    let ring = if chosen {
+        Border::default().width(2).color(tokens.text)
+    } else if is_active(status) {
+        Border::default().width(1).color(tokens.muted)
+    } else {
+        Border::default()
+    };
+    button::Style {
+        background: Some(data(theme).hues[hue as usize].into()),
+        border: ring.rounded(4),
         ..button::Style::default()
     }
 }

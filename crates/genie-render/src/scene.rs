@@ -31,6 +31,16 @@ pub enum Hue {
     Purple,
 }
 
+impl Hue {
+    pub const ALL: [Self; 5] = [
+        Self::Blue,
+        Self::Green,
+        Self::Orange,
+        Self::Vermillion,
+        Self::Purple,
+    ];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Base(Base),

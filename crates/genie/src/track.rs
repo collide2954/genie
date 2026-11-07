@@ -110,6 +110,31 @@ impl Track {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    Mode(Mode),
+    Hue(Hue),
+    Up,
+    Down,
+    Remove,
+}
+
+pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
+    let Some(position) = tracks.iter().position(|track| track.id == id) else {
+        return;
+    };
+    match change {
+        Change::Mode(mode) => tracks[position].mode = Some(mode),
+        Change::Hue(hue) => tracks[position].hue = hue,
+        Change::Up if position > 0 => tracks.swap(position, position - 1),
+        Change::Down if position + 1 < tracks.len() => tracks.swap(position, position + 1),
+        Change::Up | Change::Down => {}
+        Change::Remove => {
+            tracks.remove(position);
+        }
+    }
+}
+
 pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>> {
     let mut found = vec![None; assembly.contigs().len()];
     for name in names {
@@ -168,8 +193,9 @@ mod tests {
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
     use genie_render::features::Mode;
+    use genie_render::scene::Hue;
 
-    use super::{Loaded, Source, Track, contig_names, open};
+    use super::{Change, Loaded, Source, Track, change, contig_names, open};
     use crate::scratch::Scratch;
 
     fn region(start: u64, end: u64) -> Region {
@@ -205,6 +231,50 @@ mod tests {
             .map(|_| Feature::new("", region, Strand::Forward))
             .collect();
         Arc::new(Loaded::new(region, features))
+    }
+
+    fn ids(tracks: &[Track]) -> Vec<u64> {
+        tracks.iter().map(|track| track.id).collect()
+    }
+
+    fn three() -> Vec<Track> {
+        (0..3)
+            .map(|id| {
+                let mut track = track();
+                track.id = id;
+                track
+            })
+            .collect()
+    }
+
+    #[test]
+    fn changes_set_the_mode_and_the_hue() {
+        let mut tracks = three();
+        change(&mut tracks, 1, Change::Mode(Mode::Collapsed));
+        change(&mut tracks, 1, Change::Hue(Hue::Orange));
+        assert_eq!(tracks[1].mode, Some(Mode::Collapsed));
+        assert_eq!(tracks[1].hue, Hue::Orange);
+    }
+
+    #[test]
+    fn changes_move_tracks_inside_the_list() {
+        let mut tracks = three();
+        change(&mut tracks, 0, Change::Up);
+        assert_eq!(ids(&tracks), [0, 1, 2]);
+        change(&mut tracks, 0, Change::Down);
+        assert_eq!(ids(&tracks), [1, 0, 2]);
+        change(&mut tracks, 2, Change::Up);
+        assert_eq!(ids(&tracks), [1, 2, 0]);
+        change(&mut tracks, 0, Change::Down);
+        assert_eq!(ids(&tracks), [1, 2, 0]);
+    }
+
+    #[test]
+    fn changes_remove_tracks() {
+        let mut tracks = three();
+        change(&mut tracks, 1, Change::Remove);
+        change(&mut tracks, 9, Change::Remove);
+        assert_eq!(ids(&tracks), [0, 2]);
     }
 
     #[test]

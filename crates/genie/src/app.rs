@@ -7,14 +7,18 @@ use iced::theme::Mode;
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    button, center, column, container, operation, pin, row, scrollable, space, stack, text,
+    button, center, column, container, mouse_area, operation, pin, row, scrollable, space, stack,
+    text,
 };
 use iced::{
-    Alignment, Border, Element, Length, Subscription, Task, Theme, keyboard, system, window,
+    Alignment, Border, Element, Length, Point, Size, Subscription, Task, Theme, keyboard, system,
+    window,
 };
 
 use crate::chrome::{self, Controls, LocusField};
+use crate::context::Context;
 use crate::icon::{self, Icon};
+use crate::menu::{self, Place};
 use crate::motion::Transition;
 use crate::navigator::Navigator;
 use crate::paths::file_name;
@@ -23,7 +27,7 @@ use crate::reference::{self, Reference};
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
-use crate::track::{self, Loaded, Source, Track};
+use crate::track::{self, Change, Loaded, Source, Track};
 use crate::{font, paths, scene, style};
 
 const INITIAL_WIDTH: f32 = 1_000.0;
@@ -55,6 +59,9 @@ pub struct Genie {
     highlight: Option<usize>,
     next_track: u64,
     notice: Option<String>,
+    menu: Option<(u64, Point)>,
+    scroll: f32,
+    window: Size,
 }
 
 impl Default for Genie {
@@ -74,6 +81,9 @@ impl Default for Genie {
             highlight: None,
             next_track: 0,
             notice: None,
+            menu: None,
+            scroll: 0.0,
+            window: chrome::WINDOW,
         }
     }
 }
@@ -127,6 +137,27 @@ impl Session {
         }
     }
 
+    fn advance(&mut self, now: Instant) {
+        if let Some(transition) = &self.transition {
+            self.viewport = transition.at(now);
+            if transition.is_done(now) {
+                self.transition = None;
+            }
+        }
+    }
+
+    fn accept(
+        &mut self,
+        id: u64,
+        contig: usize,
+        region: Region,
+        result: Result<Arc<Loaded>, String>,
+    ) {
+        if let Some(track) = self.tracks.iter_mut().find(|track| track.id == id) {
+            track.accept(contig, region, result);
+        }
+    }
+
     fn destination(&self) -> Viewport {
         self.transition
             .as_ref()
@@ -172,6 +203,11 @@ pub enum Message {
     TrackOpened(Result<Arc<Source>, String>),
     TrackLoaded(u64, usize, Region, Result<Arc<Loaded>, String>),
     NoticeDismissed,
+    TrackMenu(u64, Point),
+    TrackChanged(u64, Change),
+    MenuDismissed,
+    Scrolled(f32),
+    WindowResized(Size),
 }
 
 impl Genie {
@@ -213,13 +249,22 @@ impl Genie {
             Message::Opened(Err(error)) | Message::TrackOpened(Err(error)) => self.fail(error),
             Message::TrackOpened(Ok(source)) => return self.add_track(source),
             Message::TrackLoaded(id, contig, region, result) => {
-                if let Some(session) = &mut self.session
-                    && let Some(track) = session.tracks.iter_mut().find(|track| track.id == id)
-                {
-                    track.accept(contig, region, result);
-                }
+                self.on_session(|session| session.accept(id, contig, region, result));
             }
             Message::NoticeDismissed => self.notice = None,
+            Message::TrackMenu(id, at) => {
+                self.menu = Some((id, Point::new(at.x, at.y - self.scroll)));
+            }
+            Message::TrackChanged(id, change) => {
+                self.menu = None;
+                self.on_session(|session| track::change(&mut session.tracks, id, change));
+            }
+            Message::MenuDismissed => self.menu = None,
+            Message::Scrolled(offset) => {
+                self.scroll = offset;
+                self.menu = None;
+            }
+            Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
                 self.drop_draft();
                 return self.navigate(|viewport| viewport.pan(f64::from(dx)));
@@ -257,36 +302,25 @@ impl Genie {
             }
             Message::SuggestionChosen(contig) => return self.choose(contig),
             Message::Command(command) => return self.command(command),
-            Message::Frame(now) => {
-                if let Some(session) = &mut self.session
-                    && let Some(transition) = &session.transition
-                {
-                    session.viewport = transition.at(now);
-                    if transition.is_done(now) {
-                        session.transition = None;
-                    }
-                }
-            }
+            Message::Frame(now) => self.on_session(|session| session.advance(now)),
             Message::OverviewPressed(share) => {
                 self.drop_draft();
-                if let Some(session) = &mut self.session {
-                    session.grab(share);
-                }
+                self.on_session(|session| session.grab(share));
                 return self.fetch();
             }
             Message::OverviewDragged(share) => {
-                if let Some(session) = &mut self.session {
-                    session.slide(share);
-                }
+                self.on_session(|session| session.slide(share));
                 return self.fetch();
             }
-            Message::OverviewReleased => {
-                if let Some(session) = &mut self.session {
-                    session.grip = None;
-                }
-            }
+            Message::OverviewReleased => self.on_session(|session| session.grip = None),
         }
         Task::none()
+    }
+
+    fn on_session(&mut self, change: impl FnOnce(&mut Session)) {
+        if let Some(session) = &mut self.session {
+            change(session);
+        }
     }
 
     fn is_animating(&self) -> bool {
@@ -315,6 +349,11 @@ impl Genie {
             }
             Command::PreviousSuggestion => {
                 self.step_highlight(false);
+                Task::none()
+            }
+            Command::Dismiss => {
+                self.menu = None;
+                self.notice = None;
                 Task::none()
             }
         }
@@ -479,6 +518,12 @@ impl Genie {
         if let Some(notice) = &self.notice {
             layers = layers.push(toast(notice));
         }
+        if let Some(menu) = self.track_menu() {
+            let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
+                .on_press(Message::MenuDismissed)
+                .on_right_press(Message::MenuDismissed);
+            layers = layers.push(dismiss).push(menu);
+        }
         if self.hovering {
             layers = layers.push(drop_hint());
         }
@@ -486,6 +531,20 @@ impl Genie {
             layers = layers.push(chrome::resize_handles());
         }
         layers.into()
+    }
+
+    fn track_menu(&self) -> Option<Element<'_, Message>> {
+        let (id, at) = self.menu?;
+        let session = self.session.as_ref()?;
+        let position = session.tracks.iter().position(|track| track.id == id)?;
+        let track = &session.tracks[position];
+        let place = Place {
+            position,
+            count: session.tracks.len(),
+            at,
+            window: self.window,
+        };
+        Some(menu::view(track, track.mode(session.contig), &place))
     }
 
     fn suggestion_menu(&self) -> Option<Element<'_, Message>> {
@@ -659,6 +718,7 @@ impl Genie {
                     Scrollbar::new().width(6).scroller_width(6).margin(0)
                 ))
                 .style(style::scrollbar)
+                .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
                 .height(Length::Fill),
         ]
         .height(Length::Fill);
@@ -693,7 +753,7 @@ impl Genie {
         Subscription::batch([
             system::theme_changes().map(Message::SystemModeChanged),
             keyboard::listen().filter_map(shortcut),
-            window::events().filter_map(file_drop),
+            window::events().filter_map(window_event),
             frames,
         ])
     }
@@ -716,12 +776,16 @@ fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
         let primitives = features::scene(viewport, &data.features, &data.rows, mode, track.hue);
         scene::view(primitives, rows as f32 * mode.row_height()).into()
     } else {
-        space().height(EMPTY_HEIGHT).into()
+        space().width(Length::Fill).height(EMPTY_HEIGHT).into()
     };
-    stack![
-        container(body).padding([TRACK_PADDING, 0.0]),
-        label(&track.source.name)
-    ]
+    let id = track.id;
+    Context::new(
+        stack![
+            container(body).padding([TRACK_PADDING, 0.0]),
+            label(&track.source.name)
+        ],
+        move |at| Message::TrackMenu(id, at),
+    )
     .into()
 }
 
@@ -788,11 +852,14 @@ fn drop_hint<'a>() -> Element<'a, Message> {
     container(frame).padding(8).into()
 }
 
-fn file_drop((_, event): (window::Id, window::Event)) -> Option<Message> {
+fn window_event((_, event): (window::Id, window::Event)) -> Option<Message> {
     match event {
         window::Event::FileHovered(_) => Some(Message::FileHovered),
         window::Event::FilesHoveredLeft => Some(Message::FileHoverEnded),
         window::Event::FileDropped(path) => Some(Message::FileDropped(path)),
+        window::Event::Opened { size, .. } | window::Event::Resized(size) => {
+            Some(Message::WindowResized(size))
+        }
         _ => None,
     }
 }
@@ -851,12 +918,14 @@ mod tests {
     use iced::time::{Duration, Instant};
     use iced_test::{selector, simulator};
 
-    use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, file_drop, shortcut};
+    use iced::{Point, Size};
+
+    use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
     use crate::reference::Reference;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Loaded, Source};
+    use crate::track::{Change, Loaded, Source};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
@@ -1262,18 +1331,91 @@ mod tests {
     }
 
     #[test]
-    fn window_file_events_become_messages() {
+    fn window_events_become_messages() {
         let id = iced::window::Id::unique();
         let path = PathBuf::from("/data/ref.fa");
         assert_eq!(
-            file_drop((id, iced::window::Event::FileDropped(path.clone()))),
+            window_event((id, iced::window::Event::FileDropped(path.clone()))),
             Some(Message::FileDropped(path))
         );
         assert_eq!(
-            file_drop((id, iced::window::Event::FilesHoveredLeft)),
+            window_event((id, iced::window::Event::FilesHoveredLeft)),
             Some(Message::FileHoverEnded)
         );
-        assert_eq!(file_drop((id, iced::window::Event::Focused)), None);
+        let size = Size::new(900.0, 600.0);
+        assert_eq!(
+            window_event((id, iced::window::Event::Resized(size))),
+            Some(Message::WindowResized(size))
+        );
+        assert_eq!(window_event((id, iced::window::Event::Focused)), None);
+    }
+
+    fn with_menu() -> Genie {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackOpened(Ok(source("other.gff3.gz"))));
+        let _ = genie.update(Message::TrackMenu(1, Point::new(100.0, 200.0)));
+        genie
+    }
+
+    fn ids(genie: &Genie) -> Vec<u64> {
+        let tracks = &genie.session.as_ref().unwrap().tracks;
+        tracks.iter().map(|track| track.id).collect()
+    }
+
+    #[test]
+    fn empty_tracks_keep_their_label() {
+        let genie = with_menu();
+        let mut ui = simulator(genie.view());
+        let label = ui.find("other.gff3.gz").unwrap();
+        assert!(label.bounds().width > 40.0);
+    }
+
+    #[test]
+    fn right_clicking_a_track_opens_its_menu() {
+        let genie = with_menu();
+        for item in ["Expanded", "Squished", "Collapsed", "Move up", "Remove"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+    }
+
+    #[test]
+    fn choosing_a_mode_sets_it_and_closes_the_menu() {
+        let mut genie = with_menu();
+        let mut ui = simulator(genie.view());
+        ui.click("Collapsed").unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+        let track = &genie.session.as_ref().unwrap().tracks[1];
+        assert_eq!(track.mode, Some(Rows::Collapsed));
+        assert!(!shows(&genie, "Squished"));
+    }
+
+    #[test]
+    fn menu_items_move_and_remove_tracks() {
+        let mut genie = with_menu();
+        let _ = genie.update(Message::TrackChanged(1, Change::Up));
+        assert_eq!(ids(&genie), [1, 0]);
+        let _ = genie.update(Message::TrackChanged(0, Change::Remove));
+        assert_eq!(ids(&genie), [1]);
+    }
+
+    #[test]
+    fn menus_close_on_escape_or_outside_presses() {
+        let mut genie = with_menu();
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!shows(&genie, "Squished"));
+        let _ = genie.update(Message::TrackMenu(1, Point::new(100.0, 200.0)));
+        let _ = genie.update(Message::MenuDismissed);
+        assert!(!shows(&genie, "Squished"));
+    }
+
+    #[test]
+    fn menus_open_where_the_pointer_is_on_screen() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Scrolled(50.0));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(10.0, 300.0)));
+        assert_eq!(genie.menu, Some((0, Point::new(10.0, 250.0))));
     }
 
     #[test]

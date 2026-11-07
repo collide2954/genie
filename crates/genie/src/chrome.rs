@@ -98,9 +98,11 @@ pub fn perform(action: Action) -> Task<Message> {
     })
 }
 
+pub const WINDOW: Size = Size::new(1280.0, 800.0);
+
 pub fn settings() -> window::Settings {
     window::Settings {
-        size: Size::new(1280.0, 800.0),
+        size: WINDOW,
         min_size: Some(Size::new(720.0, 480.0)),
         decorations: Controls::CURRENT == Controls::Native,
         platform_specific: platform(),

@@ -12,6 +12,7 @@ pub enum Command {
     FocusLocus,
     NextSuggestion,
     PreviousSuggestion,
+    Dismiss,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -21,6 +22,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Named(Named::ArrowRight) => Some(Command::Pan(-step)),
         Key::Named(Named::ArrowDown) => Some(Command::NextSuggestion),
         Key::Named(Named::ArrowUp) => Some(Command::PreviousSuggestion),
+        Key::Named(Named::Escape) => Some(Command::Dismiss),
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
@@ -86,6 +88,14 @@ mod tests {
         assert_eq!(
             command(&Key::Named(Named::ArrowUp), Modifiers::empty()),
             Some(Command::PreviousSuggestion)
+        );
+    }
+
+    #[test]
+    fn escape_dismisses() {
+        assert_eq!(
+            command(&Key::Named(Named::Escape), Modifiers::empty()),
+            Some(Command::Dismiss)
         );
     }
 
