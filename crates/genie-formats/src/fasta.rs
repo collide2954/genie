@@ -3,21 +3,47 @@ use std::io::{Read, Seek, SeekFrom};
 use genie_core::Region;
 
 use crate::Error;
+use crate::bgzf::Bgzf;
 use crate::fai::FaiRecord;
+use crate::gzi;
 
 pub fn fetch(
     reader: &mut (impl Read + Seek),
     record: &FaiRecord,
     region: Region,
 ) -> Result<Vec<u8>, Error> {
+    let Some((start, length)) = span(record, region) else {
+        return Ok(Vec::new());
+    };
+    reader.seek(SeekFrom::Start(start))?;
+    bases(reader, length)
+}
+
+pub fn fetch_bgzf(
+    reader: &mut Bgzf<impl Read + Seek>,
+    index: &gzi::Index,
+    record: &FaiRecord,
+    region: Region,
+) -> Result<Vec<u8>, Error> {
+    let Some((start, length)) = span(record, region) else {
+        return Ok(Vec::new());
+    };
+    reader.seek(index.virtual_offset(start)?)?;
+    bases(reader, length)
+}
+
+fn span(record: &FaiRecord, region: Region) -> Option<(u64, usize)> {
     let region = region.clamp_to(record.length);
     if region.is_empty() {
-        return Ok(Vec::new());
+        return None;
     }
     let start = byte_offset(record, region.start());
     let end = byte_offset(record, region.end() - 1) + 1;
-    let mut bytes = vec![0; (end - start) as usize];
-    reader.seek(SeekFrom::Start(start))?;
+    Some((start, (end - start) as usize))
+}
+
+fn bases(reader: &mut impl Read, length: usize) -> Result<Vec<u8>, Error> {
+    let mut bytes = vec![0; length];
     reader.read_exact(&mut bytes)?;
     bytes.retain(|byte| !matches!(byte, b'\n' | b'\r'));
     Ok(bytes)
@@ -33,8 +59,9 @@ mod tests {
 
     use genie_core::Region;
 
-    use super::fetch;
-    use crate::fai;
+    use super::{fetch, fetch_bgzf};
+    use crate::bgzf::{self, Bgzf};
+    use crate::{fai, gzi};
 
     fn bases(text: &str, contig: usize, start: u64, end: u64) -> String {
         let records = fai::build(text.as_bytes()).unwrap();
@@ -44,6 +71,21 @@ mod tests {
     }
 
     const TEXT: &str = ">chr1\nACGTA\nCGTAC\nGT\n>chr2\nTTTT\n";
+
+    #[test]
+    fn fetches_bgzip_fasta_across_blocks() {
+        let parts: Vec<&[u8]> = TEXT.as_bytes().chunks(7).collect();
+        let bytes = bgzf::tests::file(&parts);
+        let records = fai::build(Bgzf::new(Cursor::new(&bytes))).unwrap();
+        assert_eq!(records, fai::build(TEXT.as_bytes()).unwrap());
+        let index = gzi::Index::build(Cursor::new(&bytes)).unwrap();
+        let mut reader = Bgzf::new(Cursor::new(&bytes));
+        for (contig, start, end) in [(0, 0, 12), (1, 1, 3), (0, 3, 7), (0, 10, 20), (0, 5, 5)] {
+            let region = Region::new(start, end).unwrap();
+            let found = fetch_bgzf(&mut reader, &index, &records[contig], region).unwrap();
+            assert_eq!(found, bases(TEXT, contig, start, end).as_bytes());
+        }
+    }
 
     #[test]
     fn fetches_across_line_breaks() {
