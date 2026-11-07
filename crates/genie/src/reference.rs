@@ -1,7 +1,9 @@
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use genie_core::{Assembly, Contig};
+use genie_core::{Assembly, Contig, Region};
 use genie_formats::fai::{self, FaiRecord};
+use genie_formats::fasta;
 
 #[derive(Debug, PartialEq)]
 pub struct Reference {
@@ -35,6 +37,13 @@ pub fn open(path: PathBuf, cache: Option<&Path>) -> Result<Reference, String> {
         records,
         assembly,
     })
+}
+
+impl Reference {
+    pub fn fetch(&self, contig: usize, region: Region) -> Result<Vec<u8>, String> {
+        let mut file = File::open(&self.path).map_err(|error| error.to_string())?;
+        fasta::fetch(&mut file, &self.records[contig], region).map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -89,5 +98,13 @@ mod tests {
         let scratch = Scratch::new("bad");
         let error = open(scratch.file("ref.fa", "ACGT\n"), None).unwrap_err();
         assert_eq!(error, "Line 1: the sequence has no header line.");
+    }
+
+    #[test]
+    fn fetch_reads_bases() {
+        let scratch = Scratch::new("fetch");
+        let reference = open(scratch.file("ref.fa", ">a\nACGT\n"), None).unwrap();
+        let region = genie_core::Region::new(1, 3).unwrap();
+        assert_eq!(reference.fetch(0, region).unwrap(), b"CG");
     }
 }

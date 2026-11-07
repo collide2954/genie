@@ -2,21 +2,25 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use genie_core::{Locus, Span, Viewport};
-use genie_render::{overview, ruler};
+use genie_render::{overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::widget::{button, center, column, container, space, stack, text};
-use iced::{Alignment, Element, Length, Task, Theme, system};
+use iced::{Alignment, Border, Element, Length, Task, Theme, system};
 
 use crate::chrome::{self, Controls};
 use crate::icon::Icon;
 use crate::navigator::Navigator;
 use crate::reference::{self, Reference};
 use crate::theme::{self, Appearance, tokens};
+use crate::tiles::{Key, TILING, Tiles};
 use crate::{font, paths, scene, style};
 
 const INITIAL_WIDTH: f32 = 1_000.0;
 const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
+const BASE_HEIGHT: f32 = 16.0;
+const TRACK_PADDING: f32 = 2.0;
+const LABEL_SIZE: f32 = 10.0;
 
 #[derive(Debug)]
 pub struct Genie {
@@ -25,6 +29,8 @@ pub struct Genie {
     status: Status,
     session: Option<Session>,
     width: f32,
+    tiles: Tiles,
+    generation: u64,
 }
 
 impl Default for Genie {
@@ -35,6 +41,8 @@ impl Default for Genie {
             status: Status::default(),
             session: None,
             width: INITIAL_WIDTH,
+            tiles: Tiles::default(),
+            generation: 0,
         }
     }
 }
@@ -84,6 +92,7 @@ pub enum Message {
     Pan(f32),
     Zoom(f32, f32),
     Resized(f32),
+    TileLoaded(u64, Key, Result<Arc<[u8]>, String>),
 }
 
 impl Genie {
@@ -110,25 +119,67 @@ impl Genie {
             Message::Picked(None) => {}
             Message::Opened(Ok(reference)) => {
                 self.status = Status::Idle;
+                self.generation += 1;
+                self.tiles.clear();
                 self.session = Some(Session::new(reference, self.width));
+                return self.fetch();
             }
             Message::Opened(Err(error)) => self.status = Status::Failed(error),
-            Message::Pan(dx) => self.navigate(|viewport| viewport.pan(f64::from(dx))),
+            Message::Pan(dx) => return self.navigate(|viewport| viewport.pan(f64::from(dx))),
             Message::Zoom(factor, anchor) => {
-                self.navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
+                return self
+                    .navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
             }
             Message::Resized(width) => {
                 self.width = width;
-                self.navigate(|viewport| viewport.resize(f64::from(width)));
+                return self.navigate(|viewport| viewport.resize(f64::from(width)));
+            }
+            Message::TileLoaded(generation, key, result) => {
+                if generation == self.generation {
+                    match result {
+                        Ok(bases) => self.tiles.insert(key, bases),
+                        Err(_) => self.tiles.cancel(key),
+                    }
+                }
             }
         }
         Task::none()
     }
 
-    fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) {
+    fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
         if let Some(session) = &mut self.session {
             session.viewport = change(session.viewport);
         }
+        self.fetch()
+    }
+
+    fn fetch(&mut self) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let viewport = session.viewport;
+        if viewport.scale() > 1.0 {
+            return Task::none();
+        }
+        let visible = viewport.visible();
+        let wanted = visible.expand(visible.len(), viewport.length());
+        let generation = self.generation;
+        Task::batch(
+            self.tiles
+                .request(session.contig, wanted)
+                .into_iter()
+                .map(|key| {
+                    let reference = Arc::clone(&session.reference);
+                    Task::perform(
+                        async move {
+                            reference
+                                .fetch(key.contig, TILING.span(key.index))
+                                .map(Arc::from)
+                        },
+                        move |result| Message::TileLoaded(generation, key, result),
+                    )
+                }),
+        )
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -171,6 +222,15 @@ impl Genie {
 
     fn browser(&self, session: &Session) -> Element<'_, Message> {
         let viewport = session.viewport;
+        let bases = sequence::scene(
+            viewport,
+            self.tiles.chunks(session.contig, viewport.visible()),
+            BASE_HEIGHT,
+        );
+        let sequence = stack![
+            container(scene::view(bases, BASE_HEIGHT)).padding([TRACK_PADDING, 0.0]),
+            label("Sequence"),
+        ];
         let tracks = column![
             container(scene::view(
                 overview::scene(viewport, OVERVIEW_HEIGHT),
@@ -182,6 +242,8 @@ impl Genie {
                 RULER_HEIGHT
             ))
             .id("ruler"),
+            hairline(),
+            container(sequence).id("sequence"),
             hairline(),
         ]
         .height(Length::Fill);
@@ -199,6 +261,17 @@ impl Genie {
             theme::light()
         }
     }
+}
+
+fn label(name: &str) -> Element<'_, Message> {
+    container(text(name).size(LABEL_SIZE).style(muted))
+        .padding([0, 4])
+        .style(|theme| container::Style {
+            background: Some(tokens(theme).canvas.scale_alpha(0.85).into()),
+            border: Border::default().rounded(3),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn hairline<'a>() -> Element<'a, Message> {
@@ -251,7 +324,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::{Assembly, Contig};
+    use genie_core::{Assembly, Contig, Region};
     use genie_formats::fai::FaiRecord;
     use iced::theme::Mode;
     use iced_test::{selector, simulator};
@@ -259,6 +332,7 @@ mod tests {
     use super::{Genie, Message};
     use crate::reference::Reference;
     use crate::theme::Appearance;
+    use crate::tiles::Key;
 
     fn reference() -> Arc<Reference> {
         let record = FaiRecord {
@@ -307,6 +381,51 @@ mod tests {
         let _ = genie.update(Message::Opened(Ok(reference())));
         let _ = genie.update(Message::Resized(500.0));
         assert!(shows(&genie, "chr1:1-500"));
+    }
+
+    fn opened() -> Genie {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        genie
+    }
+
+    #[test]
+    fn opening_requests_the_visible_tiles() {
+        let mut genie = opened();
+        assert_eq!(genie.tiles.request(0, Region::between(0, 1_000)), []);
+    }
+
+    #[test]
+    fn loaded_tiles_feed_the_sequence() {
+        let mut genie = opened();
+        let tile = Key {
+            contig: 0,
+            index: 0,
+        };
+        let bases: Arc<[u8]> = Arc::from(vec![b'A'; 1_000]);
+        let _ = genie.update(Message::TileLoaded(genie.generation, tile, Ok(bases)));
+        assert_eq!(genie.tiles.chunks(0, Region::between(0, 10)).count(), 1);
+    }
+
+    #[test]
+    fn tiles_from_an_older_reference_are_ignored() {
+        let mut genie = opened();
+        let tile = Key {
+            contig: 0,
+            index: 0,
+        };
+        let bases: Arc<[u8]> = Arc::from(vec![b'A'; 1_000]);
+        let _ = genie.update(Message::TileLoaded(genie.generation - 1, tile, Ok(bases)));
+        assert_eq!(genie.tiles.chunks(0, Region::between(0, 10)).count(), 0);
+    }
+
+    #[test]
+    fn browser_shows_a_labelled_sequence_track() {
+        let genie = opened();
+        let mut ui = simulator(genie.view());
+        let bounds = ui.find(selector::id("sequence")).unwrap().bounds();
+        assert!((bounds.height - 20.0).abs() < f32::EPSILON);
+        assert!(ui.find("Sequence").is_ok());
     }
 
     #[test]

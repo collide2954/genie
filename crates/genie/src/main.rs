@@ -8,6 +8,7 @@ mod reference;
 mod scene;
 mod style;
 mod theme;
+mod tiles;
 
 fn main() -> iced::Result {
     app::run()
