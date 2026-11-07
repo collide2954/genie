@@ -18,8 +18,9 @@ cargo run -p genie
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), UCSC 2bit (`.2bit`) |
 | Feature track | BED and GFF3, compressed with bgzip and indexed with tabix |
+| Alignment track | BAM, sorted by position and indexed with samtools |
 
-Open a reference sequence first. Then open tracks or drop them on the window. The tabix index (`.tbi`) must be next to the track file.
+Open a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi` or `.bai`) must be next to the track file.
 
 To prepare a BED track:
 
@@ -28,6 +29,14 @@ sort -k1,1 -k2,2n genes.bed | bgzip > genes.bed.gz && tabix -p bed genes.bed.gz
 ```
 
 For GFF3, sort by columns 1 and 4 and use `tabix -p gff`.
+
+To prepare a BAM track:
+
+```bash
+samtools sort -o reads.bam reads.sam && samtools index reads.bam
+```
+
+genie shows reads when the view is 30 kb or less. It hides duplicate, QC-fail and secondary reads.
 
 ## Test
 
