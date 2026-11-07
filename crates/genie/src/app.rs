@@ -531,6 +531,7 @@ impl Genie {
     }
 
     fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
+        self.hover = None;
         if let Some(session) = &mut self.session {
             session.transition = None;
             session.viewport = change(session.viewport);
@@ -539,6 +540,7 @@ impl Genie {
     }
 
     fn glide(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
+        self.hover = None;
         if let Some(session) = &mut self.session {
             session.glide(change(session.destination()));
         }
@@ -1620,6 +1622,17 @@ mod tests {
         go(&mut genie, "brca1");
         settle(&mut genie);
         assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn navigating_hides_the_hover_card() {
+        let mut genie = with_features();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        let _ = genie.update(Message::Pan(-40.0));
+        assert!(genie.hover.is_none());
+        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        let _ = genie.update(Message::Command(Command::Zoom(2.0)));
+        assert!(genie.hover.is_none());
     }
 
     #[test]
