@@ -1,3 +1,4 @@
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Region {
     start: u64,
@@ -36,6 +37,13 @@ impl Region {
     pub const fn overlaps(self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
+
+    pub fn clamp_to(self, length: u64) -> Self {
+        Self {
+            start: self.start.min(length),
+            end: self.end.min(length),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +73,13 @@ mod tests {
         assert!(region.contains(10));
         assert!(region.contains(19));
         assert!(!region.contains(20));
+    }
+
+    #[test]
+    fn clamp_to_limits_both_ends() {
+        assert_eq!(region(10, 90).clamp_to(50), region(10, 50));
+        assert_eq!(region(60, 90).clamp_to(50), region(50, 50));
+        assert_eq!(region(10, 20).clamp_to(50), region(10, 20));
     }
 
     #[test]
