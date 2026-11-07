@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use genie_core::{Locus, Region, Span, Viewport, grouped};
+use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
 use genie_render::{features, overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::time::Instant;
@@ -164,6 +164,20 @@ impl Session {
         }
     }
 
+    fn name(&mut self, id: u64, names: Arc<Names>) {
+        if let Some(track) = self.tracks.iter_mut().find(|track| track.id == id) {
+            track.names = Some(names);
+        }
+    }
+
+    fn locus_of(&self, named: &Named) -> String {
+        Locus {
+            name: self.reference.assembly.contigs()[named.contig].name.clone(),
+            span: Span::Region(named.span),
+        }
+        .to_string()
+    }
+
     fn destination(&self) -> Viewport {
         self.transition
             .as_ref()
@@ -217,6 +231,13 @@ pub enum Message {
     TrackHovered(u64, Option<Pointer>),
     TrackClicked(u64, Pointer),
     CardClosed,
+    NamesLoaded(u64, Result<Arc<Names>, String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Suggestion {
+    Contig(usize),
+    Feature(Named),
 }
 
 impl Genie {
@@ -240,7 +261,10 @@ impl Genie {
             Message::Window(action) => return chrome::perform(action),
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
             Message::Picked(Some(path)) => return self.open(path),
-            Message::Picked(None) => {}
+            Message::Picked(None) | Message::NamesLoaded(_, Err(_)) => {}
+            Message::NamesLoaded(id, Ok(names)) => {
+                self.on_session(|session| session.name(id, names));
+            }
             Message::FileHovered => self.hovering = true,
             Message::FileHoverEnded => self.hovering = false,
             Message::FileDropped(path) => {
@@ -310,15 +334,12 @@ impl Genie {
                 self.highlight = None;
             }
             Message::LocusSubmitted => {
-                let chosen = self
-                    .highlight
-                    .and_then(|position| self.suggestions().get(position).copied());
-                return match chosen {
-                    Some(contig) => self.choose(contig),
+                return match self.highlight {
+                    Some(position) => self.choose(position),
                     None => self.submit(),
                 };
             }
-            Message::SuggestionChosen(contig) => return self.choose(contig),
+            Message::SuggestionChosen(position) => return self.choose(position),
             Message::Command(command) => return self.command(command),
             Message::Frame(now) => self.on_session(|session| session.advance(now)),
             Message::OverviewPressed(share) => {
@@ -404,13 +425,35 @@ impl Genie {
         }
     }
 
-    fn suggestions(&self) -> Vec<usize> {
-        match (&self.session, &self.draft) {
-            (Some(session), Some(draft)) if !draft.contains(':') => {
-                session.reference.assembly.suggest(draft, SUGGESTIONS)
-            }
-            _ => Vec::new(),
+    fn suggestions(&self) -> Vec<Suggestion> {
+        let (Some(session), Some(draft)) = (&self.session, &self.draft) else {
+            return Vec::new();
+        };
+        if draft.contains(':') {
+            return Vec::new();
         }
+        let mut list: Vec<Suggestion> = session
+            .reference
+            .assembly
+            .suggest(draft, SUGGESTIONS)
+            .into_iter()
+            .map(Suggestion::Contig)
+            .collect();
+        let named = session
+            .tracks
+            .iter()
+            .filter_map(|track| track.names.as_deref())
+            .flat_map(|names| names.search(draft, SUGGESTIONS));
+        for named in named {
+            if list.len() == SUGGESTIONS {
+                break;
+            }
+            let suggestion = Suggestion::Feature(named.clone());
+            if !list.contains(&suggestion) {
+                list.push(suggestion);
+            }
+        }
+        list
     }
 
     fn step_highlight(&mut self, forward: bool) {
@@ -426,11 +469,19 @@ impl Genie {
         });
     }
 
-    fn choose(&mut self, contig: usize) -> Task<Message> {
+    fn choose(&mut self, position: usize) -> Task<Message> {
+        let chosen = self.suggestions().into_iter().nth(position);
         let Some(session) = &self.session else {
             return Task::none();
         };
-        self.draft = Some(session.reference.assembly.contigs()[contig].name.clone());
+        if let Some(suggestion) = chosen {
+            self.draft = Some(match suggestion {
+                Suggestion::Contig(contig) => {
+                    session.reference.assembly.contigs()[contig].name.clone()
+                }
+                Suggestion::Feature(named) => session.locus_of(&named),
+            });
+        }
         self.highlight = None;
         self.submit()
     }
@@ -446,7 +497,19 @@ impl Genie {
             return Task::none();
         };
         let text = self.draft.take().unwrap_or_else(|| session.locus());
-        match session.reference.assembly.resolve(&text) {
+        let resolved = session.reference.assembly.resolve(&text).or_else(|error| {
+            session
+                .tracks
+                .iter()
+                .filter_map(|track| track.names.as_deref())
+                .find_map(|names| names.find(&text))
+                .map(|named| Target {
+                    contig: named.contig,
+                    span: Span::Region(named.span),
+                })
+                .ok_or(error)
+        });
+        match resolved {
             Ok(target) => {
                 if target.contig == session.contig {
                     session.glide(session.destination().jump(target.span));
@@ -502,7 +565,7 @@ impl Genie {
             .iter_mut()
             .filter(|track| track.needs(contig, visible))
             .filter_map(|track| {
-                let name = track.names[contig].clone()?;
+                let name = track.contigs[contig].clone()?;
                 track.wanted = Some((contig, wanted));
                 let (id, source) = (track.id, Arc::clone(&track.source));
                 Some(Task::perform(
@@ -609,24 +672,38 @@ impl Genie {
         if suggestions.is_empty() {
             return None;
         }
+        let contigs = session.reference.assembly.contigs();
         let rows = suggestions
             .into_iter()
             .enumerate()
-            .map(|(position, index)| {
-                let contig = &session.reference.assembly.contigs()[index];
+            .map(|(position, suggestion)| {
+                let (name, detail) = match suggestion {
+                    Suggestion::Contig(index) => (
+                        text(contigs[index].name.as_str()).font(font::MONO),
+                        grouped(contigs[index].length),
+                    ),
+                    Suggestion::Feature(named) => (
+                        text(named.name),
+                        format!(
+                            "{}:{}",
+                            contigs[named.contig].name,
+                            grouped(named.span.start() + 1)
+                        ),
+                    ),
+                };
                 let chosen = self.highlight == Some(position);
                 button(
                     row![
-                        text(contig.name.as_str()).font(font::MONO).size(12),
+                        name.size(12),
                         space::horizontal(),
-                        text(grouped(contig.length)).size(11).style(style::muted),
+                        text(detail).size(11).style(style::muted),
                     ]
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .padding([3, 8])
                 .style(if chosen { style::chosen } else { style::ghost })
-                .on_press(Message::SuggestionChosen(index))
+                .on_press(Message::SuggestionChosen(position))
                 .into()
             });
         let menu = container(column(rows).spacing(1))
@@ -715,10 +792,16 @@ impl Genie {
             return Task::none();
         }
         self.notice = None;
-        let track = Track::new(self.next_track, source, &session.reference.assembly);
+        let id = self.next_track;
         self.next_track += 1;
+        let track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
         session.tracks.push(track);
-        self.fetch_features()
+        let reference = Arc::clone(&session.reference);
+        let names = Task::perform(
+            async move { track::names(&source, &reference.assembly).map(Arc::new) },
+            move |result| Message::NamesLoaded(id, result),
+        );
+        Task::batch([self.fetch_features(), names])
     }
 
     fn fail(&mut self, error: String) {
@@ -968,7 +1051,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::{Feature, Region, Strand};
+    use genie_core::{Feature, Names, Region, Strand};
     use genie_formats::fai::FaiRecord;
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
@@ -1000,7 +1083,7 @@ mod tests {
     fn with_track() -> Genie {
         let mut genie = opened();
         let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
-        genie.session.as_mut().unwrap().tracks[0].names = vec![Some("1".to_owned()), None];
+        genie.session.as_mut().unwrap().tracks[0].contigs = vec![Some("1".to_owned()), None];
         genie
     }
 
@@ -1497,6 +1580,46 @@ mod tests {
         assert!(shows(&genie, "10 bp · reverse strand"));
         let _ = genie.update(Message::TrackHovered(0, None));
         assert!(!shows(&genie, "chr1:11-20"));
+    }
+
+    fn with_names() -> Genie {
+        let mut genie = with_track();
+        let names = Names::new([genie_core::Named {
+            name: "BRCA1".to_owned(),
+            contig: 0,
+            span: Region::between(100, 200),
+        }]);
+        let _ = genie.update(Message::NamesLoaded(0, Ok(Arc::new(names))));
+        genie
+    }
+
+    #[test]
+    fn typing_a_feature_name_suggests_it() {
+        let mut genie = with_names();
+        let _ = genie.update(Message::LocusEdited("brc".to_owned()));
+        assert!(shows(&genie, "BRCA1"));
+        assert!(shows(&genie, "chr1:101"));
+    }
+
+    #[test]
+    fn choosing_a_feature_suggestion_jumps_to_it() {
+        let mut genie = with_names();
+        let _ = genie.update(Message::LocusEdited("brc".to_owned()));
+        let mut ui = simulator(genie.view());
+        ui.click("BRCA1").unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn submitting_a_feature_name_jumps_to_it() {
+        let mut genie = with_names();
+        go(&mut genie, "brca1");
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:101-200"));
     }
 
     #[test]

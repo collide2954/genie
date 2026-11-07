@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::{Assembly, Feature, Region};
+use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind};
 use genie_formats::tabix::Index;
@@ -50,7 +50,8 @@ impl Loaded {
 pub struct Track {
     pub id: u64,
     pub source: Arc<Source>,
-    pub names: Vec<Option<String>>,
+    pub contigs: Vec<Option<String>>,
+    pub names: Option<Arc<Names>>,
     pub hue: Hue,
     pub mode: Option<Mode>,
     pub loaded: Option<(usize, Arc<Loaded>)>,
@@ -60,11 +61,12 @@ pub struct Track {
 
 impl Track {
     pub fn new(id: u64, source: Arc<Source>, assembly: &Assembly) -> Self {
-        let names = contig_names(source.index.names(), assembly);
+        let contigs = contig_names(source.index.names(), assembly);
         Self {
             id,
             source,
-            names,
+            contigs,
+            names: None,
             hue: Hue::default(),
             mode: None,
             loaded: None,
@@ -90,7 +92,7 @@ impl Track {
             wanted == contig && region.start() <= visible.start() && visible.end() <= region.end()
         };
         let loaded = self.data(contig).map(|data| (contig, data.region));
-        self.names.get(contig).is_some_and(Option::is_some)
+        self.contigs.get(contig).is_some_and(Option::is_some)
             && !loaded.is_some_and(covers)
             && !self.wanted.is_some_and(covers)
     }
@@ -184,6 +186,19 @@ pub fn load(source: &Source, contig: &str, region: Region) -> Result<Loaded, Str
     Ok(Loaded::new(region, features))
 }
 
+pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
+    let file = File::open(&source.path).map_err(|error| error.to_string())?;
+    let entries =
+        features::names(source.kind, Bgzf::new(file)).map_err(|error| error.to_string())?;
+    Ok(Names::new(entries.into_iter().filter_map(|entry| {
+        Some(Named {
+            contig: assembly.find(&entry.contig)?,
+            name: entry.name,
+            span: entry.span,
+        })
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -222,7 +237,7 @@ mod tests {
             index: Index::default(),
         };
         let mut track = Track::new(7, Arc::new(source), &assembly());
-        track.names = vec![Some("1".to_owned()), None, None];
+        track.contigs = vec![Some("1".to_owned()), None, None];
         track
     }
 
