@@ -40,6 +40,10 @@ impl Record {
     }
 }
 
+pub fn is_part(kind: &str) -> bool {
+    PARTS.contains(&kind)
+}
+
 pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
@@ -94,7 +98,7 @@ pub fn assemble(records: &[Record]) -> Vec<Feature> {
             .filter_map(|parent| ids.get(parent.as_str()));
         for &parent in found {
             parents[index].get_or_insert(parent);
-            if PARTS.contains(&record.kind.as_str()) {
+            if is_part(&record.kind) {
                 parts[parent].push(index);
                 consumed[index] = true;
             } else {
