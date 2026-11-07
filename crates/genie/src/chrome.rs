@@ -1,4 +1,6 @@
-use iced::widget::{button, column, container, mouse_area, row, space, text, text_input};
+use std::time::Duration;
+
+use iced::widget::{button, column, container, mouse_area, row, space, text, text_input, tooltip};
 use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
 
 use crate::app::Message;
@@ -19,6 +21,7 @@ const BRAND_WIDTH: f32 = 60.0;
 const BRAND_GAP: f32 = 12.0;
 const NAVIGATION_GAP: f32 = 6.0;
 const END_GAP: f32 = 6.0;
+const TIP_DELAY: Duration = Duration::from_millis(400);
 
 const fn inset(controls: Controls) -> f32 {
     match controls {
@@ -171,21 +174,38 @@ pub fn title_bar<'a>(
             .align_y(Alignment::Center),
     )
     .width(BRAND_WIDTH);
-    let save = locus
-        .is_some()
-        .then(|| tool(Icon::Save, "save", Message::Command(Command::SaveSession)));
-    let export = locus
-        .is_some()
-        .then(|| tool(Icon::Camera, "export", Message::Command(Command::Export)));
-    let navigation = row![tool(Icon::Open, "open", Message::Open)]
+    let save = locus.is_some().then(|| {
+        let words = format!("Save session ({})", keys('S'));
+        tool(
+            Icon::Save,
+            "save",
+            words,
+            Message::Command(Command::SaveSession),
+        )
+    });
+    let export = locus.is_some().then(|| {
+        let words = format!("Export PNG ({})", keys('E'));
+        tool(
+            Icon::Camera,
+            "export",
+            words,
+            Message::Command(Command::Export),
+        )
+    });
+    let theme = match appearance {
+        Icon::Sun => "Theme: light",
+        Icon::Moon => "Theme: dark",
+        _ => "Theme: system",
+    };
+    let navigation = row![tool(Icon::Open, "open", "Open a file", Message::Open)]
         .push(locus.map(locus_box))
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
     let tools = row![
         save,
         export,
-        tool(Icon::Gear, "settings", Message::ToggleSettings),
-        tool(appearance, "appearance", Message::CycleAppearance)
+        tool(Icon::Gear, "settings", "Settings", Message::ToggleSettings),
+        tool(appearance, "appearance", theme, Message::CycleAppearance)
     ]
     .spacing(TOOL_GAP)
     .align_y(Alignment::Center);
@@ -262,7 +282,8 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .style(style::locus)
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
-    row![input]
+    let words = format!("Go to a locus, a name or a variant ID ({})", keys('L'));
+    row![tip(input, words, tooltip::Position::Bottom)]
         .push(
             field
                 .error
@@ -273,30 +294,61 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .into()
 }
 
-fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Message> {
-    container(
-        button(icon::view(icon, TOOL_ICON))
-            .width(TOOL_SIZE)
-            .height(TOOL_SIZE)
-            .padding(0)
-            .style(style::ghost)
-            .on_press(message),
-    )
-    .id(id)
-    .into()
+pub fn keys(letter: char) -> String {
+    let modifier = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    format!("{modifier}+{letter}")
+}
+
+pub fn tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    words: impl Into<String>,
+    position: tooltip::Position,
+) -> Element<'a, Message> {
+    let card = container(text(words.into()).size(11))
+        .padding([3, 6])
+        .style(style::menu);
+    tooltip(content, card, position)
+        .gap(4)
+        .delay(TIP_DELAY)
+        .into()
+}
+
+fn tool<'a>(
+    icon: Icon,
+    id: &'static str,
+    words: impl Into<String>,
+    message: Message,
+) -> Element<'a, Message> {
+    let button = button(icon::view(icon, TOOL_ICON))
+        .width(TOOL_SIZE)
+        .height(TOOL_SIZE)
+        .padding(0)
+        .style(style::ghost)
+        .on_press(message);
+    container(tip(button, words, tooltip::Position::Bottom))
+        .id(id)
+        .into()
 }
 
 fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a, Message> {
-    container(
-        button(icon::view(icon, WINDOW_ICON))
-            .width(WINDOW_BUTTON_WIDTH)
-            .height(BAR_HEIGHT)
-            .padding(0)
-            .style(style::window_control)
-            .on_press(Message::Window(action)),
-    )
-    .id(id)
-    .into()
+    let words = match action {
+        Action::Minimize => "Minimize",
+        Action::ToggleMaximize => "Maximize or restore",
+        _ => "Close",
+    };
+    let button = button(icon::view(icon, WINDOW_ICON))
+        .width(WINDOW_BUTTON_WIDTH)
+        .height(BAR_HEIGHT)
+        .padding(0)
+        .style(style::window_control)
+        .on_press(Message::Window(action));
+    container(tip(button, words, tooltip::Position::Bottom))
+        .id(id)
+        .into()
 }
 
 #[cfg(test)]
@@ -407,6 +459,16 @@ mod tests {
             Some(field("chr9", Some(error))),
         ));
         assert!(ui.find(error).is_ok());
+    }
+
+    #[test]
+    fn tips_name_the_shortcut_keys() {
+        let expected = if cfg!(target_os = "macos") {
+            "Cmd+E"
+        } else {
+            "Ctrl+E"
+        };
+        assert_eq!(super::keys('E'), expected);
     }
 
     #[test]

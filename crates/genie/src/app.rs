@@ -12,7 +12,7 @@ use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     button, center, column, container, mouse_area, operation, pin, row, scrollable, space, stack,
-    text,
+    text, tooltip,
 };
 use iced::{
     Alignment, Border, Element, Length, Padding, Point, Size, Subscription, Task, Theme, keyboard,
@@ -1444,7 +1444,11 @@ impl Genie {
         let sequence = Context::new(
             stack![
                 container(strands).padding([padding, 0.0]),
-                label("Sequence"),
+                chrome::tip(
+                    label("Sequence"),
+                    "Right-click for the strand and reading frames",
+                    tooltip::Position::Right,
+                ),
             ],
             Message::SequenceMenu,
         );
@@ -1663,7 +1667,11 @@ fn track_view<'a>(
     .on_double_click(Message::Lane(id, Lane::Fit))
     .interaction(mouse::Interaction::ResizingVertically);
     let handle = Grip::new(
-        label(&track.source.name),
+        chrome::tip(
+            label(&track.source.name),
+            "Drag to move · Right-click for options",
+            tooltip::Position::Right,
+        ),
         move |delta| Message::Lane(id, Lane::Moved(delta)),
         Message::Lane(id, Lane::Dropped),
     );
