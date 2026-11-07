@@ -14,6 +14,14 @@ impl Region {
         }
     }
 
+    pub const fn between(a: u64, b: u64) -> Self {
+        if a <= b {
+            Self { start: a, end: b }
+        } else {
+            Self { start: b, end: a }
+        }
+    }
+
     pub const fn start(self) -> u64 {
         self.start
     }
@@ -57,6 +65,12 @@ mod tests {
     #[test]
     fn rejects_start_after_end() {
         assert_eq!(Region::new(5, 4), None);
+    }
+
+    #[test]
+    fn between_accepts_either_order() {
+        assert_eq!(Region::between(20, 10), region(10, 20));
+        assert_eq!(Region::between(10, 20), region(10, 20));
     }
 
     #[test]
