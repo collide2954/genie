@@ -8,7 +8,7 @@ use genie_formats::bgzf::Bgzf;
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::features::{self, Kind};
 use genie_formats::tabix::Index;
-use genie_formats::{bai, bam, fasta, gzi};
+use genie_formats::{bai, bam, fasta, gzi, vcf};
 
 const WHOLE: u64 = 1 << 29;
 
@@ -210,6 +210,41 @@ fn built_fasta_indexes_match_samtools() {
     assert_eq!(records, fai("reference.fa.gz"));
     let index = gzi::Index::build(File::open(data("reference.fa.gz")).unwrap()).unwrap();
     assert_eq!(index, gzi("reference.fa.gz"));
+}
+
+fn variant_index(suffix: &str) -> Index {
+    Index::read(File::open(data(&format!("variants.vcf.gz.{suffix}"))).unwrap()).unwrap()
+}
+
+#[test]
+fn vcf_queries_match_tabix_with_tbi_and_csi() {
+    for suffix in ["tbi", "csi"] {
+        let index = variant_index(suffix);
+        let mut reader = reader("variants.vcf.gz");
+        for (wanted, expected) in sections("variants.vcf.expected") {
+            let (name, region) = locus(&wanted);
+            let mut lines = Vec::new();
+            index
+                .query(&mut reader, name, region, |line| {
+                    lines.push(line.to_owned());
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(lines, expected, "{suffix} {wanted}");
+        }
+    }
+}
+
+#[test]
+fn every_fixture_variant_parses() {
+    let (header, table) = vcf::read_table(reader("variants.vcf.gz")).unwrap();
+    assert_eq!(header.samples, ["S1", "S2", "S3"]);
+    let whole = Region::new(0, WHOLE).unwrap();
+    assert_eq!(table.query("chr1", whole).len(), 700);
+    let index = variant_index("csi");
+    let found = vcf::query(&index, &mut reader("variants.vcf.gz"), "chr2", whole).unwrap();
+    assert_eq!(found.len(), 700);
+    assert!(found.iter().any(|variant| variant.span.len() > 500));
 }
 
 #[test]

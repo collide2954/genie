@@ -136,6 +136,56 @@ samtools faidx reference.fa.gz
 samtools faidx reference.fa.gz chr1:1-100 chr1:60000-70000 chr1:119990-120000 chr2 \
     chr2:12345-12345 chrM:16000-16569 > reference.fa.expected
 
+awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function bases(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text substr("ACGT", draw(4) + 1, 1)
+    return text
+}
+function genotype(    pick) {
+    pick = draw(10)
+    return pick < 4 ? "0/0" : pick < 7 ? "0/1" : pick < 9 ? "1/1" : "./."
+}
+BEGIN {
+    seed = 13
+    print "##fileformat=VCFv4.2"
+    print "##contig=<ID=chr1,length=3000000>"
+    print "##contig=<ID=chr2,length=3000000>"
+    print "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">"
+    print "##INFO=<ID=END,Number=1,Type=Integer,Description=\"End\">"
+    print "##INFO=<ID=SVTYPE,Number=1,Type=String,Description=\"Type\">"
+    print "##FILTER=<ID=LowQual,Description=\"Low quality\">"
+    print "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">"
+    print "#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", "S1", "S2", "S3"
+    split("chr1 chr2", contigs, " ")
+    for (c = 1; c <= 2; c++) {
+        position = 1000
+        for (i = 1; i <= 700; i++) {
+            position += 1 + draw(400)
+            kind = draw(10)
+            reference = bases(1)
+            info = "DP=" (10 + draw(90))
+            if (kind < 6) {
+                alternate = substr("ACGT", (index("ACGT", reference) + draw(3)) % 4 + 1, 1)
+            } else if (kind < 8) {
+                alternate = reference bases(1 + draw(5))
+            } else if (kind < 9) {
+                reference = reference bases(1 + draw(300))
+                alternate = substr(reference, 1, 1)
+            } else {
+                alternate = "<DEL>"
+                info = info ";SVTYPE=DEL;END=" (position + 500 + draw(5000))
+            }
+            filter = draw(8) ? "PASS" : "LowQual"
+            id = draw(3) ? sprintf("rs%d%03d", c, i) : "."
+            print contigs[c], position, id, reference, alternate, 10 + draw(90), filter, info, "GT", genotype(), genotype(), genotype()
+        }
+    }
+}' | bgzip > variants.vcf.gz
+tabix -f -p vcf variants.vcf.gz
+tabix -f -C -p vcf variants.vcf.gz
+
 expect() {
     local file=$1
     shift
@@ -152,3 +202,5 @@ expect genes.bed.gz chr1:1-1000 chr1:5000-20000 chr1:100000-100500 chr1:350000-4
     chr2:300000-301000 chrX:250000-260000 chrY:1-100 chrX
 expect genes.gff3.gz chr1:1-30000 chr1:200000-201000 chr2:500000-600000
 expect reads.bam chr1:1-1000 chr1:5000-8000 chr1:20000-24000 chr1:40000-50000 chr2 chrX:1-100
+expect variants.vcf.gz chr1:1-2000 chr1:30000-31000 chr1:60000-60100 chr1:100000-130000 \
+    chr2:50000-50010 chr2:90000-95000 chrX:1-100 chr2

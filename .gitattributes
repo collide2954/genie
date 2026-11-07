@@ -2,6 +2,7 @@
 *.ttf binary
 *.gz binary
 *.tbi binary
+*.csi binary
 *.gzi binary
 *.bam binary
 *.bai binary
