@@ -44,7 +44,24 @@ impl Hue {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Allele {
+    Base(Base),
+    Insertion,
+    Deletion,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shade {
+    Full,
+    Half,
+    Faded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
+    Allele(Allele, Shade),
+    HomRef,
     Base(Base),
     OnBase(Base),
     Faded(Base),

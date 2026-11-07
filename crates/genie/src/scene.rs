@@ -1,5 +1,5 @@
 use genie_core::Strand;
-use genie_render::scene::{Align, Font, Paint, Primitive};
+use genie_render::scene::{Align, Allele, Font, Paint, Primitive, Shade};
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
@@ -17,6 +17,7 @@ use crate::theme::{DataColors, Tokens, data, tokens};
 
 const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
+const HALF: f32 = 0.5;
 
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
 
@@ -128,6 +129,20 @@ impl<'a, Message: Clone + 'a> From<Scene<'a, Message>> for Element<'a, Message> 
 
 pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
     match paint {
+        Paint::Allele(allele, shade) => {
+            let color = match allele {
+                Allele::Base(base) => data.bases[base as usize],
+                Allele::Insertion => data.insertion,
+                Allele::Deletion => tokens.muted,
+                Allele::Other => tokens.text,
+            };
+            match shade {
+                Shade::Full => color,
+                Shade::Half => color.scale_alpha(HALF),
+                Shade::Faded => color.scale_alpha(FADED),
+            }
+        }
+        Paint::HomRef => data.codons[1],
         Paint::Base(base) => data.bases[base as usize],
         Paint::OnBase(base) => data.on_bases[base as usize],
         Paint::Faded(base) => data.bases[base as usize].scale_alpha(FADED),
