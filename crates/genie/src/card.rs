@@ -343,6 +343,8 @@ mod tests {
             cigar: vec![(Op::Match, 40), (Op::Deletion, 3), (Op::Match, 60)],
             bases: vec![b'A'; 100],
             qualities: Vec::new(),
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
         };
         assert_eq!(read_facts(&read), "100 bp · reverse strand · MAPQ 42");
         assert_eq!(cigar(&read), "CIGAR 40M3D60M");

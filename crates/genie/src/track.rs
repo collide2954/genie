@@ -1169,6 +1169,8 @@ mod tests {
             cigar,
             bases: vec![b'A'; length],
             qualities: Vec::new(),
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
         }
     }
 

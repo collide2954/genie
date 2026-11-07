@@ -155,6 +155,8 @@ mod tests {
             cigar,
             bases: bases.to_vec(),
             qualities: Vec::new(),
+            mate: None,
+            tags: crate::alignment::Tags::default(),
         }
     }
 

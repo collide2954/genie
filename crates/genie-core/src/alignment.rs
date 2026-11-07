@@ -1,7 +1,12 @@
 use crate::{Region, Strand};
 
+pub const PAIRED: u16 = 0x1;
 pub const UNMAPPED: u16 = 0x4;
+pub const MATE_UNMAPPED: u16 = 0x8;
 pub const REVERSE: u16 = 0x10;
+pub const MATE_REVERSE: u16 = 0x20;
+pub const FIRST: u16 = 0x40;
+pub const SECOND: u16 = 0x80;
 pub const SECONDARY: u16 = 0x100;
 pub const QC_FAIL: u16 = 0x200;
 pub const DUPLICATE: u16 = 0x400;
@@ -50,6 +55,19 @@ impl Op {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mate {
+    pub contig: usize,
+    pub start: u64,
+    pub insert: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Tags {
+    pub phase: Option<i64>,
+    pub group: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alignment {
     pub name: String,
@@ -59,6 +77,8 @@ pub struct Alignment {
     pub cigar: Vec<(Op, u32)>,
     pub bases: Vec<u8>,
     pub qualities: Vec<u8>,
+    pub mate: Option<Mate>,
+    pub tags: Tags,
 }
 
 impl Alignment {
@@ -377,6 +397,8 @@ mod tests {
             cigar,
             bases: Vec::new(),
             qualities: Vec::new(),
+            mate: None,
+            tags: crate::alignment::Tags::default(),
         }
     }
 

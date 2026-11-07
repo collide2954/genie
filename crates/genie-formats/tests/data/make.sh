@@ -112,6 +112,59 @@ samtools sort -o reads.bam reads.sam 2> /dev/null
 samtools index reads.bam
 rm reads.sam
 
+awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function bases(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text substr("ACGT", draw(4) + 1, 1)
+    return text
+}
+function tags(    text) {
+    text = "NM:i:" draw(4) "\tZF:f:1.5\tZB:B:c,1,-2,3\tZA:A:x"
+    if (draw(3) == 0) text = text "\tHP:i:" (1 + draw(2))
+    if (draw(2) == 0) text = text "\tRG:Z:group" (draw(2) ? "A" : "B")
+    return text "\tXS:i:" draw(300)
+}
+function mate(name, flag, contig, position, partner, at, insert) {
+    print name, flag, contig, position, 60, "50M", partner, at, insert, bases(50), "*", tags()
+}
+BEGIN {
+    seed = 29
+    print "@HD", "VN:1.6", "SO:unsorted"
+    print "@SQ", "SN:chr1", "LN:100000"
+    print "@SQ", "SN:chr2", "LN:100000"
+    print "@RG", "ID:groupA", "SM:A"
+    print "@RG", "ID:groupB", "SM:B"
+    for (i = 1; i <= 300; i++) {
+        name = sprintf("pair%03d", i)
+        kind = draw(12)
+        left = 1001 + draw(90000)
+        insert = 250 + draw(150)
+        if (kind == 0) insert = 3000 + draw(5000)
+        if (kind == 1) insert = 60 + draw(30)
+        right = left + insert - 50
+        if (kind == 2) {
+            mate(name, 65, "chr1", left, "=", right, insert)
+            mate(name, 129, "chr1", right, "=", left, -insert)
+        } else if (kind == 3) {
+            mate(name, 81, "chr1", left, "=", right, insert)
+            mate(name, 161, "chr1", right, "=", left, -insert)
+        } else if (kind == 4) {
+            other = 1001 + draw(90000)
+            mate(name, 97, "chr1", left, "chr2", other, 0)
+            mate(name, 145, "chr2", other, "chr1", left, 0)
+        } else if (kind == 5) {
+            mate(name, 73, "chr1", left, "=", left, 0)
+        } else {
+            mate(name, 99, "chr1", left, "=", right, insert)
+            mate(name, 147, "chr1", right, "=", left, -insert)
+        }
+    }
+}' > pairs.sam
+samtools sort -o pairs.bam pairs.sam 2> /dev/null
+samtools index pairs.bam
+rm pairs.sam
+
 awk '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
 BEGIN {
@@ -277,5 +330,6 @@ expect genes.bed.gz chr1:1-1000 chr1:5000-20000 chr1:100000-100500 chr1:350000-4
     chr2:300000-301000 chrX:250000-260000 chrY:1-100 chrX
 expect genes.gff3.gz chr1:1-30000 chr1:200000-201000 chr2:500000-600000
 expect reads.bam chr1:1-1000 chr1:5000-8000 chr1:20000-24000 chr1:40000-50000 chr2 chrX:1-100
+expect pairs.bam chr1 chr2
 expect variants.vcf.gz chr1:1-2000 chr1:30000-31000 chr1:60000-60100 chr1:100000-130000 \
     chr2:50000-50010 chr2:90000-95000 chrX:1-100 chr2

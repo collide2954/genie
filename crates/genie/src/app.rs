@@ -2950,6 +2950,8 @@ mod tests {
             cigar: vec![(genie_core::alignment::Op::Match, 40)],
             bases: vec![b'A'; 40],
             qualities: Vec::new(),
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
         }
     }
 

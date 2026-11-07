@@ -285,6 +285,8 @@ mod tests {
             cigar,
             bases: bases.to_vec(),
             qualities: vec![30; bases.len()],
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
         }
     }
 

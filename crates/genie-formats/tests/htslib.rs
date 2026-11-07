@@ -176,6 +176,83 @@ fn bam_queries_match_samtools() {
     }
 }
 
+fn tag(fields: &[&str], name: &str) -> String {
+    fields
+        .iter()
+        .find_map(|field| {
+            let (key, value) = field.split_at_checked(5)?;
+            (key.starts_with(name) && key.as_bytes()[2] == b':').then(|| value.to_owned())
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn bam_mates_and_tags_match_samtools() {
+    let index = bai::Index::read(File::open(data("pairs.bam.bai")).unwrap()).unwrap();
+    let mut reader = reader("pairs.bam");
+    let names: Vec<String> = bam::header(&mut reader)
+        .unwrap()
+        .references
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    for (wanted, expected) in sections("pairs.bam.expected") {
+        let (name, region) = locus(&wanted);
+        let reference = names.iter().position(|known| known == name).unwrap();
+        let mut found = Vec::new();
+        bam::query(&index, &mut reader, reference, region, |alignment| {
+            let (partner, at, insert) =
+                alignment
+                    .mate
+                    .map_or(("*".to_owned(), "0".to_owned(), "0".to_owned()), |mate| {
+                        let partner = if mate.contig == reference {
+                            "=".to_owned()
+                        } else {
+                            names[mate.contig].clone()
+                        };
+                        (
+                            partner,
+                            (mate.start + 1).to_string(),
+                            mate.insert.to_string(),
+                        )
+                    });
+            let phase = alignment.tags.phase.map(|phase| phase.to_string());
+            found.push(
+                [
+                    alignment.name.clone(),
+                    alignment.flags.to_string(),
+                    partner,
+                    at,
+                    insert,
+                    phase.unwrap_or_default(),
+                    alignment.tags.group.clone().unwrap_or_default(),
+                ]
+                .join("\t"),
+            );
+            Ok(())
+        })
+        .unwrap();
+        let expected: Vec<String> = expected
+            .iter()
+            .map(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                [
+                    fields[0].to_owned(),
+                    fields[1].to_owned(),
+                    fields[6].to_owned(),
+                    fields[7].to_owned(),
+                    fields[8].to_owned(),
+                    tag(&fields[11..], "HP"),
+                    tag(&fields[11..], "RG"),
+                ]
+                .join("\t")
+            })
+            .collect();
+        assert_ne!(expected.len(), 0, "{wanted}");
+        assert_eq!(found, expected, "{wanted}");
+    }
+}
+
 fn fai(file: &str) -> Vec<FaiRecord> {
     fai::parse(BufReader::new(
         File::open(data(&format!("{file}.fai"))).unwrap(),

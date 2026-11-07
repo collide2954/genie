@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind, Read, Seek};
 
 use genie_core::Region;
-use genie_core::alignment::{Alignment, Op};
+use genie_core::alignment::{Alignment, Mate, Op, Tags};
 
 use crate::bai::Index;
 use crate::bgzf::Bgzf;
@@ -158,6 +158,14 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
     } else {
         qualities.to_vec()
     };
+    let mate = usize::try_from(int(20))
+        .ok()
+        .zip(u64::try_from(int(24)).ok())
+        .map(|(contig, start)| Mate {
+            contig,
+            start,
+            insert: i64::from(int(28)),
+        });
     let alignment = Alignment {
         name,
         start: u64::try_from(int(4)).unwrap_or(0),
@@ -166,8 +174,65 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
         cigar,
         bases,
         qualities,
+        mate,
+        tags: tags(&bytes[fields.at..]),
     };
     Ok((int(0), alignment))
+}
+
+fn integer(kind: u8, value: &[u8]) -> Option<i64> {
+    let pair = || [value[0], value[1]];
+    let quad = || [value[0], value[1], value[2], value[3]];
+    Some(match kind {
+        b'c' => i64::from(value[0].cast_signed()),
+        b'C' => i64::from(value[0]),
+        b's' => i64::from(i16::from_le_bytes(pair())),
+        b'S' => i64::from(u16::from_le_bytes(pair())),
+        b'i' => i64::from(i32::from_le_bytes(quad())),
+        b'I' => i64::from(u32::from_le_bytes(quad())),
+        _ => return None,
+    })
+}
+
+fn tags(mut aux: &[u8]) -> Tags {
+    let mut tags = Tags::default();
+    while let [first, second, kind, rest @ ..] = aux {
+        let size = match kind {
+            b'A' | b'c' | b'C' => 1,
+            b's' | b'S' => 2,
+            b'i' | b'I' | b'f' => 4,
+            b'Z' | b'H' => rest
+                .iter()
+                .position(|byte| *byte == 0)
+                .map_or(rest.len(), |end| end + 1),
+            b'B' => {
+                let [sub, a, b, c, d, ..] = rest else {
+                    break;
+                };
+                let width = match sub {
+                    b'c' | b'C' => 1,
+                    b's' | b'S' => 2,
+                    b'i' | b'I' | b'f' => 4,
+                    _ => break,
+                };
+                5 + u32::from_le_bytes([*a, *b, *c, *d]) as usize * width
+            }
+            _ => break,
+        };
+        let Some(value) = rest.get(..size) else {
+            break;
+        };
+        match [*first, *second] {
+            [b'H', b'P'] => tags.phase = integer(*kind, value),
+            [b'R', b'G'] if *kind == b'Z' => {
+                let text = value.strip_suffix(&[0]).unwrap_or(value);
+                tags.group = Some(String::from_utf8_lossy(text).into_owned());
+            }
+            _ => {}
+        }
+        aux = &rest[size..];
+    }
+    tags
 }
 
 fn word(reader: &mut impl Read) -> io::Result<u32> {
@@ -276,6 +341,8 @@ mod tests {
             cigar,
             bases: bases.as_bytes().to_vec(),
             qualities: vec![30; bases.len()],
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
         }
     }
 
