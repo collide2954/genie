@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::{Locus, Span, Viewport};
+use genie_core::{Locus, Span, Viewport, grouped};
 use genie_render::{overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::time::Instant;
-use iced::widget::{button, center, column, container, operation, row, space, stack, text};
+use iced::widget::{button, center, column, container, operation, pin, row, space, stack, text};
 use iced::{
     Alignment, Border, Element, Length, Subscription, Task, Theme, keyboard, system, window,
 };
@@ -28,6 +28,7 @@ const BASE_HEIGHT: f32 = 16.0;
 const TRACK_PADDING: f32 = 2.0;
 const LABEL_SIZE: f32 = 10.0;
 const DROP_HINT: &str = "Drop the file to open it";
+const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
 pub struct Genie {
@@ -42,6 +43,7 @@ pub struct Genie {
     locus_error: Option<String>,
     recent: Recent,
     hovering: bool,
+    highlight: Option<usize>,
 }
 
 impl Default for Genie {
@@ -58,6 +60,7 @@ impl Default for Genie {
             locus_error: None,
             recent: Recent::default(),
             hovering: false,
+            highlight: None,
         }
     }
 }
@@ -150,6 +153,7 @@ pub enum Message {
     FileHovered,
     FileHoverEnded,
     FileDropped(PathBuf),
+    SuggestionChosen(usize),
 }
 
 impl Genie {
@@ -213,8 +217,18 @@ impl Genie {
             Message::LocusEdited(text) => {
                 self.draft = Some(text);
                 self.locus_error = None;
+                self.highlight = None;
             }
-            Message::LocusSubmitted => return self.submit(),
+            Message::LocusSubmitted => {
+                let chosen = self
+                    .highlight
+                    .and_then(|position| self.suggestions().get(position).copied());
+                return match chosen {
+                    Some(contig) => self.choose(contig),
+                    None => self.submit(),
+                };
+            }
+            Message::SuggestionChosen(contig) => return self.choose(contig),
             Message::Command(command) => return self.command(command),
             Message::Frame(now) => {
                 if let Some(session) = &mut self.session
@@ -268,12 +282,52 @@ impl Genie {
                 operation::focus(chrome::LOCUS),
                 operation::select_all(chrome::LOCUS),
             ]),
+            Command::NextSuggestion => {
+                self.step_highlight(true);
+                Task::none()
+            }
+            Command::PreviousSuggestion => {
+                self.step_highlight(false);
+                Task::none()
+            }
         }
+    }
+
+    fn suggestions(&self) -> Vec<usize> {
+        match (&self.session, &self.draft) {
+            (Some(session), Some(draft)) if !draft.contains(':') => {
+                session.reference.assembly.suggest(draft, SUGGESTIONS)
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn step_highlight(&mut self, forward: bool) {
+        let count = self.suggestions().len();
+        if count == 0 {
+            return;
+        }
+        self.highlight = Some(match (self.highlight, forward) {
+            (None, true) => 0,
+            (None, false) => count - 1,
+            (Some(position), true) => (position + 1) % count,
+            (Some(position), false) => (position + count - 1) % count,
+        });
+    }
+
+    fn choose(&mut self, contig: usize) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        self.draft = Some(session.reference.assembly.contigs()[contig].name.clone());
+        self.highlight = None;
+        self.submit()
     }
 
     fn drop_draft(&mut self) {
         self.draft = None;
         self.locus_error = None;
+        self.highlight = None;
     }
 
     fn submit(&mut self) -> Task<Message> {
@@ -360,6 +414,9 @@ impl Genie {
             chrome::title_bar(Controls::CURRENT, appearance, locus),
             self.body()
         ]];
+        if let Some(menu) = self.suggestion_menu() {
+            layers = layers.push(menu);
+        }
         if self.hovering {
             layers = layers.push(drop_hint());
         }
@@ -367,6 +424,44 @@ impl Genie {
             layers = layers.push(chrome::resize_handles());
         }
         layers.into()
+    }
+
+    fn suggestion_menu(&self) -> Option<Element<'_, Message>> {
+        let session = self.session.as_ref()?;
+        let suggestions = self.suggestions();
+        if suggestions.is_empty() {
+            return None;
+        }
+        let rows = suggestions
+            .into_iter()
+            .enumerate()
+            .map(|(position, index)| {
+                let contig = &session.reference.assembly.contigs()[index];
+                let chosen = self.highlight == Some(position);
+                button(
+                    row![
+                        text(contig.name.as_str()).font(font::MONO).size(12),
+                        space::horizontal(),
+                        text(grouped(contig.length)).size(11).style(style::muted),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(if chosen { style::chosen } else { style::ghost })
+                .on_press(Message::SuggestionChosen(index))
+                .into()
+            });
+        let menu = container(column(rows).spacing(1))
+            .width(chrome::LOCUS_WIDTH)
+            .padding(4)
+            .style(style::menu);
+        Some(
+            pin(menu)
+                .x(chrome::locus_x(Controls::CURRENT))
+                .y(chrome::BAR_HEIGHT + 2.0)
+                .into(),
+        )
     }
 
     fn body(&self) -> Element<'_, Message> {
@@ -927,6 +1022,52 @@ mod tests {
     #[test]
     fn opening_a_reference_remembers_it() {
         assert_eq!(opened().recent.paths(), [PathBuf::from("ref.fa")]);
+    }
+
+    #[test]
+    fn typing_a_contig_prefix_lists_matches() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr".to_owned()));
+        assert!(shows(&genie, "chr1"));
+        assert!(shows(&genie, "chr2"));
+    }
+
+    #[test]
+    fn typing_a_range_hides_suggestions() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr1:5".to_owned()));
+        assert!(!shows(&genie, "chr2"));
+    }
+
+    #[test]
+    fn clicking_a_suggestion_opens_that_contig() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr".to_owned()));
+        let mut ui = simulator(genie.view());
+        ui.click("chr2").unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+        assert!(shows(&genie, "chr2:1-500"));
+    }
+
+    #[test]
+    fn arrow_keys_pick_a_suggestion() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr".to_owned()));
+        let _ = genie.update(Message::Command(Command::NextSuggestion));
+        let _ = genie.update(Message::Command(Command::NextSuggestion));
+        let _ = genie.update(Message::LocusSubmitted);
+        assert!(shows(&genie, "chr2:1-500"));
+    }
+
+    #[test]
+    fn previous_wraps_to_the_last_suggestion() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr".to_owned()));
+        let _ = genie.update(Message::Command(Command::PreviousSuggestion));
+        let _ = genie.update(Message::LocusSubmitted);
+        assert!(shows(&genie, "chr2:1-500"));
     }
 
     #[test]

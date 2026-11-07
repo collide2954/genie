@@ -6,12 +6,28 @@ use crate::icon::{self, Icon};
 use crate::theme::tokens;
 use crate::{font, style};
 
-const BAR_HEIGHT: f32 = 32.0;
+pub const BAR_HEIGHT: f32 = 32.0;
+pub const LOCUS_WIDTH: f32 = 240.0;
 const TOOL_SIZE: f32 = 24.0;
 const TOOL_ICON: f32 = 14.0;
 const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const WINDOW_ICON: f32 = 16.0;
 const GRIP: f32 = 6.0;
+const BRAND_WIDTH: f32 = 60.0;
+const BRAND_GAP: f32 = 12.0;
+const NAVIGATION_GAP: f32 = 6.0;
+const END_GAP: f32 = 6.0;
+
+const fn inset(controls: Controls) -> f32 {
+    match controls {
+        Controls::Native => 76.0,
+        Controls::Custom => 10.0,
+    }
+}
+
+pub const fn locus_x(controls: Controls) -> f32 {
+    inset(controls) + BRAND_WIDTH + BRAND_GAP + TOOL_SIZE + NAVIGATION_GAP
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Controls {
@@ -136,32 +152,31 @@ pub fn title_bar<'a>(
             border: Border::default().rounded(4),
             ..container::Style::default()
         });
-    let brand = row![logo, text("genie").font(font::UI_STRONG).size(12)]
-        .spacing(6)
-        .align_y(Alignment::Center);
+    let brand = container(
+        row![logo, text("genie").font(font::UI_STRONG).size(12)]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .width(BRAND_WIDTH);
     let navigation = row![tool(Icon::Open, "open", Message::Open)]
         .push(locus.map(locus_box))
-        .spacing(6)
+        .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
     let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
         .spacing(2)
         .align_y(Alignment::Center);
-    let (inset, end) = match controls {
-        Controls::Native => (76.0, 6.0),
-        Controls::Custom => (10.0, 6.0),
-    };
     let mut bar = row![
         brand,
-        space().width(12),
+        space().width(BRAND_GAP),
         navigation,
         space::horizontal(),
         tools,
-        space().width(end)
+        space().width(END_GAP)
     ]
     .align_y(Alignment::Center)
     .height(BAR_HEIGHT)
     .padding(Padding {
-        left: inset,
+        left: inset(controls),
         ..Padding::ZERO
     });
     if controls == Controls::Custom {
@@ -219,7 +234,7 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .font(font::MONO)
         .size(12)
         .padding([2, 8])
-        .width(240)
+        .width(LOCUS_WIDTH)
         .style(style::locus)
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
@@ -267,7 +282,7 @@ mod tests {
     use iced_test::selector;
     use iced_test::simulator::{self, simulator};
 
-    use super::{Action, Controls, Edge, LOCUS, LocusField, resize_handles, title_bar};
+    use super::{Action, Controls, Edge, LOCUS, LocusField, locus_x, resize_handles, title_bar};
     use crate::app::Message;
     use crate::icon::Icon;
 
@@ -324,6 +339,19 @@ mod tests {
             Some(field("chr1:1-4", None)),
         ));
         assert!(ui.find("chr1:1-4").is_ok());
+    }
+
+    #[test]
+    fn locus_field_starts_at_the_exported_position() {
+        for controls in [Controls::Custom, Controls::Native] {
+            let mut ui = simulator(title_bar(
+                controls,
+                Icon::Monitor,
+                Some(field("chr1", None)),
+            ));
+            let bounds = ui.find(selector::id(LOCUS)).unwrap().bounds();
+            assert!((bounds.x - locus_x(controls)).abs() < 0.5, "{controls:?}");
+        }
     }
 
     #[test]

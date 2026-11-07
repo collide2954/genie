@@ -1,5 +1,5 @@
-use iced::widget::{button, text, text_input};
-use iced::{Border, Theme};
+use iced::widget::{button, container, text, text_input};
+use iced::{Border, Color, Shadow, Theme, Vector};
 
 use crate::theme::tokens;
 
@@ -47,6 +47,31 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
         text_color: tokens.text,
         border: Border::default().rounded(6),
         ..button::Style::default()
+    }
+}
+
+pub fn chosen(theme: &Theme, _status: button::Status) -> button::Style {
+    let tokens = tokens(theme);
+    button::Style {
+        background: Some(tokens.line.into()),
+        text_color: tokens.text,
+        border: Border::default().rounded(4),
+        ..button::Style::default()
+    }
+}
+
+pub fn menu(theme: &Theme) -> container::Style {
+    let tokens = tokens(theme);
+    container::Style {
+        background: Some(tokens.surface.into()),
+        text_color: Some(tokens.text),
+        border: Border::default().rounded(6).width(1).color(tokens.line),
+        shadow: Shadow {
+            color: Color::BLACK.scale_alpha(0.18),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+        ..container::Style::default()
     }
 }
 

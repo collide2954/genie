@@ -10,6 +10,8 @@ pub enum Command {
     Pan(f32),
     Zoom(f32),
     FocusLocus,
+    NextSuggestion,
+    PreviousSuggestion,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -17,6 +19,8 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
     match key.as_ref() {
         Key::Named(Named::ArrowLeft) => Some(Command::Pan(step)),
         Key::Named(Named::ArrowRight) => Some(Command::Pan(-step)),
+        Key::Named(Named::ArrowDown) => Some(Command::NextSuggestion),
+        Key::Named(Named::ArrowUp) => Some(Command::PreviousSuggestion),
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
@@ -71,6 +75,18 @@ mod tests {
             Some(Command::FocusLocus)
         );
         assert_eq!(command(&character("l"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn up_and_down_move_through_suggestions() {
+        assert_eq!(
+            command(&Key::Named(Named::ArrowDown), Modifiers::empty()),
+            Some(Command::NextSuggestion)
+        );
+        assert_eq!(
+            command(&Key::Named(Named::ArrowUp), Modifiers::empty()),
+            Some(Command::PreviousSuggestion)
+        );
     }
 
     #[test]
