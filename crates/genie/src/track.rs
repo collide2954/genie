@@ -94,6 +94,10 @@ impl Source {
         matches!(self.format, Format::BigBed { .. })
     }
 
+    pub fn has_lookup(&self) -> bool {
+        matches!(&self.format, Format::BigBed { index } if index.has_lookup())
+    }
+
     pub fn has_colors(&self) -> bool {
         matches!(
             self.format,
@@ -931,6 +935,27 @@ pub fn load(
     }
 }
 
+pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
+    let name = name.trim();
+    sources.iter().find_map(|source| {
+        let Format::BigBed { index } = &source.format else {
+            return None;
+        };
+        let mut file = BufReader::new(File::open(&source.path).ok()?);
+        index
+            .find(&mut file, name)
+            .ok()?
+            .into_iter()
+            .find_map(|(contig, feature)| {
+                Some(Named {
+                    name: name.to_owned(),
+                    contig: assembly.find(&contig)?,
+                    span: feature.span(),
+                })
+            })
+    })
+}
+
 fn bigbed_names(
     index: &bbi::Index,
     reader: &mut BufReader<File>,
@@ -1004,7 +1029,7 @@ mod tests {
 
     use super::{
         Change, Content, Format, Grouping, Loaded, Options, Plot, Source, Toggle, Track, change,
-        contig_names, fits, is_track, load, names, open, step,
+        contig_names, fits, is_track, load, lookup, names, open, step,
     };
     use crate::scratch::Scratch;
 
@@ -1477,6 +1502,20 @@ mod tests {
         assert_ne!(signal(&far.unwrap()), []);
         assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
         assert!(is_track(&PathBuf::from("peaks.bb")) && is_track(&PathBuf::from("a.bigBed")));
+    }
+
+    #[test]
+    fn bigbed_names_are_looked_up_in_the_index() {
+        let source = Arc::new(open(fixture("genes.bb")).unwrap());
+        assert!(source.has_lookup());
+        let contigs = ["chr1", "chr2", "chrX"].map(|name| Contig {
+            name: name.to_owned(),
+            length: 3_000_000,
+        });
+        let assembly = Assembly::new(contigs.into());
+        let found = lookup(&[Arc::clone(&source)], "chr2_450", &assembly).unwrap();
+        assert_eq!((found.contig, found.span), (1, region(281_270, 283_541)));
+        assert_eq!(lookup(&[source], "missing", &assembly), None);
     }
 
     #[test]

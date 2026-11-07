@@ -292,6 +292,7 @@ pub enum Message {
     TrackClicked(u64, Pointer),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
+    Looked(Option<Named>, String),
     ExportPicked(Option<PathBuf>),
     SessionPicked(Option<PathBuf>),
     Exported(Result<PathBuf, String>),
@@ -400,6 +401,7 @@ impl Genie {
             Message::NamesLoaded(id, Ok(names)) => {
                 self.on_session(|session| session.name(id, names));
             }
+            Message::Looked(found, error) => return self.looked(found, error),
             Message::FileHovered => self.hovering = true,
             Message::FileHoverEnded => self.hovering = false,
             Message::FileDropped(path) => {
@@ -836,24 +838,54 @@ impl Genie {
                 .ok_or(error)
         });
         match resolved {
-            Ok(target) => {
-                if target.contig == session.contig {
-                    session.glide(session.destination().jump(target.span));
-                } else {
-                    let length = session.reference.assembly.contigs()[target.contig].length;
-                    session.transition = None;
-                    session.contig = target.contig;
-                    session.viewport = session.viewport.retarget(length).jump(target.span);
-                }
-                self.locus_error = None;
-                self.fetch()
-            }
+            Ok(target) => self.go_to(target),
             Err(error) => {
-                self.locus_error = Some(error.to_string());
-                self.draft = Some(text);
-                Task::none()
+                let sources: Vec<Arc<Source>> = session
+                    .tracks
+                    .iter()
+                    .filter(|track| track.source.has_lookup())
+                    .map(|track| Arc::clone(&track.source))
+                    .collect();
+                self.draft = Some(text.clone());
+                if sources.is_empty() {
+                    self.locus_error = Some(error.to_string());
+                    return Task::none();
+                }
+                let (reference, message) = (Arc::clone(&session.reference), error.to_string());
+                Task::perform(
+                    async move { track::lookup(&sources, &text, &reference.assembly) },
+                    move |found| Message::Looked(found, message.clone()),
+                )
             }
         }
+    }
+
+    fn go_to(&mut self, target: Target) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        if target.contig == session.contig {
+            session.glide(session.destination().jump(target.span));
+        } else {
+            let length = session.reference.assembly.contigs()[target.contig].length;
+            session.transition = None;
+            session.contig = target.contig;
+            session.viewport = session.viewport.retarget(length).jump(target.span);
+        }
+        self.locus_error = None;
+        self.fetch()
+    }
+
+    fn looked(&mut self, found: Option<Named>, error: String) -> Task<Message> {
+        let Some(named) = found else {
+            self.locus_error = Some(error);
+            return Task::none();
+        };
+        self.draft = None;
+        self.go_to(Target {
+            contig: named.contig,
+            span: Span::Region(named.span),
+        })
     }
 
     fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
@@ -3069,6 +3101,21 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn looked_up_names_move_the_view_or_explain() {
+        let mut genie = opened();
+        let named = genie_core::Named {
+            name: "chr2_450".to_owned(),
+            contig: 1,
+            span: Region::between(100, 200),
+        };
+        let _ = genie.update(Message::Looked(Some(named), String::new()));
+        assert!(shows(&genie, "chr2:101-200"));
+        let error = "The name x is not a locus or a feature.".to_owned();
+        let _ = genie.update(Message::Looked(None, error.clone()));
+        assert!(shows(&genie, &error));
     }
 
     #[test]
