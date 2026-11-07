@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
-use genie_render::{alignments, features, overview, ruler, sequence};
+use genie_render::{alignments, features, overview, ruler, sequence, translation};
 use iced::futures::channel::mpsc;
 use iced::theme::Mode;
 use iced::time::Instant;
@@ -27,6 +27,7 @@ use crate::menu::{self, Place};
 use crate::motion::Transition;
 use crate::navigator::Navigator;
 use crate::paths::file_name;
+use crate::reading::{self, Reading};
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
 use crate::scene::Pointer;
@@ -72,6 +73,7 @@ pub struct Genie {
     notices: u64,
     indexing: Option<(String, u8)>,
     menu: Option<(u64, Point)>,
+    sequence_menu: Option<Point>,
     scroll: f32,
     window: Size,
     hover: Option<Card>,
@@ -99,6 +101,7 @@ impl Default for Genie {
             notices: 0,
             indexing: None,
             menu: None,
+            sequence_menu: None,
             scroll: 0.0,
             window: chrome::WINDOW,
             hover: None,
@@ -131,6 +134,7 @@ struct Session {
     transition: Option<Transition>,
     grip: Option<f64>,
     tracks: Vec<Track>,
+    reading: Reading,
 }
 
 impl Session {
@@ -143,6 +147,7 @@ impl Session {
             transition: None,
             grip: None,
             tracks: Vec::new(),
+            reading: Reading::default(),
         }
     }
 
@@ -257,6 +262,8 @@ pub enum Message {
     Exported(Result<PathBuf, String>),
     NoticeExpired(u64),
     Indexing(String, u8),
+    SequenceMenu(Point),
+    SequenceChanged(reading::Change),
 }
 
 enum Opening {
@@ -355,11 +362,15 @@ impl Genie {
             }
             Message::TrackClicked(id, pointer) => self.pinned = self.card(id, pointer),
             Message::CardClosed => self.pinned = None,
-            Message::MenuDismissed => self.menu = None,
+            Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
                 self.scroll = offset;
-                self.menu = None;
+                self.close_menus();
             }
+            Message::SequenceMenu(at) => {
+                self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
+            }
+            Message::SequenceChanged(change) => self.change_reading(change),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
                 self.drop_draft();
@@ -375,12 +386,7 @@ impl Genie {
                 return self.navigate(|viewport| viewport.resize(f64::from(width)));
             }
             Message::TileLoaded(generation, key, result) => {
-                if generation == self.generation {
-                    match result {
-                        Ok(bases) => self.tiles.insert(key, bases),
-                        Err(_) => self.tiles.cancel(key),
-                    }
-                }
+                self.tile_loaded(generation, key, result);
             }
             Message::LocusEdited(text) => {
                 self.draft = Some(text);
@@ -417,6 +423,25 @@ impl Genie {
         if let Some(session) = &mut self.session {
             change(session);
         }
+    }
+
+    fn tile_loaded(&mut self, generation: u64, key: Key, result: Result<Arc<[u8]>, String>) {
+        if generation == self.generation {
+            match result {
+                Ok(bases) => self.tiles.insert(key, bases),
+                Err(_) => self.tiles.cancel(key),
+            }
+        }
+    }
+
+    fn close_menus(&mut self) {
+        self.menu = None;
+        self.sequence_menu = None;
+    }
+
+    fn change_reading(&mut self, change: reading::Change) {
+        self.sequence_menu = None;
+        self.on_session(|session| session.reading.change(change));
     }
 
     fn card(&self, id: u64, pointer: Pointer) -> Option<Card> {
@@ -493,7 +518,7 @@ impl Genie {
                 Task::none()
             }
             Command::Dismiss => {
-                self.menu = None;
+                self.close_menus();
                 self.notice = None;
                 self.pinned = None;
                 Task::none()
@@ -726,7 +751,7 @@ impl Genie {
         if progress.is_some() || notice.is_some() {
             layers = layers.push(toasts(progress, notice));
         }
-        if let Some(menu) = self.track_menu() {
+        if let Some(menu) = self.track_menu().or_else(|| self.reading_menu()) {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)
                 .on_right_press(Message::MenuDismissed);
@@ -739,6 +764,12 @@ impl Genie {
             layers = layers.push(chrome::resize_handles());
         }
         layers.into()
+    }
+
+    fn reading_menu(&self) -> Option<Element<'_, Message>> {
+        let at = self.sequence_menu?;
+        let session = self.session.as_ref()?;
+        Some(reading::menu(session.reading, at, self.window))
     }
 
     fn track_menu(&self) -> Option<Element<'_, Message>> {
@@ -967,16 +998,28 @@ impl Genie {
 
     fn tracks<'a>(&'a self, session: &'a Session, repack: bool) -> Element<'a, Message> {
         let viewport = session.viewport;
+        let (contig, visible) = (session.contig, viewport.visible());
+        let reading = session.reading;
         let bases = sequence::scene(
             viewport,
-            self.tiles.chunks(session.contig, viewport.visible()),
+            self.tiles.chunks(contig, visible),
             BASE_HEIGHT,
-            false,
+            reading.reverse,
         );
-        let sequence = stack![
-            container(scene::view(bases, BASE_HEIGHT)).padding([TRACK_PADDING, 0.0]),
-            label("Sequence"),
-        ];
+        let frames = reading.frames();
+        let mut strands = column![scene::view(bases, BASE_HEIGHT)];
+        if !frames.is_empty() {
+            let codons = translation::scene(viewport, self.tiles.chunks(contig, visible), &frames);
+            let height = frames.len() as f32 * translation::ROW_HEIGHT;
+            strands = strands.push(scene::view(codons, height));
+        }
+        let sequence = Context::new(
+            stack![
+                container(strands).padding([TRACK_PADDING, 0.0]),
+                label("Sequence"),
+            ],
+            Message::SequenceMenu,
+        );
         let mut data = column![container(sequence).id("sequence"), hairline()];
         for track in &session.tracks {
             data = data
@@ -1334,6 +1377,7 @@ mod tests {
     use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
     use crate::export;
     use crate::menu;
+    use crate::reading::{self, Frames};
     use crate::reference::Reference;
     use crate::scene::Pointer;
     use crate::shortcuts::Command;
@@ -1976,6 +2020,43 @@ mod tests {
         track.wanted = Some((0, region));
         let loaded = Loaded::reads(region, reads, vec![b'A'; 1_000], 0, Options::default());
         track.accept(0, region, Ok(Arc::new(loaded)));
+    }
+
+    #[test]
+    fn right_clicking_the_sequence_opens_its_menu() {
+        let mut genie = opened();
+        let _ = genie.update(Message::SequenceMenu(Point::new(100.0, 120.0)));
+        for item in [
+            "Forward strand",
+            "Reverse strand",
+            "No translation",
+            "3 frames",
+            "6 frames",
+        ] {
+            assert!(shows(&genie, item), "{item}");
+        }
+    }
+
+    #[test]
+    fn six_frames_grow_the_sequence_track() {
+        let mut genie = opened();
+        let _ = genie.update(Message::SequenceMenu(Point::new(100.0, 120.0)));
+        let change = reading::Change::Frames(Frames::Six);
+        let _ = genie.update(Message::SequenceChanged(change));
+        assert_eq!(genie.sequence_menu, None);
+        let mut ui = simulator(genie.view());
+        let bounds = ui.find(selector::id("sequence")).unwrap().bounds();
+        assert!((bounds.height - 104.0).abs() < 0.5, "{}", bounds.height);
+    }
+
+    #[test]
+    fn sequence_menu_knows_its_height() {
+        let mut genie = opened();
+        let _ = genie.update(Message::SequenceMenu(Point::new(100.0, 120.0)));
+        let mut ui = simulator(genie.view());
+        let height = ui.find(selector::id("menu")).unwrap().bounds().height;
+        let expected = reading::MENU_HEIGHT;
+        assert!(height <= expected && expected - height < 1.0, "{height}");
     }
 
     #[test]

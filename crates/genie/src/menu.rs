@@ -1,6 +1,6 @@
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
-use iced::widget::{button, column, container, pin, row, space, text};
+use iced::widget::{Column, button, column, container, pin, row, space, text};
 use iced::{Element, Length, Point, Size};
 
 use crate::app::Message;
@@ -38,17 +38,40 @@ pub struct Place {
     pub window: Size,
 }
 
+pub fn item(label: &str, message: Message, chosen: bool, enabled: bool) -> Element<'_, Message> {
+    button(text(label).size(12))
+        .width(Length::Fill)
+        .padding([3, 8])
+        .style(if chosen { style::chosen } else { style::ghost })
+        .on_press_maybe(enabled.then_some(message))
+        .into()
+}
+
+pub fn card(
+    content: Column<'_, Message>,
+    at: Point,
+    window: Size,
+    height: f32,
+) -> Element<'_, Message> {
+    let card = container(content)
+        .id("menu")
+        .width(WIDTH)
+        .padding(4)
+        .style(style::menu);
+    let x = at.x.min(window.width - WIDTH - EDGE).max(0.0);
+    let y = if at.y + height > window.height {
+        (at.y - height).max(0.0)
+    } else {
+        at.y
+    };
+    pin(card).x(x).y(y).into()
+}
+
 pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message> {
     let id = track.id;
-    let item =
-        |label: &'a str, change: Change, chosen: bool, enabled: bool| -> Element<'a, Message> {
-            button(text(label).size(12))
-                .width(Length::Fill)
-                .padding([3, 8])
-                .style(if chosen { style::chosen } else { style::ghost })
-                .on_press_maybe(enabled.then_some(Message::TrackChanged(id, change)))
-                .into()
-        };
+    let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
+        item(label, Message::TrackChanged(id, change), chosen, enabled)
+    };
     let modes =
         MODES.map(|(label, choice)| item(label, Change::Mode(choice), choice == mode, true));
     let current = track.hue;
@@ -85,22 +108,10 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
         separator(),
         item("Remove", Change::Remove, false, true),
     ]);
-    let card = container(content)
-        .id("menu")
-        .width(WIDTH)
-        .padding(4)
-        .style(style::menu);
-    let height = height(track);
-    let x = place.at.x.min(place.window.width - WIDTH - EDGE).max(0.0);
-    let y = if place.at.y + height > place.window.height {
-        (place.at.y - height).max(0.0)
-    } else {
-        place.at.y
-    };
-    pin(card).x(x).y(y).into()
+    card(content, place.at, place.window, height(track))
 }
 
-fn separator<'a>() -> Element<'a, Message> {
+pub fn separator<'a>() -> Element<'a, Message> {
     container(
         container(space())
             .width(Length::Fill)

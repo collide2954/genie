@@ -9,6 +9,7 @@ mod menu;
 mod motion;
 mod navigator;
 mod paths;
+mod reading;
 mod recent;
 mod reference;
 mod scene;
