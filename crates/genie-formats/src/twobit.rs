@@ -146,6 +146,12 @@ impl TwoBit {
     }
 }
 
+pub fn sniff(head: &[u8]) -> bool {
+    head.first_chunk::<4>().is_some_and(|signature| {
+        u32::from_le_bytes(*signature) == SIGNATURE || u32::from_be_bytes(*signature) == SIGNATURE
+    })
+}
+
 fn bytes<const N: usize>(reader: &mut impl Read) -> Result<[u8; N], Error> {
     let mut bytes = [0; N];
     reader.read_exact(&mut bytes)?;
@@ -192,7 +198,7 @@ mod tests {
 
     use genie_core::Region;
 
-    use super::TwoBit;
+    use super::{TwoBit, sniff};
     use crate::{Error, Reason};
 
     struct Format {
@@ -365,6 +371,23 @@ mod tests {
             TwoBit::read(&mut Cursor::new(&future)),
             Err(Error::Invalid(Reason::UnsupportedVersion))
         ));
+    }
+
+    #[test]
+    fn sniff_recognizes_both_byte_orders() {
+        assert!(sniff(&encode(&[("c", "A")], &PLAIN)));
+        let big = Format {
+            big_endian: true,
+            version: 0,
+        };
+        assert!(sniff(&encode(&[("c", "A")], &big)));
+    }
+
+    #[test]
+    fn sniff_rejects_other_data() {
+        assert!(!sniff(b">chr1\nACGT\n"));
+        assert!(!sniff(b"AC"));
+        assert!(!sniff(b""));
     }
 
     #[test]
