@@ -43,7 +43,7 @@ impl Index {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::io::Cursor;
 
     use genie_core::Region;
@@ -55,7 +55,7 @@ mod tests {
         bytes.extend(i32::try_from(value).unwrap().to_le_bytes());
     }
 
-    fn index(references: &[(Bins, &[u64])]) -> Vec<u8> {
+    pub fn index(references: &[(Bins, &[u64])]) -> Vec<u8> {
         let mut bytes = b"BAI\x01".to_vec();
         put(&mut bytes, references.len());
         for (bins, intervals) in references {

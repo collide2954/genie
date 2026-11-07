@@ -1,4 +1,5 @@
 pub mod bai;
+pub mod bam;
 pub mod bed;
 pub mod bgzf;
 mod binning;

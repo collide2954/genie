@@ -31,6 +31,8 @@ pub enum Reason {
     BadStrand,
     BadBlocks,
     NotBai,
+    NotBam,
+    BadRecord,
 }
 
 impl fmt::Display for Error {
@@ -75,6 +77,8 @@ impl fmt::Display for Reason {
             Self::BadStrand => "the strand is not +, - or .",
             Self::BadBlocks => "the number of blocks is not the same as the block count",
             Self::NotBai => "the file is not a BAI index",
+            Self::NotBam => "the file is not a BAM file",
+            Self::BadRecord => "a BAM record is not valid",
         })
     }
 }
