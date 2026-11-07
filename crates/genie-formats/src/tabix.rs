@@ -16,7 +16,7 @@ pub struct Chunk {
     pub end: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Index {
     zero_based: bool,
     columns: [usize; 3],
@@ -25,7 +25,7 @@ pub struct Index {
     references: Vec<Reference>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Reference {
     bins: Vec<(u32, Vec<Chunk>)>,
     intervals: Vec<u64>,

@@ -7,6 +7,8 @@ use genie_formats::fai::{self, FaiRecord};
 use genie_formats::fasta;
 use genie_formats::twobit::{self, TwoBit};
 
+use crate::paths;
+
 #[derive(Debug)]
 enum Source {
     Fasta(Vec<FaiRecord>),
@@ -67,13 +69,9 @@ impl Reference {
         if contigs.is_empty() {
             return Err("The file has no sequences.".to_owned());
         }
-        let name = path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
         Ok(Self {
+            name: paths::file_name(&path),
             path,
-            name,
             assembly: Assembly::new(contigs),
             source,
         })
@@ -91,39 +89,13 @@ impl Reference {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-
     use super::open;
-
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new(name: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("genie-app-{}-{name}", std::process::id()));
-            let _ = fs::remove_dir_all(&path);
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-
-        fn file(&self, name: &str, content: impl AsRef<[u8]>) -> PathBuf {
-            let path = self.0.join(name);
-            fs::write(&path, content).unwrap();
-            path
-        }
-    }
+    use crate::scratch::Scratch;
 
     const ACGT_2BIT: [u8; 39] = [
         0x43, 0x27, 0x41, 0x1A, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, b'c', 22, 0, 0, 0, 4, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x9C,
     ];
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn open_names_the_file_and_lists_contigs() {

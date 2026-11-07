@@ -1,6 +1,6 @@
 use std::env;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const APP: &str = "genie";
 
@@ -16,6 +16,13 @@ pub fn cache_dir() -> Option<PathBuf> {
 
 pub fn config_dir() -> Option<PathBuf> {
     folder(Kind::Config, env::consts::OS, |key: &str| env::var_os(key))
+}
+
+pub fn file_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 fn folder(kind: Kind, os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {

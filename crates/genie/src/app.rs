@@ -1,24 +1,29 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use genie_core::{Locus, Span, Viewport, grouped};
-use genie_render::{overview, ruler, sequence};
+use genie_core::{Locus, Region, Span, Viewport, grouped};
+use genie_render::{features, overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::time::Instant;
-use iced::widget::{button, center, column, container, operation, pin, row, space, stack, text};
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{
+    button, center, column, container, operation, pin, row, scrollable, space, stack, text,
+};
 use iced::{
     Alignment, Border, Element, Length, Subscription, Task, Theme, keyboard, system, window,
 };
 
 use crate::chrome::{self, Controls, LocusField};
-use crate::icon::Icon;
+use crate::icon::{self, Icon};
 use crate::motion::Transition;
 use crate::navigator::Navigator;
+use crate::paths::file_name;
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
+use crate::track::{self, Loaded, Source, Track};
 use crate::{font, paths, scene, style};
 
 const INITIAL_WIDTH: f32 = 1_000.0;
@@ -26,8 +31,12 @@ const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
 const BASE_HEIGHT: f32 = 16.0;
 const TRACK_PADDING: f32 = 2.0;
+const EMPTY_HEIGHT: f32 = 20.0;
 const LABEL_SIZE: f32 = 10.0;
+const FEATURE_SPAN: u64 = 10_000_000;
 const DROP_HINT: &str = "Drop the file to open it";
+const ZOOM_HINT: &str = "Zoom in to see the features";
+const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
@@ -44,6 +53,8 @@ pub struct Genie {
     recent: Recent,
     hovering: bool,
     highlight: Option<usize>,
+    next_track: u64,
+    notice: Option<String>,
 }
 
 impl Default for Genie {
@@ -61,6 +72,8 @@ impl Default for Genie {
             recent: Recent::default(),
             hovering: false,
             highlight: None,
+            next_track: 0,
+            notice: None,
         }
     }
 }
@@ -80,6 +93,7 @@ struct Session {
     viewport: Viewport,
     transition: Option<Transition>,
     grip: Option<f64>,
+    tracks: Vec<Track>,
 }
 
 impl Session {
@@ -91,6 +105,7 @@ impl Session {
             viewport: Viewport::new(length, f64::from(width)),
             transition: None,
             grip: None,
+            tracks: Vec::new(),
         }
     }
 
@@ -154,6 +169,9 @@ pub enum Message {
     FileHoverEnded,
     FileDropped(PathBuf),
     SuggestionChosen(usize),
+    TrackOpened(Result<Arc<Source>, String>),
+    TrackLoaded(u64, usize, Region, Result<Arc<Loaded>, String>),
+    NoticeDismissed,
 }
 
 impl Genie {
@@ -175,7 +193,7 @@ impl Genie {
             Message::CycleAppearance => self.appearance = self.appearance.next(),
             Message::SystemModeChanged(mode) => self.system = mode,
             Message::Window(action) => return chrome::perform(action),
-            Message::Open => return Task::perform(pick(), Message::Picked),
+            Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
             Message::Picked(Some(path)) => return self.open(path),
             Message::Picked(None) => {}
             Message::FileHovered => self.hovering = true,
@@ -192,7 +210,16 @@ impl Genie {
                 self.session = Some(Session::new(reference, self.width));
                 return Task::batch([self.fetch(), self.remember()]);
             }
-            Message::Opened(Err(error)) => self.status = Status::Failed(error),
+            Message::Opened(Err(error)) | Message::TrackOpened(Err(error)) => self.fail(error),
+            Message::TrackOpened(Ok(source)) => return self.add_track(source),
+            Message::TrackLoaded(id, contig, region, result) => {
+                if let Some(session) = &mut self.session
+                    && let Some(track) = session.tracks.iter_mut().find(|track| track.id == id)
+                {
+                    track.accept(contig, region, result);
+                }
+            }
+            Message::NoticeDismissed => self.notice = None,
             Message::Pan(dx) => {
                 self.drop_draft();
                 return self.navigate(|viewport| viewport.pan(f64::from(dx)));
@@ -372,6 +399,38 @@ impl Genie {
     }
 
     fn fetch(&mut self) -> Task<Message> {
+        Task::batch([self.fetch_bases(), self.fetch_features()])
+    }
+
+    fn fetch_features(&mut self) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let viewport = session.destination();
+        let visible = viewport.visible();
+        if visible.len() > FEATURE_SPAN {
+            return Task::none();
+        }
+        let contig = session.contig;
+        let wanted = visible.expand(visible.len(), viewport.length());
+        let tasks: Vec<Task<Message>> = session
+            .tracks
+            .iter_mut()
+            .filter(|track| track.needs(contig, visible))
+            .filter_map(|track| {
+                let name = track.names[contig].clone()?;
+                track.wanted = Some((contig, wanted));
+                let (id, source) = (track.id, Arc::clone(&track.source));
+                Some(Task::perform(
+                    async move { track::load(&source, &name, wanted).map(Arc::new) },
+                    move |result| Message::TrackLoaded(id, contig, wanted, result),
+                ))
+            })
+            .collect();
+        Task::batch(tasks)
+    }
+
+    fn fetch_bases(&mut self) -> Task<Message> {
         let Some(session) = &self.session else {
             return Task::none();
         };
@@ -416,6 +475,9 @@ impl Genie {
         ]];
         if let Some(menu) = self.suggestion_menu() {
             layers = layers.push(menu);
+        }
+        if let Some(notice) = &self.notice {
+            layers = layers.push(toast(notice));
         }
         if self.hovering {
             layers = layers.push(drop_hint());
@@ -509,11 +571,47 @@ impl Genie {
     }
 
     fn open(&mut self, path: PathBuf) -> Task<Message> {
-        self.status = Status::Opening(file_name(&path));
+        if track::is_track(&path) {
+            if self.session.is_none() {
+                self.status = Status::Failed(NO_REFERENCE.to_owned());
+                return Task::none();
+            }
+            return Task::perform(
+                async move { track::open(path).map(Arc::new) },
+                Message::TrackOpened,
+            );
+        }
+        if self.session.is_none() {
+            self.status = Status::Opening(file_name(&path));
+        }
         Task::perform(
             async move { reference::open(path, paths::cache_dir().as_deref()).map(Arc::new) },
             Message::Opened,
         )
+    }
+
+    fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            self.status = Status::Failed(NO_REFERENCE.to_owned());
+            return Task::none();
+        };
+        if session.tracks.iter().any(|track| track.source == source) {
+            self.notice = Some(format!("The track {} is already open.", source.name));
+            return Task::none();
+        }
+        self.notice = None;
+        let track = Track::new(self.next_track, source, &session.reference.assembly);
+        self.next_track += 1;
+        session.tracks.push(track);
+        self.fetch_features()
+    }
+
+    fn fail(&mut self, error: String) {
+        if self.session.is_some() {
+            self.notice = Some(error);
+        } else {
+            self.status = Status::Failed(error);
+        }
     }
 
     fn remember(&self) -> Task<Message> {
@@ -527,7 +625,7 @@ impl Genie {
         .discard()
     }
 
-    fn browser(&self, session: &Session) -> Element<'_, Message> {
+    fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let viewport = session.viewport;
         let bases = sequence::scene(
             viewport,
@@ -538,6 +636,10 @@ impl Genie {
             container(scene::view(bases, BASE_HEIGHT)).padding([TRACK_PADDING, 0.0]),
             label("Sequence"),
         ];
+        let mut data = column![container(sequence).id("sequence"), hairline()];
+        for track in &session.tracks {
+            data = data.push(track_view(session, track)).push(hairline());
+        }
         let tracks = column![
             container(
                 scene::view(overview::scene(viewport, OVERVIEW_HEIGHT), OVERVIEW_HEIGHT)
@@ -552,8 +654,12 @@ impl Genie {
             ))
             .id("ruler"),
             hairline(),
-            container(sequence).id("sequence"),
-            hairline(),
+            scrollable(data)
+                .direction(Direction::Vertical(
+                    Scrollbar::new().width(6).scroller_width(6).margin(0)
+                ))
+                .style(style::scrollbar)
+                .height(Length::Fill),
         ]
         .height(Length::Fill);
         Navigator::new(tracks, self.width)
@@ -591,6 +697,64 @@ impl Genie {
             frames,
         ])
     }
+}
+
+fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
+    let viewport = session.viewport;
+    let contig = session.contig;
+    let body: Element<'a, Message> = if let Some(error) = &track.error {
+        hint(error.clone())
+    } else if viewport.visible().len() > FEATURE_SPAN {
+        hint(ZOOM_HINT.to_owned())
+    } else if let Some(data) = track.data(contig) {
+        let mode = track.mode(contig);
+        let rows = if mode == features::Mode::Collapsed {
+            1
+        } else {
+            data.count.max(1)
+        };
+        let primitives = features::scene(viewport, &data.features, &data.rows, mode, track.hue);
+        scene::view(primitives, rows as f32 * mode.row_height()).into()
+    } else {
+        space().height(EMPTY_HEIGHT).into()
+    };
+    stack![
+        container(body).padding([TRACK_PADDING, 0.0]),
+        label(&track.source.name)
+    ]
+    .into()
+}
+
+fn hint<'a>(message: String) -> Element<'a, Message> {
+    container(text(message).size(11).style(style::muted))
+        .center_x(Length::Fill)
+        .height(EMPTY_HEIGHT)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+fn toast(notice: &str) -> Element<'_, Message> {
+    let close = button(icon::view(Icon::Close, 12.0))
+        .width(20)
+        .height(20)
+        .padding(0)
+        .style(style::ghost)
+        .on_press(Message::NoticeDismissed);
+    let card = container(
+        row![text(notice).size(12).width(Length::Fill), close]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    )
+    .max_width(360)
+    .padding([6, 6])
+    .style(style::menu);
+    container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_right(Length::Fill)
+        .align_bottom(Length::Fill)
+        .padding(12)
+        .into()
 }
 
 fn label(name: &str) -> Element<'_, Message> {
@@ -642,23 +806,19 @@ fn shortcut(event: keyboard::Event) -> Option<Message> {
     }
 }
 
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
-}
-
-async fn pick() -> Option<PathBuf> {
-    rfd::AsyncFileDialog::new()
-        .set_title("Open a reference sequence")
-        .add_filter(
-            "Reference sequences",
-            &["fa", "fasta", "fna", "fas", "2bit"],
-        )
-        .pick_file()
-        .await
-        .map(|file| file.path().to_owned())
+async fn pick(tracks: bool) -> Option<PathBuf> {
+    let references = ["fa", "fasta", "fna", "fas", "2bit"];
+    let dialog = if tracks {
+        rfd::AsyncFileDialog::new()
+            .set_title("Open a track or a reference sequence")
+            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3"])
+            .add_filter("Reference sequences", &references)
+    } else {
+        rfd::AsyncFileDialog::new()
+            .set_title("Open a reference sequence")
+            .add_filter("Reference sequences", &references)
+    };
+    dialog.pick_file().await.map(|file| file.path().to_owned())
 }
 
 pub fn run() -> iced::Result {
@@ -681,18 +841,115 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::Region;
+    use genie_core::{Feature, Region, Strand};
     use genie_formats::fai::FaiRecord;
+    use genie_formats::features::Kind;
+    use genie_formats::tabix::Index;
+    use genie_render::features::Mode as Rows;
     use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
     use iced::time::{Duration, Instant};
     use iced_test::{selector, simulator};
 
-    use super::{DROP_HINT, Genie, Message, file_drop, shortcut};
+    use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, file_drop, shortcut};
     use crate::reference::Reference;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
+    use crate::track::{Loaded, Source};
+
+    fn source(name: &str) -> Arc<Source> {
+        Arc::new(Source {
+            path: PathBuf::from(format!("/data/{name}")),
+            name: name.to_owned(),
+            kind: Kind::Bed,
+            index: Index::default(),
+        })
+    }
+
+    fn with_track() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        genie.session.as_mut().unwrap().tracks[0].names = vec![Some("1".to_owned()), None];
+        genie
+    }
+
+    #[test]
+    fn tracks_need_a_reference_first() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Picked(Some(PathBuf::from("/data/genes.bed.gz"))));
+        assert!(shows(&genie, NO_REFERENCE));
+    }
+
+    #[test]
+    fn opened_tracks_show_their_name() {
+        assert!(shows(&with_track(), "genes.bed.gz"));
+    }
+
+    #[test]
+    fn opening_a_track_twice_says_so() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        assert!(shows(&genie, "The track genes.bed.gz is already open."));
+        assert_eq!(genie.session.as_ref().unwrap().tracks.len(), 1);
+    }
+
+    #[test]
+    fn errors_with_a_reference_open_become_notices() {
+        let error = "There is no index genes.bed.gz.tbi. Index the file with tabix.";
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Err(error.to_owned())));
+        assert!(shows(&genie, error));
+        let _ = genie.update(Message::NoticeDismissed);
+        assert!(!shows(&genie, error));
+    }
+
+    #[test]
+    fn navigating_requests_features_around_the_view() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.wanted, Some((0, Region::between(0, 1_000))));
+    }
+
+    #[test]
+    fn loaded_features_fill_the_track() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let region = Region::between(0, 1_000);
+        let feature = Feature::new("a", Region::between(10, 20), Strand::Forward);
+        let loaded = Arc::new(Loaded::new(region, vec![feature; 12]));
+        let _ = genie.update(Message::TrackLoaded(0, 0, region, Ok(loaded)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.data(0).unwrap().count, 12);
+        assert_eq!(track.mode(0), Rows::Squished);
+    }
+
+    #[test]
+    fn load_errors_show_inside_the_track() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let error = "The strand is not +, - or ..".to_owned();
+        let region = Region::between(0, 1_000);
+        let _ = genie.update(Message::TrackLoaded(0, 0, region, Err(error.clone())));
+        assert!(shows(&genie, &error));
+    }
+
+    #[test]
+    fn zoomed_out_tracks_ask_to_zoom_in() {
+        let records = vec![FaiRecord {
+            name: "chr1".to_owned(),
+            length: 50_000_000,
+            offset: 6,
+            line_bases: 60,
+            line_width: 61,
+        }];
+        let reference = Reference::fasta(PathBuf::from("big.fa"), records).unwrap();
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(Arc::new(reference))));
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        assert!(shows(&genie, ZOOM_HINT));
+    }
 
     fn reference() -> Arc<Reference> {
         let records = vec![

@@ -1,3 +1,4 @@
+use iced::widget::scrollable::{self, Rail, Scroller};
 use iced::widget::{button, container, text, text_input};
 use iced::{Border, Color, Shadow, Theme, Vector};
 
@@ -72,6 +73,33 @@ pub fn menu(theme: &Theme) -> container::Style {
             blur_radius: 12.0,
         },
         ..container::Style::default()
+    }
+}
+
+pub fn scrollbar(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let tokens = tokens(theme);
+    let active = matches!(
+        status,
+        scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered: true,
+            ..
+        } | scrollable::Status::Dragged {
+            is_vertical_scrollbar_dragged: true,
+            ..
+        }
+    );
+    let rail = Rail {
+        background: None,
+        border: Border::default(),
+        scroller: Scroller {
+            background: if active { tokens.muted } else { tokens.line }.into(),
+            border: Border::default().rounded(3),
+        },
+    };
+    scrollable::Style {
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        ..scrollable::default(theme, status)
     }
 }
 
