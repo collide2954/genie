@@ -2,6 +2,7 @@ mod app;
 mod chrome;
 mod font;
 mod icon;
+mod motion;
 mod navigator;
 mod paths;
 mod reference;
