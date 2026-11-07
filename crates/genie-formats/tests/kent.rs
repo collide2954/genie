@@ -213,6 +213,9 @@ fn bigbed_matches_ucsc_tools() {
             "name" => {
                 let found = index.find(&mut reader, fields[1]).unwrap();
                 assert_eq!(found, bed_lines(&lines), "{header}");
+                let upper = fields[1].to_ascii_uppercase();
+                let found = index.find(&mut reader, &upper).unwrap();
+                assert_eq!(found, bed_lines(&lines), "{upper}");
             }
             kind => {
                 let start: u64 = fields[2].parse().unwrap();

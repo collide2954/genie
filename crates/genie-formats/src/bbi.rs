@@ -134,11 +134,20 @@ fn name_index(
     Ok(None)
 }
 
+fn same(found: &[u8], name: &[u8], fold: bool) -> bool {
+    if fold {
+        found.eq_ignore_ascii_case(name)
+    } else {
+        found == name
+    }
+}
+
 fn tree_find(
     reader: &mut (impl Read + Seek),
     offset: u64,
     big: bool,
     key: &[u8],
+    fold: bool,
 ) -> Result<Vec<(u64, u64)>, Error> {
     let head = chunk(reader, offset, 32)?;
     let mut bytes = Bytes::new(&head, big);
@@ -154,8 +163,16 @@ fn tree_find(
     if key.len() > size {
         return Ok(Vec::new());
     }
-    let mut wanted = key.to_vec();
-    wanted.resize(size, 0);
+    let padded = |mut bound: Vec<u8>| {
+        bound.resize(size, 0);
+        bound
+    };
+    let (low, high) = if fold {
+        (key.to_ascii_uppercase(), key.to_ascii_lowercase())
+    } else {
+        (key.to_vec(), key.to_vec())
+    };
+    let (low, high) = (padded(low), padded(high));
     let mut found = Vec::new();
     let mut nodes = vec![(offset + 32, 0)];
     while let Some((at, depth)) = nodes.pop() {
@@ -173,13 +190,17 @@ fn tree_find(
         }
         for (place, (name, first, second)) in entries.iter().enumerate() {
             if leaf {
-                if *name == wanted.as_slice() {
+                let end = name
+                    .iter()
+                    .rposition(|byte| *byte != 0)
+                    .map_or(0, |at| at + 1);
+                if same(&name[..end], key, fold) {
                     found.push((*first, *second));
                 }
                 continue;
             }
             let next = entries.get(place + 1).map(|(next, ..)| *next);
-            if *name <= wanted.as_slice() && next.is_none_or(|next| wanted.as_slice() <= next) {
+            if *name <= high.as_slice() && next.is_none_or(|next| low.as_slice() <= next) {
                 nodes.push((*first, depth + 1));
             }
         }
@@ -506,14 +527,28 @@ impl Index {
         reader: &mut (impl Read + Seek),
         name: &str,
     ) -> Result<Vec<(String, Feature)>, Error> {
+        let exact = self.matching(reader, name, false)?;
+        if exact.is_empty() && name.bytes().any(|byte| byte.is_ascii_alphabetic()) {
+            return self.matching(reader, name, true);
+        }
+        Ok(exact)
+    }
+
+    fn matching(
+        &self,
+        reader: &mut (impl Read + Seek),
+        name: &str,
+        fold: bool,
+    ) -> Result<Vec<(String, Feature)>, Error> {
         let Some(tree) = self.lookup else {
             return Ok(Vec::new());
         };
         let mut found = Vec::new();
-        for (offset, size) in tree_find(reader, tree, self.big, name.as_bytes())? {
+        for (offset, size) in tree_find(reader, tree, self.big, name.as_bytes(), fold)? {
             let block = self.block(reader, offset, size)?;
             for item in items(&block, self.big)? {
-                if item.rest.split('\t').next() != Some(name) {
+                let first = item.rest.split('\t').next().unwrap_or_default();
+                if !same(first.as_bytes(), name.as_bytes(), fold) {
                     continue;
                 }
                 if let Some(contig) = self.contig(item.chromosome) {

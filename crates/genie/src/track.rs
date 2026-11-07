@@ -966,7 +966,7 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
             .into_iter()
             .find_map(|(contig, feature)| {
                 Some(Named {
-                    name: name.to_owned(),
+                    name: feature.name().to_owned(),
                     contig: assembly.find(&contig)?,
                     span: feature.span(),
                 })
@@ -1527,6 +1527,8 @@ mod tests {
         let assembly = Assembly::new(contigs.into());
         let found = lookup(&[Arc::clone(&source)], "chr2_450", &assembly).unwrap();
         assert_eq!((found.contig, found.span), (1, region(281_270, 283_541)));
+        let upper = lookup(&[Arc::clone(&source)], "CHR2_450", &assembly).unwrap();
+        assert_eq!(upper, found);
         assert_eq!(lookup(&[source], "missing", &assembly), None);
     }
 
