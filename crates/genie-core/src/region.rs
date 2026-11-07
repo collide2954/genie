@@ -46,6 +46,13 @@ impl Region {
         self.start < other.end && other.start < self.end
     }
 
+    pub fn hull(self, other: Self) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+
     pub fn intersection(self, other: Self) -> Option<Self> {
         let start = self.start.max(other.start);
         let end = self.end.min(other.end);
@@ -113,6 +120,12 @@ mod tests {
     fn expand_grows_both_sides_up_to_the_limit() {
         assert_eq!(region(100, 200).expand(50, 1_000), region(50, 250));
         assert_eq!(region(10, 200).expand(50, 220), region(0, 220));
+    }
+
+    #[test]
+    fn hull_covers_both_regions() {
+        assert_eq!(region(0, 10).hull(region(20, 30)), region(0, 30));
+        assert_eq!(region(5, 8).hull(region(0, 10)), region(0, 10));
     }
 
     #[test]

@@ -223,7 +223,7 @@ fn read_count(reader: &mut impl Read) -> Result<usize, Error> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::io::Cursor;
 
     use genie_core::Region;
@@ -237,16 +237,16 @@ mod tests {
         },
     };
 
-    const BED: [usize; 4] = [0x10000, 1, 2, 3];
-    const GFF: [usize; 4] = [0, 1, 4, 5];
+    pub const BED: [usize; 4] = [0x10000, 1, 2, 3];
+    pub const GFF: [usize; 4] = [0, 1, 4, 5];
 
-    type Bins<'a> = &'a [(u32, &'a [(u64, u64)])];
+    pub type Bins<'a> = &'a [(u32, &'a [(u64, u64)])];
 
     fn put(bytes: &mut Vec<u8>, value: usize) {
         bytes.extend(i32::try_from(value).unwrap().to_le_bytes());
     }
 
-    fn index(preset: [usize; 4], names: &[&str], references: &[(Bins, &[u64])]) -> Index {
+    pub fn index(preset: [usize; 4], names: &[&str], references: &[(Bins, &[u64])]) -> Index {
         let text: Vec<u8> = names
             .iter()
             .flat_map(|name| name.bytes().chain([0]))

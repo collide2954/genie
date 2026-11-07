@@ -3,6 +3,7 @@ pub mod bgzf;
 mod error;
 pub mod fai;
 pub mod fasta;
+pub mod features;
 pub mod gff;
 pub mod ini;
 pub mod tabix;

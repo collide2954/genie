@@ -124,9 +124,7 @@ pub fn assemble(records: &[Record]) -> Vec<Feature> {
             if blocks.is_empty() {
                 blocks = spans(&PIECES);
             }
-            let coding = spans(&CODING).into_iter().reduce(|hull, span| {
-                Region::between(hull.start().min(span.start()), hull.end().max(span.end()))
-            });
+            let coding = spans(&CODING).into_iter().reduce(Region::hull);
             feature.with_blocks(blocks).with_coding(coding)
         })
         .collect()
