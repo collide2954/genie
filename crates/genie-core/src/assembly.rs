@@ -15,7 +15,7 @@ pub struct Target {
     pub span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembly {
     contigs: Vec<Contig>,
     names: HashMap<String, usize>,
@@ -193,6 +193,12 @@ mod tests {
         assert_eq!(assembly.resolve("chr1:1,001"), Err(past_end.clone()));
         assert_eq!(assembly.resolve("chr1:1,001-2,000"), Err(past_end.clone()));
         assert_eq!(past_end.to_string(), "chr1 ends at 1,000.");
+    }
+
+    #[test]
+    fn assemblies_with_the_same_contigs_are_equal() {
+        assert_eq!(assembly(&["chr1", "chr2"]), assembly(&["chr1", "chr2"]));
+        assert_ne!(assembly(&["chr1"]), assembly(&["chr2"]));
     }
 
     #[test]
