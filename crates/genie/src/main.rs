@@ -1,4 +1,5 @@
 mod app;
+mod card;
 mod chrome;
 mod context;
 mod font;

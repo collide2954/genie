@@ -14,7 +14,15 @@ use iced::{
 use crate::font;
 use crate::theme::{DataColors, Tokens, data, tokens};
 
+const CLICK_SLOP: f32 = 3.0;
+
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pointer {
+    pub local: Point,
+    pub at: Point,
+}
 
 pub struct Scene<'a, Message> {
     primitives: Vec<Primitive>,
@@ -22,11 +30,15 @@ pub struct Scene<'a, Message> {
     on_press: Option<Handler<'a, Message>>,
     on_drag: Option<Handler<'a, Message>>,
     on_release: Option<Message>,
+    on_hover: Option<Box<dyn Fn(Option<Pointer>) -> Message + 'a>>,
+    on_click: Option<Box<dyn Fn(Pointer) -> Message + 'a>>,
 }
 
 #[derive(Default)]
 struct State {
     dragging: bool,
+    hovered: bool,
+    pressed: Option<Point>,
 }
 
 pub fn view<'a, Message>(primitives: Vec<Primitive>, height: f32) -> Scene<'a, Message> {
@@ -36,10 +48,60 @@ pub fn view<'a, Message>(primitives: Vec<Primitive>, height: f32) -> Scene<'a, M
         on_press: None,
         on_drag: None,
         on_release: None,
+        on_hover: None,
+        on_click: None,
     }
 }
 
 impl<'a, Message> Scene<'a, Message> {
+    pub fn on_hover(mut self, on_hover: impl Fn(Option<Pointer>) -> Message + 'a) -> Self {
+        self.on_hover = Some(Box::new(on_hover));
+        self
+    }
+
+    pub fn on_click(mut self, on_click: impl Fn(Pointer) -> Message + 'a) -> Self {
+        self.on_click = Some(Box::new(on_click));
+        self
+    }
+
+    fn watch(
+        &self,
+        state: &mut State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let pointer = |at: Point| Pointer {
+            local: Point::new(at.x - bounds.x, at.y - bounds.y),
+            at,
+        };
+        let over = cursor.position_over(bounds);
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) => {
+                let Some(on_hover) = &self.on_hover else {
+                    return;
+                };
+                if let Some(at) = over {
+                    state.hovered = true;
+                    shell.publish(on_hover(Some(pointer(at))));
+                } else if state.hovered {
+                    state.hovered = false;
+                    shell.publish(on_hover(None));
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => state.pressed = over,
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let Some(on_click) = &self.on_click
+                    && let (Some(start), Some(at)) = (state.pressed.take(), over)
+                    && start.distance(at) <= CLICK_SLOP
+                {
+                    shell.publish(on_click(pointer(at)));
+                }
+            }
+            _ => {}
+        }
+    }
     pub fn on_press(mut self, on_press: impl Fn(f32) -> Message + 'a) -> Self {
         self.on_press = Some(Box::new(on_press));
         self
@@ -107,12 +169,13 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
+        let bounds = layout.bounds();
+        let state = tree.state.downcast_mut::<State>();
+        self.watch(state, event, bounds, cursor, shell);
         let Some(on_press) = &self.on_press else {
             return;
         };
-        let bounds = layout.bounds();
         let share = |x: f32| ((x - bounds.x) / bounds.width).clamp(0.0, 1.0);
-        let state = tree.state.downcast_mut::<State>();
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_over(bounds) {
@@ -266,7 +329,7 @@ mod tests {
     use iced::{Element, Event, Point, Settings, mouse};
     use iced_test::{Simulator, selector, simulator};
 
-    use super::{color, view};
+    use super::{Pointer, color, view};
     use crate::theme::{DARK, DARK_DATA, LIGHT, LIGHT_DATA};
 
     #[test]
@@ -385,6 +448,65 @@ mod tests {
             Point::new(100.0, 100.0),
             vec![press(), release()],
         );
+        assert_eq!(messages, []);
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Seen {
+        Hovered(Option<Pointer>),
+        Clicked(Pointer),
+    }
+
+    fn watched(steps: Vec<(Point, Event)>) -> Vec<Seen> {
+        let watched = view(Vec::new(), 40.0)
+            .on_hover(Seen::Hovered)
+            .on_click(Seen::Clicked);
+        let element: Element<'_, Seen> =
+            iced::widget::column![iced::widget::space().height(10), watched].into();
+        let mut ui = Simulator::with_size(Settings::default(), (400.0, 300.0), element);
+        for (at, event) in steps {
+            ui.point_at(at);
+            let _ = ui.simulate([event]);
+        }
+        ui.into_messages().collect()
+    }
+
+    fn step(x: f32, y: f32, event: Event) -> (Point, Event) {
+        (Point::new(x, y), event)
+    }
+
+    fn pointer(x: f32, y: f32) -> Pointer {
+        Pointer {
+            local: Point::new(x, y - 10.0),
+            at: Point::new(x, y),
+        }
+    }
+
+    #[test]
+    fn hovering_reports_the_pointer_until_it_leaves() {
+        let messages = watched(vec![
+            step(50.0, 20.0, moved(50.0, 20.0)),
+            step(60.0, 100.0, moved(60.0, 100.0)),
+            step(70.0, 120.0, moved(70.0, 120.0)),
+        ]);
+        assert_eq!(
+            messages,
+            [
+                Seen::Hovered(Some(pointer(50.0, 20.0))),
+                Seen::Hovered(None)
+            ]
+        );
+    }
+
+    #[test]
+    fn clicks_report_the_pointer() {
+        let messages = watched(vec![step(50.0, 20.0, press()), step(51.0, 21.0, release())]);
+        assert_eq!(messages, [Seen::Clicked(pointer(51.0, 21.0))]);
+    }
+
+    #[test]
+    fn drags_are_not_clicks() {
+        let messages = watched(vec![step(50.0, 20.0, press()), step(90.0, 20.0, release())]);
         assert_eq!(messages, []);
     }
 

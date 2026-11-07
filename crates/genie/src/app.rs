@@ -15,6 +15,7 @@ use iced::{
     window,
 };
 
+use crate::card::{self, Card};
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
 use crate::icon::{self, Icon};
@@ -24,6 +25,7 @@ use crate::navigator::Navigator;
 use crate::paths::file_name;
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
+use crate::scene::Pointer;
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
@@ -62,6 +64,8 @@ pub struct Genie {
     menu: Option<(u64, Point)>,
     scroll: f32,
     window: Size,
+    hover: Option<Card>,
+    pinned: Option<Card>,
 }
 
 impl Default for Genie {
@@ -84,6 +88,8 @@ impl Default for Genie {
             menu: None,
             scroll: 0.0,
             window: chrome::WINDOW,
+            hover: None,
+            pinned: None,
         }
     }
 }
@@ -208,6 +214,9 @@ pub enum Message {
     MenuDismissed,
     Scrolled(f32),
     WindowResized(Size),
+    TrackHovered(u64, Option<Pointer>),
+    TrackClicked(u64, Pointer),
+    CardClosed,
 }
 
 impl Genie {
@@ -243,6 +252,7 @@ impl Genie {
                 self.generation += 1;
                 self.tiles.clear();
                 self.recent.add(reference.path.clone());
+                (self.hover, self.pinned) = (None, None);
                 self.session = Some(Session::new(reference, self.width));
                 return Task::batch([self.fetch(), self.remember()]);
             }
@@ -257,8 +267,16 @@ impl Genie {
             }
             Message::TrackChanged(id, change) => {
                 self.menu = None;
+                if change == Change::Remove {
+                    self.forget(id);
+                }
                 self.on_session(|session| track::change(&mut session.tracks, id, change));
             }
+            Message::TrackHovered(id, pointer) => {
+                self.hover = pointer.and_then(|pointer| self.card(id, pointer));
+            }
+            Message::TrackClicked(id, pointer) => self.pinned = self.card(id, pointer),
+            Message::CardClosed => self.pinned = None,
             Message::MenuDismissed => self.menu = None,
             Message::Scrolled(offset) => {
                 self.scroll = offset;
@@ -323,6 +341,32 @@ impl Genie {
         }
     }
 
+    fn card(&self, id: u64, pointer: Pointer) -> Option<Card> {
+        let session = self.session.as_ref()?;
+        let track = session.tracks.iter().find(|track| track.id == id)?;
+        let data = track.data(session.contig)?;
+        let mode = track.mode(session.contig);
+        let (x, y) = (pointer.local.x, pointer.local.y);
+        let index = features::hit(session.viewport, &data.features, &data.rows, mode, x, y)?;
+        Some(Card {
+            track: id,
+            contig: session.reference.assembly.contigs()[session.contig]
+                .name
+                .clone(),
+            feature: data.features[index].clone(),
+            at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
+        })
+    }
+
+    fn forget(&mut self, id: u64) {
+        if self.hover.as_ref().is_some_and(|card| card.track == id) {
+            self.hover = None;
+        }
+        if self.pinned.as_ref().is_some_and(|card| card.track == id) {
+            self.pinned = None;
+        }
+    }
+
     fn is_animating(&self) -> bool {
         self.session
             .as_ref()
@@ -354,6 +398,7 @@ impl Genie {
             Command::Dismiss => {
                 self.menu = None;
                 self.notice = None;
+                self.pinned = None;
                 Task::none()
             }
         }
@@ -514,6 +559,17 @@ impl Genie {
         ]];
         if let Some(menu) = self.suggestion_menu() {
             layers = layers.push(menu);
+        }
+        if let Some(pinned) = &self.pinned {
+            layers = layers.push(card::view(pinned, true, self.window));
+        }
+        if let Some(hover) = &self.hover
+            && self
+                .pinned
+                .as_ref()
+                .is_none_or(|pinned| pinned.feature != hover.feature)
+        {
+            layers = layers.push(card::view(hover, false, self.window));
         }
         if let Some(notice) = &self.notice {
             layers = layers.push(toast(notice));
@@ -774,7 +830,11 @@ fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
             data.count.max(1)
         };
         let primitives = features::scene(viewport, &data.features, &data.rows, mode, track.hue);
-        scene::view(primitives, rows as f32 * mode.row_height()).into()
+        let id = track.id;
+        scene::view(primitives, rows as f32 * mode.row_height())
+            .on_hover(move |pointer| Message::TrackHovered(id, pointer))
+            .on_click(move |pointer| Message::TrackClicked(id, pointer))
+            .into()
     } else {
         space().width(Length::Fill).height(EMPTY_HEIGHT).into()
     };
@@ -922,6 +982,7 @@ mod tests {
 
     use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
     use crate::reference::Reference;
+    use crate::scene::Pointer;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
@@ -1408,6 +1469,59 @@ mod tests {
         let _ = genie.update(Message::TrackMenu(1, Point::new(100.0, 200.0)));
         let _ = genie.update(Message::MenuDismissed);
         assert!(!shows(&genie, "Squished"));
+    }
+
+    fn with_features() -> Genie {
+        let mut genie = with_track();
+        let region = Region::between(0, 1_000);
+        let feature = Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.wanted = Some((0, region));
+        track.accept(0, region, Ok(Arc::new(Loaded::new(region, vec![feature]))));
+        genie
+    }
+
+    fn over(x: f32, y: f32) -> Pointer {
+        Pointer {
+            local: Point::new(x, y),
+            at: Point::new(x, y + 100.0),
+        }
+    }
+
+    #[test]
+    fn hovering_a_feature_shows_its_card() {
+        let mut genie = with_features();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        assert!(shows(&genie, "BRCA1"));
+        assert!(shows(&genie, "chr1:11-20"));
+        assert!(shows(&genie, "10 bp · reverse strand"));
+        let _ = genie.update(Message::TrackHovered(0, None));
+        assert!(!shows(&genie, "chr1:11-20"));
+    }
+
+    #[test]
+    fn hovering_empty_space_shows_no_card() {
+        let mut genie = with_features();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(500.0, 5.0))));
+        assert!(genie.hover.is_none());
+    }
+
+    #[test]
+    fn clicking_pins_the_card_until_dismissed() {
+        let mut genie = with_features();
+        let _ = genie.update(Message::TrackClicked(0, over(15.0, 5.0)));
+        let _ = genie.update(Message::TrackHovered(0, None));
+        assert!(shows(&genie, "chr1:11-20"));
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!shows(&genie, "chr1:11-20"));
+    }
+
+    #[test]
+    fn removing_a_track_drops_its_cards() {
+        let mut genie = with_features();
+        let _ = genie.update(Message::TrackClicked(0, over(15.0, 5.0)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Remove));
+        assert!(genie.pinned.is_none());
     }
 
     #[test]
