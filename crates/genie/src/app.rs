@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
 use genie_render::{alignments, features, overview, ruler, sequence};
@@ -31,7 +32,7 @@ use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
 use crate::track::{self, Change, Content, Loaded, Source, Track};
-use crate::{font, paths, scene, style};
+use crate::{font, paths, scene, style, timer};
 
 const INITIAL_WIDTH: f32 = 1_000.0;
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -47,6 +48,7 @@ const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 const DRAW_FAILED: &str = "The view could not be drawn.";
+const FADE: Duration = Duration::from_secs(4);
 const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
@@ -64,7 +66,8 @@ pub struct Genie {
     hovering: bool,
     highlight: Option<usize>,
     next_track: u64,
-    notice: Option<String>,
+    notice: Option<Notice>,
+    notices: u64,
     menu: Option<(u64, Point)>,
     scroll: f32,
     window: Size,
@@ -90,6 +93,7 @@ impl Default for Genie {
             highlight: None,
             next_track: 0,
             notice: None,
+            notices: 0,
             menu: None,
             scroll: 0.0,
             window: chrome::WINDOW,
@@ -98,6 +102,13 @@ impl Default for Genie {
             pending: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Notice {
+    id: u64,
+    text: String,
+    fades: bool,
 }
 
 #[derive(Debug, Default)]
@@ -240,6 +251,7 @@ pub enum Message {
     NamesLoaded(u64, Result<Arc<Names>, String>),
     ExportPicked(Option<PathBuf>),
     Exported(Result<PathBuf, String>),
+    NoticeExpired(u64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -384,7 +396,8 @@ impl Genie {
             }
             Message::OverviewReleased => self.on_session(|session| session.grip = None),
             Message::ExportPicked(path) => return self.export_to(path),
-            Message::Exported(result) => self.notice = Some(saved(result)),
+            Message::Exported(result) => return self.exported(result),
+            Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
     }
@@ -685,7 +698,7 @@ impl Genie {
             layers = layers.push(card::view(hover, false, self.window));
         }
         if let Some(notice) = &self.notice {
-            layers = layers.push(toast(notice));
+            layers = layers.push(toast(&notice.text));
         }
         if let Some(menu) = self.track_menu() {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
@@ -838,8 +851,7 @@ impl Genie {
             return Task::none();
         };
         if session.tracks.iter().any(|track| track.source == source) {
-            self.notice = Some(format!("The track {} is already open.", source.name));
-            return Task::none();
+            return self.inform(format!("The track {} is already open.", source.name));
         }
         self.notice = None;
         let id = self.next_track;
@@ -859,9 +871,48 @@ impl Genie {
 
     fn fail(&mut self, error: String) {
         if self.session.is_some() {
-            self.notice = Some(error);
+            self.warn(error);
         } else {
             self.status = Status::Failed(error);
+        }
+    }
+
+    fn show(&mut self, text: String, fades: bool) -> u64 {
+        self.notices += 1;
+        self.notice = Some(Notice {
+            id: self.notices,
+            text,
+            fades,
+        });
+        self.notices
+    }
+
+    fn inform(&mut self, text: String) -> Task<Message> {
+        let id = self.show(text, true);
+        Task::perform(timer::sleep(FADE), move |()| Message::NoticeExpired(id))
+    }
+
+    fn warn(&mut self, text: String) {
+        self.show(text, false);
+    }
+
+    fn expire(&mut self, id: u64) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.id == id && notice.fades)
+        {
+            self.notice = None;
+        }
+    }
+
+    fn exported(&mut self, result: Result<PathBuf, String>) -> Task<Message> {
+        match result {
+            Ok(path) => self.inform(format!("Saved {}.", file_name(&path))),
+            Err(error) => {
+                self.warn(error);
+                Task::none()
+            }
         }
     }
 
@@ -964,7 +1015,7 @@ impl Genie {
         if let Some(image) = export::render(self.export_view(session), self.width, &self.theme()) {
             Task::perform(async move { export::save(path, &image) }, Message::Exported)
         } else {
-            self.notice = Some(DRAW_FAILED.to_owned());
+            self.warn(DRAW_FAILED.to_owned());
             Task::none()
         }
     }
@@ -1063,10 +1114,6 @@ fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
         move |at| Message::TrackMenu(id, at),
     )
     .into()
-}
-
-fn saved(result: Result<PathBuf, String>) -> String {
-    result.map_or_else(|error| error, |path| format!("Saved {}.", file_name(&path)))
 }
 
 fn ruler_view<'a>(viewport: Viewport) -> Element<'a, Message> {
@@ -2012,6 +2059,31 @@ mod tests {
         let image = image.unwrap();
         assert_eq!(image.width, 2_000);
         assert!(image.height > 100);
+    }
+
+    fn notice_id(genie: &Genie) -> u64 {
+        genie.notice.as_ref().unwrap().id
+    }
+
+    #[test]
+    fn info_notices_fade_but_errors_stay() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png"))));
+        let _ = genie.update(Message::NoticeExpired(notice_id(&genie)));
+        assert!(genie.notice.is_none());
+        let _ = genie.update(Message::Exported(Err("The disk is full.".to_owned())));
+        let _ = genie.update(Message::NoticeExpired(notice_id(&genie)));
+        assert!(shows(&genie, "The disk is full."));
+    }
+
+    #[test]
+    fn old_timers_leave_newer_notices() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png"))));
+        let first = notice_id(&genie);
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/b.png"))));
+        let _ = genie.update(Message::NoticeExpired(first));
+        assert!(shows(&genie, "Saved b.png."));
     }
 
     #[test]

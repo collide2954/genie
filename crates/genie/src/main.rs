@@ -18,6 +18,7 @@ mod shortcuts;
 mod style;
 mod theme;
 mod tiles;
+mod timer;
 mod track;
 
 fn main() -> iced::Result {
