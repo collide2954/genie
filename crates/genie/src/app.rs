@@ -1,23 +1,42 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::{Locus, Region, Span};
+use genie_core::{Locus, Span, Viewport};
+use genie_render::{overview, ruler};
 use iced::theme::Mode;
-use iced::widget::{button, center, column, stack, text};
-use iced::{Alignment, Element, Task, Theme, system};
+use iced::widget::{button, center, column, container, space, stack, text};
+use iced::{Alignment, Element, Length, Task, Theme, system};
 
 use crate::chrome::{self, Controls};
 use crate::icon::Icon;
+use crate::navigator::Navigator;
 use crate::reference::{self, Reference};
 use crate::theme::{self, Appearance, tokens};
-use crate::{font, paths, style};
+use crate::{font, paths, scene, style};
 
-#[derive(Debug, Default)]
+const INITIAL_WIDTH: f32 = 1_000.0;
+const OVERVIEW_HEIGHT: f32 = 12.0;
+const RULER_HEIGHT: f32 = 20.0;
+
+#[derive(Debug)]
 pub struct Genie {
     appearance: Appearance,
     system: Mode,
     status: Status,
     session: Option<Session>,
+    width: f32,
+}
+
+impl Default for Genie {
+    fn default() -> Self {
+        Self {
+            appearance: Appearance::default(),
+            system: Mode::default(),
+            status: Status::default(),
+            session: None,
+            width: INITIAL_WIDTH,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -32,14 +51,23 @@ enum Status {
 struct Session {
     reference: Arc<Reference>,
     contig: usize,
+    viewport: Viewport,
 }
 
 impl Session {
+    fn new(reference: Arc<Reference>, width: f32) -> Self {
+        let length = reference.assembly.contigs()[0].length;
+        Self {
+            reference,
+            contig: 0,
+            viewport: Viewport::new(length, f64::from(width)),
+        }
+    }
+
     fn locus(&self) -> String {
-        let contig = &self.reference.assembly.contigs()[self.contig];
         Locus {
-            name: contig.name.clone(),
-            span: Span::Region(Region::between(0, contig.length)),
+            name: self.reference.assembly.contigs()[self.contig].name.clone(),
+            span: Span::Region(self.viewport.visible()),
         }
         .to_string()
     }
@@ -53,6 +81,9 @@ pub enum Message {
     Open,
     Picked(Option<PathBuf>),
     Opened(Result<Arc<Reference>, String>),
+    Pan(f32),
+    Zoom(f32, f32),
+    Resized(f32),
 }
 
 impl Genie {
@@ -79,14 +110,25 @@ impl Genie {
             Message::Picked(None) => {}
             Message::Opened(Ok(reference)) => {
                 self.status = Status::Idle;
-                self.session = Some(Session {
-                    reference,
-                    contig: 0,
-                });
+                self.session = Some(Session::new(reference, self.width));
             }
             Message::Opened(Err(error)) => self.status = Status::Failed(error),
+            Message::Pan(dx) => self.navigate(|viewport| viewport.pan(f64::from(dx))),
+            Message::Zoom(factor, anchor) => {
+                self.navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
+            }
+            Message::Resized(width) => {
+                self.width = width;
+                self.navigate(|viewport| viewport.resize(f64::from(width)));
+            }
         }
         Task::none()
+    }
+
+    fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) {
+        if let Some(session) = &mut self.session {
+            session.viewport = change(session.viewport);
+        }
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -108,13 +150,7 @@ impl Genie {
 
     fn body(&self) -> Element<'_, Message> {
         if let Some(session) = &self.session {
-            let contigs = session.reference.assembly.contigs().len();
-            let summary = format!(
-                "{} · {contigs} {}",
-                session.reference.name,
-                if contigs == 1 { "contig" } else { "contigs" }
-            );
-            return center(text(summary).style(muted)).into();
+            return self.browser(session);
         }
         let message = match &self.status {
             Status::Idle => text("Open a reference sequence to start.").style(muted),
@@ -133,6 +169,29 @@ impl Genie {
         .into()
     }
 
+    fn browser(&self, session: &Session) -> Element<'_, Message> {
+        let viewport = session.viewport;
+        let tracks = column![
+            container(scene::view(
+                overview::scene(viewport, OVERVIEW_HEIGHT),
+                OVERVIEW_HEIGHT
+            ))
+            .id("overview"),
+            container(scene::view(
+                ruler::scene(viewport, RULER_HEIGHT),
+                RULER_HEIGHT
+            ))
+            .id("ruler"),
+            hairline(),
+        ]
+        .height(Length::Fill);
+        Navigator::new(tracks, self.width)
+            .on_pan(Message::Pan)
+            .on_zoom(Message::Zoom)
+            .on_resize(Message::Resized)
+            .into()
+    }
+
     fn theme(&self) -> Theme {
         if self.appearance.is_dark(self.system) {
             theme::dark()
@@ -140,6 +199,14 @@ impl Genie {
             theme::light()
         }
     }
+}
+
+fn hairline<'a>() -> Element<'a, Message> {
+    container(space())
+        .width(Length::Fill)
+        .height(1)
+        .style(|theme| container::background(tokens(theme).line))
+        .into()
 }
 
 fn muted(theme: &Theme) -> text::Style {
@@ -218,6 +285,39 @@ mod tests {
         let _ = genie.update(Message::Opened(Ok(reference())));
         let mut ui = simulator(genie.view());
         assert!(ui.find("chr1:1-1,000").is_ok());
+    }
+
+    fn shows(genie: &Genie, text: &str) -> bool {
+        simulator(genie.view()).find(text).is_ok()
+    }
+
+    #[test]
+    fn zoom_and_pan_move_the_locus() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        assert!(shows(&genie, "chr1:1-500"));
+        let _ = genie.update(Message::Pan(-100.0));
+        assert!(shows(&genie, "chr1:51-550"));
+    }
+
+    #[test]
+    fn resizing_keeps_the_scale() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        let _ = genie.update(Message::Resized(500.0));
+        assert!(shows(&genie, "chr1:1-500"));
+    }
+
+    #[test]
+    fn browser_stacks_a_thin_overview_and_ruler() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        let mut ui = simulator(genie.view());
+        for (id, height) in [("overview", 12.0), ("ruler", 20.0)] {
+            let bounds = ui.find(selector::id(id)).unwrap().bounds();
+            assert!((bounds.height - height).abs() < f32::EPSILON, "{id}");
+        }
     }
 
     #[test]

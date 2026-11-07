@@ -71,6 +71,50 @@ pub const DARK: Tokens = Tokens {
     field: color!(0x313131),
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DataColors {
+    pub bases: [Color; 5],
+    pub on_bases: [Color; 5],
+}
+
+const ON_BASES: [Color; 5] = [
+    color!(0x1A1A1A),
+    color!(0xFFFFFF),
+    color!(0x1A1A1A),
+    color!(0x1A1A1A),
+    color!(0x1A1A1A),
+];
+
+pub const LIGHT_DATA: DataColors = DataColors {
+    bases: [
+        color!(0x009E73),
+        color!(0x0072B2),
+        color!(0xE69F00),
+        color!(0xD55E00),
+        color!(0x8C8C8C),
+    ],
+    on_bases: ON_BASES,
+};
+
+pub const DARK_DATA: DataColors = DataColors {
+    bases: [
+        color!(0x1AAE84),
+        color!(0x2E86C9),
+        color!(0xE69F00),
+        color!(0xE06A1A),
+        color!(0x7A7A7A),
+    ],
+    on_bases: ON_BASES,
+};
+
+pub fn data(theme: &Theme) -> &'static DataColors {
+    if theme.extended_palette().is_dark {
+        &DARK_DATA
+    } else {
+        &LIGHT_DATA
+    }
+}
+
 pub fn light() -> Theme {
     static THEME: LazyLock<Theme> = LazyLock::new(|| build("genie light", &LIGHT));
     THEME.clone()
