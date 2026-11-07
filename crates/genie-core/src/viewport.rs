@@ -46,6 +46,27 @@ impl Viewport {
         self.width * self.scale
     }
 
+    pub fn center(self) -> f64 {
+        self.start + self.span() / 2.0
+    }
+
+    pub fn lerp(self, to: Self, t: f64) -> Self {
+        if t <= 0.0 {
+            return self;
+        }
+        if t >= 1.0 {
+            return to;
+        }
+        let scale = (self.scale.ln() + (to.scale.ln() - self.scale.ln()) * t).exp();
+        let center = self.center() + (to.center() - self.center()) * t;
+        Self {
+            start: center - to.width * scale / 2.0,
+            scale,
+            ..to
+        }
+        .clamped()
+    }
+
     pub fn to_px(self, bp: f64) -> f64 {
         (bp - self.start) / self.scale
     }
@@ -67,10 +88,10 @@ impl Viewport {
             scale: self.limit(length / self.width),
             ..self
         }
-        .center(center)
+        .center_on(center)
     }
 
-    pub fn center(self, position: f64) -> Self {
+    pub fn center_on(self, position: f64) -> Self {
         Self {
             start: position - self.span() / 2.0,
             ..self
@@ -100,7 +121,7 @@ impl Viewport {
     pub fn jump(self, span: Span) -> Self {
         match span {
             Span::Whole => Self::new(self.length, self.width),
-            Span::Position(position) => self.center(position as f64 + 0.5),
+            Span::Position(position) => self.center_on(position as f64 + 0.5),
             Span::Region(region) => self.show(region),
         }
     }
@@ -225,8 +246,8 @@ mod tests {
 
     #[test]
     fn center_keeps_scale() {
-        assert_close(zoomed_in().center(800.0).start(), 750.0);
-        assert_close(zoomed_in().center(990.0).start(), 900.0);
+        assert_close(zoomed_in().center_on(800.0).start(), 750.0);
+        assert_close(zoomed_in().center_on(990.0).start(), 900.0);
     }
 
     #[test]
@@ -278,6 +299,29 @@ mod tests {
     fn retarget_limits_zoom_to_the_new_contig() {
         let viewport = Viewport::new(1_000, 100.0).retarget(500);
         assert_close(viewport.scale(), 5.0);
+    }
+
+    #[test]
+    fn lerp_ends_exactly_at_both_viewports() {
+        let from = Viewport::new(1_000, 100.0);
+        let to = zoomed_in();
+        assert_eq!(from.lerp(to, 0.0), from);
+        assert_eq!(from.lerp(to, 1.0), to);
+    }
+
+    #[test]
+    fn lerp_zooms_geometrically() {
+        let from = Viewport::new(1_000, 100.0).show(region(400, 600));
+        let to = Viewport::new(1_000, 100.0).show(region(450, 550));
+        let middle = from.lerp(to, 0.5);
+        assert_close(middle.scale(), 2_f64.sqrt());
+        assert_close(middle.center(), 500.0);
+    }
+
+    #[test]
+    fn lerp_moves_the_center_linearly() {
+        let to = zoomed_in().pan(-200.0);
+        assert_close(zoomed_in().lerp(to, 0.25).center(), 500.0);
     }
 
     #[test]
