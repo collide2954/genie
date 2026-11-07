@@ -7,7 +7,11 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+genie-core.workspace = true
+genie-formats.workspace = true
+genie-render.workspace = true
 iced.workspace = true
+rfd.workspace = true
 
 [dev-dependencies]
 fontdb.workspace = true

@@ -41,6 +41,7 @@ pub struct Tokens {
     pub muted: Color,
     pub accent: Color,
     pub accent_soft: Color,
+    pub on_accent: Color,
     pub field: Color,
     pub danger: Color,
 }
@@ -54,6 +55,7 @@ pub const LIGHT: Tokens = Tokens {
     muted: color!(0x5B6B7E),
     accent: color!(0x0F766E),
     accent_soft: color!(0x0F766E, 0.14),
+    on_accent: color!(0xFFFFFF),
     field: color!(0xF1F5F9),
     danger: color!(0xB42318),
 };
@@ -67,6 +69,7 @@ pub const DARK: Tokens = Tokens {
     muted: color!(0x8FA0B5),
     accent: color!(0x2DD4BF),
     accent_soft: color!(0x2DD4BF, 0.16),
+    on_accent: color!(0x04211D),
     field: color!(0x0B131E),
     danger: color!(0xF97066),
 };

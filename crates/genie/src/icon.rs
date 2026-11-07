@@ -14,6 +14,7 @@ pub enum Icon {
     Minimize,
     Maximize,
     Close,
+    Open,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub enum Hover {
 
 enum Shape {
     Line([f32; 2], [f32; 2]),
+    Polyline(&'static [[f32; 2]]),
     Rect([f32; 2], [f32; 2], f32),
     Circle([f32; 2], f32),
     Arc([f32; 2], f32, f32, f32),
@@ -58,6 +60,15 @@ impl Icon {
                 Shape::Line([6.0, 6.0], [18.0, 18.0]),
                 Shape::Line([18.0, 6.0], [6.0, 18.0]),
             ],
+            Self::Open => &[Shape::Polyline(&[
+                [3.0, 6.0],
+                [9.0, 6.0],
+                [11.0, 8.0],
+                [21.0, 8.0],
+                [21.0, 18.0],
+                [3.0, 18.0],
+                [3.0, 6.0],
+            ])],
         }
     }
 }
@@ -67,6 +78,14 @@ impl Shape {
         let point = |[x, y]: [f32; 2]| Point::new(origin.x + x * scale, origin.y + y * scale);
         match *self {
             Self::Line(from, to) => Path::line(point(from), point(to)),
+            Self::Polyline(points) => Path::new(|builder| {
+                if let Some((first, rest)) = points.split_first() {
+                    builder.move_to(point(*first));
+                    for next in rest {
+                        builder.line_to(point(*next));
+                    }
+                }
+            }),
             Self::Rect(min, max, radius) => Path::rounded_rectangle(
                 point(min),
                 Size::new((max[0] - min[0]) * scale, (max[1] - min[1]) * scale),
@@ -137,18 +156,25 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 6] = [
+    const ICONS: [Icon; 7] = [
         Icon::Sun,
         Icon::Moon,
         Icon::Monitor,
         Icon::Minimize,
         Icon::Maximize,
         Icon::Close,
+        Icon::Open,
     ];
 
     fn bounds(shape: &Shape) -> [f32; 4] {
         match *shape {
             Shape::Line([x0, y0], [x1, y1]) => [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)],
+            Shape::Polyline(points) => points.iter().fold(
+                [f32::MAX, f32::MAX, f32::MIN, f32::MIN],
+                |[left, top, right, bottom], [x, y]| {
+                    [left.min(*x), top.min(*y), right.max(*x), bottom.max(*y)]
+                },
+            ),
             Shape::Rect([x0, y0], [x1, y1], _) => [x0, y0, x1, y1],
             Shape::Circle([x, y], radius) | Shape::Arc([x, y], radius, _, _) => {
                 [x - radius, y - radius, x + radius, y + radius]

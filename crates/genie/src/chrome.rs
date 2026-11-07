@@ -111,7 +111,11 @@ fn platform() -> window::settings::PlatformSpecific {
     window::settings::PlatformSpecific::default()
 }
 
-pub fn title_bar<'a>(controls: Controls, appearance: Icon) -> Element<'a, Message> {
+pub fn title_bar<'a>(
+    controls: Controls,
+    appearance: Icon,
+    locus: Option<String>,
+) -> Element<'a, Message> {
     let logo = container(space())
         .width(18)
         .height(18)
@@ -123,6 +127,16 @@ pub fn title_bar<'a>(controls: Controls, appearance: Icon) -> Element<'a, Messag
     let brand = row![logo, text("genie").font(font::UI_STRONG).size(13)]
         .spacing(8)
         .align_y(Alignment::Center);
+    let locus = locus.map(|locus| {
+        container(text(locus).font(font::MONO).size(12))
+            .padding([5, 10])
+            .width(240)
+            .style(style::field)
+    });
+    let navigation = row![tool(Icon::Open, "open", Message::Open)]
+        .push(locus)
+        .spacing(8)
+        .align_y(Alignment::Center);
     let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
         .spacing(4)
         .align_y(Alignment::Center);
@@ -130,13 +144,20 @@ pub fn title_bar<'a>(controls: Controls, appearance: Icon) -> Element<'a, Messag
         Controls::Native => (78.0, 8.0),
         Controls::Custom => (12.0, 8.0),
     };
-    let mut bar = row![brand, space::horizontal(), tools, space().width(end)]
-        .align_y(Alignment::Center)
-        .height(BAR_HEIGHT)
-        .padding(Padding {
-            left: inset,
-            ..Padding::ZERO
-        });
+    let mut bar = row![
+        brand,
+        space().width(16),
+        navigation,
+        space::horizontal(),
+        tools,
+        space().width(end)
+    ]
+    .align_y(Alignment::Center)
+    .height(BAR_HEIGHT)
+    .padding(Padding {
+        left: inset,
+        ..Padding::ZERO
+    });
     if controls == Controls::Custom {
         bar = bar
             .push(window_button(Icon::Minimize, "minimize", Action::Minimize))
@@ -243,7 +264,7 @@ mod tests {
             ("maximize", Action::ToggleMaximize),
             ("close", Action::Close),
         ] {
-            let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor));
+            let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
             ui.click(selector::id(id)).unwrap();
             assert_eq!(
                 ui.into_messages().collect::<Vec<_>>(),
@@ -253,16 +274,33 @@ mod tests {
     }
 
     #[test]
+    fn open_button_asks_for_a_file() {
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        ui.click(selector::id("open")).unwrap();
+        assert_eq!(ui.into_messages().collect::<Vec<_>>(), [Message::Open]);
+    }
+
+    #[test]
+    fn shows_the_locus_when_there_is_one() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some("chr1:1-4".to_owned()),
+        ));
+        assert!(ui.find("chr1:1-4").is_ok());
+    }
+
+    #[test]
     fn native_controls_have_no_window_buttons() {
-        let mut ui = simulator(title_bar(Controls::Native, Icon::Monitor));
+        let mut ui = simulator(title_bar(Controls::Native, Icon::Monitor, None));
         assert!(ui.find(selector::id("close")).is_err());
     }
 
     #[test]
     fn pressing_empty_bar_space_drags_the_window() {
         let messages = press_at(
-            title_bar(Controls::Custom, Icon::Monitor),
-            Point::new(200.0, 20.0),
+            title_bar(Controls::Custom, Icon::Monitor, None),
+            Point::new(180.0, 20.0),
         );
         assert!(messages.contains(&Message::Window(Action::Drag)));
     }
