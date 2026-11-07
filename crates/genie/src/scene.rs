@@ -27,6 +27,7 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Muted => tokens.muted,
         Paint::Line => tokens.line,
         Paint::Accent => tokens.accent,
+        Paint::Selection => tokens.accent_soft,
     }
 }
 
@@ -144,6 +145,10 @@ mod tests {
         assert_eq!(color(Paint::Muted, &LIGHT, &LIGHT_DATA), LIGHT.muted);
         assert_eq!(color(Paint::Line, &DARK, &DARK_DATA), DARK.line);
         assert_eq!(color(Paint::Accent, &DARK, &DARK_DATA), DARK.accent);
+        assert_eq!(
+            color(Paint::Selection, &LIGHT, &LIGHT_DATA),
+            LIGHT.accent_soft
+        );
     }
 
     #[test]

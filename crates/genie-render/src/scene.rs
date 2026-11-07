@@ -28,6 +28,7 @@ pub enum Paint {
     Muted,
     Line,
     Accent,
+    Selection,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
