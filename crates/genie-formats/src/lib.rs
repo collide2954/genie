@@ -1,6 +1,7 @@
 pub mod bai;
 pub mod bam;
 pub mod bed;
+pub mod bedgraph;
 pub mod bgzf;
 pub mod bigwig;
 mod binning;

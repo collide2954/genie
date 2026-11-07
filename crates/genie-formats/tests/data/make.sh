@@ -214,6 +214,8 @@ BEGIN {
 bedGraphToBigWig -blockSize=4 -itemsPerSlot=64 signal.bedGraph signal.sizes signal.bw
 awk '$1 == "chr2"' signal.bedGraph > plain.bedGraph
 bedGraphToBigWig -unc plain.bedGraph signal.sizes plain.bw
+bgzip -c plain.bedGraph > plain.bedGraph.gz
+tabix -f -p bed plain.bedGraph.gz
 rm signal.bedGraph plain.bedGraph
 
 awk '

@@ -2,7 +2,10 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 
 use genie_core::Region;
+use genie_core::signal::Summary;
+use genie_formats::bgzf::Bgzf;
 use genie_formats::bigwig::Index;
+use genie_formats::{bedgraph, tabix};
 
 const FILES: [&str; 3] = ["signal.bw", "steps.bw", "plain.bw"];
 
@@ -126,6 +129,38 @@ fn zoom_levels_give_fewer_records() {
     let bases: u64 = raw.iter().map(|record| u64::from(record.count)).sum();
     let counted: u64 = zoomed.iter().map(|summary| u64::from(summary.count)).sum();
     assert_eq!(counted, bases);
+}
+
+#[test]
+fn bedgraph_matches_the_bigwig_of_the_same_data() {
+    let mut reader = File::open(data("plain.bw")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let tabix = tabix::Index::read(File::open(data("plain.bedGraph.gz.tbi")).unwrap()).unwrap();
+    let mut bgzf = Bgzf::new(File::open(data("plain.bedGraph.gz")).unwrap());
+    let table =
+        bedgraph::read_table(Bgzf::new(File::open(data("plain.bedGraph.gz")).unwrap())).unwrap();
+    for (start, end) in [
+        (0, 1_000_000),
+        (5_000, 9_000),
+        (123_456, 400_000),
+        (999_000, 999_999),
+    ] {
+        let region = Region::new(start, end).unwrap();
+        let clip = |summaries: Vec<Summary>| -> Vec<Summary> {
+            summaries
+                .into_iter()
+                .filter_map(|summary| {
+                    let span = summary.span.intersection(region)?;
+                    Some(Summary::single(span, summary.max))
+                })
+                .collect()
+        };
+        let expected = index.records(&mut reader, "chr2", region).unwrap();
+        assert!(!expected.is_empty() || start == 999_000);
+        let queried = bedgraph::query(&tabix, &mut bgzf, "chr2", region).unwrap();
+        assert_eq!(clip(queried), expected, "{region:?}");
+        assert_eq!(clip(table.query("chr2", region)), expected, "{region:?}");
+    }
 }
 
 #[test]
