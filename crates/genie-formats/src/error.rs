@@ -22,6 +22,9 @@ pub enum Reason {
     BadBlockCount,
     NoSection,
     BadLine,
+    NotBgzf,
+    BadBlock,
+    BadOffset,
 }
 
 impl fmt::Display for Error {
@@ -57,6 +60,9 @@ impl fmt::Display for Reason {
             Self::BadBlockCount => "a block count is larger than the sequence",
             Self::NoSection => "the entry is outside a section",
             Self::BadLine => "the line is not a section or an entry",
+            Self::NotBgzf => "the file is not compressed with bgzip",
+            Self::BadBlock => "a compressed block is not valid",
+            Self::BadOffset => "an offset is not in the file",
         })
     }
 }

@@ -1,3 +1,4 @@
+pub mod bgzf;
 mod error;
 pub mod fai;
 pub mod fasta;

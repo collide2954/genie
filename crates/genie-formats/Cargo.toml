@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 genie-core.workspace = true
+miniz_oxide.workspace = true
 
 [lints]
 workspace = true

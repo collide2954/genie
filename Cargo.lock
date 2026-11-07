@@ -850,6 +850,7 @@ name = "genie-formats"
 version = "0.1.0"
 dependencies = [
  "genie-core",
+ "miniz_oxide 0.9.1",
 ]
 
 [[package]]
