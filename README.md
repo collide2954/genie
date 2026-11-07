@@ -44,6 +44,10 @@ samtools sort -o reads.bam reads.sam && samtools index reads.bam
 
 genie shows reads when the view is 30 kb or less. It hides duplicate, QC-fail and secondary reads.
 
+## Export
+
+To save the view as a PNG image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. The scale of the image is 2, and the image uses the current theme.
+
 ## Test
 
 ```bash
