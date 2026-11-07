@@ -1886,7 +1886,7 @@ fn note<'a>(hidden: usize) -> Element<'a, Message> {
     container(text(words).size(LABEL_SIZE).style(style::muted))
         .padding([0, 4])
         .style(|theme| container::Style {
-            background: Some(tokens(theme).canvas.scale_alpha(0.85).into()),
+            background: Some(tokens(theme).canvas.scale_alpha(scene::CHIP).into()),
             border: Border::default().rounded(3),
             ..container::Style::default()
         })
@@ -1955,7 +1955,7 @@ fn label(name: &str) -> Element<'_, Message> {
     container(text(name).size(LABEL_SIZE).style(style::muted))
         .padding([0, 4])
         .style(|theme| container::Style {
-            background: Some(tokens(theme).canvas.scale_alpha(0.85).into()),
+            background: Some(tokens(theme).canvas.scale_alpha(scene::CHIP).into()),
             border: Border::default().rounded(3),
             ..container::Style::default()
         })

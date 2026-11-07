@@ -122,14 +122,11 @@ pub fn coverage(
             }
         }
     }
-    primitives.push(Primitive::Text {
+    primitives.push(Primitive::Label {
         x: viewport.width() as f32 - 4.0,
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(format!("0-{max}")),
         size: RANGE_SIZE,
-        paint: Paint::Muted,
-        font: Font::Ui,
-        align: Align::End,
     });
     primitives
 }
@@ -317,6 +314,16 @@ mod tests {
             .collect()
     }
 
+    fn labels(primitives: &[Primitive]) -> Vec<(String, f32)> {
+        primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Label { content, x, .. } => Some((content.to_string(), *x)),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn coverage_bars_scale_to_the_deepest_base() {
         let mut pile = Coverage::new(region(0, 100));
@@ -328,7 +335,8 @@ mod tests {
         assert_eq!(bars.len(), 20);
         assert_eq!(bars[0], ([10.0, 21.0, 1.0, 20.0], Paint::Coverage));
         assert_eq!(bars[10], ([30.0, 1.0, 1.0, 40.0], Paint::Coverage));
-        assert_eq!(texts(&primitives), [("0-4".to_owned(), 96.0)]);
+        assert_eq!(labels(&primitives), [("0-4".to_owned(), 96.0)]);
+        assert_eq!(texts(&primitives), []);
     }
 
     #[test]

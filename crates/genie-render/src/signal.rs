@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use genie_core::signal::{Bin, Summary, slice};
 use genie_core::{Region, Viewport};
 
-use crate::scene::{Align, Font, Hue, Paint, Primitive};
+use crate::scene::{Hue, Paint, Primitive};
 
 pub const HEIGHT: f32 = 48.0;
 
@@ -184,14 +184,11 @@ pub fn scene(
         }
         previous = Some((x + size, top));
     }
-    primitives.push(Primitive::Text {
+    primitives.push(Primitive::Label {
         x: width - 4.0,
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(label(scale)),
         size: RANGE_SIZE,
-        paint: Paint::Muted,
-        font: Font::Ui,
-        align: Align::End,
     });
     primitives
 }
@@ -249,11 +246,11 @@ mod tests {
             .collect()
     }
 
-    fn texts(primitives: &[Primitive]) -> Vec<(String, f32)> {
+    fn labels(primitives: &[Primitive]) -> Vec<(String, f32)> {
         primitives
             .iter()
             .filter_map(|primitive| match primitive {
-                Primitive::Text { content, x, .. } => Some((content.to_string(), *x)),
+                Primitive::Label { content, x, .. } => Some((content.to_string(), *x)),
                 _ => None,
             })
             .collect()
@@ -389,7 +386,7 @@ mod tests {
     #[test]
     fn labels_show_the_range_at_the_right() {
         let shown = [column(0.0, 1.0, 1.0, 1.0)];
-        let label = |scale| texts(&scene(&shown, scale, Style::Bars, Hue::Blue, 41.0, 100.0));
+        let label = |scale| labels(&scene(&shown, scale, Style::Bars, Hue::Blue, 41.0, 100.0));
         assert_eq!(
             label(Scale {
                 min: 0.0,

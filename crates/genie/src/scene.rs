@@ -3,21 +3,25 @@ use genie_render::scene::{Align, Allele, Font, Paint, Primitive, Shade};
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
-use iced::advanced::text::{self, Renderer as _, Text};
+use iced::advanced::text::{self, Paragraph as _, Renderer as _, Text};
 use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Renderer as _, Shell};
 use iced::widget::canvas::{Frame, LineCap, LineJoin, Path, Stroke};
 use iced::{
-    Color, Element, Event, Length, Pixels, Point, Rectangle, Renderer, Size, Theme, alignment,
-    mouse,
+    Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Renderer, Size, Theme,
+    alignment, mouse,
 };
 
 use crate::font;
 use crate::theme::{DataColors, Tokens, data, tokens};
 
+pub const CHIP: f32 = 0.85;
+
 const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
 const HALF: f32 = 0.5;
+const CHIP_PADDING: f32 = 4.0;
+const CHIP_LINE: f32 = 1.3;
 
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
 
@@ -338,6 +342,12 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                         color(*paint, tokens, data),
                         bounds,
                     ),
+                    Primitive::Label {
+                        x,
+                        y,
+                        content,
+                        size,
+                    } => label(renderer, bounds, Point::new(*x, *y), content, *size, tokens),
                 }
             }
             if let Some(frame) = marks {
@@ -345,6 +355,49 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
             }
         });
     }
+}
+
+fn label(
+    renderer: &mut Renderer,
+    bounds: Rectangle,
+    at: Point,
+    content: &str,
+    size: f32,
+    tokens: &Tokens,
+) {
+    let text = |content| Text {
+        content,
+        bounds: bounds.size(),
+        size: Pixels(size),
+        line_height: text::LineHeight::Relative(1.0),
+        font: typeface(Font::Ui),
+        align_x: text::Alignment::Right,
+        align_y: alignment::Vertical::Center,
+        shaping: text::Shaping::Basic,
+        wrapping: text::Wrapping::None,
+    };
+    let width = <Renderer as text::Renderer>::Paragraph::with_text(text(content)).min_width();
+    let height = (size * CHIP_LINE).round();
+    let chip = Rectangle {
+        x: bounds.x + at.x - width - CHIP_PADDING,
+        y: bounds.y + at.y - height / 2.0,
+        width: width + 2.0 * CHIP_PADDING,
+        height,
+    };
+    renderer.fill_quad(
+        Quad {
+            bounds: chip,
+            border: Border::default().rounded(3),
+            ..Quad::default()
+        },
+        tokens.canvas.scale_alpha(CHIP),
+    );
+    renderer.fill_text(
+        text(content).with_content(content.to_owned()),
+        Point::new(bounds.x + at.x, bounds.y + at.y),
+        tokens.muted,
+        bounds,
+    );
 }
 
 #[cfg(test)]

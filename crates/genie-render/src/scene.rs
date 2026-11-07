@@ -117,4 +117,10 @@ pub enum Primitive {
         forward: bool,
         paint: Paint,
     },
+    Label {
+        x: f32,
+        y: f32,
+        content: Cow<'static, str>,
+        size: f32,
+    },
 }
