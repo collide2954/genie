@@ -635,16 +635,19 @@ mod tests {
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Change, Content, Format, Grouping, Loaded, Options, Source, Toggle};
+    use crate::track::{
+        Change, Content, FeatureFile, Format, Grouping, Loaded, Options, ReadFile, SignalFile,
+        Source, Toggle, VariantFile,
+    };
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
             path: PathBuf::from(format!("/data/{name}")),
             name: name.to_owned(),
-            format: Format::Features {
+            format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
-            },
+            }),
         })
     }
 
@@ -772,9 +775,9 @@ mod tests {
         assert!(shows(&genie, ZOOM_HINT));
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
         assert!(shows(&genie, VARIANT_HINT));
-        let indexed = Format::BedGraph {
+        let indexed = Format::Signal(SignalFile::BedGraph {
             index: Index::default(),
-        };
+        });
         let _ = genie.update(Message::TrackOpened(Ok(signal_source(indexed))));
         assert!(shows(&genie, SIGNAL_HINT));
     }
@@ -1362,10 +1365,10 @@ mod tests {
         let source = Arc::new(Source {
             path: folder.join("genes.bed.gz"),
             name: "genes.bed.gz".to_owned(),
-            format: Format::Features {
+            format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
-            },
+            }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let session = genie.session.as_ref().unwrap();
@@ -1535,10 +1538,10 @@ mod tests {
         let source = Arc::new(Source {
             path: PathBuf::from("/data/reads.bam"),
             name: "reads.bam".to_owned(),
-            format: Format::Reads {
+            format: Format::Reads(ReadFile {
                 index: genie_formats::bai::Index::default(),
                 contigs: vec!["chr1".to_owned()],
-            },
+            }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let region = Region::between(0, 1_000);
@@ -1746,10 +1749,10 @@ mod tests {
         Arc::new(Source {
             path: PathBuf::from("/data/calls.vcf"),
             name: "calls.vcf".to_owned(),
-            format: Format::VariantTable {
+            format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples: vec!["NA1".to_owned(), "NA2".to_owned()],
-            },
+            }),
         })
     }
 
@@ -1774,9 +1777,9 @@ mod tests {
     }
 
     fn signal_table() -> Format {
-        Format::BedGraphTable {
+        Format::Signal(SignalFile::BedGraphTable {
             table: genie_formats::table::Table::new(Vec::new()),
-        }
+        })
     }
 
     fn with_signal() -> Genie {

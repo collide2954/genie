@@ -3,64 +3,42 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, DUPLICATE, Filter, Inserts, REVERSE};
+use genie_core::alignment::{Alignment, Inserts, REVERSE};
 use genie_core::pileup::{Coverage, Read, Sampler, sort_rows};
-use genie_core::signal::{self, Summary};
+use genie_core::signal::Summary;
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
-use genie_formats::bgzf::Bgzf;
-use genie_formats::features::{self, Kind, Table};
-use genie_formats::{bai, bam, bbi, bedgraph, tabix, vcf};
+use genie_formats::features::Kind;
+use genie_formats::{bbi, tabix};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
-use genie_render::{alignments, rows, variants};
+use genie_render::{alignments, rows};
 
 use crate::paths::file_name;
 
+mod features;
+mod reads;
+mod signal;
+mod variants;
+
+pub use features::FeatureFile;
+pub use reads::ReadFile;
+pub use signal::SignalFile;
+pub use variants::VariantFile;
+
 const FEATURE_SPAN: u64 = 10_000_000;
-const VARIANT_SPAN: u64 = 1_000_000;
-const READ_SPAN: u64 = 30_000;
 const WINDOW: u64 = 50;
 const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
-const MARGIN: u64 = 1_000;
 const PLAIN_LIMIT: u64 = 50 << 20;
 
 #[derive(Debug)]
 pub enum Format {
-    Features {
-        kind: Kind,
-        index: tabix::Index,
-    },
-    Table {
-        kind: Kind,
-        table: Table<Feature>,
-    },
-    Variants {
-        index: tabix::Index,
-        samples: Vec<String>,
-    },
-    VariantTable {
-        table: Table<Variant>,
-        samples: Vec<String>,
-    },
-    Reads {
-        index: bai::Index,
-        contigs: Vec<String>,
-    },
-    BigWig {
-        index: bbi::Index,
-    },
-    BigBed {
-        index: bbi::Index,
-    },
-    BedGraph {
-        index: tabix::Index,
-    },
-    BedGraphTable {
-        table: Table<Summary>,
-    },
+    Features(FeatureFile),
+    Variants(VariantFile),
+    Reads(ReadFile),
+    Signal(SignalFile),
 }
 
 #[derive(Debug)]
@@ -79,71 +57,50 @@ impl PartialEq for Source {
 impl Source {
     pub fn contigs(&self) -> &[String] {
         match &self.format {
-            Format::Features { index, .. }
-            | Format::Variants { index, .. }
-            | Format::BedGraph { index } => index.names(),
-            Format::Table { table, .. } => table.contigs(),
-            Format::VariantTable { table, .. } => table.contigs(),
-            Format::BedGraphTable { table } => table.contigs(),
-            Format::Reads { contigs, .. } => contigs,
-            Format::BigWig { index } | Format::BigBed { index } => index.names(),
+            Format::Features(file) => file.contigs(),
+            Format::Variants(file) => file.contigs(),
+            Format::Reads(file) => &file.contigs,
+            Format::Signal(file) => file.contigs(),
         }
     }
 
     pub fn is_bigbed(&self) -> bool {
-        matches!(self.format, Format::BigBed { .. })
+        matches!(self.format, Format::Features(FeatureFile::BigBed { .. }))
     }
 
     pub fn has_lookup(&self) -> bool {
-        matches!(&self.format, Format::BigBed { index } if index.has_lookup())
+        matches!(&self.format, Format::Features(FeatureFile::BigBed { index }) if index.has_lookup())
     }
 
     pub fn has_colors(&self) -> bool {
-        matches!(
-            self.format,
-            Format::Features {
-                kind: Kind::Bed,
-                ..
-            } | Format::Table {
-                kind: Kind::Bed,
-                ..
-            } | Format::BigBed { .. }
-        )
+        matches!(&self.format, Format::Features(file) if file.has_colors())
     }
 
     pub fn has_signal(&self) -> bool {
-        matches!(
-            self.format,
-            Format::BigWig { .. } | Format::BedGraph { .. } | Format::BedGraphTable { .. }
-        )
+        matches!(self.format, Format::Signal(_))
     }
 
     pub fn has_reads(&self) -> bool {
-        matches!(self.format, Format::Reads { .. })
+        matches!(self.format, Format::Reads(_))
     }
 
     pub fn has_variants(&self) -> bool {
-        matches!(
-            self.format,
-            Format::Variants { .. } | Format::VariantTable { .. }
-        )
+        matches!(self.format, Format::Variants(_))
     }
 
     pub fn samples(&self) -> &[String] {
         match &self.format {
-            Format::Variants { samples, .. } | Format::VariantTable { samples, .. } => samples,
+            Format::Variants(file) => file.samples(),
             _ => &[],
         }
     }
 
     pub fn span(&self) -> u64 {
-        match self.format {
-            Format::Reads { .. } => READ_SPAN,
-            Format::Variants { .. } | Format::VariantTable { .. } => VARIANT_SPAN,
-            Format::BigWig { .. } | Format::BigBed { .. } | Format::BedGraphTable { .. } => {
-                u64::MAX
-            }
-            _ => FEATURE_SPAN,
+        match &self.format {
+            Format::Features(file) => file.span(),
+            Format::Variants(_) => VariantFile::SPAN,
+            Format::Reads(_) => ReadFile::SPAN,
+            Format::Signal(file) => file.span(),
         }
     }
 }
@@ -536,7 +493,7 @@ impl Track {
             if self.source.has_reads() {
                 alignments::fit(count)
             } else if self.source.has_variants() {
-                variants::fit(count)
+                genie_render::variants::fit(count)
             } else {
                 Mode::fit(count)
             }
@@ -738,89 +695,29 @@ fn tabix_index(path: &Path, name: &str) -> Result<tabix::Index, String> {
 
 pub fn open(path: PathBuf) -> Result<Source, String> {
     let name = file_name(&path);
-    if is_bam(&path) {
-        return open_reads(path, name);
-    }
-    if is_vcf(&name) {
-        return open_variants(path, name);
-    }
-    if is_bigbed(&name) || is_bigwig(&name) {
-        return open_bbi(path, name);
-    }
-    if is_signal(&name) {
-        return open_signal(path, name);
-    }
-    let kind = Kind::of(&name).ok_or_else(|| {
-        format!(
-            "The file {name} is not a BED, GFF3, GTF, VCF, BAM, bigWig, bigBed or bedGraph file."
-        )
-    })?;
-    if !is_compressed(&path) {
-        let table = features::read_table(kind, plain(&path, &name)?)
-            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
-        return Ok(Source {
-            path,
-            name,
-            format: Format::Table { kind, table },
-        });
-    }
-    let index = tabix_index(&path, &name)?;
-    Ok(Source {
-        path,
-        name,
-        format: Format::Features { kind, index },
-    })
+    let format = if is_bam(&path) {
+        Format::Reads(ReadFile::open(&path, &name)?)
+    } else if is_vcf(&name) {
+        Format::Variants(VariantFile::open(&path, &name)?)
+    } else if is_bigbed(&name) || is_bigwig(&name) {
+        open_bbi(&path, &name)?
+    } else if is_signal(&name) {
+        Format::Signal(SignalFile::open(&path, &name)?)
+    } else {
+        Format::Features(FeatureFile::open(&path, &name)?)
+    };
+    Ok(Source { path, name, format })
 }
 
-fn open_variants(path: PathBuf, name: String) -> Result<Source, String> {
-    if !is_compressed(&path) {
-        let (header, table) = vcf::read_table(plain(&path, &name)?)
-            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
-        return Ok(Source {
-            path,
-            name,
-            format: Format::VariantTable {
-                table,
-                samples: header.samples,
-            },
-        });
-    }
-    let index = tabix_index(&path, &name)?;
-    let file = File::open(&path).map_err(|error| error.to_string())?;
-    let header = vcf::header(Bgzf::new(file)).map_err(|error| error.to_string())?;
-    Ok(Source {
-        path,
-        name,
-        format: Format::Variants {
-            index,
-            samples: header.samples,
-        },
-    })
-}
-
-fn open_bbi(path: PathBuf, name: String) -> Result<Source, String> {
-    let mut file = File::open(&path).map_err(|error| error.to_string())?;
+fn open_bbi(path: &Path, name: &str) -> Result<Format, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
     let index = bbi::Index::read(&mut file)
         .map_err(|error| format!("The file {name} is not valid. {error}"))?;
-    let format = if index.is_bed() {
-        Format::BigBed { index }
+    Ok(if index.is_bed() {
+        Format::Features(FeatureFile::BigBed { index })
     } else {
-        Format::BigWig { index }
-    };
-    Ok(Source { path, name, format })
-}
-
-fn open_signal(path: PathBuf, name: String) -> Result<Source, String> {
-    let format = if is_compressed(&path) {
-        Format::BedGraph {
-            index: tabix_index(&path, &name)?,
-        }
-    } else {
-        let table = bedgraph::read_table(plain(&path, &name)?)
-            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
-        Format::BedGraphTable { table }
-    };
-    Ok(Source { path, name, format })
+        Format::Signal(SignalFile::BigWig { index })
+    })
 }
 
 fn fits(name: &str, size: u64) -> Result<(), String> {
@@ -830,31 +727,6 @@ fn fits(name: &str, size: u64) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn open_reads(path: PathBuf, name: String) -> Result<Source, String> {
-    let file = [
-        with_suffix(&path, ".bai"),
-        path.with_extension("bai"),
-        with_suffix(&path, ".csi"),
-    ]
-    .into_iter()
-    .find_map(|candidate| File::open(candidate).ok())
-    .ok_or_else(|| format!("There is no index {name}.bai. Index the file with samtools index."))?;
-    let index = bai::Index::read(file)
-        .map_err(|error| format!("The index {name}.bai is not valid. {error}"))?;
-    let file = File::open(&path).map_err(|error| error.to_string())?;
-    let header = bam::header(&mut Bgzf::new(file)).map_err(|error| error.to_string())?;
-    let contigs = header
-        .references
-        .into_iter()
-        .map(|(contig, _)| contig)
-        .collect();
-    Ok(Source {
-        path,
-        name,
-        format: Format::Reads { index, contigs },
-    })
 }
 
 fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
@@ -872,97 +744,22 @@ pub fn load(
     detail: bool,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
-    let reader = || {
-        File::open(&source.path)
-            .map(Bgzf::new)
-            .map_err(|error| error.to_string())
-    };
+    let path = &source.path;
     match &source.format {
-        Format::BigBed { index } => {
-            let file = File::open(&source.path).map_err(|error| error.to_string())?;
-            let mut file = BufReader::new(file);
-            if detail {
-                let features = index
-                    .features(&mut file, contig, region)
-                    .map_err(|error| error.to_string())?;
-                return Ok(Loaded::features(region, features));
-            }
-            let summaries = index
-                .summaries(&mut file, contig, region, step)
-                .map_err(|error| error.to_string())?;
-            Ok(Loaded::signal(region, summaries, step))
-        }
-        Format::BigWig { index } => {
-            let file = File::open(&source.path).map_err(|error| error.to_string())?;
-            let summaries = index
-                .summaries(&mut BufReader::new(file), contig, region, step)
-                .map_err(|error| error.to_string())?;
-            Ok(Loaded::signal(region, summaries, step))
-        }
-        Format::BedGraphTable { table } => {
-            let records = table.query(contig, region);
-            Ok(Loaded::signal(region, signal::reduce(&records, step), step))
-        }
-        Format::BedGraph { index } => {
-            let records = bedgraph::query(index, &mut reader()?, contig, region)
-                .map_err(|error| error.to_string())?;
-            Ok(Loaded::signal(region, signal::reduce(&records, step), step))
-        }
-        Format::Table { table, .. } => Ok(Loaded::features(region, table.query(contig, region))),
-        Format::VariantTable { table, samples } => Ok(Loaded::variants(
-            region,
-            table.query(contig, region),
-            samples.len(),
-        )),
-        Format::Variants { index, samples } => {
-            let variants = vcf::query(index, &mut reader()?, contig, region)
-                .map_err(|error| error.to_string())?;
-            Ok(Loaded::variants(region, variants, samples.len()))
-        }
-        Format::Features { kind, index } => {
-            let (region, features) = features::query(*kind, index, &mut reader()?, contig, region)
-                .map_err(|error| error.to_string())?;
-            Ok(Loaded::features(region, features))
-        }
-        Format::Reads { index, contigs } => {
-            let mut reader = reader()?;
-            let id = contigs
-                .iter()
-                .position(|known| known == contig)
-                .ok_or_else(|| format!("The file has no contig {contig}."))?;
-            let filter = if options.duplicates {
-                Filter::default().showing(DUPLICATE)
-            } else {
-                Filter::default()
-            };
-            let mut gather = Gather::new(region, id, options);
-            bam::query(index, &mut reader, id, region, |alignment| {
-                if filter.keeps(&alignment) {
-                    gather.add(alignment);
-                }
-                Ok(())
-            })
-            .map_err(|error| error.to_string())?;
-            let window = Region::between(
-                region.start().saturating_sub(MARGIN),
-                region.end().saturating_add(MARGIN),
-            );
-            let bases = reference(window)?;
-            Ok(Loaded::reads(gather, bases, window.start()))
-        }
+        Format::Features(file) => file.load(path, contig, region, step, detail),
+        Format::Variants(file) => file.load(path, contig, region),
+        Format::Reads(file) => file.load(path, contig, region, options, reference),
+        Format::Signal(file) => file.load(path, contig, region, step),
     }
 }
 
 pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
     let name = name.trim();
     sources.iter().find_map(|source| {
-        let Format::BigBed { index } = &source.format else {
+        let Format::Features(file) = &source.format else {
             return None;
         };
-        let mut file = BufReader::new(File::open(&source.path).ok()?);
-        index
-            .find(&mut file, name)
-            .ok()?
+        file.find(&source.path, name)
             .into_iter()
             .find_map(|(contig, feature)| {
                 Some(Named {
@@ -974,52 +771,12 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
     })
 }
 
-fn bigbed_names(
-    index: &bbi::Index,
-    reader: &mut BufReader<File>,
-) -> Result<Vec<features::Entry>, genie_formats::Error> {
-    let whole = Region::between(0, u64::from(u32::MAX));
-    let mut entries = Vec::new();
-    for contig in index.names() {
-        for feature in index.features(reader, contig, whole)? {
-            if !feature.name().is_empty() {
-                entries.push(features::Entry {
-                    name: feature.name().to_owned(),
-                    contig: contig.clone(),
-                    span: feature.span(),
-                });
-            }
-        }
-    }
-    Ok(entries)
-}
-
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
-    let file = || File::open(&source.path).map_err(|error| error.to_string());
     let entries = match &source.format {
-        Format::Features { kind, .. } => features::names(*kind, Bgzf::new(file()?)),
-        Format::Table { kind, .. } => features::names(*kind, BufReader::new(file()?)),
-        Format::VariantTable { .. } => vcf::names(BufReader::new(file()?)),
-        Format::Variants { .. } => {
-            let size = fs::metadata(&source.path).map_or(u64::MAX, |metadata| metadata.len());
-            if size > PLAIN_LIMIT {
-                return Ok(Names::default());
-            }
-            vcf::names(Bgzf::new(file()?))
-        }
-        Format::BigBed { index } => {
-            let size = fs::metadata(&source.path).map_or(u64::MAX, |metadata| metadata.len());
-            if index.has_lookup() || size > PLAIN_LIMIT {
-                return Ok(Names::default());
-            }
-            bigbed_names(index, &mut BufReader::new(file()?))
-        }
-        Format::Reads { .. }
-        | Format::BigWig { .. }
-        | Format::BedGraph { .. }
-        | Format::BedGraphTable { .. } => return Ok(Names::default()),
-    }
-    .map_err(|error| error.to_string())?;
+        Format::Features(file) => file.names(&source.path)?,
+        Format::Variants(file) => file.names(&source.path)?,
+        Format::Reads(_) | Format::Signal(_) => return Ok(Names::default()),
+    };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
         Some(Named {
             contig: assembly.find(&entry.contig)?,
@@ -1046,8 +803,9 @@ mod tests {
     use genie_render::signal::Style;
 
     use super::{
-        Change, Content, Format, Gather, Grouping, Loaded, Options, Plot, Source, Toggle, Track,
-        change, contig_names, fits, is_track, load, lookup, names, open, step,
+        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, SignalFile,
+        Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load, lookup,
+        names, open, step,
     };
     use crate::scratch::Scratch;
 
@@ -1071,10 +829,10 @@ mod tests {
         let source = Source {
             path: PathBuf::from("/data/genes.bed.gz"),
             name: "genes.bed.gz".to_owned(),
-            format: Format::Features {
+            format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: tabix::Index::default(),
-            },
+            }),
         };
         let mut track = Track::new(7, Arc::new(source), &assembly());
         track.contigs = vec![Some("1".to_owned()), None, None];
@@ -1323,10 +1081,10 @@ mod tests {
         let source = open(fixture("genes.gff3.gz")).unwrap();
         assert!(matches!(
             source.format,
-            Format::Features {
+            Format::Features(FeatureFile::Indexed {
                 kind: Kind::Gff,
                 ..
-            }
+            })
         ));
         let window = region(50_000, 51_000);
         let loaded = load(
@@ -1392,7 +1150,10 @@ mod tests {
         let text = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\n\
                     chr1\t20\trs9\tA\tG\t.\tPASS\t.\tGT\t0/1\n";
         let source = open(scratch.file("calls.vcf", text)).unwrap();
-        assert!(matches!(source.format, Format::VariantTable { .. }));
+        assert!(matches!(
+            source.format,
+            Format::Variants(VariantFile::Table { .. })
+        ));
         assert_eq!(source.contigs(), ["chr1"]);
         let window = region(0, 100);
         let loaded = load(
@@ -1482,7 +1243,10 @@ mod tests {
     #[test]
     fn opens_bigbed_with_features_up_close_and_density_far_out() {
         let source = open(fixture("genes.bb")).unwrap();
-        assert!(matches!(source.format, Format::BigBed { .. }));
+        assert!(matches!(
+            source.format,
+            Format::Features(FeatureFile::BigBed { .. })
+        ));
         assert!(source.has_colors() && !source.has_signal());
         assert_eq!(source.span(), u64::MAX);
         let near = region(0, 20_000);
@@ -1555,7 +1319,10 @@ mod tests {
         let scratch = Scratch::new("bedgraph");
         let text = "track type=bedGraph\nchr1\t0\t10\t1.5\nchr1\t10\t20\t2.5\n";
         let plain = open(scratch.file("coverage.bedGraph", text)).unwrap();
-        assert!(matches!(plain.format, Format::BedGraphTable { .. }));
+        assert!(matches!(
+            plain.format,
+            Format::Signal(SignalFile::BedGraphTable { .. })
+        ));
         assert_eq!(plain.span(), u64::MAX);
         let window = region(0, 100);
         let raw = load(
@@ -1589,7 +1356,10 @@ mod tests {
         let index = std::fs::read(fixture("plain.bedGraph.gz.tbi")).unwrap();
         scratch.file("coverage.bedGraph.gz.tbi", index);
         let indexed = open(path).unwrap();
-        assert!(matches!(indexed.format, Format::BedGraph { .. }));
+        assert!(matches!(
+            indexed.format,
+            Format::Signal(SignalFile::BedGraph { .. })
+        ));
         assert_eq!(indexed.span(), 10_000_000);
         let window = region(0, 10_000);
         let loaded = load(
@@ -1610,9 +1380,9 @@ mod tests {
         let source = Source {
             path: PathBuf::from("/data/coverage.bedGraph"),
             name: "coverage.bedGraph".to_owned(),
-            format: Format::BedGraphTable {
+            format: Format::Signal(SignalFile::BedGraphTable {
                 table: genie_formats::table::Table::new(Vec::new()),
-            },
+            }),
         };
         let mut track = Track::new(3, Arc::new(source), &assembly());
         track.contigs = vec![Some("chr1".to_owned()), None, None];
@@ -1643,10 +1413,10 @@ mod tests {
         let source = open(scratch.file("genes.bed", text)).unwrap();
         assert!(matches!(
             source.format,
-            Format::Table {
+            Format::Features(FeatureFile::Table {
                 kind: Kind::Bed,
                 ..
-            }
+            })
         ));
         assert_eq!(source.contigs(), ["chr1", "chr2"]);
         let loaded = load(
