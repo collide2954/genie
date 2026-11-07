@@ -1,3 +1,4 @@
+pub mod alignment;
 mod assembly;
 mod feature;
 mod locus;
