@@ -10,6 +10,7 @@ publish.workspace = true
 iced.workspace = true
 
 [dev-dependencies]
+fontdb.workspace = true
 iced_test.workspace = true
 
 [lints]

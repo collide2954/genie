@@ -815,6 +815,7 @@ dependencies = [
 name = "genie"
 version = "0.1.0"
 dependencies = [
+ "fontdb",
  "iced",
  "iced_test",
 ]

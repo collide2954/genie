@@ -2,6 +2,7 @@ use iced::theme::Mode;
 use iced::widget::{button, center, column, container, row, space, text};
 use iced::{Element, Task, Theme, system};
 
+use crate::font;
 use crate::theme::{self, Appearance, tokens};
 
 #[derive(Debug, Default)]
@@ -58,7 +59,13 @@ impl Genie {
 }
 
 pub fn run() -> iced::Result {
-    iced::application(Genie::boot, Genie::update, Genie::view)
+    font::FILES
+        .into_iter()
+        .fold(
+            iced::application(Genie::boot, Genie::update, Genie::view),
+            |application, (bytes, _)| application.font(bytes),
+        )
+        .default_font(font::UI)
         .title("genie")
         .theme(Genie::theme)
         .subscription(|_| system::theme_changes().map(Message::SystemModeChanged))
