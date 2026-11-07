@@ -1,6 +1,7 @@
 use crate::{Region, Strand};
 
 pub const PAIRED: u16 = 0x1;
+pub const PROPER: u16 = 0x2;
 pub const UNMAPPED: u16 = 0x4;
 pub const MATE_UNMAPPED: u16 = 0x8;
 pub const REVERSE: u16 = 0x10;
@@ -11,6 +12,8 @@ pub const SECONDARY: u16 = 0x100;
 pub const QC_FAIL: u16 = 0x200;
 pub const DUPLICATE: u16 = 0x400;
 pub const SUPPLEMENTARY: u16 = 0x800;
+
+const MIN_PAIRS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
@@ -251,16 +254,152 @@ impl Filter {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pairing {
+    #[default]
+    Normal,
+    Large,
+    Small,
+    SameStrand,
+    Outward,
+    Elsewhere,
+}
+
+impl Alignment {
+    fn paired_mate(&self) -> Option<Mate> {
+        if self.has(PAIRED) && !self.has(MATE_UNMAPPED) {
+            self.mate
+        } else {
+            None
+        }
+    }
+
+    pub fn pairing(&self, contig: usize, range: Option<(u64, u64)>) -> Pairing {
+        let Some(mate) = self.paired_mate() else {
+            return Pairing::Normal;
+        };
+        if mate.contig != contig {
+            return Pairing::Elsewhere;
+        }
+        let reverse = self.has(REVERSE);
+        if reverse == self.has(MATE_REVERSE) {
+            return Pairing::SameStrand;
+        }
+        let inward = if reverse {
+            mate.start <= self.start
+        } else {
+            self.start <= mate.start
+        };
+        if !inward {
+            return Pairing::Outward;
+        }
+        let size = mate.insert.unsigned_abs();
+        match range {
+            Some((_, high)) if size > high => Pairing::Large,
+            Some((low, _)) if size > 0 && size < low => Pairing::Small,
+            _ => Pairing::Normal,
+        }
+    }
+}
+
+pub fn expected_inserts<'a>(
+    alignments: impl Iterator<Item = &'a Alignment>,
+    contig: usize,
+) -> Option<(u64, u64)> {
+    let (mut proper, mut inward) = (Vec::new(), Vec::new());
+    for alignment in alignments {
+        let Some(mate) = alignment.paired_mate() else {
+            continue;
+        };
+        let size = mate.insert.unsigned_abs();
+        if size == 0 || alignment.pairing(contig, None) != Pairing::Normal {
+            continue;
+        }
+        inward.push(size);
+        if alignment.has(PROPER) {
+            proper.push(size);
+        }
+    }
+    let mut sizes = if proper.len() >= MIN_PAIRS {
+        proper
+    } else {
+        inward
+    };
+    if sizes.len() < MIN_PAIRS {
+        return None;
+    }
+    sizes.sort_unstable();
+    let count = sizes.len();
+    Some((
+        sizes[count * 5 / 1000],
+        sizes[(count * 995).div_ceil(1000) - 1],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Alignment, DUPLICATE, Filter, Gap, Mismatch, Op, Parts, QC_FAIL, REVERSE, SECONDARY,
-        SUPPLEMENTARY, UNMAPPED,
+        Alignment, DUPLICATE, Filter, Gap, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch, Op, PAIRED,
+        PROPER, Pairing, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, UNMAPPED,
+        expected_inserts,
     };
     use crate::{Region, Strand};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
+    }
+
+    fn pair(flags: u16, start: u64, contig: usize, mate_start: u64, insert: i64) -> Alignment {
+        Alignment {
+            start,
+            mate: Some(Mate {
+                contig,
+                start: mate_start,
+                insert,
+            }),
+            ..alignment(PAIRED | flags, vec![(Op::Match, 50)])
+        }
+    }
+
+    #[test]
+    fn pairs_fall_into_classes() {
+        let range = Some((200, 600));
+        let class = |read: &Alignment| read.pairing(0, range);
+        assert_eq!(
+            class(&pair(MATE_REVERSE, 100, 0, 400, 350)),
+            Pairing::Normal
+        );
+        assert_eq!(class(&pair(REVERSE, 400, 0, 100, -350)), Pairing::Normal);
+        assert_eq!(
+            class(&pair(MATE_REVERSE, 100, 0, 5_000, 4_950)),
+            Pairing::Large
+        );
+        assert_eq!(class(&pair(MATE_REVERSE, 100, 0, 120, 70)), Pairing::Small);
+        assert_eq!(class(&pair(0, 100, 0, 400, 350)), Pairing::SameStrand);
+        assert_eq!(
+            class(&pair(REVERSE | MATE_REVERSE, 100, 0, 400, 350)),
+            Pairing::SameStrand
+        );
+        assert_eq!(class(&pair(REVERSE, 100, 0, 400, 350)), Pairing::Outward);
+        assert_eq!(
+            class(&pair(MATE_REVERSE, 100, 1, 400, 0)),
+            Pairing::Elsewhere
+        );
+        assert_eq!(class(&pair(MATE_UNMAPPED, 100, 0, 100, 0)), Pairing::Normal);
+        let single = alignment(0, vec![(Op::Match, 50)]);
+        assert_eq!(class(&single), Pairing::Normal);
+        let large = pair(MATE_REVERSE, 100, 0, 5_000, 4_950);
+        assert_eq!(large.pairing(0, None), Pairing::Normal);
+    }
+
+    #[test]
+    fn expected_inserts_come_from_proper_pairs() {
+        let mut reads: Vec<Alignment> = (0..300)
+            .map(|index| pair(PROPER | MATE_REVERSE, 100, 0, 400, 300 + index))
+            .collect();
+        reads.extend((0..20).map(|_| pair(MATE_REVERSE, 100, 0, 9_000, 8_950)));
+        assert_eq!(expected_inserts(reads.iter(), 0), Some((301, 598)));
+        assert_eq!(expected_inserts(reads[..50].iter(), 0), None);
     }
 
     #[test]
