@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{BufRead, Read, Seek};
 
 use genie_core::{Feature, Region};
@@ -77,6 +78,94 @@ impl Kind {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct Table {
+    names: Vec<String>,
+    contigs: Vec<(Vec<Feature>, u64)>,
+}
+
+impl Table {
+    pub fn read(kind: Kind, mut reader: impl BufRead) -> Result<Self, Error> {
+        let mut table = Self::default();
+        let mut slots = HashMap::new();
+        let mut records: Vec<Vec<gff::Record>> = Vec::new();
+        let mut bytes = Vec::new();
+        let mut number = 0;
+        loop {
+            bytes.clear();
+            if reader.read_until(b'\n', &mut bytes)? == 0 {
+                break;
+            }
+            number += 1;
+            let text = String::from_utf8_lossy(&bytes);
+            let line = text.trim_end_matches(['\n', '\r']);
+            if line.starts_with("##FASTA") {
+                break;
+            }
+            let failed = |reason| Error::Format {
+                line: number,
+                reason,
+            };
+            match kind {
+                Kind::Bed => {
+                    if let Some((contig, feature)) = bed::parse(line).map_err(failed)? {
+                        let slot = table.slot(&mut slots, contig);
+                        table.contigs[slot].0.push(feature);
+                    }
+                }
+                Kind::Gff => {
+                    if let Some(record) = gff::parse(line).map_err(failed)? {
+                        let slot = table.slot(&mut slots, &record.contig);
+                        records.resize_with(table.names.len(), Vec::new);
+                        records[slot].push(record);
+                    }
+                }
+            }
+        }
+        for (slot, records) in records.iter().enumerate() {
+            table.contigs[slot].0 = gff::assemble(records);
+        }
+        for (features, longest) in &mut table.contigs {
+            features.sort_by_key(|feature| feature.span().start());
+            *longest = features
+                .iter()
+                .map(|feature| feature.span().len())
+                .max()
+                .unwrap_or(0);
+        }
+        Ok(table)
+    }
+
+    fn slot(&mut self, slots: &mut HashMap<String, usize>, contig: &str) -> usize {
+        if let Some(&slot) = slots.get(contig) {
+            return slot;
+        }
+        self.names.push(contig.to_owned());
+        self.contigs.push((Vec::new(), 0));
+        slots.insert(contig.to_owned(), self.names.len() - 1);
+        self.names.len() - 1
+    }
+
+    pub fn contigs(&self) -> &[String] {
+        &self.names
+    }
+
+    pub fn query(&self, contig: &str, region: Region) -> Vec<Feature> {
+        let Some(slot) = self.names.iter().position(|name| name == contig) else {
+            return Vec::new();
+        };
+        let (features, longest) = &self.contigs[slot];
+        let from = region.start().saturating_sub(*longest);
+        let first = features.partition_point(|feature| feature.span().start() < from);
+        features[first..]
+            .iter()
+            .take_while(|feature| feature.span().start() < region.end())
+            .filter(|feature| feature.span().overlaps(region))
+            .cloned()
+            .collect()
+    }
+}
+
 pub fn query<R: Read + Seek>(
     kind: Kind,
     index: &Index,
@@ -124,7 +213,8 @@ mod tests {
 
     use genie_core::{Feature, Region, Strand};
 
-    use super::{Entry, Kind, names, query};
+    use super::{Entry, Kind, Table, names, query};
+    use crate::Error;
     use crate::{
         bgzf::{
             Bgzf,
@@ -209,6 +299,58 @@ mod tests {
             features,
             [Feature::new("b", region(30, 40), Strand::Unknown)]
         );
+    }
+
+    fn table(kind: Kind, lines: &[&str]) -> Result<Table, Error> {
+        let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
+        Table::read(kind, text.as_bytes())
+    }
+
+    fn named(features: &[Feature]) -> Vec<&str> {
+        features.iter().map(Feature::name).collect()
+    }
+
+    #[test]
+    fn tables_hold_bed_features_by_contig() {
+        let lines = [
+            "track name=genes",
+            "chr2\t5\t9\tz",
+            "chr1\t30\t40\tb",
+            "chr1\t0\t1000\tlong",
+            "chr1\t10\t20\ta",
+        ];
+        let table = table(Kind::Bed, &lines).unwrap();
+        assert_eq!(table.contigs(), ["chr2", "chr1"]);
+        assert_eq!(named(&table.query("chr1", region(25, 45))), ["long", "b"]);
+        assert_eq!(named(&table.query("chr1", region(500, 600))), ["long"]);
+        assert_eq!(table.query("chrX", region(0, 10)), []);
+    }
+
+    #[test]
+    fn tables_assemble_gff_transcripts() {
+        let lines = [
+            "##gff-version 3",
+            "chr1\t.\tgene\t1001\t9000\t.\t+\t.\tID=g1;Name=ABC",
+            "chr1\t.\tmRNA\t1001\t9000\t.\t+\t.\tID=t1;Parent=g1",
+            "chr1\t.\texon\t1001\t1200\t.\t+\t.\tParent=t1",
+            "chr1\t.\texon\t8801\t9000\t.\t+\t.\tParent=t1",
+            "##FASTA",
+            ">chr1",
+        ];
+        let table = table(Kind::Gff, &lines).unwrap();
+        let expected = Feature::new("ABC", region(1_000, 9_000), Strand::Forward)
+            .with_blocks(vec![region(1_000, 1_200), region(8_800, 9_000)])
+            .with_coding(None);
+        assert_eq!(table.query("chr1", region(4_000, 5_000)), [expected]);
+    }
+
+    #[test]
+    fn tables_name_the_bad_line() {
+        let lines = ["chr1\t10\t20\ta", "chr1\tx\t9\tbad"];
+        assert!(matches!(
+            table(Kind::Bed, &lines),
+            Err(Error::Format { line: 2, .. })
+        ));
     }
 
     #[test]
