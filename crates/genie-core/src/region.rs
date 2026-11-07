@@ -1,0 +1,76 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Region {
+    start: u64,
+    end: u64,
+}
+
+impl Region {
+    pub const fn new(start: u64, end: u64) -> Option<Self> {
+        if start <= end {
+            Some(Self { start, end })
+        } else {
+            None
+        }
+    }
+
+    pub const fn start(self) -> u64 {
+        self.start
+    }
+
+    pub const fn end(self) -> u64 {
+        self.end
+    }
+
+    pub const fn len(self) -> u64 {
+        self.end - self.start
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.start == self.end
+    }
+
+    pub const fn contains(self, position: u64) -> bool {
+        self.start <= position && position < self.end
+    }
+
+    pub const fn overlaps(self, other: Self) -> bool {
+        self.start < other.end && other.start < self.end
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Region;
+
+    fn region(start: u64, end: u64) -> Region {
+        Region::new(start, end).unwrap()
+    }
+
+    #[test]
+    fn rejects_start_after_end() {
+        assert_eq!(Region::new(5, 4), None);
+    }
+
+    #[test]
+    fn length_is_end_minus_start() {
+        assert_eq!(region(10, 25).len(), 15);
+        assert!(!region(10, 25).is_empty());
+        assert!(region(7, 7).is_empty());
+    }
+
+    #[test]
+    fn contains_is_half_open() {
+        let region = region(10, 20);
+        assert!(!region.contains(9));
+        assert!(region.contains(10));
+        assert!(region.contains(19));
+        assert!(!region.contains(20));
+    }
+
+    #[test]
+    fn touching_regions_do_not_overlap() {
+        assert!(!region(0, 10).overlaps(region(10, 20)));
+        assert!(region(0, 10).overlaps(region(9, 11)));
+        assert!(region(5, 5).overlaps(region(0, 10)));
+    }
+}
