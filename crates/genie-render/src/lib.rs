@@ -1,3 +1,4 @@
+pub mod features;
 pub mod overview;
 pub mod ruler;
 pub mod scene;
