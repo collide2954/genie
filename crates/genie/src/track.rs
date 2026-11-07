@@ -13,6 +13,7 @@ use genie_formats::features::{self, Kind, Table};
 use genie_formats::{bai, bam, bedgraph, bigwig, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
+use genie_render::signal::Style;
 use genie_render::{alignments, rows, variants};
 
 use crate::paths::file_name;
@@ -157,6 +158,12 @@ impl Default for Options {
             downsample: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Plot {
+    pub style: Style,
+    pub linked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,6 +346,7 @@ pub struct Track {
     pub hue: Hue,
     pub mode: Option<Mode>,
     pub options: Options,
+    pub plot: Plot,
     pub height: Option<f32>,
     pub loaded: Option<(usize, Arc<Loaded>)>,
     pub wanted: Option<(usize, Region)>,
@@ -356,6 +364,7 @@ impl Track {
             hue: Hue::default(),
             mode: None,
             options: Options::default(),
+            plot: Plot::default(),
             height: None,
             loaded: None,
             wanted: None,
@@ -420,6 +429,8 @@ pub enum Change {
     Mode(Mode),
     Hue(Hue),
     Toggle(Toggle),
+    Style(Style),
+    Link,
     Up,
     Down,
     Remove,
@@ -432,6 +443,11 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
     match change {
         Change::Mode(mode) => tracks[position].mode = Some(mode),
         Change::Hue(hue) => tracks[position].hue = hue,
+        Change::Style(style) => tracks[position].plot.style = style,
+        Change::Link => {
+            let plot = &mut tracks[position].plot;
+            plot.linked = !plot.linked;
+        }
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
             track.options = track.options.toggled(toggle);
@@ -756,10 +772,11 @@ mod tests {
     use genie_formats::tabix;
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
+    use genie_render::signal::Style;
 
     use super::{
-        Change, Content, Format, Loaded, Options, Source, Toggle, Track, change, contig_names,
-        fits, is_track, load, names, open, step,
+        Change, Content, Format, Loaded, Options, Plot, Source, Toggle, Track, change,
+        contig_names, fits, is_track, load, names, open, step,
     };
     use crate::scratch::Scratch;
 
@@ -821,6 +838,22 @@ mod tests {
         change(&mut tracks, 1, Change::Hue(Hue::Orange));
         assert_eq!(tracks[1].mode, Some(Mode::Collapsed));
         assert_eq!(tracks[1].hue, Hue::Orange);
+    }
+
+    #[test]
+    fn changes_set_the_signal_style_and_the_link() {
+        let mut tracks = three();
+        change(&mut tracks, 1, Change::Style(Style::Line));
+        change(&mut tracks, 1, Change::Link);
+        assert_eq!(
+            tracks[1].plot,
+            Plot {
+                style: Style::Line,
+                linked: true
+            }
+        );
+        change(&mut tracks, 1, Change::Link);
+        assert!(!tracks[1].plot.linked);
     }
 
     #[test]

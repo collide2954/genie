@@ -1,5 +1,6 @@
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
+use genie_render::signal::Style;
 use iced::widget::{Column, button, column, container, pin, row, space, text};
 use iced::{Element, Length, Point, Size};
 
@@ -12,7 +13,8 @@ pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
 const READS_HEIGHT: f32 = 235.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
-const SIGNAL_HEIGHT: f32 = 116.0;
+const SIGNAL_HEIGHT: f32 = 200.0;
+const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
@@ -90,11 +92,20 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let mut content = if track.source.has_signal() {
-        column![].spacing(1)
-    } else {
-        column![column(modes).spacing(1), separator()].spacing(1)
-    };
+    let mut content =
+        if track.source.has_signal() {
+            let plot = track.plot;
+            column![]
+                .spacing(1)
+                .extend(STYLES.map(|(label, style)| {
+                    item(label, Change::Style(style), plot.style == style, true)
+                }))
+                .push(separator())
+                .push(item("Shared scale", Change::Link, plot.linked, true))
+                .push(separator())
+        } else {
+            column![column(modes).spacing(1), separator()].spacing(1)
+        };
     if track.source.has_reads() {
         let options = track.options;
         content = content

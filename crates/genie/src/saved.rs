@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use genie_formats::ini::{self, Document, Section};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
+use genie_render::signal::Style;
 
 use crate::reading::{Frames, Reading};
-use crate::track::Options;
+use crate::track::{Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -38,6 +39,7 @@ pub struct SavedTrack {
     pub hue: Hue,
     pub height: Option<f32>,
     pub options: Options,
+    pub plot: Plot,
 }
 
 impl Saved {
@@ -72,6 +74,14 @@ impl Saved {
                         duplicates: on("duplicates"),
                         clips: on("clips"),
                         downsample: section.value("downsample") != Some("off"),
+                    },
+                    plot: Plot {
+                        style: if section.value("style") == Some("line") {
+                            Style::Line
+                        } else {
+                            Style::Bars
+                        },
+                        linked: section.value("scale") == Some("shared"),
                     },
                 })
             })
@@ -115,6 +125,12 @@ impl Saved {
             }
             if !track.options.downsample {
                 entries.push(("downsample", "off".to_owned()));
+            }
+            if track.plot.style == Style::Line {
+                entries.push(("style", "line".to_owned()));
+            }
+            if track.plot.linked {
+                entries.push(("scale", "shared".to_owned()));
             }
             sections.push(section("track", entries));
         }
@@ -186,10 +202,11 @@ mod tests {
 
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
+    use genie_render::signal::Style;
 
     use super::{Saved, SavedTrack, is_session};
     use crate::reading::{Frames, Reading};
-    use crate::track::Options;
+    use crate::track::{Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -214,6 +231,7 @@ mod tests {
                         clips: true,
                         downsample: false,
                     },
+                    plot: Plot::default(),
                 },
                 SavedTrack {
                     path: PathBuf::from("/elsewhere/genes.bed.gz"),
@@ -221,6 +239,18 @@ mod tests {
                     hue: Hue::Vermillion,
                     height: None,
                     options: Options::default(),
+                    plot: Plot::default(),
+                },
+                SavedTrack {
+                    path: base().join("coverage.bw"),
+                    mode: None,
+                    hue: Hue::Green,
+                    height: Some(64.0),
+                    options: Options::default(),
+                    plot: Plot {
+                        style: Style::Line,
+                        linked: true,
+                    },
                 },
             ],
         }
@@ -230,6 +260,14 @@ mod tests {
     fn sessions_read_back_what_they_write() {
         let saved = saved();
         assert_eq!(Saved::parse(&saved.text(&base()), &base()), Ok(saved));
+    }
+
+    #[test]
+    fn signal_tracks_keep_their_style_and_shared_scale() {
+        let text = saved().text(&base());
+        assert!(text.contains("style = line"), "{text}");
+        assert!(text.contains("scale = shared"), "{text}");
+        assert_eq!(text.matches("style =").count(), 1, "{text}");
     }
 
     #[test]

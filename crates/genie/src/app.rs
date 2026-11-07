@@ -1229,6 +1229,7 @@ impl Genie {
                 track.hue = found.hue;
                 track.height = found.height;
                 track.options = found.options;
+                track.plot = found.plot;
             }
             session.tracks.push(track);
             session.tracks.sort_by_key(|track| {
@@ -1299,6 +1300,7 @@ impl Genie {
                     hue: track.hue,
                     height: track.height,
                     options: track.options,
+                    plot: track.plot,
                 })
                 .collect(),
         })
@@ -1654,11 +1656,11 @@ fn track_body<'a>(
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
             let columns = signal::columns(viewport, &data.summaries);
-            let Some(scale) = signal::range(&columns) else {
+            let Some(scale) = signal_scale(session, track, &columns) else {
                 return space().width(Length::Fill).height(height).into();
             };
             let width = viewport.width() as f32;
-            let style = signal::Style::default();
+            let style = track.plot.style;
             let primitives = signal::scene(&columns, scale, style, track.hue, height, width);
             interactive(primitives, height).into()
         }
@@ -1837,6 +1839,27 @@ fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
+}
+
+fn signal_scale(
+    session: &Session,
+    track: &Track,
+    columns: &[signal::Column],
+) -> Option<signal::Scale> {
+    if !track.plot.linked {
+        return signal::range(columns);
+    }
+    session
+        .tracks
+        .iter()
+        .filter(|other| other.plot.linked)
+        .filter_map(|other| match other.data(session.contig)?.content {
+            Content::Signal(ref data) => {
+                signal::range(&signal::columns(session.viewport, &data.summaries))
+            }
+            _ => None,
+        })
+        .reduce(signal::Scale::union)
 }
 
 fn body_height(session: &Session, track: &Track) -> f32 {
@@ -2052,6 +2075,7 @@ mod tests {
     use genie_formats::tabix::Index;
     use genie_render::features::Mode as Rows;
     use genie_render::scene::Hue;
+    use genie_render::signal::{Scale, Style};
     use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
     use iced::time::{Duration, Instant};
@@ -2072,7 +2096,7 @@ mod tests {
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Change, Format, Loaded, Options, Source, Toggle};
+    use crate::track::{Change, Content, Format, Loaded, Options, Source, Toggle};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
@@ -2622,6 +2646,7 @@ mod tests {
                 hue: Hue::Blue,
                 height: None,
                 options: crate::track::Options::default(),
+                plot: crate::track::Plot::default(),
             }],
         };
         let mut genie = Genie {
@@ -3142,6 +3167,55 @@ mod tests {
                 .find(selector::id("swatches"))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn signal_menus_offer_bars_lines_and_a_shared_scale() {
+        let mut genie = with_signal();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for item in ["Bars", "Line", "Shared scale"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+        let _ = genie.update(Message::TrackChanged(0, Change::Style(Style::Line)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.plot.style, Style::Line);
+    }
+
+    fn scale_of(genie: &Genie, index: usize) -> Option<Scale> {
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[index];
+        let Some(Content::Signal(data)) = track.data(0).map(|data| &data.content) else {
+            return None;
+        };
+        let columns = genie_render::signal::columns(session.viewport, &data.summaries);
+        super::signal_scale(session, track, &columns)
+    }
+
+    #[test]
+    fn linked_signal_tracks_share_one_scale() {
+        let mut genie = with_signal();
+        let other = Arc::new(Source {
+            path: PathBuf::from("/data/other.bedGraph"),
+            name: "other.bedGraph".to_owned(),
+            format: signal_table(),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(other)));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[1];
+        track.wanted = Some((0, region));
+        let values = vec![Summary::single(Region::between(300, 400), 10.0)];
+        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        let own = Scale { min: 0.0, max: 4.0 };
+        assert_eq!(scale_of(&genie, 0), Some(own));
+        for id in [0, 1] {
+            let _ = genie.update(Message::TrackChanged(id, Change::Link));
+        }
+        let shared = Scale {
+            min: 0.0,
+            max: 10.0,
+        };
+        assert_eq!(scale_of(&genie, 0), Some(shared));
+        assert_eq!(scale_of(&genie, 1), Some(shared));
     }
 
     #[test]
