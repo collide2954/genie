@@ -1,6 +1,9 @@
-use std::io::{self, Read, Write};
+use std::fs::File;
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::path::Path;
 
 use crate::binning::read_u64;
+use crate::sidecar::{self, Sidecar};
 use crate::{Error, Reason, bgzf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -57,13 +60,50 @@ impl Index {
     }
 }
 
+pub fn load(path: &Path, cache: Option<&Path>) -> Result<Index, Error> {
+    sidecar::load(path, cache, Index::build)
+}
+
+impl Sidecar for Index {
+    const EXTENSION: &'static str = "gzi";
+
+    fn parse(file: File) -> Result<Self, Error> {
+        Self::read(BufReader::new(file))
+    }
+
+    fn save(&self, file: File) -> io::Result<()> {
+        self.write(BufWriter::new(file))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
 
-    use super::Index;
+    use super::{Index, load};
     use crate::bgzf::tests::{block, file};
+    use crate::fai::tests::{Scratch, cached};
     use crate::{Error, Reason};
+
+    #[test]
+    fn load_builds_and_caches_a_missing_index() {
+        let scratch = Scratch::new("gzi-build");
+        let path = scratch.file("ref.fa.gz", file(&[b"ab", b"cd"]));
+        let cache = scratch.0.join("cache");
+        let built = Index::build(Cursor::new(file(&[b"ab", b"cd"]))).unwrap();
+        assert_eq!(load(&path, Some(&cache)).unwrap(), built);
+        assert_eq!(cached(&cache).len(), 1);
+        assert_eq!(load(&path, Some(&cache)).unwrap(), built);
+        assert!(!scratch.0.join("ref.fa.gz.gzi").exists());
+    }
+
+    #[test]
+    fn load_prefers_the_index_next_to_the_file() {
+        let scratch = Scratch::new("gzi-sidecar");
+        let path = scratch.file("ref.fa.gz", file(&[b"ab", b"cd"]));
+        scratch.file("ref.fa.gz.gzi", bytes(&[(7, 9)]));
+        assert_eq!(load(&path, None).unwrap(), index(&[(7, 9)]));
+    }
 
     fn bytes(blocks: &[(u64, u64)]) -> Vec<u8> {
         let mut bytes = (blocks.len() as u64).to_le_bytes().to_vec();

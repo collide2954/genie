@@ -1,12 +1,10 @@
-use std::collections::hash_map::DefaultHasher;
-use std::fs::{self, File};
-use std::hash::{Hash, Hasher};
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::bgzf::{self, Bgzf};
+use crate::sidecar::{self, Sidecar};
 use crate::{Error, Reason};
-
-const SCAN_BUFFER: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaiRecord {
@@ -18,51 +16,25 @@ pub struct FaiRecord {
 }
 
 pub fn load(fasta: &Path, cache: Option<&Path>) -> Result<Vec<FaiRecord>, Error> {
-    let sidecar = sidecar(fasta);
-    if sidecar.is_file() {
-        return read(&sidecar);
-    }
-    let cached = cache.and_then(|cache| {
-        fingerprint(fasta)
-            .ok()
-            .map(|key| cache.join(format!("{key:016x}.fai")))
-    });
-    if let Some(cached) = cached.as_deref().filter(|path| path.is_file()) {
-        return read(cached);
-    }
-    let records = build(BufReader::with_capacity(SCAN_BUFFER, File::open(fasta)?))?;
-    if let Some(cached) = &cached {
-        let _ = store(cached, &records);
-    }
-    Ok(records)
+    sidecar::load(fasta, cache, |mut reader| {
+        if bgzf::sniff(reader.fill_buf()?) {
+            build(Bgzf::new(reader))
+        } else {
+            build(reader)
+        }
+    })
 }
 
-fn sidecar(fasta: &Path) -> PathBuf {
-    let mut path = fasta.as_os_str().to_owned();
-    path.push(".fai");
-    PathBuf::from(path)
-}
+impl Sidecar for Vec<FaiRecord> {
+    const EXTENSION: &'static str = "fai";
 
-fn read(path: &Path) -> Result<Vec<FaiRecord>, Error> {
-    parse(BufReader::new(File::open(path)?))
-}
-
-fn fingerprint(fasta: &Path) -> io::Result<u64> {
-    let metadata = fs::metadata(fasta)?;
-    let mut hasher = DefaultHasher::new();
-    fs::canonicalize(fasta)?.hash(&mut hasher);
-    metadata.len().hash(&mut hasher);
-    metadata.modified()?.hash(&mut hasher);
-    Ok(hasher.finish())
-}
-
-fn store(path: &Path, records: &[FaiRecord]) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    fn parse(file: File) -> Result<Self, Error> {
+        parse(BufReader::new(file))
     }
-    let partial = path.with_extension("partial");
-    write(records, BufWriter::new(File::create(&partial)?))?;
-    fs::rename(partial, path)
+
+    fn save(&self, file: File) -> io::Result<()> {
+        write(self, BufWriter::new(file))
+    }
 }
 
 pub fn parse(reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
@@ -210,24 +182,25 @@ fn parse_line(line: &str) -> Result<FaiRecord, Reason> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use super::{FaiRecord, build, load, parse, write};
+    use crate::bgzf;
     use crate::{Error, Reason};
 
-    struct Scratch(PathBuf);
+    pub struct Scratch(pub PathBuf);
 
     impl Scratch {
-        fn new(name: &str) -> Self {
+        pub fn new(name: &str) -> Self {
             let path = std::env::temp_dir().join(format!("genie-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
 
-        fn file(&self, name: &str, content: &str) -> PathBuf {
+        pub fn file(&self, name: &str, content: impl AsRef<[u8]>) -> PathBuf {
             let path = self.0.join(name);
             fs::write(&path, content).unwrap();
             path
@@ -240,11 +213,23 @@ mod tests {
         }
     }
 
-    fn cached(cache: &Path) -> Vec<PathBuf> {
+    pub fn cached(cache: &Path) -> Vec<PathBuf> {
         fs::read_dir(cache)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .collect()
+    }
+
+    #[test]
+    fn load_builds_an_index_for_bgzip_fasta() {
+        let scratch = Scratch::new("bgzip");
+        let fasta = scratch.file("ref.fa.gz", bgzf::tests::file(&[b">a\nAC", b"GT\nAC\n"]));
+        let cache = scratch.0.join("cache");
+        assert_eq!(
+            load(&fasta, Some(&cache)).unwrap(),
+            [record("a", 6, 3, 4, 5)]
+        );
+        assert!(cached(&cache)[0].extension().is_some_and(|it| it == "fai"));
     }
 
     #[test]

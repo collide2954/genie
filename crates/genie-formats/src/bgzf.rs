@@ -111,6 +111,10 @@ impl<R: Read> BufRead for Bgzf<R> {
     }
 }
 
+pub fn sniff(head: &[u8]) -> bool {
+    head.starts_with(&MAGIC[..2])
+}
+
 pub(crate) fn read_block(
     reader: &mut impl Read,
     compressed: &mut Vec<u8>,
