@@ -77,15 +77,53 @@ BEGIN {
 rm genes.gff3.tmp
 tabix -f -p gff genes.gff3.gz
 
+awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function bases(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text substr("ACGT", draw(4) + 1, 1)
+    return text
+}
+function qualities(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text sprintf("%c", 33 + draw(42))
+    return text
+}
+BEGIN {
+    seed = 11
+    print "@HD", "VN:1.6", "SO:unsorted"
+    print "@SQ", "SN:chr1", "LN:3000000"
+    print "@SQ", "SN:chr2", "LN:3000000"
+    split("50M 20M2I28M 25M3D25M 15M300N35M 5S45M 3H47M 10M1D10M2I28M 48M2S 20=1X29=", cigars, " ")
+    split("50 50 50 50 50 47 50 50 50", lengths, " ")
+    split("0 16 0 16 1024 256 512 2048 16", flags, " ")
+    for (i = 1; i <= 600; i++) {
+        contig = i <= 450 ? "chr1" : "chr2"
+        start = 1000 + draw(40000)
+        shape = 1 + draw(9)
+        flag = flags[1 + draw(9)]
+        quality = i % 25 == 0 ? "*" : qualities(lengths[shape])
+        print sprintf("read%03d", i), flag, contig, start, draw(61), cigars[shape], "*", 0, 0, bases(lengths[shape]), quality
+    }
+    for (i = 1; i <= 5; i++) print sprintf("lost%d", i), 4, "*", 0, 0, "*", "*", 0, 0, bases(50), qualities(50)
+}' > reads.sam
+samtools sort -o reads.bam reads.sam 2> /dev/null
+samtools index reads.bam
+rm reads.sam
+
 expect() {
     local file=$1
     shift
     for region in "$@"; do
         printf '>%s\n' "$region"
-        tabix "$file" "$region" || true
+        case "$file" in
+        *.bam) samtools view "$file" "$region" 2> /dev/null || true ;;
+        *) tabix "$file" "$region" || true ;;
+        esac
     done > "${file%.gz}.expected"
 }
 
 expect genes.bed.gz chr1:1-1000 chr1:5000-20000 chr1:100000-100500 chr1:350000-420000 \
     chr2:300000-301000 chrX:250000-260000 chrY:1-100 chrX
 expect genes.gff3.gz chr1:1-30000 chr1:200000-201000 chr2:500000-600000
+expect reads.bam chr1:1-1000 chr1:5000-8000 chr1:20000-24000 chr1:40000-50000 chr2 chrX:1-100

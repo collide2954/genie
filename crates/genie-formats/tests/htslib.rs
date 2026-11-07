@@ -3,9 +3,11 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use genie_core::Region;
+use genie_core::alignment::{Alignment, Op};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind};
 use genie_formats::tabix::Index;
+use genie_formats::{bai, bam};
 
 const WHOLE: u64 = 1 << 29;
 
@@ -99,6 +101,78 @@ fn gff_transcripts_keep_exons_outside_the_query() {
     let probe = Region::new(intron + 10, intron + 11).unwrap();
     let (_, found) = features::query(Kind::Gff, &index, &mut reader, "chr1", probe).unwrap();
     assert!(found.contains(transcript));
+}
+
+fn letter(op: Op) -> char {
+    match op {
+        Op::Match => 'M',
+        Op::Insertion => 'I',
+        Op::Deletion => 'D',
+        Op::Skip => 'N',
+        Op::SoftClip => 'S',
+        Op::HardClip => 'H',
+        Op::Padding => 'P',
+        Op::Equal => '=',
+        Op::Diff => 'X',
+    }
+}
+
+fn sam(alignment: &Alignment, contig: &str) -> String {
+    let mut cigar = String::new();
+    for (op, length) in &alignment.cigar {
+        cigar.push_str(&length.to_string());
+        cigar.push(letter(*op));
+    }
+    let qualities: String = if alignment.qualities.is_empty() {
+        "*".to_owned()
+    } else {
+        alignment
+            .qualities
+            .iter()
+            .map(|quality| char::from(quality + 33))
+            .collect()
+    };
+    [
+        alignment.name.clone(),
+        alignment.flags.to_string(),
+        contig.to_owned(),
+        (alignment.start + 1).to_string(),
+        alignment.mapq.to_string(),
+        cigar,
+        String::from_utf8_lossy(&alignment.bases).into_owned(),
+        qualities,
+    ]
+    .join("\t")
+}
+
+fn columns(line: &str) -> String {
+    let fields: Vec<&str> = line.split('\t').collect();
+    [0, 1, 2, 3, 4, 5, 9, 10].map(|at| fields[at]).join("\t")
+}
+
+#[test]
+fn bam_queries_match_samtools() {
+    let index = bai::Index::read(File::open(data("reads.bam.bai")).unwrap()).unwrap();
+    let mut reader = reader("reads.bam");
+    let header = bam::header(&mut reader).unwrap();
+    assert_eq!(header.references.len(), index.len());
+    for (wanted, expected) in sections("reads.bam.expected") {
+        let (name, region) = locus(&wanted);
+        let mut found = Vec::new();
+        if let Some(reference) = header
+            .references
+            .iter()
+            .position(|(known, _)| known == name)
+        {
+            bam::query(&index, &mut reader, reference, region, |alignment| {
+                found.push(sam(&alignment, name));
+                Ok(())
+            })
+            .unwrap();
+        }
+        let expected: Vec<String> = expected.iter().map(|line| columns(line)).collect();
+        assert_eq!(found, expected, "{wanted}");
+    }
 }
 
 #[test]
