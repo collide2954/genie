@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::{Region, parse_bases};
+use crate::{Region, grouped, parse_bases};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Locus {
@@ -40,6 +40,22 @@ impl FromStr for Locus {
             name: name.to_owned(),
             span,
         })
+    }
+}
+
+impl fmt::Display for Locus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = &self.name;
+        match self.span {
+            Span::Whole => f.write_str(name),
+            Span::Position(position) => write!(f, "{name}:{}", grouped(position.saturating_add(1))),
+            Span::Region(region) => write!(
+                f,
+                "{name}:{}-{}",
+                grouped(region.start().saturating_add(1)),
+                grouped(region.end())
+            ),
+        }
     }
 }
 
@@ -143,6 +159,30 @@ mod tests {
         assert_eq!(parse("chr1:0-10"), Err(LocusError::ZeroPosition));
         assert_eq!(parse("chr1:2,000-1,000"), Err(LocusError::Reversed));
         assert_eq!(parse("chr1:1000-999"), Err(LocusError::Reversed));
+    }
+
+    #[test]
+    fn displays_one_based_grouped_text() {
+        assert_eq!(locus("chr1", Span::Whole).to_string(), "chr1");
+        assert_eq!(
+            locus("chr1", Span::Position(12_344)).to_string(),
+            "chr1:12,345"
+        );
+        assert_eq!(
+            locus("chr1", range(999, 2_000)).to_string(),
+            "chr1:1,000-2,000"
+        );
+    }
+
+    #[test]
+    fn display_parses_back() {
+        for original in [
+            locus("chrX", Span::Whole),
+            locus("2", Span::Position(0)),
+            locus("chr1", range(0, 248_956_422)),
+        ] {
+            assert_eq!(parse(&original.to_string()), Ok(original));
+        }
     }
 
     #[test]
