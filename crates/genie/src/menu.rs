@@ -1,3 +1,4 @@
+use genie_core::grouped;
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
@@ -11,7 +12,7 @@ use crate::track::{Change, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
-const READS_HEIGHT: f32 = 257.0;
+const READS_HEIGHT: f32 = 288.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
 const SIGNAL_HEIGHT: f32 = 200.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
@@ -44,9 +45,15 @@ pub struct Place {
     pub count: usize,
     pub at: Point,
     pub window: Size,
+    pub base: u64,
 }
 
-pub fn item(label: &str, message: Message, chosen: bool, enabled: bool) -> Element<'_, Message> {
+pub fn item<'a>(
+    label: impl text::IntoFragment<'a>,
+    message: Message,
+    chosen: bool,
+    enabled: bool,
+) -> Element<'a, Message> {
     button(text(label).size(12))
         .width(Length::Fill)
         .padding([3, 8])
@@ -116,6 +123,13 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
                 "Color unusual pairs",
                 Change::Pairs,
                 track.plot.pairs,
+                true,
+            ))
+            .push(separator())
+            .push(self::item(
+                format!("Sort by base at {}", grouped(place.base + 1)),
+                Message::TrackChanged(id, Change::Sort(place.base)),
+                false,
                 true,
             ))
             .push(separator());

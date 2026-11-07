@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, DUPLICATE, Filter, expected_inserts};
-use genie_core::pileup::{Coverage, Read, downsample};
+use genie_core::pileup::{Coverage, Read, downsample, sort_rows};
 use genie_core::signal::{self, Summary};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
@@ -368,6 +368,7 @@ pub struct Track {
     pub loaded: Option<(usize, Arc<Loaded>)>,
     pub wanted: Option<(usize, Region)>,
     pub error: Option<String>,
+    pub order: Option<(u64, Vec<usize>)>,
 }
 
 impl Track {
@@ -386,7 +387,12 @@ impl Track {
             loaded: None,
             wanted: None,
             error: None,
+            order: None,
         }
+    }
+
+    pub fn rows<'a>(&'a self, pile: &'a Pile) -> &'a [usize] {
+        self.order.as_ref().map_or(&pile.rows, |(_, rows)| rows)
     }
 
     pub fn data(&self, contig: usize) -> Option<&Loaded> {
@@ -435,6 +441,7 @@ impl Track {
             Ok(data) => {
                 self.loaded = Some((contig, data));
                 self.error = None;
+                self.order = None;
             }
             Err(error) => self.error = Some(error),
         }
@@ -449,6 +456,7 @@ pub enum Change {
     Style(Style),
     Link,
     Pairs,
+    Sort(u64),
     Up,
     Down,
     Remove,
@@ -469,6 +477,16 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Pairs => {
             let plot = &mut tracks[position].plot;
             plot.pairs = !plot.pairs;
+        }
+        Change::Sort(at) => {
+            let track = &mut tracks[position];
+            track.order = track
+                .loaded
+                .as_ref()
+                .and_then(|(_, data)| match &data.content {
+                    Content::Reads(pile) => Some((at, sort_rows(&pile.reads, &pile.rows, at))),
+                    _ => None,
+                });
         }
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
@@ -890,6 +908,36 @@ mod tests {
         change(&mut tracks, 1, Change::Pairs);
         assert!(!tracks[1].plot.pairs);
         assert_eq!(tracks[1].wanted, Some((0, region(0, 10))));
+    }
+
+    #[test]
+    fn sorting_keeps_rows_until_new_reads_load() {
+        let mut tracks = three();
+        let reads = vec![
+            alignment(10, vec![(Op::Match, 10)]),
+            alignment(12, vec![(Op::Match, 10)]),
+        ];
+        let wide = region(0, 100);
+        let loaded = Loaded::reads(wide, 0, reads, vec![b'A'; 100], 0, Options::default());
+        tracks[1].wanted = Some((0, wide));
+        tracks[1].accept(0, wide, Ok(Arc::new(loaded)));
+        change(&mut tracks, 1, Change::Sort(15));
+        assert_eq!(tracks[1].order.as_ref().map(|(at, _)| *at), Some(15));
+        tracks[1].wanted = Some((0, wide));
+        tracks[1].accept(0, wide, Ok(loaded_reads(wide)));
+        assert_eq!(tracks[1].order, None);
+    }
+
+    fn loaded_reads(wide: Region) -> Arc<Loaded> {
+        let reads = vec![alignment(30, vec![(Op::Match, 10)])];
+        Arc::new(Loaded::reads(
+            wide,
+            0,
+            reads,
+            vec![b'A'; 100],
+            0,
+            Options::default(),
+        ))
     }
 
     #[test]

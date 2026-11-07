@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+use genie_core::pileup::sort_rows;
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
@@ -648,7 +649,8 @@ impl Genie {
                 Detail::Feature(annotation.features[index].clone())
             }
             Content::Reads(pile) => {
-                let index = alignments::hit(viewport, &pile.reads, &pile.rows, mode, x, y)?;
+                let rows = track.rows(pile);
+                let index = alignments::hit(viewport, &pile.reads, rows, mode, x, y)?;
                 Detail::Read(pile.reads[index].alignment.clone())
             }
             Content::Variants(calls) => {
@@ -1031,6 +1033,7 @@ impl Genie {
             count: session.tracks.len(),
             at,
             window: self.window,
+            base: session.viewport.to_bp(f64::from(at.x)).floor().max(0.0) as u64,
         };
         Some(menu::view(track, track.mode(session.contig), &place))
     }
@@ -1689,10 +1692,14 @@ fn track_body<'a>(
             if mode != features::Mode::Collapsed {
                 let packed;
                 let rows = if repack {
-                    packed = pile.packed(viewport.visible()).0;
+                    let rows = pile.packed(viewport.visible()).0;
+                    packed = match &track.order {
+                        Some((at, _)) => sort_rows(&pile.reads, &rows, *at),
+                        None => rows,
+                    };
                     packed.as_slice()
                 } else {
-                    pile.rows.as_slice()
+                    track.rows(pile)
                 };
                 let pairs = track.plot.pairs;
                 let primitives = alignments::reads(viewport, &pile.reads, rows, mode, pairs);
@@ -3046,6 +3053,16 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn read_menus_sort_at_the_clicked_base() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(20.5, 200.0)));
+        assert!(shows(&genie, "Sort by base at 21"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Sort(20)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.order.as_ref().map(|(at, _)| *at), Some(20));
     }
 
     #[test]
