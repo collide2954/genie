@@ -5,12 +5,25 @@ use crate::alignment::{Alignment, Op, Parts};
 pub struct Read {
     pub alignment: Alignment,
     pub parts: Parts,
+    pub extent: Region,
 }
 
 impl Read {
-    pub fn new(alignment: Alignment, reference: &[u8], offset: u64) -> Self {
-        let parts = alignment.parts(reference, offset);
-        Self { alignment, parts }
+    pub fn new(alignment: Alignment, reference: &[u8], offset: u64, clips: bool) -> Self {
+        let mut parts = alignment.parts(reference, offset);
+        let mut extent = alignment.span();
+        if clips {
+            for clip in &parts.clips {
+                extent = extent.hull(Region::between(clip.position, clip.position + 1));
+            }
+        } else {
+            parts.clips.clear();
+        }
+        Self {
+            alignment,
+            parts,
+            extent,
+        }
     }
 }
 
@@ -125,7 +138,7 @@ fn bucket(base: u8) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{Coverage, downsample};
+    use super::{Coverage, Read, downsample};
     use crate::Region;
     use crate::alignment::{Alignment, Op};
 
@@ -161,6 +174,18 @@ mod tests {
         assert_eq!(coverage.counts(104), Some([0, 1, 1, 0, 0]));
         assert_eq!(coverage.counts(110), None);
         assert_eq!(coverage.depth(99), 0);
+    }
+
+    #[test]
+    fn reads_reach_over_clips_only_when_shown() {
+        let cigar = vec![(Op::SoftClip, 2), (Op::Match, 3), (Op::SoftClip, 1)];
+        let alignment = read(100, cigar, b"ACGTAC");
+        let shown = Read::new(alignment.clone(), b"", 0, true);
+        assert_eq!(shown.extent, region(98, 104));
+        assert_eq!(shown.parts.clips.len(), 3);
+        let hidden = Read::new(alignment, b"", 0, false);
+        assert_eq!(hidden.extent, region(100, 103));
+        assert_eq!(hidden.parts.clips.len(), 0);
     }
 
     #[test]

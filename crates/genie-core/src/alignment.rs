@@ -108,6 +108,7 @@ pub struct Parts {
     pub gaps: Vec<(Region, Gap)>,
     pub insertions: Vec<(u64, u32)>,
     pub mismatches: Vec<Mismatch>,
+    pub clips: Vec<Mismatch>,
 }
 
 impl Alignment {
@@ -171,7 +172,32 @@ impl Alignment {
                         .push((Region::between(position, position + size), gap));
                     position += size;
                 }
-                Op::SoftClip => index += count,
+                Op::SoftClip => {
+                    let leading = parts.blocks.is_empty() && parts.gaps.is_empty();
+                    for step in 0..count {
+                        let Some(&base) = self.bases.get(index + step) else {
+                            break;
+                        };
+                        let at = position + step as u64;
+                        let at = if leading {
+                            at.checked_sub(size)
+                        } else {
+                            Some(at)
+                        };
+                        if let Some(at) = at {
+                            parts.clips.push(Mismatch {
+                                position: at,
+                                base,
+                                quality: self
+                                    .qualities
+                                    .get(index + step)
+                                    .copied()
+                                    .unwrap_or(u8::MAX),
+                            });
+                        }
+                    }
+                    index += count;
+                }
                 Op::HardClip | Op::Padding => {}
             }
         }
@@ -193,6 +219,13 @@ impl Default for Filter {
 }
 
 impl Filter {
+    #[must_use]
+    pub fn showing(self, flags: u16) -> Self {
+        Self {
+            hidden: self.hidden & !flags,
+        }
+    }
+
     pub fn keeps(self, alignment: &Alignment) -> bool {
         !alignment.has(self.hidden)
     }
@@ -256,8 +289,66 @@ mod tests {
                         quality: 16
                     },
                 ],
+                clips: vec![
+                    Mismatch {
+                        position: 98,
+                        base: b'T',
+                        quality: 0
+                    },
+                    Mismatch {
+                        position: 99,
+                        base: b'T',
+                        quality: 1
+                    },
+                ],
             }
         );
+    }
+
+    fn clip(position: u64, base: u8, quality: u8) -> Mismatch {
+        Mismatch {
+            position,
+            base,
+            quality,
+        }
+    }
+
+    #[test]
+    fn parts_keep_soft_clipped_bases_beside_the_read() {
+        let read = Alignment {
+            bases: b"ACGTAC".to_vec(),
+            qualities: vec![30, 31, 32, 33, 34, 35],
+            ..alignment(
+                0,
+                vec![
+                    (Op::HardClip, 5),
+                    (Op::SoftClip, 2),
+                    (Op::Match, 3),
+                    (Op::SoftClip, 1),
+                ],
+            )
+        };
+        assert_eq!(
+            read.parts(b"", 0).clips,
+            [clip(98, b'A', 30), clip(99, b'C', 31), clip(103, b'C', 35)]
+        );
+    }
+
+    #[test]
+    fn clips_before_the_contig_start_are_dropped() {
+        let read = Alignment {
+            start: 1,
+            bases: b"GTCAA".to_vec(),
+            ..alignment(0, vec![(Op::SoftClip, 3), (Op::Match, 2)])
+        };
+        assert_eq!(read.parts(b"", 0).clips, [clip(0, b'C', u8::MAX)]);
+    }
+
+    #[test]
+    fn filters_can_show_hidden_flags() {
+        let filter = Filter::default().showing(DUPLICATE);
+        assert!(filter.keeps(&alignment(DUPLICATE, Vec::new())));
+        assert!(!filter.keeps(&alignment(QC_FAIL, Vec::new())));
     }
 
     #[test]

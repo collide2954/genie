@@ -361,7 +361,12 @@ mod tests {
     }
 
     fn read(start: u64, flags: u16, cigar: Vec<(Op, u32)>, bases: &[u8]) -> Read {
-        Read::new(alignment(start, flags, cigar, bases), &[b'A'; 100], 0)
+        Read::new(
+            alignment(start, flags, cigar, bases),
+            &[b'A'; 100],
+            0,
+            false,
+        )
     }
 
     #[test]
@@ -403,7 +408,7 @@ mod tests {
         low.qualities = vec![30, 30, 30, 10];
         let primitives = reads(
             view(0, 100),
-            &[Read::new(low, &[b'A'; 100], 0)],
+            &[Read::new(low, &[b'A'; 100], 0, false)],
             &[0],
             Mode::Expanded,
         );

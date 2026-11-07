@@ -148,7 +148,7 @@ impl Loaded {
         }
         let reads: Vec<Read> = downsample(alignments, WINDOW, DEPTH)
             .into_iter()
-            .map(|alignment| Read::new(alignment, &reference, offset))
+            .map(|alignment| Read::new(alignment, &reference, offset, false))
             .collect();
         let rows = rows::pack(&reads, |read| read.alignment.span(), READ_GAP);
         let count = count(&rows);
