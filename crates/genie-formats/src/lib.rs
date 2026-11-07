@@ -8,6 +8,7 @@ pub mod fai;
 pub mod fasta;
 pub mod features;
 pub mod gff;
+pub mod gzi;
 pub mod ini;
 pub mod tabix;
 pub mod twobit;

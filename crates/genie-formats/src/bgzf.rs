@@ -67,27 +67,10 @@ impl<R: Read + Seek> Bgzf<R> {
 
 impl<R: Read> Bgzf<R> {
     fn load(&mut self) -> io::Result<bool> {
-        let mut header = [0; HEADER];
-        match fill(&mut self.inner, &mut header)? {
-            0 => return Ok(false),
-            HEADER if header[..4] == MAGIC => {}
-            _ => return Err(invalid(Reason::NotBgzf)),
-        }
-        let extra = usize::from(u16::from_le_bytes([header[10], header[11]]));
-        self.compressed.resize(extra, 0);
-        self.inner.read_exact(&mut self.compressed)?;
-        let size = block_size(&self.compressed).ok_or_else(|| invalid(Reason::NotBgzf))?;
-        let rest = size
-            .checked_sub(HEADER + extra)
-            .filter(|rest| *rest >= FOOTER)
-            .ok_or_else(|| invalid(Reason::BadBlock))?;
-        self.compressed.resize(rest, 0);
-        self.inner.read_exact(&mut self.compressed)?;
-        let (data, footer) = self.compressed.split_at(rest - FOOTER);
-        let length = u32::from_le_bytes([footer[4], footer[5], footer[6], footer[7]]) as usize;
-        if length > MAX_LENGTH {
-            return Err(invalid(Reason::BadBlock));
-        }
+        let Some((size, length)) = read_block(&mut self.inner, &mut self.compressed)? else {
+            return Ok(false);
+        };
+        let data = &self.compressed[..self.compressed.len() - FOOTER];
         self.block.resize(length, 0);
         self.inflater.init();
         let (status, _, written) = decompress(
@@ -126,6 +109,34 @@ impl<R: Read> BufRead for Bgzf<R> {
     fn consume(&mut self, amount: usize) {
         self.position = (self.position + amount).min(self.block.len());
     }
+}
+
+pub(crate) fn read_block(
+    reader: &mut impl Read,
+    compressed: &mut Vec<u8>,
+) -> io::Result<Option<(usize, usize)>> {
+    let mut header = [0; HEADER];
+    match fill(reader, &mut header)? {
+        0 => return Ok(None),
+        HEADER if header[..4] == MAGIC => {}
+        _ => return Err(invalid(Reason::NotBgzf)),
+    }
+    let extra = usize::from(u16::from_le_bytes([header[10], header[11]]));
+    compressed.resize(extra, 0);
+    reader.read_exact(compressed)?;
+    let size = block_size(compressed).ok_or_else(|| invalid(Reason::NotBgzf))?;
+    let rest = size
+        .checked_sub(HEADER + extra)
+        .filter(|rest| *rest >= FOOTER)
+        .ok_or_else(|| invalid(Reason::BadBlock))?;
+    compressed.resize(rest, 0);
+    reader.read_exact(compressed)?;
+    let footer = &compressed[rest - 4..];
+    let length = u32::from_le_bytes([footer[0], footer[1], footer[2], footer[3]]) as usize;
+    if length > MAX_LENGTH {
+        return Err(invalid(Reason::BadBlock));
+    }
+    Ok(Some((size, length)))
 }
 
 fn block_size(mut extra: &[u8]) -> Option<usize> {
