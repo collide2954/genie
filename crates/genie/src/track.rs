@@ -10,7 +10,7 @@ use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind, Table};
-use genie_formats::{bai, bam, bedgraph, bigwig, tabix, vcf};
+use genie_formats::{bai, bam, bbi, bedgraph, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
@@ -50,7 +50,7 @@ pub enum Format {
         contigs: Vec<String>,
     },
     BigWig {
-        index: bigwig::Index,
+        index: bbi::Index,
     },
     BedGraph {
         index: tabix::Index,
@@ -740,7 +740,7 @@ fn open_variants(path: PathBuf, name: String) -> Result<Source, String> {
 fn open_signal(path: PathBuf, name: String) -> Result<Source, String> {
     let format = if is_bigwig(&name) {
         let mut file = File::open(&path).map_err(|error| error.to_string())?;
-        let index = bigwig::Index::read(&mut file)
+        let index = bbi::Index::read(&mut file)
             .map_err(|error| format!("The file {name} is not valid. {error}"))?;
         Format::BigWig { index }
     } else if is_compressed(&path) {

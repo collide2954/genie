@@ -1,9 +1,9 @@
 pub mod bai;
 pub mod bam;
+pub mod bbi;
 pub mod bed;
 pub mod bedgraph;
 pub mod bgzf;
-pub mod bigwig;
 mod binning;
 mod error;
 pub mod fai;

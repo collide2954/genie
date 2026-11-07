@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use genie_core::Region;
 use genie_core::signal::Summary;
+use genie_formats::bbi::Index;
 use genie_formats::bgzf::Bgzf;
-use genie_formats::bigwig::Index;
 use genie_formats::{bedgraph, tabix};
 
 const FILES: [&str; 3] = ["signal.bw", "steps.bw", "plain.bw"];
