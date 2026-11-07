@@ -1,9 +1,11 @@
 use genie_render::scene::{Align, Font, Paint, Primitive};
+use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::text::{self, Renderer as _, Text};
 use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Renderer as _, Shell};
+use iced::widget::canvas::{Frame, LineCap, LineJoin, Path, Stroke};
 use iced::{
     Color, Element, Event, Length, Pixels, Point, Rectangle, Renderer, Size, Theme, alignment,
     mouse,
@@ -64,6 +66,8 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
     match paint {
         Paint::Base(base) => data.bases[base as usize],
         Paint::OnBase(base) => data.on_bases[base as usize],
+        Paint::Hue(hue) => data.hues[hue as usize],
+        Paint::Text => tokens.text,
         Paint::Muted => tokens.muted,
         Paint::Line => tokens.line,
         Paint::Accent => tokens.accent,
@@ -175,8 +179,32 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
         let bounds = layout.bounds();
         let (tokens, data) = (tokens(theme), data(theme));
         renderer.with_layer(bounds, |renderer| {
+            let mut marks: Option<Frame> = None;
             for primitive in &self.primitives {
                 match primitive {
+                    Primitive::Chevron {
+                        x,
+                        y,
+                        size,
+                        forward,
+                        paint,
+                    } => {
+                        let frame =
+                            marks.get_or_insert_with(|| Frame::with_bounds(renderer, bounds));
+                        let reach = if *forward { size / 2.0 } else { -size / 2.0 };
+                        let (x, y) = (bounds.x + x, bounds.y + y);
+                        let path = Path::new(|builder| {
+                            builder.move_to(Point::new(x - reach, y - size));
+                            builder.line_to(Point::new(x + reach, y));
+                            builder.line_to(Point::new(x - reach, y + size));
+                        });
+                        let stroke = Stroke::default()
+                            .with_color(color(*paint, tokens, data))
+                            .with_width(1.0)
+                            .with_line_cap(LineCap::Round)
+                            .with_line_join(LineJoin::Round);
+                        frame.stroke(&path, stroke);
+                    }
                     Primitive::Rect {
                         x,
                         y,
@@ -224,13 +252,16 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                     ),
                 }
             }
+            if let Some(frame) = marks {
+                renderer.draw_geometry(frame.into_geometry());
+            }
         });
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use genie_render::scene::{Base, Paint};
+    use genie_render::scene::{Base, Hue, Paint};
     use iced::widget::container;
     use iced::{Element, Event, Point, Settings, mouse};
     use iced_test::{Simulator, selector, simulator};
@@ -251,7 +282,20 @@ mod tests {
     }
 
     #[test]
+    fn hue_paints_use_data_colors() {
+        assert_eq!(
+            color(Paint::Hue(Hue::Blue), &LIGHT, &LIGHT_DATA),
+            LIGHT_DATA.hues[0]
+        );
+        assert_eq!(
+            color(Paint::Hue(Hue::Purple), &DARK, &DARK_DATA),
+            DARK_DATA.hues[4]
+        );
+    }
+
+    #[test]
     fn chrome_paints_use_theme_tokens() {
+        assert_eq!(color(Paint::Text, &DARK, &DARK_DATA), DARK.text);
         assert_eq!(color(Paint::Muted, &LIGHT, &LIGHT_DATA), LIGHT.muted);
         assert_eq!(color(Paint::Line, &DARK, &DARK_DATA), DARK.line);
         assert_eq!(color(Paint::Accent, &DARK, &DARK_DATA), DARK.accent);

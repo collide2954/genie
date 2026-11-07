@@ -112,7 +112,7 @@ mod tests {
             .iter()
             .filter_map(|primitive| match primitive {
                 Primitive::Text { x, content, .. } => Some((*x, content.to_string())),
-                Primitive::Rect { .. } => None,
+                _ => None,
             })
             .collect()
     }

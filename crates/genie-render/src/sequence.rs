@@ -100,7 +100,7 @@ mod tests {
                 Primitive::Rect {
                     x, width, paint, ..
                 } => Some((*x, *width, *paint)),
-                Primitive::Text { .. } => None,
+                _ => None,
             })
             .collect()
     }
@@ -110,7 +110,7 @@ mod tests {
             .iter()
             .filter_map(|primitive| match primitive {
                 Primitive::Text { content, .. } => Some(content.to_string()),
-                Primitive::Rect { .. } => None,
+                _ => None,
             })
             .collect()
     }

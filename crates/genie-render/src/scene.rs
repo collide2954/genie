@@ -21,10 +21,22 @@ impl Base {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Hue {
+    #[default]
+    Blue,
+    Green,
+    Orange,
+    Vermillion,
+    Purple,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Base(Base),
     OnBase(Base),
+    Hue(Hue),
+    Text,
     Muted,
     Line,
     Accent,
@@ -61,5 +73,12 @@ pub enum Primitive {
         paint: Paint,
         font: Font,
         align: Align,
+    },
+    Chevron {
+        x: f32,
+        y: f32,
+        size: f32,
+        forward: bool,
+        paint: Paint,
     },
 }
