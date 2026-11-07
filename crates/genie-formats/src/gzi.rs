@@ -60,8 +60,12 @@ impl Index {
     }
 }
 
-pub fn load(path: &Path, cache: Option<&Path>) -> Result<Index, Error> {
-    sidecar::load(path, cache, Index::build)
+pub fn load(
+    path: &Path,
+    cache: Option<&Path>,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Index, Error> {
+    sidecar::load(path, cache, progress, Index::build)
 }
 
 impl Sidecar for Index {
@@ -91,9 +95,9 @@ mod tests {
         let path = scratch.file("ref.fa.gz", file(&[b"ab", b"cd"]));
         let cache = scratch.0.join("cache");
         let built = Index::build(Cursor::new(file(&[b"ab", b"cd"]))).unwrap();
-        assert_eq!(load(&path, Some(&cache)).unwrap(), built);
+        assert_eq!(load(&path, Some(&cache), &mut |_| {}).unwrap(), built);
         assert_eq!(cached(&cache).len(), 1);
-        assert_eq!(load(&path, Some(&cache)).unwrap(), built);
+        assert_eq!(load(&path, Some(&cache), &mut |_| {}).unwrap(), built);
         assert!(!scratch.0.join("ref.fa.gz.gzi").exists());
     }
 
@@ -102,7 +106,7 @@ mod tests {
         let scratch = Scratch::new("gzi-sidecar");
         let path = scratch.file("ref.fa.gz", file(&[b"ab", b"cd"]));
         scratch.file("ref.fa.gz.gzi", bytes(&[(7, 9)]));
-        assert_eq!(load(&path, None).unwrap(), index(&[(7, 9)]));
+        assert_eq!(load(&path, None, &mut |_| {}).unwrap(), index(&[(7, 9)]));
     }
 
     fn bytes(blocks: &[(u64, u64)]) -> Vec<u8> {

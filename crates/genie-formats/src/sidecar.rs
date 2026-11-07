@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use crate::Error;
@@ -16,10 +16,47 @@ pub trait Sidecar: Sized {
     fn save(&self, file: File) -> io::Result<()>;
 }
 
-pub fn load<T: Sidecar>(
+pub struct Counting<'a, R> {
+    inner: R,
+    read: u64,
+    total: u64,
+    percent: u64,
+    report: &'a mut dyn FnMut(f32),
+}
+
+impl<'a, R> Counting<'a, R> {
+    pub fn new(inner: R, total: u64, report: &'a mut dyn FnMut(f32)) -> Self {
+        Self {
+            inner,
+            read: 0,
+            total,
+            percent: 0,
+            report,
+        }
+    }
+}
+
+impl<R: Read> Read for Counting<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = self.inner.read(buffer)?;
+        self.read += count as u64;
+        let percent = (self.read * 100)
+            .checked_div(self.total)
+            .unwrap_or(100)
+            .min(100);
+        if percent > self.percent {
+            self.percent = percent;
+            (self.report)(percent as f32 / 100.0);
+        }
+        Ok(count)
+    }
+}
+
+pub fn load<'a, T: Sidecar>(
     data: &Path,
     cache: Option<&Path>,
-    build: impl FnOnce(BufReader<File>) -> Result<T, Error>,
+    progress: &'a mut dyn FnMut(f32),
+    build: impl FnOnce(BufReader<Counting<'a, File>>) -> Result<T, Error>,
 ) -> Result<T, Error> {
     let mut sidecar = data.as_os_str().to_owned();
     sidecar.push(".");
@@ -36,7 +73,10 @@ pub fn load<T: Sidecar>(
     if let Some(cached) = cached.as_deref().filter(|path| path.is_file()) {
         return T::parse(File::open(cached)?);
     }
-    let index = build(BufReader::with_capacity(SCAN_BUFFER, File::open(data)?))?;
+    let file = File::open(data)?;
+    let total = file.metadata()?.len();
+    let reader = Counting::new(file, total, progress);
+    let index = build(BufReader::with_capacity(SCAN_BUFFER, reader))?;
     if let Some(cached) = &cached {
         let _ = store(cached, &index);
     }
@@ -59,4 +99,23 @@ fn store<T: Sidecar>(path: &Path, index: &T) -> io::Result<()> {
     let partial = path.with_extension(format!("{}.partial", T::EXTENSION));
     index.save(File::create(&partial)?)?;
     fs::rename(partial, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use super::Counting;
+
+    #[test]
+    fn counting_reports_whole_percents() {
+        let mut shares = Vec::new();
+        let mut report = |share| shares.push(share);
+        let mut reader = Counting::new(&[0_u8; 1_000][..], 1_000, &mut report);
+        let mut buffer = [0; 7];
+        while reader.read(&mut buffer).unwrap() > 0 {}
+        assert!(shares.len() > 90, "{}", shares.len());
+        assert!(shares.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(shares.last(), Some(&1.0));
+    }
 }

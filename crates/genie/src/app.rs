@@ -843,7 +843,9 @@ impl Genie {
             self.status = Status::Opening(file_name(&path));
         }
         Task::perform(
-            async move { reference::open(path, paths::cache_dir().as_deref()).map(Arc::new) },
+            async move {
+                reference::open(path, paths::cache_dir().as_deref(), &mut |_| {}).map(Arc::new)
+            },
             Message::Opened,
         )
     }

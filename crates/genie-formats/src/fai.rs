@@ -15,8 +15,12 @@ pub struct FaiRecord {
     pub line_width: u64,
 }
 
-pub fn load(fasta: &Path, cache: Option<&Path>) -> Result<Vec<FaiRecord>, Error> {
-    sidecar::load(fasta, cache, |mut reader| {
+pub fn load(
+    fasta: &Path,
+    cache: Option<&Path>,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Vec<FaiRecord>, Error> {
+    sidecar::load(fasta, cache, progress, |mut reader| {
         if bgzf::sniff(reader.fill_buf()?) {
             build(Bgzf::new(reader))
         } else {
@@ -221,12 +225,25 @@ pub mod tests {
     }
 
     #[test]
+    fn building_reports_progress_and_reading_does_not() {
+        let scratch = Scratch::new("progress");
+        let fasta = scratch.file("ref.fa", format!(">a\n{}", "ACGTACGTAC\n".repeat(500)));
+        let mut shares = Vec::new();
+        load(&fasta, None, &mut |share| shares.push(share)).unwrap();
+        assert_eq!(shares.last(), Some(&1.0));
+        scratch.file("ref.fa.fai", "a\t5000\t3\t10\t11\n");
+        shares.clear();
+        load(&fasta, None, &mut |share| shares.push(share)).unwrap();
+        assert_eq!(shares, [] as [f32; 0]);
+    }
+
+    #[test]
     fn load_builds_an_index_for_bgzip_fasta() {
         let scratch = Scratch::new("bgzip");
         let fasta = scratch.file("ref.fa.gz", bgzf::tests::file(&[b">a\nAC", b"GT\nAC\n"]));
         let cache = scratch.0.join("cache");
         assert_eq!(
-            load(&fasta, Some(&cache)).unwrap(),
+            load(&fasta, Some(&cache), &mut |_| {}).unwrap(),
             [record("a", 6, 3, 4, 5)]
         );
         assert!(cached(&cache)[0].extension().is_some_and(|it| it == "fai"));
@@ -237,7 +254,7 @@ pub mod tests {
         let scratch = Scratch::new("sidecar");
         let fasta = scratch.file("ref.fa", ">a\nACGT\n");
         scratch.file("ref.fa.fai", "a\t4\t3\t4\t5\nb\t1\t9\t1\t2\n");
-        assert_eq!(load(&fasta, None).unwrap().len(), 2);
+        assert_eq!(load(&fasta, None, &mut |_| {}).unwrap().len(), 2);
     }
 
     #[test]
@@ -246,7 +263,7 @@ pub mod tests {
         let fasta = scratch.file("ref.fa", ">a\nACGT\nAC\n");
         let cache = scratch.0.join("cache");
         assert_eq!(
-            load(&fasta, Some(&cache)).unwrap(),
+            load(&fasta, Some(&cache), &mut |_| {}).unwrap(),
             [record("a", 6, 3, 4, 5)]
         );
         assert_eq!(cached(&cache).len(), 1);
@@ -258,9 +275,9 @@ pub mod tests {
         let scratch = Scratch::new("cached");
         let fasta = scratch.file("ref.fa", ">a\nACGT\nAC\n");
         let cache = scratch.0.join("cache");
-        load(&fasta, Some(&cache)).unwrap();
+        load(&fasta, Some(&cache), &mut |_| {}).unwrap();
         fs::write(&cached(&cache)[0], "a\t6\t3\t4\t5\nz\t1\t1\t1\t2\n").unwrap();
-        assert_eq!(load(&fasta, Some(&cache)).unwrap().len(), 2);
+        assert_eq!(load(&fasta, Some(&cache), &mut |_| {}).unwrap().len(), 2);
     }
 
     fn record(name: &str, length: u64, offset: u64, line_bases: u64, line_width: u64) -> FaiRecord {
