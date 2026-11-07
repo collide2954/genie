@@ -4,6 +4,7 @@ mod chrome;
 mod context;
 mod export;
 mod font;
+mod grip;
 mod icon;
 mod logger;
 mod menu;

@@ -16,13 +16,14 @@ use iced::widget::{
 };
 use iced::{
     Alignment, Border, Element, Length, Padding, Point, Size, Subscription, Task, Theme, keyboard,
-    system, window,
+    mouse, system, window,
 };
 
 use crate::card::{self, Card, Detail};
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
 use crate::export;
+use crate::grip::Grip;
 use crate::icon::{self, Icon};
 use crate::menu::{self, Place};
 use crate::motion::Transition;
@@ -44,6 +45,8 @@ const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
 const BASE_HEIGHT: f32 = 16.0;
 const EMPTY_HEIGHT: f32 = 20.0;
+const MIN_HEIGHT: f32 = 10.0;
+const EDGE: f32 = 4.0;
 const LABEL_SIZE: f32 = 10.0;
 const CAPTION_HEIGHT: f32 = 22.0;
 const CAPTION_SIZE: f32 = 11.0;
@@ -78,6 +81,7 @@ pub struct Genie {
     stats: Stats,
     menu: Option<(u64, Point)>,
     sequence_menu: Option<Point>,
+    resize: Option<(u64, f32)>,
     scroll: f32,
     window: Size,
     hover: Option<Card>,
@@ -109,6 +113,7 @@ impl Default for Genie {
             stats: Stats::default(),
             menu: None,
             sequence_menu: None,
+            resize: None,
             scroll: 0.0,
             window: chrome::WINDOW,
             hover: None,
@@ -281,6 +286,14 @@ pub enum Message {
     SequenceChanged(reading::Change),
     ToggleSettings,
     SettingChanged(Setting),
+    Lane(u64, Lane),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Lane {
+    Resized(f32),
+    Released,
+    Fit,
 }
 
 enum Opening {
@@ -398,6 +411,7 @@ impl Genie {
             }
             Message::SequenceChanged(change) => self.change_reading(change),
             Message::ToggleSettings => self.settings_open = !self.settings_open,
+            Message::Lane(id, lane) => self.lane(id, lane),
             Message::SettingChanged(setting) => {
                 self.settings = self.settings.apply(setting);
                 return self.save_settings();
@@ -529,6 +543,27 @@ impl Genie {
                 ..Padding::ZERO
             })
             .into()
+    }
+
+    fn lane(&mut self, id: u64, lane: Lane) {
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let Some(position) = session.tracks.iter().position(|track| track.id == id) else {
+            return;
+        };
+        match lane {
+            Lane::Resized(delta) => {
+                let from = match self.resize {
+                    Some((dragged, from)) if dragged == id => from,
+                    _ => body_height(session, &session.tracks[position]),
+                };
+                self.resize = Some((id, from));
+                session.tracks[position].height = Some((from + delta).max(MIN_HEIGHT));
+            }
+            Lane::Released => self.resize = None,
+            Lane::Fit => session.tracks[position].height = None,
+        }
     }
 
     fn close_menus(&mut self) {
@@ -1327,6 +1362,7 @@ fn track_view<'a>(
             .on_click(move |pointer| Message::TrackClicked(id, pointer))
     };
     let mode = track.mode(contig);
+    let shape = shape(session, track, repack);
     let body: Element<'a, Message> = if let Some(error) = &track.error {
         hint(error.clone())
     } else if viewport.visible().len() > track.source.span() {
@@ -1341,11 +1377,6 @@ fn track_view<'a>(
     } else {
         match track.data(contig).map(|data| &data.content) {
             Some(Content::Features(annotation)) => {
-                let rows = if mode == features::Mode::Collapsed {
-                    1
-                } else {
-                    annotation.count.max(1)
-                };
                 let primitives = features::scene(
                     viewport,
                     &annotation.features,
@@ -1353,7 +1384,7 @@ fn track_view<'a>(
                     mode,
                     track.hue,
                 );
-                interactive(primitives, rows as f32 * mode.row_height()).into()
+                interactive(primitives, shape.height).into()
             }
             Some(Content::Reads(pile)) => {
                 let depth = alignments::coverage(
@@ -1365,29 +1396,145 @@ fn track_view<'a>(
                 let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
                 if mode != features::Mode::Collapsed {
                     let packed;
-                    let (rows, count) = if repack {
-                        packed = pile.packed(viewport.visible());
-                        (packed.0.as_slice(), packed.1)
+                    let rows = if repack {
+                        packed = pile.packed(viewport.visible()).0;
+                        packed.as_slice()
                     } else {
-                        (pile.rows.as_slice(), pile.count)
+                        pile.rows.as_slice()
                     };
                     let primitives = alignments::reads(viewport, &pile.reads, rows, mode);
-                    let height = count.max(1) as f32 * alignments::row_height(mode);
-                    body = body.push(interactive(primitives, height));
+                    body = body.push(interactive(primitives, shape.height - shape.fixed));
                 }
                 body.into()
             }
             None => space().width(Length::Fill).height(EMPTY_HEIGHT).into(),
         }
     };
-    Context::new(
-        stack![
-            container(body).padding([padding, 0.0]),
-            label(&track.source.name)
-        ],
-        move |at| Message::TrackMenu(id, at),
+    let height = track.height.unwrap_or(shape.height);
+    let edge = Grip::new(
+        space().width(Length::Fill).height(EDGE),
+        move |delta| Message::Lane(id, Lane::Resized(delta)),
+        Message::Lane(id, Lane::Released),
     )
-    .into()
+    .on_double_click(Message::Lane(id, Lane::Fit))
+    .interaction(mouse::Interaction::ResizingVertically);
+    let mut layers = stack![
+        container(body)
+            .height(height + 2.0 * padding)
+            .padding([padding, 0.0])
+            .clip(true),
+        label(&track.source.name),
+        container(edge)
+            .height(Length::Fill)
+            .align_bottom(Length::Fill),
+    ];
+    let hidden = shape.hidden(height);
+    if hidden > 0 {
+        layers = layers.push(
+            container(note(hidden))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_right(Length::Fill)
+                .align_bottom(Length::Fill)
+                .padding([1, 4]),
+        );
+    }
+    container(Context::new(layers, move |at| Message::TrackMenu(id, at)))
+        .id(format!("lane-{id}"))
+        .into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Shape {
+    height: f32,
+    rows: usize,
+    fixed: f32,
+    row_height: f32,
+}
+
+impl Shape {
+    const fn plain(height: f32) -> Self {
+        Self {
+            height,
+            rows: 0,
+            fixed: height,
+            row_height: 0.0,
+        }
+    }
+
+    fn hidden(self, height: f32) -> usize {
+        if self.row_height <= 0.0 {
+            return 0;
+        }
+        let shown = ((height - self.fixed).max(0.0) / self.row_height).floor() as usize;
+        self.rows.saturating_sub(shown)
+    }
+}
+
+fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
+    let viewport = session.viewport;
+    if track.error.is_some() || viewport.visible().len() > track.source.span() {
+        return Shape::plain(EMPTY_HEIGHT);
+    }
+    let mode = track.mode(session.contig);
+    match track.data(session.contig).map(|data| &data.content) {
+        Some(Content::Features(annotation)) => {
+            let rows = if mode == features::Mode::Collapsed {
+                1
+            } else {
+                annotation.count.max(1)
+            };
+            let row_height = mode.row_height();
+            Shape {
+                height: rows as f32 * row_height,
+                rows,
+                fixed: 0.0,
+                row_height,
+            }
+        }
+        Some(Content::Reads(_)) if mode == features::Mode::Collapsed => {
+            Shape::plain(alignments::COVERAGE_HEIGHT)
+        }
+        Some(Content::Reads(pile)) => {
+            let count = if repack {
+                pile.packed(viewport.visible()).1
+            } else {
+                pile.count
+            }
+            .max(1);
+            let row_height = alignments::row_height(mode);
+            let fixed = alignments::COVERAGE_HEIGHT + 1.0;
+            Shape {
+                height: fixed + count as f32 * row_height,
+                rows: count,
+                fixed,
+                row_height,
+            }
+        }
+        None => Shape::plain(EMPTY_HEIGHT),
+    }
+}
+
+fn body_height(session: &Session, track: &Track) -> f32 {
+    track
+        .height
+        .unwrap_or_else(|| shape(session, track, false).height)
+}
+
+fn note<'a>(hidden: usize) -> Element<'a, Message> {
+    let words = if hidden == 1 {
+        "+1 row".to_owned()
+    } else {
+        format!("+{hidden} rows")
+    };
+    container(text(words).size(LABEL_SIZE).style(style::muted))
+        .padding([0, 4])
+        .style(|theme| container::Style {
+            background: Some(tokens(theme).canvas.scale_alpha(0.85).into()),
+            border: Border::default().rounded(3),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn ruler_view<'a>(viewport: Viewport) -> Element<'a, Message> {
@@ -1558,7 +1705,7 @@ mod tests {
 
     use iced::{Point, Size};
 
-    use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
+    use super::{DROP_HINT, Genie, Lane, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};
@@ -2167,6 +2314,55 @@ mod tests {
             Ok(Arc::new(Loaded::features(region, vec![feature]))),
         );
         genie
+    }
+
+    fn with_rows(count: usize) -> Genie {
+        let mut genie = with_track();
+        let region = Region::between(0, 1_000);
+        let features = (0..count)
+            .map(|index| {
+                Feature::new(
+                    format!("f{index}"),
+                    Region::between(10, 20),
+                    Strand::Forward,
+                )
+            })
+            .collect();
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.wanted = Some((0, region));
+        track.accept(0, region, Ok(Arc::new(Loaded::features(region, features))));
+        genie
+    }
+
+    fn first_height(genie: &Genie) -> Option<f32> {
+        genie.session.as_ref().unwrap().tracks[0].height
+    }
+
+    #[test]
+    fn dragging_the_edge_cuts_rows_and_double_clicks_fit_them() {
+        let mut genie = with_rows(3);
+        let _ = genie.update(Message::Lane(0, Lane::Resized(-25.0)));
+        let _ = genie.update(Message::Lane(0, Lane::Resized(-30.0)));
+        let _ = genie.update(Message::Lane(0, Lane::Released));
+        assert_eq!(first_height(&genie), Some(30.0));
+        assert!(shows(&genie, "+2 rows"));
+        let _ = genie.update(Message::Lane(0, Lane::Fit));
+        assert_eq!(first_height(&genie), None);
+        assert!(!shows(&genie, "+2 rows"));
+    }
+
+    #[test]
+    fn lanes_have_the_height_the_app_expects() {
+        for genie in [with_rows(3), with_reads()] {
+            let session = genie.session.as_ref().unwrap();
+            let expected = super::body_height(session, &session.tracks[0]) + 4.0;
+            let mut ui = simulator(genie.view());
+            let bounds = ui.find(selector::id("lane-0")).unwrap().bounds();
+            assert!(
+                (bounds.height - expected).abs() < 0.5,
+                "{bounds:?} {expected}"
+            );
+        }
     }
 
     fn over(x: f32, y: f32) -> Pointer {
