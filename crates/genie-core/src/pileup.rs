@@ -1,5 +1,5 @@
 use crate::Region;
-use crate::alignment::{Alignment, Op, Pairing, Parts};
+use crate::alignment::{Alignment, Gap, Op, Pairing, Parts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
@@ -138,11 +138,73 @@ fn bucket(base: u8) -> usize {
     }
 }
 
+fn key(read: &Read, position: u64) -> (u8, u8) {
+    let parts = &read.parts;
+    if let Some(mismatch) = parts
+        .mismatches
+        .iter()
+        .find(|mismatch| mismatch.position == position)
+    {
+        return (0, bucket(mismatch.base) as u8);
+    }
+    if parts
+        .gaps
+        .iter()
+        .any(|(gap, kind)| *kind == Gap::Deletion && gap.contains(position))
+    {
+        return (1, 0);
+    }
+    if parts.blocks.iter().any(|block| block.contains(position)) {
+        return (2, 0);
+    }
+    (3, 0)
+}
+
+pub fn sort_rows(reads: &[Read], rows: &[usize], position: u64) -> Vec<usize> {
+    let count = rows.iter().max().map_or(0, |row| row + 1);
+    let mut keys = vec![(3, 0); count];
+    for (read, &row) in reads.iter().zip(rows) {
+        if read.extent.contains(position) {
+            keys[row] = keys[row].min(key(read, position));
+        }
+    }
+    let mut order: Vec<usize> = (0..count).collect();
+    order.sort_by_key(|&row| keys[row]);
+    let mut placed = vec![0; count];
+    for (new, &old) in order.iter().enumerate() {
+        placed[old] = new;
+    }
+    rows.iter().map(|&row| placed[row]).collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Coverage, Read, downsample};
+    use super::{Coverage, Read, downsample, sort_rows};
     use crate::Region;
     use crate::alignment::{Alignment, Op};
+
+    #[test]
+    fn sorting_puts_mismatches_first_then_deletions_then_reference() {
+        let reference = [b'A'; 100];
+        let read = |start, cigar, bases: &[u8]| {
+            Read::new(self::read(start, cigar, bases), &reference, 0, false)
+        };
+        let reads = [
+            read(10, vec![(Op::Match, 10)], b"AAAAAAAAAA"),
+            read(10, vec![(Op::Match, 10)], b"AAAAAGAAAA"),
+            read(
+                10,
+                vec![(Op::Match, 4), (Op::Deletion, 2), (Op::Match, 4)],
+                b"AAAAAAAA",
+            ),
+            read(30, vec![(Op::Match, 10)], b"AAAAAAAAAA"),
+            read(12, vec![(Op::Match, 6)], b"AAACAA"),
+            read(40, vec![(Op::Match, 10)], b"AAAAAAAAAA"),
+        ];
+        let rows = [0, 1, 2, 3, 4, 3];
+        assert_eq!(sort_rows(&reads, &rows, 15), [3, 1, 2, 4, 0, 4]);
+        assert_eq!(sort_rows(&reads, &rows, 90), rows);
+    }
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
