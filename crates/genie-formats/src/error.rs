@@ -20,6 +20,8 @@ pub enum Reason {
     NotTwoBit,
     UnsupportedVersion,
     BadBlockCount,
+    NoSection,
+    BadLine,
 }
 
 impl fmt::Display for Error {
@@ -53,6 +55,8 @@ impl fmt::Display for Reason {
             Self::NotTwoBit => "the file is not a 2bit file",
             Self::UnsupportedVersion => "the 2bit version is not supported",
             Self::BadBlockCount => "a block count is larger than the sequence",
+            Self::NoSection => "the entry is outside a section",
+            Self::BadLine => "the line is not a section or an entry",
         })
     }
 }
