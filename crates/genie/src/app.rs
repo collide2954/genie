@@ -5,7 +5,7 @@ use genie_core::{Locus, Span, Viewport};
 use genie_render::{overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::time::Instant;
-use iced::widget::{button, center, column, container, operation, space, stack, text};
+use iced::widget::{button, center, column, container, operation, row, space, stack, text};
 use iced::{
     Alignment, Border, Element, Length, Subscription, Task, Theme, keyboard, system, window,
 };
@@ -14,6 +14,7 @@ use crate::chrome::{self, Controls, LocusField};
 use crate::icon::Icon;
 use crate::motion::Transition;
 use crate::navigator::Navigator;
+use crate::recent::Recent;
 use crate::reference::{self, Reference};
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
@@ -38,6 +39,7 @@ pub struct Genie {
     generation: u64,
     draft: Option<String>,
     locus_error: Option<String>,
+    recent: Recent,
 }
 
 impl Default for Genie {
@@ -52,6 +54,7 @@ impl Default for Genie {
             generation: 0,
             draft: None,
             locus_error: None,
+            recent: Recent::default(),
         }
     }
 }
@@ -145,8 +148,14 @@ pub enum Message {
 
 impl Genie {
     fn boot() -> (Self, Task<Message>) {
+        let recent = paths::config_dir()
+            .map(|folder| Recent::load(&folder))
+            .unwrap_or_default();
         (
-            Self::default(),
+            Self {
+                recent,
+                ..Self::default()
+            },
             system::theme().map(Message::SystemModeChanged),
         )
     }
@@ -169,8 +178,9 @@ impl Genie {
                 self.status = Status::Idle;
                 self.generation += 1;
                 self.tiles.clear();
+                self.recent.add(reference.path.clone());
                 self.session = Some(Session::new(reference, self.width));
-                return self.fetch();
+                return Task::batch([self.fetch(), self.remember()]);
             }
             Message::Opened(Err(error)) => self.status = Status::Failed(error),
             Message::Pan(dx) => {
@@ -356,19 +366,53 @@ impl Genie {
         }
         let message = match &self.status {
             Status::Idle => text("Open a reference sequence to start.").style(style::muted),
-            Status::Opening(name) => text(format!("Opening {name}â€¦")).style(style::muted),
+            Status::Opening(name) => text(format!("Opening {name}…")).style(style::muted),
             Status::Failed(error) => text(error.as_str()),
         };
         let open = button(text("Open reference").font(font::UI_STRONG).size(13))
             .padding([8, 16])
             .style(style::primary)
             .on_press(Message::Open);
-        center(
-            column![message, open]
-                .spacing(16)
-                .align_x(Alignment::Center),
-        )
-        .into()
+        let mut welcome = column![message, open]
+            .spacing(16)
+            .align_x(Alignment::Center);
+        if !self.recent.paths().is_empty() {
+            let files = self.recent.paths().iter().map(|path| {
+                let folder = path
+                    .parent()
+                    .map(|parent| parent.display().to_string())
+                    .unwrap_or_default();
+                button(
+                    row![
+                        text(file_name(path)).size(12),
+                        text(folder).size(11).style(style::muted)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([3, 8])
+                .style(style::ghost)
+                .on_press(Message::Picked(Some(path.clone())))
+                .into()
+            });
+            welcome = welcome.push(
+                column![text("Recent").size(11).style(style::muted)]
+                    .extend(files)
+                    .spacing(2),
+            );
+        }
+        center(welcome).into()
+    }
+
+    fn remember(&self) -> Task<Message> {
+        let Some(folder) = paths::config_dir() else {
+            return Task::none();
+        };
+        let recent = self.recent.clone();
+        Task::future(async move {
+            let _ = recent.save(&folder);
+        })
+        .discard()
     }
 
     fn browser(&self, session: &Session) -> Element<'_, Message> {
@@ -772,6 +816,45 @@ mod tests {
         let _ = genie.update(Message::OverviewReleased);
         let _ = genie.update(Message::OverviewDragged(0.9));
         assert!(shows(&genie, "chr1:1-250"));
+    }
+
+    fn with_recent(paths: &[&str]) -> Genie {
+        let mut genie = Genie::default();
+        for path in paths.iter().rev() {
+            genie.recent.add(PathBuf::from(path));
+        }
+        genie
+    }
+
+    #[test]
+    fn welcome_lists_recent_files() {
+        let genie = with_recent(&["/data/hg38.2bit", "/data/demo.fa"]);
+        let mut ui = simulator(genie.view());
+        assert!(ui.find("hg38.2bit").is_ok());
+        assert!(ui.find("demo.fa").is_ok());
+    }
+
+    #[test]
+    fn clicking_a_recent_file_opens_it() {
+        let genie = with_recent(&["/data/hg38.2bit"]);
+        let mut ui = simulator(genie.view());
+        ui.click("hg38.2bit").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Picked(Some(PathBuf::from("/data/hg38.2bit")))]
+        );
+    }
+
+    #[test]
+    fn picking_a_file_shows_that_it_is_opening() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Picked(Some(PathBuf::from("/data/ref.fa"))));
+        assert!(shows(&genie, "Opening ref.fa…"));
+    }
+
+    #[test]
+    fn opening_a_reference_remembers_it() {
+        assert_eq!(opened().recent.paths(), [PathBuf::from("ref.fa")]);
     }
 
     #[test]

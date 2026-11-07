@@ -5,6 +5,7 @@ mod icon;
 mod motion;
 mod navigator;
 mod paths;
+mod recent;
 mod reference;
 mod scene;
 mod shortcuts;

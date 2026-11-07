@@ -4,19 +4,37 @@ use std::path::PathBuf;
 
 const APP: &str = "genie";
 
-pub fn cache_dir() -> Option<PathBuf> {
-    cache_dir_for(env::consts::OS, |key: &str| env::var_os(key))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Cache,
+    Config,
 }
 
-fn cache_dir_for(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+pub fn cache_dir() -> Option<PathBuf> {
+    folder(Kind::Cache, env::consts::OS, |key: &str| env::var_os(key))
+}
+
+pub fn config_dir() -> Option<PathBuf> {
+    folder(Kind::Config, env::consts::OS, |key: &str| env::var_os(key))
+}
+
+fn folder(kind: Kind, os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let home = || var("HOME").map(PathBuf::from);
-    let base = match os {
-        "windows" => PathBuf::from(var("LOCALAPPDATA")?),
-        "macos" => home()?.join("Library").join("Caches"),
-        _ => var("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.has_root())
-            .or_else(|| Some(home()?.join(".cache")))?,
+    let base = match (os, kind) {
+        ("windows", Kind::Cache) => PathBuf::from(var("LOCALAPPDATA")?),
+        ("windows", Kind::Config) => PathBuf::from(var("APPDATA")?),
+        ("macos", Kind::Cache) => home()?.join("Library").join("Caches"),
+        ("macos", Kind::Config) => home()?.join("Library").join("Application Support"),
+        (_, kind) => {
+            let (variable, fallback) = match kind {
+                Kind::Cache => ("XDG_CACHE_HOME", ".cache"),
+                Kind::Config => ("XDG_CONFIG_HOME", ".config"),
+            };
+            var(variable)
+                .map(PathBuf::from)
+                .filter(|path| path.has_root())
+                .or_else(|| Some(home()?.join(fallback)))?
+        }
     };
     Some(base.join(APP))
 }
@@ -26,7 +44,37 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::cache_dir_for;
+    use super::{Kind, folder};
+
+    fn cache_dir_for(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+        folder(Kind::Cache, os, var)
+    }
+
+    #[test]
+    fn config_follows_each_platform() {
+        let windows = folder(
+            Kind::Config,
+            "windows",
+            lookup(&[("APPDATA", "C:/Users/a/AppData/Roaming")]),
+        );
+        assert_eq!(
+            windows,
+            Some(PathBuf::from("C:/Users/a/AppData/Roaming").join("genie"))
+        );
+        let macos = folder(Kind::Config, "macos", lookup(&[("HOME", "/Users/a")]));
+        assert_eq!(
+            macos,
+            Some(PathBuf::from("/Users/a/Library/Application Support/genie"))
+        );
+        let xdg = folder(
+            Kind::Config,
+            "linux",
+            lookup(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/home/a")]),
+        );
+        assert_eq!(xdg, Some(PathBuf::from("/x/genie")));
+        let home = folder(Kind::Config, "linux", lookup(&[("HOME", "/home/a")]));
+        assert_eq!(home, Some(PathBuf::from("/home/a/.config/genie")));
+    }
 
     fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
         let pairs: Vec<(String, String)> = pairs
