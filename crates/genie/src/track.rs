@@ -85,6 +85,25 @@ pub struct Pile {
 }
 
 impl Pile {
+    pub fn packed(&self, visible: Region) -> (Vec<usize>, usize) {
+        let shown: Vec<usize> = (0..self.reads.len())
+            .filter(|&index| {
+                let span = self.reads[index].alignment.span();
+                span.start() <= visible.end() && span.end() >= visible.start()
+            })
+            .collect();
+        let packed = rows::pack(
+            &shown,
+            |&index| self.reads[index].alignment.span(),
+            READ_GAP,
+        );
+        let mut rows = vec![0; self.reads.len()];
+        for (&index, &row) in shown.iter().zip(&packed) {
+            rows[index] = row;
+        }
+        (rows, count(&packed))
+    }
+
     pub fn base(&self, position: u64) -> Option<u8> {
         let index = usize::try_from(position.checked_sub(self.offset)?).ok()?;
         self.reference.get(index).copied()
@@ -388,7 +407,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::alignment::{DUPLICATE, QC_FAIL, SECONDARY};
+    use genie_core::alignment::{Alignment, DUPLICATE, Op, QC_FAIL, SECONDARY};
     use genie_core::{Assembly, Contig, Feature, Region, Strand};
     use genie_formats::features::Kind;
     use genie_formats::tabix;
@@ -534,6 +553,37 @@ mod tests {
                 .iter()
                 .all(|read| !read.alignment.has(DUPLICATE | QC_FAIL | SECONDARY))
         );
+    }
+
+    #[test]
+    fn packing_for_a_view_skips_reads_outside_it() {
+        let alignments = [0, 50, 500, 510, 520]
+            .map(|start| Alignment {
+                name: format!("read{start}"),
+                start,
+                flags: 0,
+                mapq: 60,
+                cigar: vec![(Op::Match, 100)],
+                bases: vec![b'A'; 100],
+                qualities: Vec::new(),
+            })
+            .to_vec();
+        let loaded = Loaded::reads(region(0, 1_000), alignments, vec![b'A'; 1_000], 0);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert_eq!(pile.count, 3);
+        let (rows, count) = pile.packed(region(0, 200));
+        assert_eq!(count, 2);
+        let mut shown: Vec<usize> = pile
+            .reads
+            .iter()
+            .zip(&rows)
+            .filter(|(read, _)| read.alignment.start < 200)
+            .map(|(_, row)| *row)
+            .collect();
+        shown.sort_unstable();
+        assert_eq!(shown, [0, 1]);
     }
 
     #[test]

@@ -927,7 +927,7 @@ impl Genie {
         .discard()
     }
 
-    fn tracks<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+    fn tracks<'a>(&'a self, session: &'a Session, repack: bool) -> Element<'a, Message> {
         let viewport = session.viewport;
         let bases = sequence::scene(
             viewport,
@@ -940,7 +940,9 @@ impl Genie {
         ];
         let mut data = column![container(sequence).id("sequence"), hairline()];
         for track in &session.tracks {
-            data = data.push(track_view(session, track)).push(hairline());
+            data = data
+                .push(track_view(session, track, repack))
+                .push(hairline());
         }
         data.into()
     }
@@ -957,7 +959,7 @@ impl Genie {
             .id("overview"),
             ruler_view(viewport),
             hairline(),
-            scrollable(self.tracks(session))
+            scrollable(self.tracks(session, false))
                 .direction(Direction::Vertical(
                     Scrollbar::new().width(6).scroller_width(6).margin(0)
                 ))
@@ -994,7 +996,7 @@ impl Genie {
             hairline(),
             ruler_view(session.viewport),
             hairline(),
-            self.tracks(session)
+            self.tracks(session, true)
         ]
         .into()
     }
@@ -1050,7 +1052,7 @@ impl Genie {
     }
 }
 
-fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
+fn track_view<'a>(session: &Session, track: &'a Track, repack: bool) -> Element<'a, Message> {
     let viewport = session.viewport;
     let contig = session.contig;
     let id = track.id;
@@ -1097,8 +1099,15 @@ fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
                 );
                 let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
                 if mode != features::Mode::Collapsed {
-                    let primitives = alignments::reads(viewport, &pile.reads, &pile.rows, mode);
-                    let height = pile.count.max(1) as f32 * alignments::row_height(mode);
+                    let packed;
+                    let (rows, count) = if repack {
+                        packed = pile.packed(viewport.visible());
+                        (packed.0.as_slice(), packed.1)
+                    } else {
+                        (pile.rows.as_slice(), pile.count)
+                    };
+                    let primitives = alignments::reads(viewport, &pile.reads, rows, mode);
+                    let height = count.max(1) as f32 * alignments::row_height(mode);
                     body = body.push(interactive(primitives, height));
                 }
                 body.into()
@@ -1861,8 +1870,19 @@ mod tests {
         assert!(genie.hover.is_none());
     }
 
-    fn with_reads() -> Genie {
-        let mut genie = opened();
+    fn read(name: &str, start: u64) -> genie_core::alignment::Alignment {
+        genie_core::alignment::Alignment {
+            name: name.to_owned(),
+            start,
+            flags: 0,
+            mapq: 60,
+            cigar: vec![(genie_core::alignment::Op::Match, 40)],
+            bases: vec![b'A'; 40],
+            qualities: Vec::new(),
+        }
+    }
+
+    fn add_reads(genie: &mut Genie, reads: Vec<genie_core::alignment::Alignment>) {
         let source = Arc::new(Source {
             path: PathBuf::from("/data/reads.bam"),
             name: "reads.bam".to_owned(),
@@ -1873,20 +1893,32 @@ mod tests {
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let region = Region::between(0, 1_000);
-        let read = genie_core::alignment::Alignment {
-            name: "read7".to_owned(),
-            start: 10,
-            flags: 0,
-            mapq: 60,
-            cigar: vec![(genie_core::alignment::Op::Match, 40)],
-            bases: vec![b'A'; 40],
-            qualities: Vec::new(),
-        };
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.wanted = Some((0, region));
-        let loaded = Loaded::reads(region, vec![read], vec![b'A'; 1_000], 0);
+        let loaded = Loaded::reads(region, reads, vec![b'A'; 1_000], 0);
         track.accept(0, region, Ok(Arc::new(loaded)));
+    }
+
+    fn with_reads() -> Genie {
+        let mut genie = opened();
+        add_reads(&mut genie, vec![read("read7", 10)]);
         genie
+    }
+
+    #[test]
+    fn exports_pack_only_the_reads_in_view() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:1-100");
+        settle(&mut genie);
+        let reads = [10, 500, 510, 520]
+            .map(|start| read("read", start))
+            .to_vec();
+        add_reads(&mut genie, reads);
+        let session = genie.session.as_ref().unwrap();
+        let theme = genie.theme();
+        let live = export::render(genie.tracks(session, false), genie.width, &theme).unwrap();
+        let packed = export::render(genie.tracks(session, true), genie.width, &theme).unwrap();
+        assert_eq!(live.height - packed.height, 2 * 2 * 10);
     }
 
     #[test]
