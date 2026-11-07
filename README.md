@@ -17,7 +17,7 @@ cargo run -p genie
 | Kind | Formats |
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
-| Feature track | BED and GFF3: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
+| Feature track | BED, GFF3 and GTF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix; bigBed (`.bb`) |
 | Alignment track | BAM, sorted by position and indexed with samtools |
 | Variant track | VCF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix. genie does not read BCF. |
 | Signal track | bigWig (`.bw`); bedGraph: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
@@ -37,7 +37,13 @@ To prepare a large BED track:
 sort -k1,1 -k2,2n genes.bed | bgzip > genes.bed.gz && tabix -p bed genes.bed.gz
 ```
 
-For GFF3, sort by columns 1 and 4 and use `tabix -p gff`.
+For GFF3 and GTF, sort by columns 1 and 4 and use `tabix -p gff`:
+
+```bash
+sort -k1,1 -k4,4n genes.gtf | bgzip > genes.gtf.gz && tabix -p gff genes.gtf.gz
+```
+
+genie shows bigBed features when the view is 10 Mb or less. Wider views show the feature density from the zoom levels of the file.
 
 To prepare a BAM track:
 
@@ -66,7 +72,8 @@ genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows
 ## Tracks
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
-- Type a feature name or a variant ID in the locus box to go to it. genie finds variant IDs in VCF files up to 50 MB.
+- Type a feature name or a variant ID in the locus box to go to it. genie finds variant IDs in VCF files up to 50 MB. It also finds names in bigBed files that have a name index (`bedToBigBed -extraIndex=name`), and in other bigBed files up to 50 MB.
+- BED and bigBed features use the colors of the file (itemRgb). Right-click the track and turn off "Use file colors" to use the track color.
 - In a variant track, the color of a site shows the change: the color of the new base for an SNV, purple for an insertion and dark grey for a deletion. A site that does not pass FILTER has a light color.
 - Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin.
 - A signal track has a bar for each pixel. The bar goes to the mean value, and a light color goes to the maximum value. Values below zero go down from a zero line. The range of the values in view is at the top right.
