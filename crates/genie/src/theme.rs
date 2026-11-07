@@ -47,31 +47,31 @@ pub struct Tokens {
 }
 
 pub const LIGHT: Tokens = Tokens {
-    canvas: color!(0xEEF2F6),
+    canvas: color!(0xF8F8F8),
     surface: color!(0xFFFFFF),
-    bar: color!(0xF8FAFC),
-    line: color!(0xDCE3EA),
-    text: color!(0x0F172A),
-    muted: color!(0x5B6B7E),
+    bar: color!(0xF8F8F8),
+    line: color!(0xE5E5E5),
+    text: color!(0x2B2B2B),
+    muted: color!(0x6E6E6E),
     accent: color!(0x0F766E),
     accent_soft: color!(0x0F766E, 0.14),
     on_accent: color!(0xFFFFFF),
-    field: color!(0xF1F5F9),
+    field: color!(0xFFFFFF),
     danger: color!(0xB42318),
 };
 
 pub const DARK: Tokens = Tokens {
-    canvas: color!(0x0A111C),
-    surface: color!(0x121B29),
-    bar: color!(0x0F1723),
-    line: color!(0x223044),
-    text: color!(0xE2E8F0),
-    muted: color!(0x8FA0B5),
-    accent: color!(0x2DD4BF),
-    accent_soft: color!(0x2DD4BF, 0.16),
+    canvas: color!(0x181818),
+    surface: color!(0x1F1F1F),
+    bar: color!(0x181818),
+    line: color!(0x2B2B2B),
+    text: color!(0xCCCCCC),
+    muted: color!(0x9D9D9D),
+    accent: color!(0x2AA198),
+    accent_soft: color!(0x2AA198, 0.16),
     on_accent: color!(0x04211D),
-    field: color!(0x0B131E),
-    danger: color!(0xF97066),
+    field: color!(0x313131),
+    danger: color!(0xF85149),
 };
 
 pub const CLOSE: Color = color!(0xC42B1C);
@@ -124,6 +124,26 @@ mod tests {
     fn tokens_follow_the_theme() {
         assert_eq!(tokens(&light()).canvas, LIGHT.canvas);
         assert_eq!(tokens(&dark()).canvas, DARK.canvas);
+    }
+
+    #[test]
+    fn surfaces_and_text_are_neutral_grey() {
+        for tokens in [LIGHT, DARK] {
+            for color in [
+                tokens.canvas,
+                tokens.surface,
+                tokens.bar,
+                tokens.line,
+                tokens.field,
+                tokens.text,
+                tokens.muted,
+            ] {
+                assert!(
+                    (color.r - color.g).abs() < 1e-6 && (color.g - color.b).abs() < 1e-6,
+                    "{color:?} is tinted"
+                );
+            }
+        }
     }
 
     #[test]
