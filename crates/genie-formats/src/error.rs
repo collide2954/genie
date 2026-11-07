@@ -4,6 +4,7 @@ use std::{fmt, io};
 pub enum Error {
     Io(io::Error),
     Format { line: u64, reason: Reason },
+    Invalid(Reason),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,9 @@ pub enum Reason {
     EmptyName,
     UnevenLines,
     BlankLine,
+    NotTwoBit,
+    UnsupportedVersion,
+    BadBlockCount,
 }
 
 impl fmt::Display for Error {
@@ -23,6 +27,14 @@ impl fmt::Display for Error {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::Format { line, reason } => write!(f, "Line {line}: {reason}."),
+            Self::Invalid(reason) => {
+                let reason = reason.to_string();
+                let mut letters = reason.chars();
+                match letters.next() {
+                    Some(first) => write!(f, "{}{}.", first.to_uppercase(), letters.as_str()),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -38,6 +50,9 @@ impl fmt::Display for Reason {
             Self::EmptyName => "the header has no name",
             Self::UnevenLines => "the line length is not the same as the first line",
             Self::BlankLine => "a blank line is in the sequence",
+            Self::NotTwoBit => "the file is not a 2bit file",
+            Self::UnsupportedVersion => "the 2bit version is not supported",
+            Self::BadBlockCount => "a block count is larger than the sequence",
         })
     }
 }
@@ -46,7 +61,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::Format { .. } => None,
+            Self::Format { .. } | Self::Invalid(_) => None,
         }
     }
 }
