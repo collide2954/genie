@@ -15,6 +15,7 @@ pub mod png;
 mod sidecar;
 pub mod tabix;
 pub mod table;
+mod text;
 pub mod twobit;
 pub mod vcf;
 
