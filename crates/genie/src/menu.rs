@@ -11,7 +11,7 @@ use crate::track::{Change, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
-const READS_HEIGHT: f32 = 235.0;
+const READS_HEIGHT: f32 = 257.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
 const SIGNAL_HEIGHT: f32 = 200.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
@@ -112,6 +112,12 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .extend(TOGGLES.map(|(label, toggle)| {
                 item(label, Change::Toggle(toggle), options.is_on(toggle), true)
             }))
+            .push(item(
+                "Color unusual pairs",
+                Change::Pairs,
+                track.plot.pairs,
+                true,
+            ))
             .push(separator());
     } else if !track.source.has_variants() {
         content = content

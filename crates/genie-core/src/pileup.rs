@@ -1,11 +1,12 @@
 use crate::Region;
-use crate::alignment::{Alignment, Op, Parts};
+use crate::alignment::{Alignment, Op, Pairing, Parts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
     pub alignment: Alignment,
     pub parts: Parts,
     pub extent: Region,
+    pub pairing: Pairing,
 }
 
 impl Read {
@@ -23,6 +24,7 @@ impl Read {
             alignment,
             parts,
             extent,
+            pairing: Pairing::Normal,
         }
     }
 }

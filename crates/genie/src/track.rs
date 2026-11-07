@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, DUPLICATE, Filter};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter, expected_inserts};
 use genie_core::pileup::{Coverage, Read, downsample};
 use genie_core::signal::{self, Summary};
 use genie_core::variant::Variant;
@@ -160,10 +160,21 @@ impl Default for Options {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Plot {
     pub style: Style,
     pub linked: bool,
+    pub pairs: bool,
+}
+
+impl Default for Plot {
+    fn default() -> Self {
+        Self {
+            style: Style::default(),
+            linked: false,
+            pairs: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,6 +277,7 @@ impl Loaded {
 
     pub fn reads(
         region: Region,
+        contig: usize,
         alignments: Vec<Alignment>,
         reference: Vec<u8>,
         offset: u64,
@@ -275,6 +287,7 @@ impl Loaded {
         for alignment in &alignments {
             coverage.add(alignment);
         }
+        let range = expected_inserts(alignments.iter(), contig);
         let alignments = if options.downsample {
             downsample(alignments, WINDOW, DEPTH)
         } else {
@@ -282,7 +295,11 @@ impl Loaded {
         };
         let reads: Vec<Read> = alignments
             .into_iter()
-            .map(|alignment| Read::new(alignment, &reference, offset, options.clips))
+            .map(|alignment| {
+                let mut read = Read::new(alignment, &reference, offset, options.clips);
+                read.pairing = read.alignment.pairing(contig, range);
+                read
+            })
             .collect();
         let rows = rows::pack(&reads, |read| read.extent, READ_GAP);
         let count = count(&rows);
@@ -431,6 +448,7 @@ pub enum Change {
     Toggle(Toggle),
     Style(Style),
     Link,
+    Pairs,
     Up,
     Down,
     Remove,
@@ -447,6 +465,10 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Link => {
             let plot = &mut tracks[position].plot;
             plot.linked = !plot.linked;
+        }
+        Change::Pairs => {
+            let plot = &mut tracks[position].plot;
+            plot.pairs = !plot.pairs;
         }
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
@@ -724,6 +746,7 @@ pub fn load(
             let bases = reference(window)?;
             Ok(Loaded::reads(
                 region,
+                id,
                 alignments,
                 bases,
                 window.start(),
@@ -766,7 +789,9 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::alignment::{Alignment, DUPLICATE, Op, QC_FAIL, SECONDARY};
+    use genie_core::alignment::{
+        Alignment, DUPLICATE, MATE_REVERSE, Mate, Op, PAIRED, PROPER, Pairing, QC_FAIL, SECONDARY,
+    };
     use genie_core::{Assembly, Contig, Feature, Names, Region, Strand};
     use genie_formats::features::Kind;
     use genie_formats::tabix;
@@ -849,11 +874,61 @@ mod tests {
             tracks[1].plot,
             Plot {
                 style: Style::Line,
-                linked: true
+                linked: true,
+                pairs: true,
             }
         );
         change(&mut tracks, 1, Change::Link);
         assert!(!tracks[1].plot.linked);
+    }
+
+    #[test]
+    fn changes_toggle_the_pair_colors() {
+        let mut tracks = three();
+        assert!(tracks[1].plot.pairs);
+        tracks[1].wanted = Some((0, region(0, 10)));
+        change(&mut tracks, 1, Change::Pairs);
+        assert!(!tracks[1].plot.pairs);
+        assert_eq!(tracks[1].wanted, Some((0, region(0, 10))));
+    }
+
+    #[test]
+    fn loaded_reads_mark_unusual_pairs() {
+        let pair = |start: u64, contig: usize, mate: u64, insert: i64| Alignment {
+            flags: PAIRED | PROPER | MATE_REVERSE,
+            mate: Some(Mate {
+                contig,
+                start: mate,
+                insert,
+            }),
+            ..alignment(start, vec![(Op::Match, 10)])
+        };
+        let mut alignments: Vec<Alignment> = (0..150)
+            .map(|index| pair(index, 0, index + 300, 300 + index.cast_signed() % 50))
+            .collect();
+        alignments.push(Alignment {
+            flags: PAIRED | MATE_REVERSE,
+            ..pair(160, 0, 9_000, 8_850)
+        });
+        alignments.push(pair(170, 1, 500, 0));
+        let options = Options {
+            downsample: false,
+            ..Options::default()
+        };
+        let loaded = Loaded::reads(
+            region(0, 1_000),
+            0,
+            alignments,
+            vec![b'A'; 1_000],
+            0,
+            options,
+        );
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let classes: Vec<Pairing> = pile.reads[150..].iter().map(|read| read.pairing).collect();
+        assert_eq!(classes, [Pairing::Large, Pairing::Elsewhere]);
+        assert_eq!(pile.reads[0].pairing, Pairing::Normal);
     }
 
     #[test]
@@ -1205,7 +1280,8 @@ mod tests {
             .map(|index| alignment(10 + index % 10, vec![(Op::SoftClip, 2), (Op::Match, 10)]))
             .collect();
         let pile = |options| {
-            let loaded = Loaded::reads(region(0, 100), deep.clone(), vec![b'A'; 100], 0, options);
+            let loaded =
+                Loaded::reads(region(0, 100), 0, deep.clone(), vec![b'A'; 100], 0, options);
             let Content::Reads(pile) = loaded.content else {
                 panic!("expected reads");
             };
@@ -1252,7 +1328,14 @@ mod tests {
             .map(|start| alignment(start, vec![(Op::Match, 100)]))
             .to_vec();
         let options = Options::default();
-        let loaded = Loaded::reads(region(0, 1_000), alignments, vec![b'A'; 1_000], 0, options);
+        let loaded = Loaded::reads(
+            region(0, 1_000),
+            0,
+            alignments,
+            vec![b'A'; 1_000],
+            0,
+            options,
+        );
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };

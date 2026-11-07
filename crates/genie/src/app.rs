@@ -1694,7 +1694,8 @@ fn track_body<'a>(
                 } else {
                     pile.rows.as_slice()
                 };
-                let primitives = alignments::reads(viewport, &pile.reads, rows, mode);
+                let pairs = track.plot.pairs;
+                let primitives = alignments::reads(viewport, &pile.reads, rows, mode, pairs);
                 body = body.push(interactive(primitives, shape.height - shape.fixed));
             }
             body.into()
@@ -2968,7 +2969,7 @@ mod tests {
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.wanted = Some((0, region));
-        let loaded = Loaded::reads(region, reads, vec![b'A'; 1_000], 0, Options::default());
+        let loaded = Loaded::reads(region, 0, reads, vec![b'A'; 1_000], 0, Options::default());
         track.accept(0, region, Ok(Arc::new(loaded)));
     }
 
@@ -3045,6 +3046,15 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn read_menus_turn_pair_colors_off_and_on() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Color unusual pairs"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Pairs));
+        assert!(!genie.session.as_ref().unwrap().tracks[0].plot.pairs);
     }
 
     #[test]

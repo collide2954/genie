@@ -67,6 +67,7 @@ pub enum Paint {
     Faded(Base),
     Hue(Hue),
     Tint(Hue),
+    Pair(Hue),
     Strand(Strand),
     Coverage,
     Insertion,

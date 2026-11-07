@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
-use genie_core::alignment::Gap;
+use genie_core::alignment::{Gap, Pairing};
 use genie_core::pileup::{Coverage, Read};
 use genie_core::{Region, Viewport};
 
 use crate::features::Mode;
-use crate::scene::{Align, Base, Font, Paint, Primitive};
+use crate::scene::{Align, Base, Font, Hue, Paint, Primitive};
 
 pub const COVERAGE_HEIGHT: f32 = 36.0;
 pub const LIMIT: usize = 100;
@@ -131,7 +131,24 @@ pub fn coverage(
     primitives
 }
 
-pub fn reads(viewport: Viewport, reads: &[Read], rows: &[usize], mode: Mode) -> Vec<Primitive> {
+fn pair_hue(pairing: Pairing) -> Option<Hue> {
+    match pairing {
+        Pairing::Normal => None,
+        Pairing::Large => Some(Hue::Vermillion),
+        Pairing::Small => Some(Hue::Blue),
+        Pairing::SameStrand => Some(Hue::Green),
+        Pairing::Outward => Some(Hue::Purple),
+        Pairing::Elsewhere => Some(Hue::Orange),
+    }
+}
+
+pub fn reads(
+    viewport: Viewport,
+    reads: &[Read],
+    rows: &[usize],
+    mode: Mode,
+    pairs: bool,
+) -> Vec<Primitive> {
     let (row_height, offset, size) = shape(mode);
     let visible = viewport.visible();
     let width = viewport.width() as f32;
@@ -158,7 +175,9 @@ pub fn reads(viewport: Viewport, reads: &[Read], rows: &[usize], mode: Mode) -> 
             continue;
         }
         let top = row as f32 * row_height + offset;
-        let tint = Paint::Strand(read.alignment.strand());
+        let tint = pair_hue(read.pairing)
+            .filter(|_| pairs)
+            .map_or(Paint::Strand(read.alignment.strand()), Paint::Pair);
         for block in &read.parts.blocks {
             primitives.push(bar(*block, top, size, tint));
         }
@@ -260,13 +279,13 @@ fn bucket(base: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use genie_core::alignment::{Alignment, Op, REVERSE};
+    use genie_core::alignment::{Alignment, Op, Pairing, REVERSE};
     use genie_core::pileup::{Coverage, Read};
     use genie_core::{Region, Strand, Viewport};
 
     use super::{LIMIT, coverage, fit, hit, reads};
     use crate::features::Mode;
-    use crate::scene::{Base, Paint, Primitive};
+    use crate::scene::{Base, Hue, Paint, Primitive};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -380,10 +399,52 @@ mod tests {
     }
 
     #[test]
+    fn unusual_pairs_take_their_color() {
+        let mut shown: Vec<Read> = [Pairing::Large, Pairing::Small, Pairing::SameStrand]
+            .into_iter()
+            .chain([Pairing::Outward, Pairing::Elsewhere, Pairing::Normal])
+            .enumerate()
+            .map(|(index, pairing)| {
+                let mut read = read(index as u64 * 15, 0, vec![(Op::Match, 10)], &[b'A'; 10]);
+                read.pairing = pairing;
+                read
+            })
+            .collect();
+        shown[5].alignment.flags = REVERSE;
+        let rows = [0; 6];
+        let paints = |pairs| -> Vec<Paint> {
+            rects(&reads(view(0, 100), &shown, &rows, Mode::Expanded, pairs))
+                .into_iter()
+                .map(|(_, paint)| paint)
+                .collect()
+        };
+        assert_eq!(
+            paints(true),
+            [
+                Paint::Pair(Hue::Vermillion),
+                Paint::Pair(Hue::Blue),
+                Paint::Pair(Hue::Green),
+                Paint::Pair(Hue::Purple),
+                Paint::Pair(Hue::Orange),
+                Paint::Strand(Strand::Reverse),
+            ]
+        );
+        let plain = paints(false);
+        assert_eq!(plain[0], Paint::Strand(Strand::Forward));
+        assert_eq!(plain[5], Paint::Strand(Strand::Reverse));
+    }
+
+    #[test]
     fn reads_take_their_strand_tint() {
         let forward = read(10, 0, vec![(Op::Match, 10)], &[b'A'; 10]);
         let reverse = read(10, REVERSE, vec![(Op::Match, 10)], &[b'A'; 10]);
-        let primitives = reads(view(0, 100), &[forward, reverse], &[0, 1], Mode::Expanded);
+        let primitives = reads(
+            view(0, 100),
+            &[forward, reverse],
+            &[0, 1],
+            Mode::Expanded,
+            true,
+        );
         assert_eq!(
             rects(&primitives),
             [
@@ -405,7 +466,7 @@ mod tests {
             (Op::Match, 5),
         ];
         let spliced = read(10, 0, cigar, &[b'A'; 22]);
-        let primitives = reads(view(0, 100), &[spliced], &[0], Mode::Expanded);
+        let primitives = reads(view(0, 100), &[spliced], &[0], Mode::Expanded, true);
         let found = rects(&primitives);
         assert!(found.contains(&([20.0, 4.5, 4.0, 1.0], Paint::Text)));
         assert!(found.contains(&([29.0, 4.5, 20.0, 1.0], Paint::Muted)));
@@ -421,6 +482,7 @@ mod tests {
             &[Read::new(low, &[b'A'; 100], 0, false)],
             &[0],
             Mode::Expanded,
+            true,
         );
         let found = rects(&primitives);
         assert!(found.contains(&([11.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
@@ -431,7 +493,7 @@ mod tests {
     #[test]
     fn mismatch_letters_appear_when_zoomed_in() {
         let mismatch = read(2, 0, vec![(Op::Match, 4)], b"AGAA");
-        let primitives = reads(view(0, 10), &[mismatch], &[0], Mode::Expanded);
+        let primitives = reads(view(0, 10), &[mismatch], &[0], Mode::Expanded, true);
         assert_eq!(texts(&primitives), [("G".to_owned(), 34.5)]);
     }
 
@@ -441,7 +503,7 @@ mod tests {
             read(10, 0, vec![(Op::Match, 10)], &[b'A'; 10]),
             read(10, 0, vec![(Op::Match, 10)], &[b'A'; 10]),
         ];
-        let tops: Vec<f32> = rects(&reads(view(0, 100), &pair, &[0, 1], Mode::Squished))
+        let tops: Vec<f32> = rects(&reads(view(0, 100), &pair, &[0, 1], Mode::Squished, true))
             .iter()
             .map(|(rect, _)| rect[1])
             .collect();
@@ -482,7 +544,7 @@ mod tests {
     #[test]
     fn soft_clips_draw_as_bases_beside_the_read() {
         let read = clipped(10, vec![(Op::SoftClip, 2), (Op::Match, 4)], b"GTAAAA");
-        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded));
+        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded, true));
         assert!(found.contains(&([8.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
         assert!(found.contains(&([9.0, 1.0, 1.0, 8.0], Paint::Base(Base::T))));
     }
@@ -490,7 +552,7 @@ mod tests {
     #[test]
     fn soft_clips_count_for_drawing_and_hits() {
         let read = clipped(103, vec![(Op::SoftClip, 6), (Op::Match, 4)], b"GGGGGGAAAA");
-        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded));
+        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded, true));
         assert!(found.contains(&([97.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
         let read = clipped(50, vec![(Op::SoftClip, 10), (Op::Match, 4)], &[b'C'; 14]);
         assert_eq!(

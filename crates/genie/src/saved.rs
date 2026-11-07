@@ -82,6 +82,7 @@ impl Saved {
                             Style::Bars
                         },
                         linked: section.value("scale") == Some("shared"),
+                        pairs: section.value("pairs") != Some("off"),
                     },
                 })
             })
@@ -131,6 +132,9 @@ impl Saved {
             }
             if track.plot.linked {
                 entries.push(("scale", "shared".to_owned()));
+            }
+            if !track.plot.pairs {
+                entries.push(("pairs", "off".to_owned()));
             }
             sections.push(section("track", entries));
         }
@@ -231,7 +235,10 @@ mod tests {
                         clips: true,
                         downsample: false,
                     },
-                    plot: Plot::default(),
+                    plot: Plot {
+                        pairs: false,
+                        ..Plot::default()
+                    },
                 },
                 SavedTrack {
                     path: PathBuf::from("/elsewhere/genes.bed.gz"),
@@ -250,6 +257,7 @@ mod tests {
                     plot: Plot {
                         style: Style::Line,
                         linked: true,
+                        pairs: true,
                     },
                 },
             ],
@@ -268,6 +276,7 @@ mod tests {
         assert!(text.contains("style = line"), "{text}");
         assert!(text.contains("scale = shared"), "{text}");
         assert_eq!(text.matches("style =").count(), 1, "{text}");
+        assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
     }
 
     #[test]
