@@ -4,8 +4,13 @@ use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
 use genie_formats::ini::{self, Section};
+use iced::widget::{button, column, container, row, text};
+use iced::{Alignment, Element, Length, Padding};
 
+use crate::app::Message;
+use crate::chrome::BAR_HEIGHT;
 use crate::theme::Appearance;
+use crate::{font, style};
 
 pub const FILE: &str = "settings.ini";
 const SECTION: &str = "settings";
@@ -25,6 +30,13 @@ impl Density {
             Self::Comfortable => 6.0,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Setting {
+    Scale(i8),
+    Density(Density),
+    Motion(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +110,28 @@ impl Settings {
         }
     }
 
+    #[must_use]
+    pub fn scale_by(self, steps: i8) -> Self {
+        let at = SCALES
+            .iter()
+            .position(|scale| *scale == self.scale)
+            .unwrap_or(1);
+        let at = at.saturating_add_signed(isize::from(steps));
+        Self {
+            scale: SCALES[at.min(SCALES.len() - 1)],
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub fn apply(self, setting: Setting) -> Self {
+        match setting {
+            Setting::Scale(steps) => self.scale_by(steps),
+            Setting::Density(density) => Self { density, ..self },
+            Setting::Motion(motion) => Self { motion, ..self },
+        }
+    }
+
     pub fn load(folder: &Path) -> Self {
         fs::read_to_string(folder.join(FILE))
             .map(|text| Self::parse(&text))
@@ -107,6 +141,75 @@ impl Settings {
     pub fn save(self, folder: &Path) -> io::Result<()> {
         store(folder, self.section())
     }
+}
+
+pub fn panel<'a>(settings: Settings, inset: f32) -> Element<'a, Message> {
+    let choice = |label: &'a str, setting: Setting, chosen: bool| -> Element<'a, Message> {
+        button(text(label).size(12))
+            .padding([3, 8])
+            .style(if chosen { style::chosen } else { style::ghost })
+            .on_press(Message::SettingChanged(setting))
+            .into()
+    };
+    let step = |label: &'a str, steps: i8| {
+        button(text(label).size(12))
+            .padding([3, 8])
+            .style(style::ghost)
+            .on_press(Message::SettingChanged(Setting::Scale(steps)))
+    };
+    let line = |label: &'a str, control: Element<'a, Message>| {
+        row![text(label).size(12).width(72).style(style::muted), control]
+            .spacing(8)
+            .align_y(Alignment::Center)
+    };
+    let scale = row![
+        step("−", -1),
+        text(format!("{} %", settings.scale))
+            .size(12)
+            .font(font::MONO)
+            .width(48)
+            .align_x(Alignment::Center),
+        step("+", 1),
+    ]
+    .align_y(Alignment::Center);
+    let density = row![
+        choice(
+            "Compact",
+            Setting::Density(Density::Compact),
+            settings.density == Density::Compact
+        ),
+        choice(
+            "Comfortable",
+            Setting::Density(Density::Comfortable),
+            settings.density == Density::Comfortable
+        ),
+    ]
+    .spacing(2);
+    let motion = row![
+        choice("On", Setting::Motion(true), settings.motion),
+        choice("Off", Setting::Motion(false), !settings.motion),
+    ]
+    .spacing(2);
+    let content = column![
+        text("Settings").font(font::UI_STRONG).size(12),
+        line("UI scale", scale.into()),
+        line("Density", density.into()),
+        line("Motion", motion.into()),
+    ]
+    .spacing(8);
+    let card = container(content)
+        .id("settings-panel")
+        .padding(10)
+        .style(style::menu);
+    container(card)
+        .width(Length::Fill)
+        .align_right(Length::Fill)
+        .padding(Padding {
+            top: BAR_HEIGHT + 4.0,
+            right: inset,
+            ..Padding::ZERO
+        })
+        .into()
 }
 
 pub fn store(folder: &Path, section: Section) -> io::Result<()> {
@@ -156,6 +259,15 @@ mod tests {
         assert_eq!(Settings::parse("not ini"), Settings::default());
         let settings = Settings::parse("[settings]\nscale = 300\ntheme = pink\n");
         assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn scale_steps_stop_at_the_ends() {
+        let settings = Settings::default();
+        assert_eq!(settings.scale_by(1).scale, 110);
+        assert_eq!(settings.scale_by(-1).scale, 90);
+        assert_eq!(settings.scale_by(-1).scale_by(-1).scale, 90);
+        assert_eq!(settings.scale_by(9).scale, 150);
     }
 
     #[test]

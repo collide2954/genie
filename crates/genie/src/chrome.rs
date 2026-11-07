@@ -10,6 +10,7 @@ use crate::{font, style};
 pub const BAR_HEIGHT: f32 = 32.0;
 pub const LOCUS_WIDTH: f32 = 240.0;
 const TOOL_SIZE: f32 = 24.0;
+const TOOL_GAP: f32 = 2.0;
 const TOOL_ICON: f32 = 14.0;
 const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const WINDOW_ICON: f32 = 16.0;
@@ -28,6 +29,14 @@ const fn inset(controls: Controls) -> f32 {
 
 pub const fn locus_x(controls: Controls) -> f32 {
     inset(controls) + BRAND_WIDTH + BRAND_GAP + TOOL_SIZE + NAVIGATION_GAP
+}
+
+pub const fn settings_inset(controls: Controls) -> f32 {
+    let buttons = match controls {
+        Controls::Native => 0.0,
+        Controls::Custom => 3.0 * WINDOW_BUTTON_WIDTH,
+    };
+    TOOL_GAP + TOOL_SIZE + END_GAP + buttons
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,9 +179,10 @@ pub fn title_bar<'a>(
         .align_y(Alignment::Center);
     let tools = row![
         export,
+        tool(Icon::Gear, "settings", Message::ToggleSettings),
         tool(appearance, "appearance", Message::CycleAppearance)
     ]
-    .spacing(2)
+    .spacing(TOOL_GAP)
     .align_y(Alignment::Center);
     let mut bar = row![
         brand,
@@ -392,6 +402,16 @@ mod tests {
             Some(field("chr9", Some(error))),
         ));
         assert!(ui.find(error).is_ok());
+    }
+
+    #[test]
+    fn settings_button_toggles_the_panel() {
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        ui.click(selector::id("settings")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::ToggleSettings]
+        );
     }
 
     #[test]

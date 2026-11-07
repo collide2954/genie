@@ -32,7 +32,7 @@ use crate::reading::{self, Reading};
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
 use crate::scene::Pointer;
-use crate::settings::Settings;
+use crate::settings::{self, Setting, Settings};
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{self, Key, TILING, Tiles};
@@ -58,6 +58,7 @@ const SUGGESTIONS: usize = 8;
 #[derive(Debug)]
 pub struct Genie {
     settings: Settings,
+    settings_open: bool,
     system: Mode,
     status: Status,
     session: Option<Session>,
@@ -88,6 +89,7 @@ impl Default for Genie {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
+            settings_open: false,
             system: Mode::default(),
             status: Status::default(),
             session: None,
@@ -277,6 +279,8 @@ pub enum Message {
     Indexing(String, u8),
     SequenceMenu(Point),
     SequenceChanged(reading::Change),
+    ToggleSettings,
+    SettingChanged(Setting),
 }
 
 enum Opening {
@@ -393,6 +397,11 @@ impl Genie {
                 self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
             }
             Message::SequenceChanged(change) => self.change_reading(change),
+            Message::ToggleSettings => self.settings_open = !self.settings_open,
+            Message::SettingChanged(setting) => {
+                self.settings = self.settings.apply(setting);
+                return self.save_settings();
+            }
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
                 self.drop_draft();
@@ -525,6 +534,7 @@ impl Genie {
     fn close_menus(&mut self) {
         self.menu = None;
         self.sequence_menu = None;
+        self.settings_open = false;
     }
 
     fn change_reading(&mut self, change: reading::Change) {
@@ -868,7 +878,15 @@ impl Genie {
         if progress.is_some() || notice.is_some() {
             layers = layers.push(toasts(progress, notice));
         }
-        if let Some(menu) = self.track_menu().or_else(|| self.reading_menu()) {
+        let panel = || {
+            self.settings_open
+                .then(|| settings::panel(self.settings, chrome::settings_inset(Controls::CURRENT)))
+        };
+        if let Some(menu) = self
+            .track_menu()
+            .or_else(|| self.reading_menu())
+            .or_else(panel)
+        {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)
                 .on_right_press(Message::MenuDismissed);
@@ -1546,7 +1564,7 @@ mod tests {
     use crate::reading::{self, Frames};
     use crate::reference::Reference;
     use crate::scene::Pointer;
-    use crate::settings::Density;
+    use crate::settings::{Density, Setting};
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
@@ -1750,6 +1768,40 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:251-750"));
+    }
+
+    #[test]
+    fn the_gear_opens_settings_that_apply_at_once() {
+        let mut genie = opened();
+        let _ = genie.update(Message::ToggleSettings);
+        assert!(shows(&genie, "UI scale"));
+        assert!(shows(&genie, "100 %"));
+        let _ = genie.update(Message::SettingChanged(Setting::Scale(1)));
+        assert_eq!(genie.settings.scale, 110);
+        assert!(shows(&genie, "110 %"));
+        let density = Setting::Density(Density::Comfortable);
+        let _ = genie.update(Message::SettingChanged(density));
+        let _ = genie.update(Message::SettingChanged(Setting::Motion(false)));
+        assert_eq!(genie.settings.density, Density::Comfortable);
+        assert!(!genie.settings.motion);
+        assert!(shows(&genie, "UI scale"));
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!shows(&genie, "UI scale"));
+    }
+
+    #[test]
+    fn settings_panel_sits_under_the_gear() {
+        let mut genie = opened();
+        let _ = genie.update(Message::ToggleSettings);
+        let mut ui = simulator(genie.view());
+        let gear = ui.find(selector::id("settings")).unwrap().bounds();
+        let panel = ui.find(selector::id("settings-panel")).unwrap().bounds();
+        let edge = gear.x + gear.width;
+        assert!(
+            (panel.x + panel.width - edge).abs() < 1.0,
+            "{panel:?} {gear:?}"
+        );
+        assert!(panel.y >= gear.y + gear.height);
     }
 
     #[test]

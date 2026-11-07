@@ -1,3 +1,5 @@
+use std::f32::consts::TAU;
+
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke, path::Arc};
 use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
 
@@ -16,6 +18,7 @@ pub enum Icon {
     Close,
     Open,
     Camera,
+    Gear,
 }
 
 enum Shape {
@@ -24,6 +27,7 @@ enum Shape {
     Rect([f32; 2], [f32; 2], f32),
     Circle([f32; 2], f32),
     Arc([f32; 2], f32, f32, f32),
+    Gear([f32; 2], f32, f32, u8),
 }
 
 impl Icon {
@@ -69,6 +73,10 @@ impl Icon {
                 Shape::Polyline(&[[8.0, 7.0], [9.5, 4.0], [14.5, 4.0], [16.0, 7.0]]),
                 Shape::Circle([12.0, 13.5], 3.5),
             ],
+            Self::Gear => &[
+                Shape::Gear([12.0, 12.0], 7.0, 9.5, 8),
+                Shape::Circle([12.0, 12.0], 2.75),
+            ],
         }
     }
 }
@@ -99,6 +107,30 @@ impl Shape {
                     start_angle: Radians(from.to_radians()),
                     end_angle: Radians(to.to_radians()),
                 });
+            }),
+            Self::Gear(center, inner, outer, teeth) => Path::new(|builder| {
+                let step = TAU / f32::from(teeth);
+                for tooth in 0..teeth {
+                    let angle = f32::from(tooth) * step;
+                    let corners = [
+                        (inner, angle - step * 0.3),
+                        (outer, angle - step * 0.17),
+                        (outer, angle + step * 0.17),
+                        (inner, angle + step * 0.3),
+                    ];
+                    for (corner, (radius, theta)) in corners.into_iter().enumerate() {
+                        let at = point([
+                            center[0] + radius * theta.cos(),
+                            center[1] + radius * theta.sin(),
+                        ]);
+                        if tooth == 0 && corner == 0 {
+                            builder.move_to(at);
+                        } else {
+                            builder.line_to(at);
+                        }
+                    }
+                }
+                builder.close();
             }),
         }
     }
@@ -155,7 +187,7 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 8] = [
+    const ICONS: [Icon; 9] = [
         Icon::Sun,
         Icon::Moon,
         Icon::Monitor,
@@ -164,6 +196,7 @@ mod tests {
         Icon::Close,
         Icon::Open,
         Icon::Camera,
+        Icon::Gear,
     ];
 
     fn bounds(shape: &Shape) -> [f32; 4] {
@@ -176,9 +209,9 @@ mod tests {
                 },
             ),
             Shape::Rect([x0, y0], [x1, y1], _) => [x0, y0, x1, y1],
-            Shape::Circle([x, y], radius) | Shape::Arc([x, y], radius, _, _) => {
-                [x - radius, y - radius, x + radius, y + radius]
-            }
+            Shape::Circle([x, y], radius)
+            | Shape::Arc([x, y], radius, _, _)
+            | Shape::Gear([x, y], _, radius, _) => [x - radius, y - radius, x + radius, y + radius],
         }
     }
 
