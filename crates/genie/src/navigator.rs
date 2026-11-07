@@ -157,7 +157,8 @@ impl<Message> Widget<Message, Theme, Renderer> for Navigator<'_, Message> {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(last) = state.drag.replace(position.x) {
+                if let Some(last) = state.drag {
+                    state.drag = Some(position.x);
                     return self.pan(shell, position.x - last);
                 }
             }
@@ -326,17 +327,33 @@ mod tests {
         assert!((anchor - 100.0).abs() < f32::EPSILON);
     }
 
+    fn moved(x: f32) -> Event {
+        Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(x, 50.0),
+        })
+    }
+
     #[test]
     fn drag_pans_with_the_pointer() {
-        let moved = Event::Mouse(mouse::Event::CursorMoved {
-            position: Point::new(150.0, 50.0),
-        });
         let messages = run(
             380.0,
             Point::new(100.0, 50.0),
-            vec![press(), moved, release()],
+            vec![press(), moved(150.0), release()],
         );
         assert_eq!(messages, [Probe::Pan(50.0)]);
+    }
+
+    #[test]
+    fn moving_without_a_press_does_not_pan() {
+        let events = vec![
+            moved(150.0),
+            moved(200.0),
+            press(),
+            release(),
+            moved(250.0),
+            moved(300.0),
+        ];
+        assert_eq!(run(380.0, Point::new(100.0, 50.0), events), []);
     }
 
     #[test]
