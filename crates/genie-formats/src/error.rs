@@ -30,6 +30,7 @@ pub enum Reason {
     BadSpan,
     BadStrand,
     BadBlocks,
+    NotBai,
 }
 
 impl fmt::Display for Error {
@@ -73,6 +74,7 @@ impl fmt::Display for Reason {
             Self::BadSpan => "the start is after the end",
             Self::BadStrand => "the strand is not +, - or .",
             Self::BadBlocks => "the number of blocks is not the same as the block count",
+            Self::NotBai => "the file is not a BAI index",
         })
     }
 }
