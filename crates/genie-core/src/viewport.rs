@@ -1,4 +1,4 @@
-use crate::Region;
+use crate::{Region, Span};
 
 pub const MAX_PIXELS_PER_BASE: f64 = 32.0;
 
@@ -97,6 +97,23 @@ impl Viewport {
         .clamped()
     }
 
+    pub fn jump(self, span: Span) -> Self {
+        match span {
+            Span::Whole => Self::new(self.length, self.width),
+            Span::Position(position) => self.center(position as f64 + 0.5),
+            Span::Region(region) => self.show(region),
+        }
+    }
+
+    pub fn retarget(self, length: u64) -> Self {
+        Self {
+            length,
+            start: 0.0,
+            ..self
+        }
+        .clamped()
+    }
+
     pub fn resize(self, width: f64) -> Self {
         Self {
             width: width.max(1.0),
@@ -130,7 +147,7 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::{MAX_PIXELS_PER_BASE, Viewport};
-    use crate::Region;
+    use crate::{Region, Span};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -226,6 +243,41 @@ mod tests {
     fn visible_rounds_outward() {
         let viewport = Viewport::new(1_000, 100.0).show(region(400, 500)).pan(-0.5);
         assert_eq!(viewport.visible(), region(400, 501));
+    }
+
+    #[test]
+    fn jump_to_whole_contig_shows_everything() {
+        let viewport = zoomed_in().jump(Span::Whole);
+        assert_close(viewport.start(), 0.0);
+        assert_close(viewport.scale(), 10.0);
+    }
+
+    #[test]
+    fn jump_to_position_centers_its_base_at_current_zoom() {
+        let viewport = zoomed_in().jump(Span::Position(800));
+        assert_close(viewport.scale(), 1.0);
+        assert_close(viewport.to_bp(50.0), 800.5);
+    }
+
+    #[test]
+    fn jump_to_region_shows_it() {
+        let viewport = Viewport::new(1_000, 100.0).jump(Span::Region(region(400, 500)));
+        assert_close(viewport.start(), 400.0);
+        assert_close(viewport.scale(), 1.0);
+    }
+
+    #[test]
+    fn retarget_keeps_width_and_zoom() {
+        let viewport = zoomed_in().retarget(2_000);
+        assert_close(viewport.scale(), 1.0);
+        assert_close(viewport.start(), 0.0);
+        assert_eq!(viewport.length(), 2_000);
+    }
+
+    #[test]
+    fn retarget_limits_zoom_to_the_new_contig() {
+        let viewport = Viewport::new(1_000, 100.0).retarget(500);
+        assert_close(viewport.scale(), 5.0);
     }
 
     #[test]
