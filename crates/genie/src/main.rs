@@ -16,6 +16,7 @@ mod reference;
 mod scene;
 #[cfg(test)]
 mod scratch;
+mod settings;
 mod shortcuts;
 mod style;
 mod theme;

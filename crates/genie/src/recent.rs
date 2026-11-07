@@ -2,11 +2,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use genie_formats::ini::{self, Document, Section};
+use genie_formats::ini::{self, Section};
+
+use crate::settings::{self, FILE};
 
 pub const LIMIT: usize = 8;
 
-const FILE: &str = "settings.ini";
 const SECTION: &str = "recent";
 const KEY: &str = "file";
 
@@ -35,17 +36,22 @@ impl Recent {
         Self { paths }
     }
 
+    #[cfg(test)]
     pub fn text(&self) -> String {
-        ini::write(&Document {
-            sections: vec![Section {
-                name: SECTION.to_owned(),
-                entries: self
-                    .paths
-                    .iter()
-                    .map(|path| (KEY.to_owned(), path.display().to_string()))
-                    .collect(),
-            }],
+        ini::write(&ini::Document {
+            sections: vec![self.section()],
         })
+    }
+
+    fn section(&self) -> Section {
+        Section {
+            name: SECTION.to_owned(),
+            entries: self
+                .paths
+                .iter()
+                .map(|path| (KEY.to_owned(), path.display().to_string()))
+                .collect(),
+        }
     }
 
     pub fn load(folder: &Path) -> Self {
@@ -55,8 +61,7 @@ impl Recent {
     }
 
     pub fn save(&self, folder: &Path) -> io::Result<()> {
-        fs::create_dir_all(folder)?;
-        fs::write(folder.join(FILE), self.text())
+        settings::store(folder, self.section())
     }
 }
 

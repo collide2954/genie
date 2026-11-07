@@ -32,6 +32,7 @@ use crate::reading::{self, Reading};
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
 use crate::scene::Pointer;
+use crate::settings::Settings;
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{self, Key, TILING, Tiles};
@@ -42,7 +43,6 @@ const INITIAL_WIDTH: f32 = 1_000.0;
 const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
 const BASE_HEIGHT: f32 = 16.0;
-const TRACK_PADDING: f32 = 2.0;
 const EMPTY_HEIGHT: f32 = 20.0;
 const LABEL_SIZE: f32 = 10.0;
 const CAPTION_HEIGHT: f32 = 22.0;
@@ -57,7 +57,7 @@ const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
 pub struct Genie {
-    appearance: Appearance,
+    settings: Settings,
     system: Mode,
     status: Status,
     session: Option<Session>,
@@ -87,7 +87,7 @@ pub struct Genie {
 impl Default for Genie {
     fn default() -> Self {
         Self {
-            appearance: Appearance::default(),
+            settings: Settings::default(),
             system: Mode::default(),
             status: Status::default(),
             session: None,
@@ -292,11 +292,10 @@ enum Suggestion {
 
 impl Genie {
     fn boot() -> (Self, Task<Message>) {
-        let recent = paths::config_dir()
-            .map(|folder| Recent::load(&folder))
-            .unwrap_or_default();
+        let folder = paths::config_dir();
         let mut genie = Self {
-            recent,
+            recent: folder.as_deref().map(Recent::load).unwrap_or_default(),
+            settings: folder.as_deref().map(Settings::load).unwrap_or_default(),
             ..Self::default()
         };
         let files = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -350,7 +349,10 @@ impl Genie {
 
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::CycleAppearance => self.appearance = self.appearance.next(),
+            Message::CycleAppearance => {
+                self.settings.appearance = self.settings.appearance.next();
+                return self.save_settings();
+            }
             Message::SystemModeChanged(mode) => self.system = mode,
             Message::Window(action) => return chrome::perform(action),
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
@@ -734,6 +736,9 @@ impl Genie {
     }
 
     fn glide(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
+        if !self.settings.motion {
+            return self.navigate(change);
+        }
         self.hover = None;
         if let Some(session) = &mut self.session {
             session.glide(change(session.destination()));
@@ -827,7 +832,7 @@ impl Genie {
     }
 
     fn window_view(&self) -> Element<'_, Message> {
-        let appearance = match self.appearance {
+        let appearance = match self.settings.appearance {
             Appearance::System => Icon::Monitor,
             Appearance::Light => Icon::Sun,
             Appearance::Dark => Icon::Moon,
@@ -1110,6 +1115,17 @@ impl Genie {
         }
     }
 
+    fn save_settings(&self) -> Task<Message> {
+        let Some(folder) = paths::config_dir() else {
+            return Task::none();
+        };
+        let settings = self.settings;
+        Task::future(async move {
+            let _ = settings.save(&folder);
+        })
+        .discard()
+    }
+
     fn remember(&self) -> Task<Message> {
         let Some(folder) = paths::config_dir() else {
             return Task::none();
@@ -1125,6 +1141,7 @@ impl Genie {
         let viewport = session.viewport;
         let (contig, visible) = (session.contig, viewport.visible());
         let reading = session.reading;
+        let padding = self.settings.density.padding();
         let bases = sequence::scene(
             viewport,
             self.tiles.chunks(contig, visible),
@@ -1140,7 +1157,7 @@ impl Genie {
         }
         let sequence = Context::new(
             stack![
-                container(strands).padding([TRACK_PADDING, 0.0]),
+                container(strands).padding([padding, 0.0]),
                 label("Sequence"),
             ],
             Message::SequenceMenu,
@@ -1148,7 +1165,7 @@ impl Genie {
         let mut data = column![container(sequence).id("sequence"), hairline()];
         for track in &session.tracks {
             data = data
-                .push(track_view(session, track, repack))
+                .push(track_view(session, track, repack, padding))
                 .push(hairline());
         }
         data.into()
@@ -1250,8 +1267,12 @@ impl Genie {
         }
     }
 
+    fn scale_factor(&self) -> f32 {
+        f32::from(self.settings.scale) / 100.0
+    }
+
     fn theme(&self) -> Theme {
-        if self.appearance.is_dark(self.system) {
+        if self.settings.appearance.is_dark(self.system) {
             theme::dark()
         } else {
             theme::light()
@@ -1273,7 +1294,12 @@ impl Genie {
     }
 }
 
-fn track_view<'a>(session: &Session, track: &'a Track, repack: bool) -> Element<'a, Message> {
+fn track_view<'a>(
+    session: &Session,
+    track: &'a Track,
+    repack: bool,
+    padding: f32,
+) -> Element<'a, Message> {
     let viewport = session.viewport;
     let contig = session.contig;
     let id = track.id;
@@ -1338,7 +1364,7 @@ fn track_view<'a>(session: &Session, track: &'a Track, repack: bool) -> Element<
     };
     Context::new(
         stack![
-            container(body).padding([TRACK_PADDING, 0.0]),
+            container(body).padding([padding, 0.0]),
             label(&track.source.name)
         ],
         move |at| Message::TrackMenu(id, at),
@@ -1491,6 +1517,7 @@ pub fn run() -> iced::Result {
         .default_font(font::UI)
         .title(Genie::title)
         .window(chrome::settings())
+        .scale_factor(Genie::scale_factor)
         .theme(Genie::theme)
         .subscription(Genie::subscription)
         .run()
@@ -1519,6 +1546,7 @@ mod tests {
     use crate::reading::{self, Frames};
     use crate::reference::Reference;
     use crate::scene::Pointer;
+    use crate::settings::Density;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
@@ -1722,6 +1750,32 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:251-750"));
+    }
+
+    #[test]
+    fn without_motion_keys_jump_at_once() {
+        let mut genie = opened();
+        genie.settings.motion = false;
+        let _ = genie.update(Message::Command(Command::Zoom(2.0)));
+        assert!(genie.session.as_ref().unwrap().transition.is_none());
+        assert!(shows(&genie, "chr1:251-750"));
+    }
+
+    #[test]
+    fn comfortable_density_pads_tracks() {
+        let mut genie = opened();
+        genie.settings.density = Density::Comfortable;
+        let mut ui = simulator(genie.view());
+        let bounds = ui.find(selector::id("sequence")).unwrap().bounds();
+        assert!((bounds.height - 28.0).abs() < 0.5, "{}", bounds.height);
+    }
+
+    #[test]
+    fn scale_factor_follows_the_setting() {
+        let mut genie = Genie::default();
+        assert!((genie.scale_factor() - 1.0).abs() < f32::EPSILON);
+        genie.settings.scale = 125;
+        assert!((genie.scale_factor() - 1.25).abs() < f32::EPSILON);
     }
 
     fn settle(genie: &mut Genie) {
@@ -2422,7 +2476,7 @@ mod tests {
         for message in ui.into_messages() {
             let _ = genie.update(message);
         }
-        assert_eq!(genie.appearance, Appearance::Light);
+        assert_eq!(genie.settings.appearance, Appearance::Light);
     }
 
     #[test]
