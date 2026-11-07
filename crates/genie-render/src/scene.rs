@@ -27,6 +27,7 @@ pub enum Paint {
     OnBase(Base),
     Muted,
     Line,
+    Accent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
