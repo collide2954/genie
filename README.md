@@ -19,9 +19,10 @@ cargo run -p genie
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED and GFF3: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
 | Alignment track | BAM, sorted by position and indexed with samtools |
+| Variant track | VCF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix. genie does not read BCF. |
 | Session | genie session (`.genie`) |
 
-Open a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi` or `.bai`) must be next to the track file.
+Open a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi`, `.csi` or `.bai`) must be next to the track file.
 
 If a FASTA file has no index (`.fai`, and `.gzi` for bgzip), genie makes the index and keeps it in its cache folder. For a large file, this can take some seconds. To make the indexes before you open the file:
 
@@ -45,8 +46,20 @@ samtools sort -o reads.bam reads.sam && samtools index reads.bam
 
 genie shows reads when the view is 30 kb or less. It hides QC-fail and secondary reads. By default, it also hides duplicate reads and soft clips, and it keeps 100 reads for each 50 bp.
 
+To prepare a large VCF track:
+
+```bash
+bgzip calls.vcf && tabix -p vcf calls.vcf.gz
+```
+
+genie shows variants when the view is 1 Mb or less.
+
 ## Tracks
 
+- Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
+- Type a feature name or a variant ID in the locus box to go to it. genie finds variant IDs in VCF files up to 50 MB.
+- In a variant track, the color of a site shows the change: the color of the new base for an SNV, purple for an insertion and dark grey for a deletion. A site that does not pass FILTER has a light color.
+- Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin.
 - Right-click a track to set its rows, its color or its place.
 - Right-click a read track to show duplicate reads and soft clips, or to keep all reads.
 - Right-click the sequence to show the reverse strand and 3 or 6 reading frames.
