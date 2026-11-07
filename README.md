@@ -12,6 +12,23 @@ Install [rustup](https://rustup.rs). rustup installs the toolchain version in `r
 cargo run -p genie
 ```
 
+## Files
+
+| Kind | Formats |
+| --- | --- |
+| Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), UCSC 2bit (`.2bit`) |
+| Feature track | BED and GFF3, compressed with bgzip and indexed with tabix |
+
+Open a reference sequence first. Then open tracks or drop them on the window. The tabix index (`.tbi`) must be next to the track file.
+
+To prepare a BED track:
+
+```bash
+sort -k1,1 -k2,2n genes.bed | bgzip > genes.bed.gz && tabix -p bed genes.bed.gz
+```
+
+For GFF3, sort by columns 1 and 4 and use `tabix -p gff`.
+
 ## Test
 
 ```bash
