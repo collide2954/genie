@@ -16,11 +16,17 @@ cargo run -p genie
 
 | Kind | Formats |
 | --- | --- |
-| Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), UCSC 2bit (`.2bit`) |
+| Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED and GFF3, compressed with bgzip and indexed with tabix |
 | Alignment track | BAM, sorted by position and indexed with samtools |
 
 Open a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi` or `.bai`) must be next to the track file.
+
+If a FASTA file has no index (`.fai`, and `.gzi` for bgzip), genie makes the index and keeps it in its cache folder. For a large file, this can take some seconds. To make the indexes before you open the file:
+
+```bash
+bgzip genome.fa && samtools faidx genome.fa.gz
+```
 
 To prepare a BED track:
 
