@@ -223,7 +223,7 @@ pub fn store(folder: &Path, section: Section) -> io::Result<()> {
         .unwrap_or_default();
     document.sections.retain(|known| known.name != section.name);
     document.sections.push(section);
-    fs::write(path, ini::write(&document))
+    crate::paths::replace(&path, &ini::write(&document))
 }
 
 #[cfg(test)]

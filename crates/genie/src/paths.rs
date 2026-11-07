@@ -1,6 +1,9 @@
 use std::env;
 use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const APP: &str = "genie";
 
@@ -23,6 +26,24 @@ pub fn file_name(path: &Path) -> String {
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
+}
+
+pub fn replace(path: &Path, text: &str) -> io::Result<()> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let mut name = path.file_name().map(OsString::from).unwrap_or_default();
+    let count = COUNT.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".{}.{count}.tmp", std::process::id()));
+    let temporary = path.with_file_name(name);
+    let result = File::create(&temporary)
+        .and_then(|mut file| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn folder(kind: Kind, os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
@@ -49,9 +70,45 @@ fn folder(kind: Kind, os: &str, var: impl Fn(&str) -> Option<OsString>) -> Optio
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
-    use super::{Kind, folder};
+    use super::{Kind, folder, replace};
+    use crate::scratch::Scratch;
+
+    fn names(folder: &Path) -> Vec<OsString> {
+        let mut names: Vec<OsString> = fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn replacing_a_file_leaves_only_the_new_text() {
+        let scratch = Scratch::new("replace");
+        let path = scratch.file("last.genie", "old");
+        replace(&path, "new").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        let fresh = path.with_file_name("fresh.genie");
+        replace(&fresh, "first").unwrap();
+        assert_eq!(fs::read_to_string(&fresh).unwrap(), "first");
+        let folder = path.parent().unwrap();
+        assert_eq!(names(folder), ["fresh.genie", "last.genie"]);
+    }
+
+    #[test]
+    fn failed_replaces_leave_no_temporary_file() {
+        let scratch = Scratch::new("replace-fail");
+        let marker = scratch.file("marker", "");
+        let folder = marker.parent().unwrap();
+        let taken = folder.join("taken");
+        fs::create_dir(&taken).unwrap();
+        fs::write(taken.join("inside"), "").unwrap();
+        assert!(replace(&taken, "text").is_err());
+        assert_eq!(names(folder), ["marker", "taken"]);
+    }
 
     fn cache_dir_for(os: &str, var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
         folder(Kind::Cache, os, var)

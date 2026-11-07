@@ -159,7 +159,7 @@ impl Saved {
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        fs::write(path, self.text(path.parent().unwrap_or(Path::new(""))))
+        crate::paths::replace(path, &self.text(path.parent().unwrap_or(Path::new(""))))
     }
 }
 
