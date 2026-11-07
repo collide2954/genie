@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
 use genie_render::{alignments, features, overview, ruler, sequence};
+use iced::futures::channel::mpsc;
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -68,6 +70,7 @@ pub struct Genie {
     next_track: u64,
     notice: Option<Notice>,
     notices: u64,
+    indexing: Option<(String, u8)>,
     menu: Option<(u64, Point)>,
     scroll: f32,
     window: Size,
@@ -94,6 +97,7 @@ impl Default for Genie {
             next_track: 0,
             notice: None,
             notices: 0,
+            indexing: None,
             menu: None,
             scroll: 0.0,
             window: chrome::WINDOW,
@@ -252,6 +256,12 @@ pub enum Message {
     ExportPicked(Option<PathBuf>),
     Exported(Result<PathBuf, String>),
     NoticeExpired(u64),
+    Indexing(String, u8),
+}
+
+enum Opening {
+    Progress(f32),
+    Done(Result<Arc<Reference>, String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -288,7 +298,16 @@ impl Genie {
         Task::batch(tasks)
     }
 
-    fn opened(&mut self, reference: Arc<Reference>) -> Task<Message> {
+    fn opened(&mut self, result: Result<Arc<Reference>, String>) -> Task<Message> {
+        self.indexing = None;
+        let reference = match result {
+            Ok(reference) => reference,
+            Err(error) => {
+                self.pending.clear();
+                self.fail(error);
+                return Task::none();
+            }
+        };
         self.status = Status::Idle;
         self.generation += 1;
         self.tiles.clear();
@@ -319,11 +338,9 @@ impl Genie {
                 self.hovering = false;
                 return self.open(path);
             }
-            Message::Opened(Ok(reference)) => return self.opened(reference),
-            Message::Opened(Err(error)) | Message::TrackOpened(Err(error)) => {
-                self.pending.clear();
-                self.fail(error);
-            }
+            Message::Opened(result) => return self.opened(result),
+            Message::Indexing(name, percent) => self.indexing = Some((name, percent)),
+            Message::TrackOpened(Err(error)) => self.fail(error),
             Message::TrackOpened(Ok(source)) => return self.add_track(source),
             Message::TrackLoaded(id, contig, region, result) => {
                 self.on_session(|session| session.accept(id, contig, region, result));
@@ -700,8 +717,14 @@ impl Genie {
         {
             layers = layers.push(card::view(hover, false, self.window));
         }
-        if let Some(notice) = &self.notice {
-            layers = layers.push(toast(&notice.text));
+        let progress = self
+            .session
+            .as_ref()
+            .and(self.indexing.as_ref())
+            .map(|(name, percent)| indexing(name, *percent));
+        let notice = self.notice.as_ref().map(|notice| notice.text.as_str());
+        if progress.is_some() || notice.is_some() {
+            layers = layers.push(toasts(progress, notice));
         }
         if let Some(menu) = self.track_menu() {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
@@ -788,10 +811,13 @@ impl Genie {
         if let Some(session) = &self.session {
             return self.browser(session);
         }
-        let message = match &self.status {
-            Status::Idle => text("Open a reference sequence to start.").style(style::muted),
-            Status::Opening(name) => text(format!("Opening {name}…")).style(style::muted),
-            Status::Failed(error) => text(error.as_str()),
+        let message = match (&self.status, &self.indexing) {
+            (Status::Idle, _) => text("Open a reference sequence to start.").style(style::muted),
+            (Status::Opening(_), Some((name, percent))) => {
+                text(indexing(name, *percent)).style(style::muted)
+            }
+            (Status::Opening(name), None) => text(format!("Opening {name}…")).style(style::muted),
+            (Status::Failed(error), _) => text(error.as_str()),
         };
         let open = button(text("Open reference").font(font::UI_STRONG).size(13))
             .padding([8, 16])
@@ -839,15 +865,22 @@ impl Genie {
                 Message::TrackOpened,
             );
         }
+        let name = file_name(&path);
         if self.session.is_none() {
-            self.status = Status::Opening(file_name(&path));
+            self.status = Status::Opening(name.clone());
         }
-        Task::perform(
-            async move {
-                reference::open(path, paths::cache_dir().as_deref(), &mut |_| {}).map(Arc::new)
-            },
-            Message::Opened,
-        )
+        let (sender, receiver) = mpsc::unbounded();
+        thread::spawn(move || {
+            let mut report = |share| {
+                let _ = sender.unbounded_send(Opening::Progress(share));
+            };
+            let result = reference::open(path, paths::cache_dir().as_deref(), &mut report);
+            let _ = sender.unbounded_send(Opening::Done(result.map(Arc::new)));
+        });
+        Task::run(receiver, move |event| match event {
+            Opening::Progress(share) => Message::Indexing(name.clone(), (share * 100.0) as u8),
+            Opening::Done(result) => Message::Opened(result),
+        })
     }
 
     fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
@@ -1147,28 +1180,45 @@ fn hint<'a>(message: String) -> Element<'a, Message> {
         .into()
 }
 
-fn toast(notice: &str) -> Element<'_, Message> {
-    let close = button(icon::view(Icon::Close, 12.0))
-        .width(20)
-        .height(20)
-        .padding(0)
-        .style(style::ghost)
-        .on_press(Message::NoticeDismissed);
-    let card = container(
-        row![text(notice).size(12).width(Length::Fill), close]
-            .spacing(8)
-            .align_y(Alignment::Center),
+fn indexing(name: &str, percent: u8) -> String {
+    format!("Indexing {name}… {percent} %")
+}
+
+fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, Message> {
+    let card = |content: Element<'a, Message>| {
+        container(content)
+            .max_width(360)
+            .padding([6, 6])
+            .style(style::menu)
+    };
+    let progress = progress.map(|line| card(text(line).size(12).into()));
+    let notice = notice.map(|notice| {
+        let close = button(icon::view(Icon::Close, 12.0))
+            .width(20)
+            .height(20)
+            .padding(0)
+            .style(style::ghost)
+            .on_press(Message::NoticeDismissed);
+        card(
+            row![text(notice).size(12).width(Length::Fill), close]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+        )
+    });
+    container(
+        column![]
+            .push(progress)
+            .push(notice)
+            .spacing(6)
+            .align_x(Alignment::End),
     )
-    .max_width(360)
-    .padding([6, 6])
-    .style(style::menu);
-    container(card)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_right(Length::Fill)
-        .align_bottom(Length::Fill)
-        .padding(12)
-        .into()
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_right(Length::Fill)
+    .align_bottom(Length::Fill)
+    .padding(12)
+    .into()
 }
 
 fn label(name: &str) -> Element<'_, Message> {
@@ -1317,6 +1367,28 @@ mod tests {
         assert_eq!(genie.pending, [track]);
         let _ = genie.update(Message::Opened(Ok(reference())));
         assert_eq!(genie.pending, [] as [PathBuf; 0]);
+    }
+
+    #[test]
+    fn indexing_progress_shows_while_opening() {
+        let mut genie = Genie::default();
+        let _ = genie.launch(vec![PathBuf::from("/data/genome.fa.gz")]);
+        let _ = genie.update(Message::Indexing("genome.fa.gz".to_owned(), 45));
+        assert!(shows(&genie, "Indexing genome.fa.gz… 45 %"));
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        assert_eq!(genie.indexing, None);
+    }
+
+    #[test]
+    fn indexing_another_reference_shows_a_toast() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Indexing("genome.fa.gz".to_owned(), 7));
+        assert!(shows(&genie, "Indexing genome.fa.gz… 7 %"));
+        let _ = genie.update(Message::Opened(
+            Err("The file has no sequences.".to_owned()),
+        ));
+        assert!(!shows(&genie, "Indexing genome.fa.gz… 7 %"));
+        assert!(shows(&genie, "The file has no sequences."));
     }
 
     #[test]
