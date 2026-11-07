@@ -674,9 +674,22 @@ impl Genie {
                 let reference = Arc::clone(reference);
                 Some(Task::perform(
                     async move {
+                        let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        track::load(&source, &name, wanted, options, bases).map(Arc::new)
+                        let result = track::load(&source, &name, wanted, options, bases);
+                        match &result {
+                            Ok(loaded) => log::debug!(
+                                "Loaded {} items of {} at {name}:{}-{} in {:.0?}",
+                                loaded.count(),
+                                source.name,
+                                wanted.start() + 1,
+                                wanted.end(),
+                                started.elapsed()
+                            ),
+                            Err(error) => log::warn!("{}: {error}", source.name),
+                        }
+                        result.map(Arc::new)
                     },
                     move |result| Message::TrackLoaded(id, contig, wanted, result),
                 ))
@@ -902,10 +915,19 @@ impl Genie {
         }
         let (sender, receiver) = mpsc::unbounded();
         thread::spawn(move || {
+            let started = Instant::now();
             let mut report = |share| {
                 let _ = sender.unbounded_send(Opening::Progress(share));
             };
             let result = reference::open(path, paths::cache_dir().as_deref(), &mut report);
+            if let Ok(reference) = &result {
+                let contigs = reference.assembly.contigs().len();
+                log::info!(
+                    "Opened {} with {contigs} contigs in {:.0?}",
+                    reference.name,
+                    started.elapsed()
+                );
+            }
             let _ = sender.unbounded_send(Opening::Done(result.map(Arc::new)));
         });
         Task::run(receiver, move |event| match event {
@@ -939,6 +961,7 @@ impl Genie {
     }
 
     fn fail(&mut self, error: String) {
+        log::warn!("{error}");
         if self.session.is_some() {
             self.warn(error);
         } else {
@@ -1097,7 +1120,21 @@ impl Genie {
             return Task::none();
         };
         if let Some(image) = export::render(self.export_view(session), self.width, &self.theme()) {
-            Task::perform(async move { export::save(path, &image) }, Message::Exported)
+            Task::perform(
+                async move {
+                    let result = export::save(path, &image);
+                    if let Ok(path) = &result {
+                        log::info!(
+                            "Saved {} ({}x{})",
+                            path.display(),
+                            image.width,
+                            image.height
+                        );
+                    }
+                    result
+                },
+                Message::Exported,
+            )
         } else {
             self.warn(DRAW_FAILED.to_owned());
             Task::none()

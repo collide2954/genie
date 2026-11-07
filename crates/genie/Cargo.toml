@@ -11,6 +11,7 @@ genie-core.workspace = true
 genie-formats.workspace = true
 genie-render.workspace = true
 iced.workspace = true
+log.workspace = true
 rfd.workspace = true
 
 [dev-dependencies]

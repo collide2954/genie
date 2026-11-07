@@ -5,6 +5,7 @@ mod context;
 mod export;
 mod font;
 mod icon;
+mod logger;
 mod menu;
 mod motion;
 mod navigator;
@@ -23,5 +24,6 @@ mod timer;
 mod track;
 
 fn main() -> iced::Result {
+    logger::install();
     app::run()
 }
