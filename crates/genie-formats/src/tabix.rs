@@ -3,10 +3,11 @@ use std::io::{BufRead, Read, Seek};
 use genie_core::Region;
 
 pub use crate::binning::Chunk;
-use crate::binning::{Bins, read_count, read_u32};
+use crate::binning::{Bins, Scheme, read_count, read_u32};
 use crate::{Error, Reason, bgzf::Bgzf, vcf};
 
 const MAGIC: &[u8; 4] = b"TBI\x01";
+const CSI: &[u8; 4] = b"CSI\x01";
 const ZERO_BASED: u32 = 0x10000;
 const VCF: u32 = 2;
 
@@ -25,34 +26,41 @@ impl Index {
         let mut reader = Bgzf::new(reader);
         let mut magic = [0; 4];
         reader.read_exact(&mut magic)?;
-        if &magic != MAGIC {
-            return Err(Error::Invalid(Reason::NotTabix));
-        }
-        let count = read_count(&mut reader)?;
-        let format = read_u32(&mut reader)?;
-        let columns = [
-            read_count(&mut reader)?,
-            read_count(&mut reader)?,
-            read_count(&mut reader)?,
-        ];
-        let meta = read_u32(&mut reader)? as u8;
-        read_count(&mut reader)?;
-        let length = read_count(&mut reader)?;
-        let mut text = Vec::new();
-        reader.by_ref().take(length as u64).read_to_end(&mut text)?;
-        let names = names(&text).ok_or(Error::Invalid(Reason::BadIndex))?;
-        if text.len() != length || names.len() != count || columns[0] == 0 || columns[1] == 0 {
+        let (settings, references) = match &magic {
+            MAGIC => {
+                let count = read_count(&mut reader)?;
+                let settings = Settings::read(&mut reader)?;
+                let references = (0..count)
+                    .map(|_| Bins::read(&mut reader))
+                    .collect::<Result<Vec<_>, _>>()?;
+                (settings, references)
+            }
+            CSI => {
+                let shift = read_u32(&mut reader)?.cast_signed();
+                let scheme = Scheme::new(shift, read_u32(&mut reader)?.cast_signed())?;
+                let length = read_count(&mut reader)?;
+                let mut aux = Vec::new();
+                reader.by_ref().take(length as u64).read_to_end(&mut aux)?;
+                if aux.is_empty() || aux.len() != length {
+                    return Err(Error::Invalid(Reason::BadIndex));
+                }
+                let settings = Settings::read(&mut aux.as_slice())?;
+                let references = (0..read_count(&mut reader)?)
+                    .map(|_| Bins::read_csi(&mut reader, scheme))
+                    .collect::<Result<Vec<_>, _>>()?;
+                (settings, references)
+            }
+            _ => return Err(Error::Invalid(Reason::NotTabix)),
+        };
+        if settings.names.len() != references.len() {
             return Err(Error::Invalid(Reason::BadIndex));
         }
-        let references = (0..count)
-            .map(|_| Bins::read(&mut reader))
-            .collect::<Result<_, _>>()?;
         Ok(Self {
-            zero_based: format & ZERO_BASED != 0,
-            vcf: format & 0xFFFF == VCF,
-            columns,
-            meta,
-            names,
+            zero_based: settings.format & ZERO_BASED != 0,
+            vcf: settings.format & 0xFFFF == VCF,
+            columns: settings.columns,
+            meta: settings.meta,
+            names: settings.names,
             references,
         })
     }
@@ -128,6 +136,39 @@ impl Index {
     }
 }
 
+struct Settings {
+    format: u32,
+    columns: [usize; 3],
+    meta: u8,
+    names: Vec<String>,
+}
+
+impl Settings {
+    fn read(reader: &mut impl Read) -> Result<Self, Error> {
+        let format = read_u32(reader)?;
+        let columns = [
+            read_count(reader)?,
+            read_count(reader)?,
+            read_count(reader)?,
+        ];
+        let meta = read_u32(reader)? as u8;
+        read_count(reader)?;
+        let length = read_count(reader)?;
+        let mut text = Vec::new();
+        reader.take(length as u64).read_to_end(&mut text)?;
+        let names = names(&text).ok_or(Error::Invalid(Reason::BadIndex))?;
+        if text.len() != length || columns[0] == 0 || columns[1] == 0 {
+            return Err(Error::Invalid(Reason::BadIndex));
+        }
+        Ok(Self {
+            format,
+            columns,
+            meta,
+            names,
+        })
+    }
+}
+
 fn names(text: &[u8]) -> Option<Vec<String>> {
     match text.split_last() {
         None => Some(Vec::new()),
@@ -160,18 +201,18 @@ pub mod tests {
     pub const VCF: [usize; 4] = [2, 1, 2, 0];
 
     pub type Bins<'a> = &'a [(u32, &'a [(u64, u64)])];
+    pub type CsiBins<'a> = &'a [(u32, u64, &'a [(u64, u64)])];
 
     fn put(bytes: &mut Vec<u8>, value: usize) {
         bytes.extend(i32::try_from(value).unwrap().to_le_bytes());
     }
 
-    pub fn index(preset: [usize; 4], names: &[&str], references: &[(Bins, &[u64])]) -> Index {
+    pub fn settings(preset: [usize; 4], names: &[&str]) -> Vec<u8> {
         let text: Vec<u8> = names
             .iter()
             .flat_map(|name| name.bytes().chain([0]))
             .collect();
-        let mut bytes = b"TBI\x01".to_vec();
-        put(&mut bytes, names.len());
+        let mut bytes = Vec::new();
         for value in preset {
             put(&mut bytes, value);
         }
@@ -179,6 +220,35 @@ pub mod tests {
             put(&mut bytes, value);
         }
         bytes.extend(text);
+        bytes
+    }
+
+    pub fn csi(shift: usize, depth: usize, aux: &[u8], references: &[CsiBins]) -> Vec<u8> {
+        let mut bytes = b"CSI\x01".to_vec();
+        put(&mut bytes, shift);
+        put(&mut bytes, depth);
+        put(&mut bytes, aux.len());
+        bytes.extend(aux);
+        put(&mut bytes, references.len());
+        for bins in references {
+            put(&mut bytes, bins.len());
+            for (bin, offset, chunks) in *bins {
+                bytes.extend(bin.to_le_bytes());
+                bytes.extend(offset.to_le_bytes());
+                put(&mut bytes, chunks.len());
+                for (start, end) in *chunks {
+                    bytes.extend(start.to_le_bytes());
+                    bytes.extend(end.to_le_bytes());
+                }
+            }
+        }
+        file(&[&bytes])
+    }
+
+    pub fn index(preset: [usize; 4], names: &[&str], references: &[(Bins, &[u64])]) -> Index {
+        let mut bytes = b"TBI\x01".to_vec();
+        put(&mut bytes, names.len());
+        bytes.extend(settings(preset, names));
         for (bins, intervals) in references {
             put(&mut bytes, bins.len());
             for (bin, chunks) in *bins {
@@ -278,6 +348,31 @@ pub mod tests {
         );
         assert_eq!(lines(BED, parts, region(0, 15)), ["chr1\t10\t20\ta"]);
         assert_eq!(lines(BED, parts, region(20, 30)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn reads_csi_indexes_with_tabix_settings() {
+        let parts: &[&[u8]] = &[b"chr1\t10\t20\ta\nchr1\t30\t40\tb\n"];
+        let end = (block(parts[0]).len() as u64) << 16;
+        let bins: CsiBins = &[(4681, 0, &[(0, end)])];
+        let bytes = csi(14, 5, &settings(BED, &["chr1"]), &[bins]);
+        let index = Index::read(Cursor::new(bytes)).unwrap();
+        assert_eq!(index.names(), ["chr1"]);
+        let mut reader = Bgzf::new(Cursor::new(file(parts)));
+        let mut found = Vec::new();
+        index
+            .query(&mut reader, "chr1", region(25, 35), |line| {
+                found.push(line.to_owned());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(found, ["chr1\t30\t40\tb"]);
+    }
+
+    #[test]
+    fn csi_without_tabix_settings_is_rejected() {
+        let result = Index::read(Cursor::new(csi(14, 5, &[], &[])));
+        assert!(matches!(result, Err(Error::Invalid(Reason::BadIndex))));
     }
 
     #[test]

@@ -1,11 +1,13 @@
-use std::io::{BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read};
 
 use genie_core::Region;
 
-use crate::binning::{Bins, Chunk, read_count};
+use crate::bgzf::{self, Bgzf};
+use crate::binning::{Bins, Chunk, Scheme, read_count, read_u32};
 use crate::{Error, Reason};
 
 const MAGIC: &[u8; 4] = b"BAI\x01";
+const CSI: &[u8; 4] = b"CSI\x01";
 
 #[derive(Debug, Default)]
 pub struct Index {
@@ -15,6 +17,9 @@ pub struct Index {
 impl Index {
     pub fn read(reader: impl Read) -> Result<Self, Error> {
         let mut reader = BufReader::new(reader);
+        if bgzf::sniff(reader.fill_buf()?) {
+            return Self::read_csi(Bgzf::new(reader));
+        }
         let mut magic = [0; 4];
         reader.read_exact(&mut magic)?;
         if &magic != MAGIC {
@@ -23,6 +28,22 @@ impl Index {
         let count = read_count(&mut reader)?;
         let references = (0..count)
             .map(|_| Bins::read(&mut reader))
+            .collect::<Result<_, _>>()?;
+        Ok(Self { references })
+    }
+
+    fn read_csi(mut reader: impl Read) -> Result<Self, Error> {
+        let mut magic = [0; 4];
+        reader.read_exact(&mut magic)?;
+        if &magic != CSI {
+            return Err(Error::Invalid(Reason::NotBai));
+        }
+        let shift = read_u32(&mut reader)?.cast_signed();
+        let scheme = Scheme::new(shift, read_u32(&mut reader)?.cast_signed())?;
+        let length = read_count(&mut reader)? as u64;
+        io::copy(&mut reader.by_ref().take(length), &mut io::sink())?;
+        let references = (0..read_count(&mut reader)?)
+            .map(|_| Bins::read_csi(&mut reader, scheme))
             .collect::<Result<_, _>>()?;
         Ok(Self { references })
     }
@@ -49,7 +70,11 @@ pub mod tests {
     use genie_core::Region;
 
     use super::Index;
-    use crate::{Error, Reason, binning::Chunk, tabix::tests::Bins};
+    use crate::{
+        Error, Reason,
+        binning::Chunk,
+        tabix::tests::{Bins, CsiBins, csi},
+    };
 
     fn put(bytes: &mut Vec<u8>, value: usize) {
         bytes.extend(i32::try_from(value).unwrap().to_le_bytes());
@@ -93,6 +118,18 @@ pub mod tests {
         );
         assert_eq!(index.chunks(0, region(0, 100)), []);
         assert_eq!(index.chunks(7, region(0, 100)), []);
+    }
+
+    #[test]
+    fn reads_csi_indexes_for_bam() {
+        let bins: CsiBins = &[(4681, 0, &[(10, 20)])];
+        let bytes = csi(14, 5, &[], &[&[], bins]);
+        let index = Index::read(Cursor::new(bytes)).unwrap();
+        assert_eq!(index.len(), 2);
+        assert_eq!(
+            index.chunks(1, region(0, 100)),
+            [Chunk { start: 10, end: 20 }]
+        );
     }
 
     #[test]
