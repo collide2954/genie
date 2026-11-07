@@ -318,7 +318,7 @@ impl Genie {
             Status::Opening(name) => text(format!("Opening {name}â€¦")).style(style::muted),
             Status::Failed(error) => text(error.as_str()),
         };
-        let open = button(text("Open FASTA").font(font::UI_STRONG).size(13))
+        let open = button(text("Open reference").font(font::UI_STRONG).size(13))
             .padding([8, 16])
             .style(style::primary)
             .on_press(Message::Open);
@@ -362,6 +362,13 @@ impl Genie {
             .on_zoom(Message::Zoom)
             .on_resize(Message::Resized)
             .into()
+    }
+
+    fn title(&self) -> String {
+        match &self.session {
+            Some(session) => format!("{} · genie", session.reference.name),
+            None => "genie".to_owned(),
+        }
     }
 
     fn theme(&self) -> Theme {
@@ -424,7 +431,10 @@ fn file_name(path: &Path) -> String {
 async fn pick() -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Open a reference sequence")
-        .add_filter("FASTA", &["fa", "fasta", "fna", "fas"])
+        .add_filter(
+            "Reference sequences",
+            &["fa", "fasta", "fna", "fas", "2bit"],
+        )
         .pick_file()
         .await
         .map(|file| file.path().to_owned())
@@ -438,7 +448,7 @@ pub fn run() -> iced::Result {
             |application, (bytes, _)| application.font(bytes),
         )
         .default_font(font::UI)
-        .title("genie")
+        .title(Genie::title)
         .window(chrome::settings())
         .theme(Genie::theme)
         .subscription(Genie::subscription)
@@ -450,7 +460,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::{Assembly, Contig, Region};
+    use genie_core::Region;
     use genie_formats::fai::FaiRecord;
     use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
@@ -480,20 +490,7 @@ mod tests {
                 line_width: 61,
             },
         ];
-        Arc::new(Reference {
-            path: PathBuf::from("ref.fa"),
-            name: "ref.fa".to_owned(),
-            assembly: Assembly::new(
-                records
-                    .iter()
-                    .map(|record| Contig {
-                        name: record.name.clone(),
-                        length: record.length,
-                    })
-                    .collect(),
-            ),
-            records,
-        })
+        Arc::new(Reference::fasta(PathBuf::from("ref.fa"), records).unwrap())
     }
 
     fn go(genie: &mut Genie, locus: &str) {
@@ -707,10 +704,16 @@ mod tests {
     }
 
     #[test]
+    fn window_title_names_the_open_reference() {
+        assert_eq!(Genie::default().title(), "genie");
+        assert_eq!(opened().title(), "ref.fa · genie");
+    }
+
+    #[test]
     fn welcome_open_button_asks_for_a_file() {
         let genie = Genie::default();
         let mut ui = simulator(genie.view());
-        ui.click("Open FASTA").unwrap();
+        ui.click("Open reference").unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), [Message::Open]);
     }
 
