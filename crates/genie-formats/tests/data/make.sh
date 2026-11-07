@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
+export PATH="$HOME/bin:$PATH"
 cd "$(dirname "$0")"
 
 awk -v OFS='\t' '
@@ -185,6 +186,78 @@ BEGIN {
 }' | bgzip > variants.vcf.gz
 tabix -f -p vcf variants.vcf.gz
 tabix -f -C -p vcf variants.vcf.gz
+
+printf 'chr1\t3000000\nchr2\t1000000\nchrX\t500000\nchrM\t16569\nchrUn_KI270742v1\t186739\n' > signal.sizes
+for c in 3 4 5 6 7 8 9; do printf 'chr%s\t10000\n' "$c"; done >> signal.sizes
+awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function value() { return (draw(9000) - 1000) / 8 }
+function run(contig, last, count, gap, size,    position, end, i) {
+    position = 0
+    for (i = 0; i < count; i++) {
+        position += draw(4) ? 0 : draw(gap)
+        end = position + 1 + draw(size)
+        if (end > last) break
+        print contig, position, end, value()
+        position = end
+    }
+}
+BEGIN {
+    seed = 17
+    run("chr1", 3000000, 4000, 1500, 600)
+    run("chr2", 1000000, 1000, 2000, 2000)
+    run("chrX", 500000, 2000, 3, 1)
+    run("chrM", 16569, 3, 5000, 100)
+    run("chrUn_KI270742v1", 186739, 2, 100, 50)
+    for (c = 3; c <= 9; c++) run("chr" c, 10000, 1, 9000, 500)
+}' | sort -k1,1 -k2,2n > signal.bedGraph
+bedGraphToBigWig -blockSize=4 -itemsPerSlot=64 signal.bedGraph signal.sizes signal.bw
+awk '$1 == "chr2"' signal.bedGraph > plain.bedGraph
+bedGraphToBigWig -unc plain.bedGraph signal.sizes plain.bw
+rm signal.bedGraph plain.bedGraph
+
+awk '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+BEGIN {
+    seed = 19
+    print "fixedStep chrom=chr1 start=1001 step=10 span=5"
+    for (i = 0; i < 500; i++) print (draw(8000) - 1000) / 8
+    print "variableStep chrom=chr1 span=3"
+    position = 10001
+    for (i = 0; i < 300; i++) { print position, (draw(8000) - 1000) / 8; position += 3 + draw(40) }
+    print "fixedStep chrom=chr2 start=100 step=1"
+    for (i = 0; i < 1000; i++) print (draw(8000) - 1000) / 8
+    print "variableStep chrom=chrX"
+    position = 50
+    for (i = 0; i < 200; i++) { print position, (draw(8000) - 1000) / 8; position += 1 + draw(2000) }
+}' > steps.wig
+wigToBigWig -blockSize=4 -itemsPerSlot=64 steps.wig signal.sizes steps.bw
+rm steps.wig signal.sizes
+
+signal() {
+    local file=$1
+    shift
+    for query in "$@"; do
+        read -r chrom start end bins <<< "$query"
+        if [ -z "$bins" ]; then
+            printf '>records %s %s %s\n' "$chrom" "$start" "$end"
+            bigWigToBedGraph -chrom="$chrom" -start="$start" -end="$end" "$file" stdout
+            continue
+        fi
+        for kind in mean min max; do
+            printf '>%s %s %s %s %s\n' "$kind" "$chrom" "$start" "$end" "$bins"
+            bigWigSummary -type="$kind" "$file" "$chrom" "$start" "$end" "$bins" 2> /dev/null || echo none
+        done
+    done > "$file.expected"
+}
+
+signal signal.bw "chr1 0 5000" "chr1 1000000 1003000" "chr1 2999000 3000000" "chr2 0 200000" \
+    "chrX 100 400" "chrM 0 16569" "chr5 0 10000" "chrUn_KI270742v1 0 186739" "chr9 0 100" \
+    "chr1 0 3000000 100" "chr1 0 3000000 7" "chr1 1000000 1010000 50" "chr1 123 777 654" \
+    "chr1 5000 5010 20" "chr2 0 1000000 33" "chrX 0 500000 128" "chrM 0 16569 10" "chr9 0 10 5"
+signal steps.bw "chr1 990 1100" "chr1 5980 10100" "chr2 500 560" "chrX 0 500000" \
+    "chr1 0 20000 40" "chr2 0 2000 2000" "chrX 0 500000 10" "chr1 1000 1010 10"
+signal plain.bw "chr2 0 1000000" "chr2 0 1000000 25"
 
 expect() {
     local file=$1

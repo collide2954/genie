@@ -33,6 +33,7 @@ pub enum Reason {
     NotBai,
     NotBam,
     BadRecord,
+    NotBigWig,
 }
 
 impl fmt::Display for Error {
@@ -79,6 +80,7 @@ impl fmt::Display for Reason {
             Self::NotBai => "the file is not a BAI index",
             Self::NotBam => "the file is not a BAM file",
             Self::BadRecord => "a BAM record is not valid",
+            Self::NotBigWig => "the file is not a bigWig file",
         })
     }
 }
