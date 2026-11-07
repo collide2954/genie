@@ -25,6 +25,8 @@ pub enum Reason {
     NotBgzf,
     BadBlock,
     BadOffset,
+    NotTabix,
+    BadIndex,
 }
 
 impl fmt::Display for Error {
@@ -63,6 +65,8 @@ impl fmt::Display for Reason {
             Self::NotBgzf => "the file is not compressed with bgzip",
             Self::BadBlock => "a compressed block is not valid",
             Self::BadOffset => "an offset is not in the file",
+            Self::NotTabix => "the file is not a tabix index",
+            Self::BadIndex => "the index is not valid",
         })
     }
 }
@@ -78,6 +82,9 @@ impl std::error::Error for Error {
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
-        Self::Io(error)
+        match error.downcast::<Self>() {
+            Ok(error) => error,
+            Err(error) => Self::Io(error),
+        }
     }
 }
