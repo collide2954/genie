@@ -68,6 +68,7 @@ pub enum Paint {
     Hue(Hue),
     Tint(Hue),
     Pair(Hue),
+    Rgb([u8; 3]),
     Strand(Strand),
     Coverage,
     Insertion,

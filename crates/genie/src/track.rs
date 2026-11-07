@@ -87,6 +87,19 @@ impl Source {
         }
     }
 
+    pub fn has_colors(&self) -> bool {
+        matches!(
+            self.format,
+            Format::Features {
+                kind: Kind::Bed,
+                ..
+            } | Format::Table {
+                kind: Kind::Bed,
+                ..
+            }
+        )
+    }
+
     pub fn has_signal(&self) -> bool {
         matches!(
             self.format,
@@ -175,6 +188,7 @@ pub struct Plot {
     pub style: Style,
     pub linked: bool,
     pub pairs: bool,
+    pub colors: bool,
 }
 
 impl Default for Plot {
@@ -183,6 +197,7 @@ impl Default for Plot {
             style: Style::default(),
             linked: false,
             pairs: true,
+            colors: true,
         }
     }
 }
@@ -527,6 +542,7 @@ pub enum Change {
     Style(Style),
     Link,
     Pairs,
+    Colors,
     Sort(u64),
     Group(Grouping),
     Up,
@@ -549,6 +565,10 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Pairs => {
             let plot = &mut tracks[position].plot;
             plot.pairs = !plot.pairs;
+        }
+        Change::Colors => {
+            let plot = &mut tracks[position].plot;
+            plot.colors = !plot.colors;
         }
         Change::Group(grouping) => {
             let track = &mut tracks[position];
@@ -977,11 +997,20 @@ mod tests {
             Plot {
                 style: Style::Line,
                 linked: true,
-                pairs: true,
+                ..Plot::default()
             }
         );
         change(&mut tracks, 1, Change::Link);
         assert!(!tracks[1].plot.linked);
+    }
+
+    #[test]
+    fn changes_toggle_the_file_colors() {
+        let mut tracks = three();
+        assert!(tracks[1].plot.colors);
+        assert!(tracks[1].source.has_colors());
+        change(&mut tracks, 1, Change::Colors);
+        assert!(!tracks[1].plot.colors);
     }
 
     #[test]

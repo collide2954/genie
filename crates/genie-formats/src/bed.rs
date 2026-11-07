@@ -35,10 +35,22 @@ pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
         let thick = Region::new(number(fields[6])?, number(fields[7])?).ok_or(Reason::BadSpan)?;
         feature = feature.with_coding((!thick.is_empty()).then_some(thick));
     }
+    if count > 8 {
+        feature = feature.with_color(rgb(fields[8]));
+    }
     if count == COLUMNS {
         feature = feature.with_blocks(blocks(start, fields[9], fields[10], fields[11])?);
     }
     Ok(Some((fields[0], feature)))
+}
+
+fn rgb(field: &str) -> Option<[u8; 3]> {
+    let mut parts = field
+        .trim()
+        .split(',')
+        .map(|part| part.trim().parse::<u8>().ok());
+    let color = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(color)
 }
 
 pub(crate) fn number(field: &str) -> Result<u64, Reason> {
@@ -116,6 +128,21 @@ mod tests {
         let line = "chr1\t100\t200\ta\t0\t+\t110\t190\t0\t2\t20,30,\t0,70,";
         let (_, feature) = parse(line).unwrap().unwrap();
         assert_eq!(feature.blocks(), [region(100, 120), region(170, 200)]);
+    }
+
+    #[test]
+    fn parses_item_colors() {
+        let colored = "chr1\t10\t20\ta\t0\t+\t10\t20\t255,0,128";
+        assert_eq!(
+            parse(colored).unwrap().unwrap().1.color(),
+            Some([255, 0, 128])
+        );
+        for plain in [
+            "chr1\t10\t20\ta\t0\t+\t10\t20\t0",
+            "chr1\t10\t20\ta\t0\t+\t10\t20\tred",
+        ] {
+            assert_eq!(parse(plain).unwrap().unwrap().1.color(), None, "{plain}");
+        }
     }
 
     #[test]

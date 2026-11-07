@@ -103,13 +103,13 @@ pub fn scene(
     rows: &[usize],
     mode: Mode,
     hue: Hue,
+    colors: bool,
 ) -> Vec<Primitive> {
     let shape = mode.shape();
-    let paint = Paint::Hue(hue);
     let visible = viewport.visible();
     let width = viewport.width() as f32;
     let px = |bp: u64| viewport.to_px(bp as f64) as f32;
-    let bar = |region: Region, top: f32, (offset, height): (f32, f32)| {
+    let bar = |region: Region, top: f32, (offset, height): (f32, f32), paint: Paint| {
         let left = px(region.start()).max(-1.0);
         let right = px(region.end()).min(width + 1.0);
         Primitive::Rect {
@@ -130,6 +130,10 @@ pub fn scene(
         }
         let row = if mode == Mode::Collapsed { 0 } else { row };
         let top = row as f32 * shape.row;
+        let paint = feature
+            .color()
+            .filter(|_| colors)
+            .map_or(Paint::Hue(hue), Paint::Rgb);
         let blocks = feature.blocks();
         for pair in blocks.windows(2) {
             let (left, right) = (px(pair[0].end()), px(pair[1].start()));
@@ -137,7 +141,7 @@ pub fn scene(
                 continue;
             }
             if let Some(intron) = Region::new(pair[0].end(), pair[1].start()) {
-                primitives.push(bar(intron, top, (shape.line, 1.0)));
+                primitives.push(bar(intron, top, (shape.line, 1.0), paint));
             }
             if shape.marks && feature.strand() != Strand::Unknown {
                 let forward = feature.strand() == Strand::Forward;
@@ -160,16 +164,16 @@ pub fn scene(
                     if let Some(before) =
                         Region::new(block.start(), coding.start()).filter(|part| !part.is_empty())
                     {
-                        primitives.push(bar(before, top, shape.short));
+                        primitives.push(bar(before, top, shape.short, paint));
                     }
-                    primitives.push(bar(coding, top, shape.tall));
+                    primitives.push(bar(coding, top, shape.tall, paint));
                     if let Some(after) =
                         Region::new(coding.end(), block.end()).filter(|part| !part.is_empty())
                     {
-                        primitives.push(bar(after, top, shape.short));
+                        primitives.push(bar(after, top, shape.short, paint));
                     }
                 }
-                None => primitives.push(bar(*block, top, shape.short)),
+                None => primitives.push(bar(*block, top, shape.short, paint)),
             }
         }
         if shape.marks && !feature.name().is_empty() {
@@ -256,7 +260,35 @@ mod tests {
     }
 
     fn draw(features: &[Feature], rows: &[usize], mode: Mode) -> Vec<Primitive> {
-        scene(view(), features, rows, mode, Hue::Green)
+        scene(view(), features, rows, mode, Hue::Green, true)
+    }
+
+    #[test]
+    fn file_colors_paint_their_features() {
+        let colored =
+            Feature::new("a", region(10, 20), Strand::Unknown).with_color(Some([1, 2, 3]));
+        let plain = Feature::new("b", region(30, 40), Strand::Unknown);
+        let paints = |colors| -> Vec<Paint> {
+            scene(
+                view(),
+                &[colored.clone(), plain.clone()],
+                &[0, 0],
+                Mode::Squished,
+                Hue::Blue,
+                colors,
+            )
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Rect { paint, .. } => Some(*paint),
+                _ => None,
+            })
+            .collect()
+        };
+        assert_eq!(paints(true), [Paint::Rgb([1, 2, 3]), Paint::Hue(Hue::Blue)]);
+        assert_eq!(
+            paints(false),
+            [Paint::Hue(Hue::Blue), Paint::Hue(Hue::Blue)]
+        );
     }
 
     fn rects(primitives: &[Primitive]) -> Vec<[f32; 4]> {
@@ -416,7 +448,8 @@ mod tests {
     #[test]
     fn keeps_small_blocks_one_pixel_wide() {
         let wide = Viewport::new(1_000_000, 100.0).show(region(0, 10_000));
-        let primitives = scene(wide, &[named("", 10, 20)], &[0], Mode::Expanded, Hue::Blue);
+        let features = [named("", 10, 20)];
+        let primitives = scene(wide, &features, &[0], Mode::Expanded, Hue::Blue, true);
         assert_eq!(rects(&primitives), [[0.1, 1.0, 1.0, 9.0]]);
     }
 }

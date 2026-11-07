@@ -16,6 +16,7 @@ pub struct Feature {
     strand: Strand,
     blocks: Vec<Region>,
     coding: Option<Region>,
+    color: Option<[u8; 3]>,
 }
 
 impl Feature {
@@ -26,7 +27,18 @@ impl Feature {
             strand,
             blocks: Vec::new(),
             coding: Some(span),
+            color: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_color(mut self, color: Option<[u8; 3]>) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn color(&self) -> Option<[u8; 3]> {
+        self.color
     }
 
     #[must_use]
@@ -96,6 +108,16 @@ mod tests {
             region(0, 15),
         ]);
         assert_eq!(feature.blocks(), [region(10, 15), region(40, 50)]);
+    }
+
+    #[test]
+    fn features_keep_a_file_color() {
+        let feature = Feature::new("a", region(10, 50), Strand::Unknown);
+        assert_eq!(feature.color(), None);
+        assert_eq!(
+            feature.with_color(Some([200, 10, 0])).color(),
+            Some([200, 10, 0])
+        );
     }
 
     #[test]

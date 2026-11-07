@@ -88,6 +88,7 @@ impl Saved {
                         },
                         linked: section.value("scale") == Some("shared"),
                         pairs: section.value("pairs") != Some("off"),
+                        colors: section.value("colors") != Some("off"),
                     },
                 })
             })
@@ -143,6 +144,9 @@ impl Saved {
             }
             if !track.plot.pairs {
                 entries.push(("pairs", "off".to_owned()));
+            }
+            if !track.plot.colors {
+                entries.push(("colors", "off".to_owned()));
             }
             sections.push(section("track", entries));
         }
@@ -266,7 +270,8 @@ mod tests {
                     plot: Plot {
                         style: Style::Line,
                         linked: true,
-                        pairs: true,
+                        colors: false,
+                        ..Plot::default()
                     },
                 },
             ],
@@ -287,6 +292,7 @@ mod tests {
         assert_eq!(text.matches("style =").count(), 1, "{text}");
         assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
         assert_eq!(text.matches("group = phase").count(), 1, "{text}");
+        assert_eq!(text.matches("colors = off").count(), 1, "{text}");
     }
 
     #[test]

@@ -154,6 +154,7 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Hue(hue) => data.hues[hue as usize],
         Paint::Tint(hue) => data.hues[hue as usize].scale_alpha(FADED),
         Paint::Pair(hue) => data.hues[hue as usize].scale_alpha(PAIR),
+        Paint::Rgb([red, green, blue]) => Color::from_rgb8(red, green, blue),
         Paint::Strand(Strand::Reverse) => data.strands[1],
         Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
         Paint::Coverage => data.coverage,

@@ -12,6 +12,7 @@ use crate::track::{Change, Grouping, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
+const COLORED_HEIGHT: f32 = 215.0;
 const READS_HEIGHT: f32 = 341.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
 const SIGNAL_HEIGHT: f32 = 200.0;
@@ -39,6 +40,8 @@ pub fn height(track: &Track) -> f32 {
         VARIANTS_HEIGHT
     } else if track.source.has_signal() {
         SIGNAL_HEIGHT
+    } else if track.source.has_colors() {
+        COLORED_HEIGHT
     } else {
         FEATURES_HEIGHT
     }
@@ -147,6 +150,14 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             }))
             .push(separator());
     } else if !track.source.has_variants() {
+        if track.source.has_colors() {
+            content = content.push(item(
+                "Use file colors",
+                Change::Colors,
+                track.plot.colors,
+                true,
+            ));
+        }
         content = content
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());

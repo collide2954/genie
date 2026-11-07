@@ -1686,6 +1686,7 @@ fn track_body<'a>(
                 &annotation.rows,
                 mode,
                 track.hue,
+                track.plot.colors,
             );
             interactive(primitives, shape.height).into()
         }
@@ -3066,6 +3067,15 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn bed_menus_turn_file_colors_off() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Use file colors"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Colors));
+        assert!(!genie.session.as_ref().unwrap().tracks[0].plot.colors);
     }
 
     #[test]
