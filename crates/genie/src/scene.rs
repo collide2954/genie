@@ -136,6 +136,7 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
         Paint::Coverage => data.coverage,
         Paint::Insertion => data.insertion,
+        Paint::Codon(even) => data.codons[usize::from(!even)],
         Paint::Text => tokens.text,
         Paint::Muted => tokens.muted,
         Paint::Line => tokens.line,

@@ -79,6 +79,7 @@ pub struct DataColors {
     pub strands: [Color; 2],
     pub coverage: Color,
     pub insertion: Color,
+    pub codons: [Color; 2],
 }
 
 const ON_BASES: [Color; 5] = [
@@ -108,6 +109,7 @@ pub const LIGHT_DATA: DataColors = DataColors {
     strands: [color!(0xBACBE3), color!(0xE5BEC4)],
     coverage: color!(0xB0B0B0),
     insertion: color!(0x7B3FA0),
+    codons: [color!(0xE3E3E3), color!(0xD2D2D2)],
 };
 
 pub const DARK_DATA: DataColors = DataColors {
@@ -129,6 +131,7 @@ pub const DARK_DATA: DataColors = DataColors {
     strands: [color!(0x405873), color!(0x6E4850)],
     coverage: color!(0x5E5E5E),
     insertion: color!(0xB784E0),
+    codons: [color!(0x3A3A3A), color!(0x2D2D2D)],
 };
 
 pub fn data(theme: &Theme) -> &'static DataColors {

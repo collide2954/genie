@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use genie_core::Viewport;
+use genie_core::{Viewport, codon};
 
 use crate::scene::{Align, Base, Font, Paint, Primitive};
 
@@ -15,6 +15,7 @@ pub fn scene<'a>(
     viewport: Viewport,
     chunks: impl IntoIterator<Item = (u64, &'a [u8])>,
     height: f32,
+    complement: bool,
 ) -> Vec<Primitive> {
     let pixels = 1.0 / viewport.scale();
     if pixels < 1.0 {
@@ -41,6 +42,11 @@ pub fn scene<'a>(
         let last = visible.end().min(start + bases.len() as u64);
         for position in first..last {
             let byte = bases[(position - start) as usize];
+            let byte = if complement {
+                codon::complement(byte)
+            } else {
+                byte
+            };
             let base = Base::from_byte(byte);
             let x = viewport.to_px(position as f64);
             primitives.push(Primitive::Rect {
@@ -117,14 +123,24 @@ mod tests {
 
     #[test]
     fn hints_when_bases_are_under_one_pixel() {
-        let primitives = scene(Viewport::new(1_000_000, 1_000.0), [(0, &b"ACGT"[..])], 20.0);
+        let primitives = scene(
+            Viewport::new(1_000_000, 1_000.0),
+            [(0, &b"ACGT"[..])],
+            20.0,
+            false,
+        );
         assert_eq!(texts(&primitives), [HINT]);
         assert_eq!(rects(&primitives), []);
     }
 
     #[test]
     fn draws_plain_bars_below_six_pixels() {
-        let primitives = scene(viewport(0, 200, 1_000.0), [(0, &[b'A'; 200][..])], 20.0);
+        let primitives = scene(
+            viewport(0, 200, 1_000.0),
+            [(0, &[b'A'; 200][..])],
+            20.0,
+            false,
+        );
         let rects = rects(&primitives);
         assert_eq!(rects.len(), 200);
         assert_eq!(rects[1], (5.0, 5.0, Paint::Base(Base::A)));
@@ -133,22 +149,48 @@ mod tests {
 
     #[test]
     fn separates_bases_from_six_pixels() {
-        let primitives = scene(viewport(0, 100, 700.0), [(0, &[b'C'; 100][..])], 20.0);
+        let primitives = scene(
+            viewport(0, 100, 700.0),
+            [(0, &[b'C'; 100][..])],
+            20.0,
+            false,
+        );
         assert_eq!(rects(&primitives)[0], (0.0, 6.0, Paint::Base(Base::C)));
     }
 
     #[test]
     fn writes_letters_from_nine_pixels_and_keeps_case() {
-        let primitives = scene(viewport(0, 10, 100.0), [(0, &b"ACGTNacgtn"[..])], 20.0);
+        let primitives = scene(
+            viewport(0, 10, 100.0),
+            [(0, &b"ACGTNacgtn"[..])],
+            20.0,
+            false,
+        );
         assert_eq!(rects(&primitives).len(), 10);
         assert_eq!(texts(&primitives).concat(), "ACGTNacgtn");
         assert_eq!(rects(&primitives)[6], (60.0, 9.0, Paint::Base(Base::C)));
     }
 
     #[test]
+    fn complements_the_reverse_strand() {
+        let primitives = scene(viewport(0, 4, 40.0), [(0, &b"ACgt"[..])], 20.0, true);
+        assert_eq!(texts(&primitives).concat(), "TGca");
+        let paints: Vec<Paint> = rects(&primitives).iter().map(|rect| rect.2).collect();
+        assert_eq!(
+            paints,
+            [
+                Paint::Base(Base::T),
+                Paint::Base(Base::G),
+                Paint::Base(Base::C),
+                Paint::Base(Base::A)
+            ]
+        );
+    }
+
+    #[test]
     fn draws_only_loaded_chunks() {
         let chunks = [(1, &b"G"[..]), (4, &b"GG"[..])];
-        let primitives = scene(viewport(0, 10, 100.0), chunks, 20.0);
+        let primitives = scene(viewport(0, 10, 100.0), chunks, 20.0, false);
         let starts: Vec<f32> = rects(&primitives).iter().map(|rect| rect.0).collect();
         assert_eq!(starts, [10.0, 40.0, 50.0]);
     }

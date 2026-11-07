@@ -52,6 +52,7 @@ pub enum Paint {
     Strand(Strand),
     Coverage,
     Insertion,
+    Codon(bool),
     Text,
     Muted,
     Line,

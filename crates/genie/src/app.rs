@@ -971,6 +971,7 @@ impl Genie {
             viewport,
             self.tiles.chunks(session.contig, viewport.visible()),
             BASE_HEIGHT,
+            false,
         );
         let sequence = stack![
             container(scene::view(bases, BASE_HEIGHT)).padding([TRACK_PADDING, 0.0]),
