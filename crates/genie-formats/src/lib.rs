@@ -13,6 +13,7 @@ pub mod ini;
 pub mod png;
 mod sidecar;
 pub mod tabix;
+pub mod table;
 pub mod twobit;
 pub mod vcf;
 

@@ -31,7 +31,7 @@ pub enum Format {
     },
     Table {
         kind: Kind,
-        table: Table,
+        table: Table<Feature>,
     },
     Reads {
         index: bai::Index,
@@ -384,7 +384,7 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
             .len();
         fits(&name, size)?;
         let file = File::open(&path).map_err(|error| error.to_string())?;
-        let table = Table::read(kind, BufReader::new(file))
+        let table = features::read_table(kind, BufReader::new(file))
             .map_err(|error| format!("The file {name} is not valid. {error}"))?;
         return Ok(Source {
             path,

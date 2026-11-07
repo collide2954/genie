@@ -3,6 +3,7 @@ use std::io::{BufRead, Read, Seek};
 
 use genie_core::{Feature, Region};
 
+pub use crate::table::Table;
 use crate::{Error, bed, bgzf::Bgzf, gff, tabix::Index};
 
 const PASSES: usize = 4;
@@ -78,92 +79,50 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Table {
-    names: Vec<String>,
-    contigs: Vec<(Vec<Feature>, u64)>,
-}
-
-impl Table {
-    pub fn read(kind: Kind, mut reader: impl BufRead) -> Result<Self, Error> {
-        let mut table = Self::default();
-        let mut slots = HashMap::new();
-        let mut records: Vec<Vec<gff::Record>> = Vec::new();
-        let mut bytes = Vec::new();
-        let mut number = 0;
-        loop {
-            bytes.clear();
-            if reader.read_until(b'\n', &mut bytes)? == 0 {
-                break;
-            }
-            number += 1;
-            let text = String::from_utf8_lossy(&bytes);
-            let line = text.trim_end_matches(['\n', '\r']);
-            if line.starts_with("##FASTA") {
-                break;
-            }
-            let failed = |reason| Error::Format {
-                line: number,
-                reason,
-            };
-            match kind {
-                Kind::Bed => {
-                    if let Some((contig, feature)) = bed::parse(line).map_err(failed)? {
-                        let slot = table.slot(&mut slots, contig);
-                        table.contigs[slot].0.push(feature);
-                    }
-                }
-                Kind::Gff => {
-                    if let Some(record) = gff::parse(line).map_err(failed)? {
-                        let slot = table.slot(&mut slots, &record.contig);
-                        records.resize_with(table.names.len(), Vec::new);
-                        records[slot].push(record);
-                    }
-                }
-            }
+pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>, Error> {
+    let mut rows = Vec::new();
+    let mut groups: Vec<(String, Vec<gff::Record>)> = Vec::new();
+    let mut slots = HashMap::new();
+    let mut bytes = Vec::new();
+    let mut number = 0;
+    loop {
+        bytes.clear();
+        if reader.read_until(b'\n', &mut bytes)? == 0 {
+            break;
         }
-        for (slot, records) in records.iter().enumerate() {
-            table.contigs[slot].0 = gff::assemble(records);
+        number += 1;
+        let text = String::from_utf8_lossy(&bytes);
+        let line = text.trim_end_matches(['\n', '\r']);
+        if line.starts_with("##FASTA") {
+            break;
         }
-        for (features, longest) in &mut table.contigs {
-            features.sort_by_key(|feature| feature.span().start());
-            *longest = features
-                .iter()
-                .map(|feature| feature.span().len())
-                .max()
-                .unwrap_or(0);
-        }
-        Ok(table)
-    }
-
-    fn slot(&mut self, slots: &mut HashMap<String, usize>, contig: &str) -> usize {
-        if let Some(&slot) = slots.get(contig) {
-            return slot;
-        }
-        self.names.push(contig.to_owned());
-        self.contigs.push((Vec::new(), 0));
-        slots.insert(contig.to_owned(), self.names.len() - 1);
-        self.names.len() - 1
-    }
-
-    pub fn contigs(&self) -> &[String] {
-        &self.names
-    }
-
-    pub fn query(&self, contig: &str, region: Region) -> Vec<Feature> {
-        let Some(slot) = self.names.iter().position(|name| name == contig) else {
-            return Vec::new();
+        let failed = |reason| Error::Format {
+            line: number,
+            reason,
         };
-        let (features, longest) = &self.contigs[slot];
-        let from = region.start().saturating_sub(*longest);
-        let first = features.partition_point(|feature| feature.span().start() < from);
-        features[first..]
-            .iter()
-            .take_while(|feature| feature.span().start() < region.end())
-            .filter(|feature| feature.span().overlaps(region))
-            .cloned()
-            .collect()
+        match kind {
+            Kind::Bed => {
+                if let Some((contig, feature)) = bed::parse(line).map_err(failed)? {
+                    rows.push((contig.to_owned(), feature.span(), feature));
+                }
+            }
+            Kind::Gff => {
+                if let Some(record) = gff::parse(line).map_err(failed)? {
+                    let slot = *slots.entry(record.contig.clone()).or_insert_with(|| {
+                        groups.push((record.contig.clone(), Vec::new()));
+                        groups.len() - 1
+                    });
+                    groups[slot].1.push(record);
+                }
+            }
+        }
     }
+    for (contig, records) in groups {
+        for feature in gff::assemble(&records) {
+            rows.push((contig.clone(), feature.span(), feature));
+        }
+    }
+    Ok(Table::new(rows))
 }
 
 pub fn query<R: Read + Seek>(
@@ -213,7 +172,7 @@ mod tests {
 
     use genie_core::{Feature, Region, Strand};
 
-    use super::{Entry, Kind, Table, names, query};
+    use super::{Entry, Kind, Table, names, query, read_table};
     use crate::Error;
     use crate::{
         bgzf::{
@@ -301,9 +260,9 @@ mod tests {
         );
     }
 
-    fn table(kind: Kind, lines: &[&str]) -> Result<Table, Error> {
+    fn table(kind: Kind, lines: &[&str]) -> Result<Table<Feature>, Error> {
         let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
-        Table::read(kind, text.as_bytes())
+        read_table(kind, text.as_bytes())
     }
 
     fn named(features: &[Feature]) -> Vec<&str> {
