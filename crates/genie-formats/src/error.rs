@@ -12,6 +12,10 @@ pub enum Reason {
     BadNumber,
     ShortLineWidth,
     ZeroLineBases,
+    NoHeader,
+    EmptyName,
+    UnevenLines,
+    BlankLine,
 }
 
 impl fmt::Display for Error {
@@ -30,6 +34,10 @@ impl fmt::Display for Reason {
             Self::BadNumber => "a number is not valid",
             Self::ShortLineWidth => "the line width is less than the bases per line",
             Self::ZeroLineBases => "the number of bases per line is zero",
+            Self::NoHeader => "the sequence has no header line",
+            Self::EmptyName => "the header has no name",
+            Self::UnevenLines => "the line length is not the same as the first line",
+            Self::BlankLine => "a blank line is in the sequence",
         })
     }
 }

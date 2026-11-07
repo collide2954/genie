@@ -27,6 +27,91 @@ pub fn parse(reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
     Ok(records)
 }
 
+pub fn build(mut reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
+    let mut builder = Builder::default();
+    let mut line = Vec::new();
+    let mut number = 0;
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(builder.records);
+        }
+        number += 1;
+        builder.line(&line).map_err(|reason| Error::Format {
+            line: number,
+            reason,
+        })?;
+    }
+}
+
+#[derive(Default)]
+struct Builder {
+    records: Vec<FaiRecord>,
+    position: u64,
+    short: bool,
+    blank: bool,
+}
+
+impl Builder {
+    fn line(&mut self, line: &[u8]) -> Result<(), Reason> {
+        self.position += line.len() as u64;
+        let content = line.strip_suffix(b"\n").unwrap_or(line);
+        let content = content.strip_suffix(b"\r").unwrap_or(content);
+        if let Some(header) = content.strip_prefix(b">") {
+            return self.header(header);
+        }
+        let Some(record) = self.records.last_mut() else {
+            return if content.is_empty() {
+                Ok(())
+            } else {
+                Err(Reason::NoHeader)
+            };
+        };
+        if content.is_empty() {
+            self.blank = true;
+            return Ok(());
+        }
+        if self.blank {
+            return Err(Reason::BlankLine);
+        }
+        let bases = content.len() as u64;
+        let width = line.len() as u64;
+        if record.line_bases == 0 {
+            record.line_bases = bases;
+            record.line_width = width;
+        } else if self.short
+            || bases > record.line_bases
+            || (bases == record.line_bases && width != record.line_width && line.ends_with(b"\n"))
+        {
+            return Err(Reason::UnevenLines);
+        } else if bases < record.line_bases {
+            self.short = true;
+        }
+        record.length += bases;
+        Ok(())
+    }
+
+    fn header(&mut self, header: &[u8]) -> Result<(), Reason> {
+        let name = header
+            .split(u8::is_ascii_whitespace)
+            .next()
+            .unwrap_or_default();
+        if name.is_empty() {
+            return Err(Reason::EmptyName);
+        }
+        self.records.push(FaiRecord {
+            name: String::from_utf8_lossy(name).into_owned(),
+            length: 0,
+            offset: self.position,
+            line_bases: 0,
+            line_width: 0,
+        });
+        self.short = false;
+        self.blank = false;
+        Ok(())
+    }
+}
+
 fn parse_line(line: &str) -> Result<FaiRecord, Reason> {
     let mut fields = line.split('\t');
     let name = fields
@@ -61,7 +146,7 @@ fn parse_line(line: &str) -> Result<FaiRecord, Reason> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FaiRecord, parse};
+    use super::{FaiRecord, build, parse};
     use crate::{Error, Reason};
 
     fn record(name: &str, length: u64, offset: u64, line_bases: u64, line_width: u64) -> FaiRecord {
@@ -109,6 +194,52 @@ mod tests {
         assert_eq!(failure("chr1\tten\t6\t10\t11\n"), (1, Reason::BadNumber));
         assert_eq!(failure("chr1\t10\t6\t10\t9\n"), (1, Reason::ShortLineWidth));
         assert_eq!(failure("chr1\t10\t6\t0\t1\n"), (1, Reason::ZeroLineBases));
+    }
+
+    fn build_failure(text: &str) -> (u64, Reason) {
+        match build(text.as_bytes()) {
+            Err(Error::Format { line, reason }) => (line, reason),
+            other => panic!("expected a format error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_records_offsets_and_line_shape() {
+        let records = build(">chr1 desc\nACGT\nAC\n>chr2\nGG\n".as_bytes()).unwrap();
+        assert_eq!(
+            records,
+            [record("chr1", 6, 11, 4, 5), record("chr2", 2, 25, 2, 3)]
+        );
+    }
+
+    #[test]
+    fn build_handles_crlf_and_missing_final_newline() {
+        assert_eq!(
+            build(">c\r\nACGT\r\nAC\r\n".as_bytes()).unwrap(),
+            [record("c", 6, 4, 4, 6)]
+        );
+        assert_eq!(
+            build(">c\nACGT\nAC".as_bytes()).unwrap(),
+            [record("c", 6, 3, 4, 5)]
+        );
+    }
+
+    #[test]
+    fn build_allows_blank_lines_between_records() {
+        let records = build(">c\nACGT\n\n\n>d\nAC\n".as_bytes()).unwrap();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn build_rejects_malformed_fasta() {
+        assert_eq!(build_failure("ACGT\n"), (1, Reason::NoHeader));
+        assert_eq!(build_failure(">\nACGT\n"), (1, Reason::EmptyName));
+        assert_eq!(build_failure(">c\nACG\nACGT\n"), (3, Reason::UnevenLines));
+        assert_eq!(
+            build_failure(">c\nACGT\nAC\nACGT\n"),
+            (4, Reason::UnevenLines)
+        );
+        assert_eq!(build_failure(">c\nACGT\n\nACGT\n"), (4, Reason::BlankLine));
     }
 
     #[test]
