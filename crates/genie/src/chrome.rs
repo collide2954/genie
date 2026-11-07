@@ -170,6 +170,9 @@ pub fn title_bar<'a>(
             .align_y(Alignment::Center),
     )
     .width(BRAND_WIDTH);
+    let save = locus
+        .is_some()
+        .then(|| tool(Icon::Save, "save", Message::Command(Command::SaveSession)));
     let export = locus
         .is_some()
         .then(|| tool(Icon::Camera, "export", Message::Command(Command::Export)));
@@ -178,6 +181,7 @@ pub fn title_bar<'a>(
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
     let tools = row![
+        save,
         export,
         tool(Icon::Gear, "settings", Message::ToggleSettings),
         tool(appearance, "appearance", Message::CycleAppearance)
@@ -402,6 +406,22 @@ mod tests {
             Some(field("chr9", Some(error))),
         ));
         assert!(ui.find(error).is_ok());
+    }
+
+    #[test]
+    fn save_button_shows_with_a_locus() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        ui.click(selector::id("save")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Command(Command::SaveSession)]
+        );
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        assert!(ui.find(selector::id("save")).is_err());
     }
 
     #[test]

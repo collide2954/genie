@@ -32,6 +32,7 @@ use crate::paths::file_name;
 use crate::reading::{self, Reading};
 use crate::recent::Recent;
 use crate::reference::{self, Reference};
+use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::settings::{self, Setting, Settings};
 use crate::shortcuts::{self, Command};
@@ -78,6 +79,7 @@ pub struct Genie {
     notice: Option<Notice>,
     notices: u64,
     indexing: Option<(String, u8)>,
+    restoring: Option<Saved>,
     diagnostics: bool,
     stats: Stats,
     menu: Option<(u64, Point)>,
@@ -111,6 +113,7 @@ impl Default for Genie {
             notice: None,
             notices: 0,
             indexing: None,
+            restoring: None,
             diagnostics: false,
             stats: Stats::default(),
             menu: None,
@@ -282,6 +285,7 @@ pub enum Message {
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
     ExportPicked(Option<PathBuf>),
+    SessionPicked(Option<PathBuf>),
     Exported(Result<PathBuf, String>),
     NoticeExpired(u64),
     Indexing(String, u8),
@@ -355,6 +359,7 @@ impl Genie {
         self.recent.add(reference.path.clone());
         (self.hover, self.pinned) = (None, None);
         self.session = Some(Session::new(reference, self.width));
+        self.resume();
         let mut tasks = vec![self.fetch(), self.remember()];
         for path in std::mem::take(&mut self.pending) {
             tasks.push(self.open(path));
@@ -463,6 +468,7 @@ impl Genie {
             }
             Message::OverviewReleased => self.on_session(|session| session.grip = None),
             Message::ExportPicked(path) => return self.export_to(path),
+            Message::SessionPicked(path) => return self.session_picked(path),
             Message::Exported(result) => return self.exported(result),
             Message::NoticeExpired(id) => self.expire(id),
         }
@@ -696,6 +702,7 @@ impl Genie {
                 Task::none()
             }
             Command::Export => self.export(),
+            Command::SaveSession => self.save_session(),
             Command::Diagnostics => {
                 if cfg!(debug_assertions) {
                     self.diagnostics = !self.diagnostics;
@@ -1098,6 +1105,19 @@ impl Genie {
     }
 
     fn open(&mut self, path: PathBuf) -> Task<Message> {
+        if saved::is_session(&path) {
+            return match Saved::load(&path) {
+                Ok(saved) => {
+                    self.recent.add(path);
+                    let remember = self.remember();
+                    Task::batch([self.restore(saved), remember])
+                }
+                Err(error) => {
+                    self.fail(error);
+                    Task::none()
+                }
+            };
+        }
         if track::is_track(&path) {
             if self.session.is_none() {
                 self.status = Status::Failed(NO_REFERENCE.to_owned());
@@ -1146,8 +1166,25 @@ impl Genie {
         self.notice = None;
         let id = self.next_track;
         self.next_track += 1;
-        let track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
-        session.tracks.push(track);
+        let mut track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
+        if let Some(saved) = &self.restoring {
+            if let Some(found) = saved.tracks.iter().find(|known| known.path == source.path) {
+                track.mode = found.mode;
+                track.hue = found.hue;
+                track.height = found.height;
+                track.options = found.options;
+            }
+            session.tracks.push(track);
+            session.tracks.sort_by_key(|track| {
+                saved
+                    .tracks
+                    .iter()
+                    .position(|known| known.path == track.source.path)
+                    .unwrap_or(usize::MAX)
+            });
+        } else {
+            session.tracks.push(track);
+        }
         if source.has_reads() {
             return self.fetch_features();
         }
@@ -1157,6 +1194,102 @@ impl Genie {
             move |result| Message::NamesLoaded(id, result),
         );
         Task::batch([self.fetch_features(), names])
+    }
+
+    fn restore(&mut self, saved: Saved) -> Task<Message> {
+        self.pending = saved
+            .tracks
+            .iter()
+            .map(|track| track.path.clone())
+            .collect();
+        let reference = saved.reference.clone();
+        self.restoring = Some(saved);
+        self.open(reference)
+    }
+
+    fn resume(&mut self) {
+        let (Some(saved), Some(session)) = (&self.restoring, &mut self.session) else {
+            return;
+        };
+        if saved.reference != session.reference.path {
+            self.restoring = None;
+            return;
+        }
+        session.reading = saved.reading;
+        let assembly = &session.reference.assembly;
+        if let Some(target) = saved
+            .locus
+            .as_deref()
+            .and_then(|locus| assembly.resolve(locus).ok())
+        {
+            let length = assembly.contigs()[target.contig].length;
+            session.contig = target.contig;
+            session.viewport = session.viewport.retarget(length).jump(target.span);
+        }
+    }
+
+    fn saved(&self) -> Option<Saved> {
+        let session = self.session.as_ref()?;
+        Some(Saved {
+            reference: session.reference.path.clone(),
+            locus: Some(session.locus()),
+            reading: session.reading,
+            tracks: session
+                .tracks
+                .iter()
+                .map(|track| SavedTrack {
+                    path: track.source.path.clone(),
+                    mode: track.mode,
+                    hue: track.hue,
+                    height: track.height,
+                    options: track.options,
+                })
+                .collect(),
+        })
+    }
+
+    fn save_session(&self) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let stem = session
+            .reference
+            .name
+            .split('.')
+            .next()
+            .unwrap_or("session");
+        Task::perform(
+            save_session_as(format!("{stem}.{}", saved::EXTENSION)),
+            Message::SessionPicked,
+        )
+    }
+
+    fn session_picked(&mut self, path: Option<PathBuf>) -> Task<Message> {
+        let (Some(path), Some(saved)) = (path, self.saved()) else {
+            return Task::none();
+        };
+        let path = if saved::is_session(&path) {
+            path
+        } else {
+            let mut text = path.into_os_string();
+            text.push(".");
+            text.push(saved::EXTENSION);
+            PathBuf::from(text)
+        };
+        match saved.save(&path) {
+            Ok(()) => {
+                self.recent.add(path.clone());
+                let remember = self.remember();
+                Task::batch([
+                    self.inform(format!("Saved {}.", file_name(&path))),
+                    remember,
+                ])
+            }
+            Err(error) => {
+                self.warn(format!("The session could not be saved. {error}"));
+                Task::none()
+            }
+        }
     }
 
     fn fail(&mut self, error: String) {
@@ -1715,15 +1848,26 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
     let references = ["fa", "fasta", "fna", "fas", "gz", "bgz", "2bit"];
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
-            .set_title("Open a track or a reference sequence")
+            .set_title("Open a track, a reference sequence or a session")
             .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3", "bam"])
             .add_filter("Reference sequences", &references)
     } else {
         rfd::AsyncFileDialog::new()
-            .set_title("Open a reference sequence")
+            .set_title("Open a reference sequence or a session")
             .add_filter("Reference sequences", &references)
-    };
+    }
+    .add_filter("Sessions", &[saved::EXTENSION]);
     dialog.pick_file().await.map(|file| file.path().to_owned())
+}
+
+async fn save_session_as(name: String) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Save session")
+        .set_file_name(name)
+        .add_filter("Sessions", &[saved::EXTENSION])
+        .save_file()
+        .await
+        .map(|file| file.path().to_owned())
 }
 
 async fn save_as(name: String) -> Option<PathBuf> {
@@ -1762,6 +1906,7 @@ mod tests {
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
     use genie_render::features::Mode as Rows;
+    use genie_render::scene::Hue;
     use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
     use iced::time::{Duration, Instant};
@@ -2400,6 +2545,70 @@ mod tests {
 
     fn first_height(genie: &Genie) -> Option<f32> {
         genie.session.as_ref().unwrap().tracks[0].height
+    }
+
+    fn reference_at(path: PathBuf) -> Arc<Reference> {
+        let records = vec![FaiRecord {
+            name: "chr1".to_owned(),
+            length: 1_000,
+            offset: 6,
+            line_bases: 60,
+            line_width: 61,
+        }];
+        Arc::new(Reference::fasta(path, records).unwrap())
+    }
+
+    #[test]
+    fn opening_a_session_restores_the_view_and_tracks() {
+        let scratch = crate::scratch::Scratch::new("restore");
+        let text = "[session]\nreference = ref.fa\nlocus = chr1:101-200\nframes = 3\n\
+                    [track]\nfile = genes.bed.gz\ncolor = orange\nheight = 50\n";
+        let file = scratch.file("work.genie", text);
+        let folder = file.parent().unwrap().to_owned();
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Picked(Some(file.clone())));
+        assert_eq!(genie.pending, [folder.join("genes.bed.gz")]);
+        assert_eq!(genie.recent.paths()[0], file);
+        let _ = genie.update(Message::Opened(Ok(reference_at(folder.join("ref.fa")))));
+        assert!(shows(&genie, "chr1:101-200"));
+        let source = Arc::new(Source {
+            path: folder.join("genes.bed.gz"),
+            name: "genes.bed.gz".to_owned(),
+            format: Format::Features {
+                kind: Kind::Bed,
+                index: Index::default(),
+            },
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.reading.frames, Frames::Three);
+        assert_eq!(session.tracks[0].hue, Hue::Orange);
+        assert_eq!(session.tracks[0].height, Some(50.0));
+    }
+
+    #[test]
+    fn the_saved_view_lists_the_reference_and_tracks() {
+        let genie = with_track();
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.reference, PathBuf::from("ref.fa"));
+        assert_eq!(saved.locus.as_deref(), Some("chr1:1-1,000"));
+        let paths: Vec<PathBuf> = saved
+            .tracks
+            .iter()
+            .map(|track| track.path.clone())
+            .collect();
+        assert_eq!(paths, [PathBuf::from("/data/genes.bed.gz")]);
+    }
+
+    #[test]
+    fn saved_sessions_are_announced() {
+        let scratch = crate::scratch::Scratch::new("save-session");
+        let file = scratch.file("view", "");
+        let mut genie = with_track();
+        let _ = genie.update(Message::SessionPicked(Some(file.clone())));
+        assert!(shows(&genie, "Saved view.genie."));
+        let written = std::fs::read_to_string(file.with_file_name("view.genie")).unwrap();
+        assert!(written.contains("file = /data/genes.bed.gz"), "{written}");
     }
 
     #[test]

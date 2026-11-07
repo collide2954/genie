@@ -19,6 +19,7 @@ pub enum Icon {
     Open,
     Camera,
     Gear,
+    Save,
 }
 
 enum Shape {
@@ -76,6 +77,18 @@ impl Icon {
             Self::Gear => &[
                 Shape::Gear([12.0, 12.0], 7.0, 9.5, 8),
                 Shape::Circle([12.0, 12.0], 2.75),
+            ],
+            Self::Save => &[
+                Shape::Polyline(&[
+                    [4.0, 4.0],
+                    [16.5, 4.0],
+                    [20.0, 7.5],
+                    [20.0, 20.0],
+                    [4.0, 20.0],
+                    [4.0, 4.0],
+                ]),
+                Shape::Polyline(&[[8.0, 4.0], [8.0, 9.0], [15.0, 9.0], [15.0, 4.0]]),
+                Shape::Polyline(&[[7.5, 20.0], [7.5, 14.0], [16.5, 14.0], [16.5, 20.0]]),
             ],
         }
     }
@@ -187,7 +200,8 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 9] = [
+    const ICONS: [Icon; 10] = [
+        Icon::Save,
         Icon::Sun,
         Icon::Moon,
         Icon::Monitor,

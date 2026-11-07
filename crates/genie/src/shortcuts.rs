@@ -15,6 +15,7 @@ pub enum Command {
     Dismiss,
     Export,
     Diagnostics,
+    SaveSession,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -30,6 +31,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
+        Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
         _ => None,
     }
 }
@@ -90,6 +92,14 @@ mod tests {
             Some(Command::Export)
         );
         assert_eq!(command(&character("e"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_s_saves_the_session() {
+        assert_eq!(
+            command(&character("s"), Modifiers::COMMAND),
+            Some(Command::SaveSession)
+        );
     }
 
     #[test]

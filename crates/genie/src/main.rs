@@ -14,6 +14,7 @@ mod paths;
 mod reading;
 mod recent;
 mod reference;
+mod saved;
 mod scene;
 #[cfg(test)]
 mod scratch;
