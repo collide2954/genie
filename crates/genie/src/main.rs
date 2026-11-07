@@ -1,4 +1,5 @@
 mod app;
+mod chrome;
 mod font;
 mod icon;
 mod style;

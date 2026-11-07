@@ -1,10 +1,11 @@
 use iced::theme::Mode;
-use iced::widget::{button, center, column, container, row, space, text};
-use iced::{Alignment, Element, Task, Theme, system};
+use iced::widget::{center, column, stack, text};
+use iced::{Element, Task, Theme, system};
 
-use crate::icon::{self, Icon};
+use crate::chrome::{self, Controls};
+use crate::font;
+use crate::icon::Icon;
 use crate::theme::{self, Appearance, tokens};
-use crate::{font, style};
 
 #[derive(Debug, Default)]
 pub struct Genie {
@@ -12,10 +13,11 @@ pub struct Genie {
     system: Mode,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Message {
     CycleAppearance,
     SystemModeChanged(Mode),
+    Window(chrome::Action),
 }
 
 impl Genie {
@@ -30,6 +32,7 @@ impl Genie {
         match message {
             Message::CycleAppearance => self.appearance = self.appearance.next(),
             Message::SystemModeChanged(mode) => self.system = mode,
+            Message::Window(action) => return chrome::perform(action),
         }
         Task::none()
     }
@@ -40,28 +43,17 @@ impl Genie {
             Appearance::Light => Icon::Sun,
             Appearance::Dark => Icon::Moon,
         };
-        let bar = container(
-            row![
-                text("genie"),
-                space::horizontal(),
-                container(
-                    button(icon::view(appearance, 16.0))
-                        .width(28)
-                        .height(28)
-                        .padding(0)
-                        .style(style::ghost)
-                        .on_press(Message::CycleAppearance)
-                )
-                .id("appearance"),
-            ]
-            .align_y(Alignment::Center)
-            .padding(8),
-        )
-        .style(|theme| container::background(tokens(theme).bar));
         let welcome = text("Open a reference sequence to start.").style(|theme| text::Style {
             color: Some(tokens(theme).muted),
         });
-        column![bar, center(welcome)].into()
+        let content = column![
+            chrome::title_bar(Controls::CURRENT, appearance),
+            center(welcome)
+        ];
+        match Controls::CURRENT {
+            Controls::Native => content.into(),
+            Controls::Custom => stack![content, chrome::resize_handles()].into(),
+        }
     }
 
     fn theme(&self) -> Theme {
@@ -82,6 +74,7 @@ pub fn run() -> iced::Result {
         )
         .default_font(font::UI)
         .title("genie")
+        .window(chrome::settings())
         .theme(Genie::theme)
         .subscription(|_| system::theme_changes().map(Message::SystemModeChanged))
         .run()

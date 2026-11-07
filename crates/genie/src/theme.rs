@@ -71,6 +71,8 @@ pub const DARK: Tokens = Tokens {
     danger: color!(0xF97066),
 };
 
+pub const CLOSE: Color = color!(0xC42B1C);
+
 pub fn light() -> Theme {
     static THEME: LazyLock<Theme> = LazyLock::new(|| build("genie light", &LIGHT));
     THEME.clone()

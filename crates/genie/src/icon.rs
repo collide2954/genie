@@ -1,5 +1,5 @@
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke, path::Arc};
-use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::theme::tokens;
 
@@ -11,6 +11,15 @@ pub enum Icon {
     Sun,
     Moon,
     Monitor,
+    Minimize,
+    Maximize,
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hover {
+    Text,
+    White,
 }
 
 enum Shape {
@@ -43,6 +52,12 @@ impl Icon {
                 Shape::Line([8.0, 21.0], [16.0, 21.0]),
                 Shape::Line([12.0, 17.0], [12.0, 21.0]),
             ],
+            Self::Minimize => &[Shape::Line([5.0, 12.0], [19.0, 12.0])],
+            Self::Maximize => &[Shape::Rect([5.0, 5.0], [19.0, 19.0], 1.5)],
+            Self::Close => &[
+                Shape::Line([6.0, 6.0], [18.0, 18.0]),
+                Shape::Line([18.0, 6.0], [6.0, 18.0]),
+            ],
         }
     }
 }
@@ -70,8 +85,8 @@ impl Shape {
     }
 }
 
-pub fn view<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(Program { icon, size })
+pub fn view<'a, Message: 'a>(icon: Icon, size: f32, hover: Hover) -> Element<'a, Message> {
+    canvas::Canvas::new(Program { icon, size, hover })
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -80,6 +95,7 @@ pub fn view<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
 struct Program {
     icon: Icon,
     size: f32,
+    hover: Hover,
 }
 
 impl<Message> canvas::Program<Message> for Program {
@@ -94,10 +110,10 @@ impl<Message> canvas::Program<Message> for Program {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let tokens = tokens(theme);
-        let color = if cursor.is_over(bounds) {
-            tokens.text
-        } else {
-            tokens.muted
+        let color = match (cursor.is_over(bounds), self.hover) {
+            (false, _) => tokens.muted,
+            (true, Hover::Text) => tokens.text,
+            (true, Hover::White) => Color::WHITE,
         };
         let scale = self.size / GRID;
         let origin = Point::new(
@@ -121,7 +137,14 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 3] = [Icon::Sun, Icon::Moon, Icon::Monitor];
+    const ICONS: [Icon; 6] = [
+        Icon::Sun,
+        Icon::Moon,
+        Icon::Monitor,
+        Icon::Minimize,
+        Icon::Maximize,
+        Icon::Close,
+    ];
 
     fn bounds(shape: &Shape) -> [f32; 4] {
         match *shape {

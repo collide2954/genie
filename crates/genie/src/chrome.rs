@@ -1,0 +1,284 @@
+use iced::widget::{button, column, container, mouse_area, row, space, text};
+use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
+
+use crate::app::Message;
+use crate::icon::{self, Hover, Icon};
+use crate::theme::tokens;
+use crate::{font, style};
+
+const BAR_HEIGHT: f32 = 40.0;
+const GRIP: f32 = 6.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Controls {
+    Native,
+    Custom,
+}
+
+impl Controls {
+    pub const CURRENT: Self = if cfg!(target_os = "macos") {
+        Self::Native
+    } else {
+        Self::Custom
+    };
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Drag,
+    Resize(Edge),
+    Minimize,
+    ToggleMaximize,
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
+}
+
+impl Edge {
+    fn direction(self) -> window::Direction {
+        match self {
+            Self::North => window::Direction::North,
+            Self::South => window::Direction::South,
+            Self::East => window::Direction::East,
+            Self::West => window::Direction::West,
+            Self::NorthEast => window::Direction::NorthEast,
+            Self::NorthWest => window::Direction::NorthWest,
+            Self::SouthEast => window::Direction::SouthEast,
+            Self::SouthWest => window::Direction::SouthWest,
+        }
+    }
+
+    fn interaction(self) -> mouse::Interaction {
+        match self {
+            Self::North | Self::South => mouse::Interaction::ResizingVertically,
+            Self::East | Self::West => mouse::Interaction::ResizingHorizontally,
+            Self::NorthWest | Self::SouthEast => mouse::Interaction::ResizingDiagonallyDown,
+            Self::NorthEast | Self::SouthWest => mouse::Interaction::ResizingDiagonallyUp,
+        }
+    }
+}
+
+pub fn perform(action: Action) -> Task<Message> {
+    window::latest().and_then(move |id| match action {
+        Action::Drag => window::drag(id),
+        Action::Resize(edge) => window::drag_resize(id, edge.direction()),
+        Action::Minimize => window::minimize(id, true),
+        Action::ToggleMaximize => window::toggle_maximize(id),
+        Action::Close => window::close(id),
+    })
+}
+
+pub fn settings() -> window::Settings {
+    window::Settings {
+        size: Size::new(1280.0, 800.0),
+        min_size: Some(Size::new(720.0, 480.0)),
+        decorations: Controls::CURRENT == Controls::Native,
+        platform_specific: platform(),
+        ..window::Settings::default()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn platform() -> window::settings::PlatformSpecific {
+    window::settings::PlatformSpecific {
+        title_hidden: true,
+        titlebar_transparent: true,
+        fullsize_content_view: true,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn platform() -> window::settings::PlatformSpecific {
+    window::settings::PlatformSpecific {
+        undecorated_shadow: true,
+        corner_preference: window::settings::platform::CornerPreference::Round,
+        ..window::settings::PlatformSpecific::default()
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn platform() -> window::settings::PlatformSpecific {
+    window::settings::PlatformSpecific::default()
+}
+
+pub fn title_bar<'a>(controls: Controls, appearance: Icon) -> Element<'a, Message> {
+    let logo = container(space())
+        .width(18)
+        .height(18)
+        .style(|theme| container::Style {
+            background: Some(tokens(theme).accent.into()),
+            border: Border::default().rounded(5),
+            ..container::Style::default()
+        });
+    let brand = row![logo, text("genie").font(font::UI_STRONG).size(13)]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
+        .spacing(4)
+        .align_y(Alignment::Center);
+    let (inset, end) = match controls {
+        Controls::Native => (78.0, 8.0),
+        Controls::Custom => (12.0, 8.0),
+    };
+    let mut bar = row![brand, space::horizontal(), tools, space().width(end)]
+        .align_y(Alignment::Center)
+        .height(BAR_HEIGHT)
+        .padding(Padding {
+            left: inset,
+            ..Padding::ZERO
+        });
+    if controls == Controls::Custom {
+        bar = bar
+            .push(window_button(Icon::Minimize, "minimize", Action::Minimize))
+            .push(window_button(
+                Icon::Maximize,
+                "maximize",
+                Action::ToggleMaximize,
+            ))
+            .push(window_button(Icon::Close, "close", Action::Close));
+    }
+    let bar = mouse_area(container(bar).style(|theme| container::background(tokens(theme).bar)))
+        .on_press(Message::Window(Action::Drag))
+        .on_double_click(Message::Window(Action::ToggleMaximize));
+    let hairline = container(space())
+        .width(Length::Fill)
+        .height(1)
+        .style(|theme| container::background(tokens(theme).line));
+    column![bar, hairline].into()
+}
+
+pub fn resize_handles<'a>() -> Element<'a, Message> {
+    let grip = |edge: Edge, width: Length, height: Length| -> Element<'a, Message> {
+        mouse_area(space().width(width).height(height))
+            .interaction(edge.interaction())
+            .on_press(Message::Window(Action::Resize(edge)))
+            .into()
+    };
+    let size = Length::Fixed(GRIP);
+    column![
+        row![
+            grip(Edge::NorthWest, size, size),
+            grip(Edge::North, Length::Fill, size),
+            grip(Edge::NorthEast, size, size),
+        ],
+        row![
+            grip(Edge::West, size, Length::Fill),
+            space::horizontal(),
+            grip(Edge::East, size, Length::Fill),
+        ]
+        .height(Length::Fill),
+        row![
+            grip(Edge::SouthWest, size, size),
+            grip(Edge::South, Length::Fill, size),
+            grip(Edge::SouthEast, size, size),
+        ],
+    ]
+    .into()
+}
+
+fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Message> {
+    container(
+        button(icon::view(icon, 16.0, Hover::Text))
+            .width(28)
+            .height(28)
+            .padding(0)
+            .style(style::ghost)
+            .on_press(message),
+    )
+    .id(id)
+    .into()
+}
+
+fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a, Message> {
+    let (hover, style): (Hover, fn(&iced::Theme, button::Status) -> button::Style) =
+        if action == Action::Close {
+            (Hover::White, style::window_close)
+        } else {
+            (Hover::Text, style::window_control)
+        };
+    container(
+        button(icon::view(icon, 14.0, hover))
+            .width(46)
+            .height(BAR_HEIGHT)
+            .padding(0)
+            .style(style)
+            .on_press(Message::Window(action)),
+    )
+    .id(id)
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use iced::Point;
+    use iced_test::selector;
+    use iced_test::simulator::{self, simulator};
+
+    use super::{Action, Controls, Edge, resize_handles, title_bar};
+    use crate::app::Message;
+    use crate::icon::Icon;
+
+    fn press_at(element: iced::Element<'_, Message>, point: Point) -> Vec<Message> {
+        let mut ui =
+            iced_test::Simulator::with_size(iced::Settings::default(), (400.0, 300.0), element);
+        ui.point_at(point);
+        let _ = ui.simulate(simulator::click());
+        ui.into_messages().collect()
+    }
+
+    #[test]
+    fn window_buttons_send_window_actions() {
+        for (id, action) in [
+            ("minimize", Action::Minimize),
+            ("maximize", Action::ToggleMaximize),
+            ("close", Action::Close),
+        ] {
+            let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor));
+            ui.click(selector::id(id)).unwrap();
+            assert_eq!(
+                ui.into_messages().collect::<Vec<_>>(),
+                [Message::Window(action)]
+            );
+        }
+    }
+
+    #[test]
+    fn native_controls_have_no_window_buttons() {
+        let mut ui = simulator(title_bar(Controls::Native, Icon::Monitor));
+        assert!(ui.find(selector::id("close")).is_err());
+    }
+
+    #[test]
+    fn pressing_empty_bar_space_drags_the_window() {
+        let messages = press_at(
+            title_bar(Controls::Custom, Icon::Monitor),
+            Point::new(200.0, 20.0),
+        );
+        assert!(messages.contains(&Message::Window(Action::Drag)));
+    }
+
+    #[test]
+    fn edges_and_corners_resize_the_window() {
+        for (point, edge) in [
+            (Point::new(200.0, 2.0), Edge::North),
+            (Point::new(2.0, 150.0), Edge::West),
+            (Point::new(398.0, 298.0), Edge::SouthEast),
+        ] {
+            assert_eq!(
+                press_at(resize_handles(), point),
+                [Message::Window(Action::Resize(edge))]
+            );
+        }
+        assert_eq!(press_at(resize_handles(), Point::new(200.0, 150.0)), []);
+    }
+}
