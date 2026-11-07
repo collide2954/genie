@@ -27,6 +27,9 @@ pub enum Reason {
     BadOffset,
     NotTabix,
     BadIndex,
+    BadSpan,
+    BadStrand,
+    BadBlocks,
 }
 
 impl fmt::Display for Error {
@@ -67,6 +70,9 @@ impl fmt::Display for Reason {
             Self::BadOffset => "an offset is not in the file",
             Self::NotTabix => "the file is not a tabix index",
             Self::BadIndex => "the index is not valid",
+            Self::BadSpan => "the start is after the end",
+            Self::BadStrand => "the strand is not +, - or .",
+            Self::BadBlocks => "the number of blocks is not the same as the block count",
         })
     }
 }

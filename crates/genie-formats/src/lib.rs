@@ -1,3 +1,4 @@
+pub mod bed;
 pub mod bgzf;
 mod error;
 pub mod fai;
