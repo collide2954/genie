@@ -6,16 +6,30 @@ use iced::{Element, Length, Point, Size};
 use crate::app::Message;
 use crate::style;
 use crate::theme::tokens;
-use crate::track::{Change, Track};
+use crate::track::{Change, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
-pub const HEIGHT: f32 = 196.0;
+const FEATURES_HEIGHT: f32 = 192.0;
+const READS_HEIGHT: f32 = 235.0;
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
     ("Squished", Mode::Squished),
     ("Collapsed", Mode::Collapsed),
 ];
+const TOGGLES: [(&str, Toggle); 3] = [
+    ("Show duplicates", Toggle::Duplicates),
+    ("Show soft clips", Toggle::Clips),
+    ("Down-sample", Toggle::Downsample),
+];
+
+pub fn height(track: &Track) -> f32 {
+    if track.source.has_reads() {
+        READS_HEIGHT
+    } else {
+        FEATURES_HEIGHT
+    }
+}
 
 pub struct Place {
     pub position: usize,
@@ -48,7 +62,14 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .into()
     });
     let mut content = column![column(modes).spacing(1), separator()].spacing(1);
-    if !track.source.has_reads() {
+    if track.source.has_reads() {
+        let options = track.options;
+        content = content
+            .extend(TOGGLES.map(|(label, toggle)| {
+                item(label, Change::Toggle(toggle), options.is_on(toggle), true)
+            }))
+            .push(separator());
+    } else {
         content = content
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());
@@ -65,12 +86,14 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
         item("Remove", Change::Remove, false, true),
     ]);
     let card = container(content)
+        .id("menu")
         .width(WIDTH)
         .padding(4)
         .style(style::menu);
+    let height = height(track);
     let x = place.at.x.min(place.window.width - WIDTH - EDGE).max(0.0);
-    let y = if place.at.y + HEIGHT > place.window.height {
-        (place.at.y - HEIGHT).max(0.0)
+    let y = if place.at.y + height > place.window.height {
+        (place.at.y - height).max(0.0)
     } else {
         place.at.y
     };

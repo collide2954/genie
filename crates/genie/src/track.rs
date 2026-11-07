@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, Filter};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter};
 use genie_core::pileup::{Coverage, Read, downsample};
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
@@ -67,6 +67,52 @@ impl Source {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Options {
+    pub duplicates: bool,
+    pub clips: bool,
+    pub downsample: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            duplicates: false,
+            clips: false,
+            downsample: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toggle {
+    Duplicates,
+    Clips,
+    Downsample,
+}
+
+impl Options {
+    #[must_use]
+    pub fn toggled(self, toggle: Toggle) -> Self {
+        let mut options = self;
+        let flag = match toggle {
+            Toggle::Duplicates => &mut options.duplicates,
+            Toggle::Clips => &mut options.clips,
+            Toggle::Downsample => &mut options.downsample,
+        };
+        *flag = !*flag;
+        options
+    }
+
+    pub fn is_on(self, toggle: Toggle) -> bool {
+        match toggle {
+            Toggle::Duplicates => self.duplicates,
+            Toggle::Clips => self.clips,
+            Toggle::Downsample => self.downsample,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Annotation {
     pub features: Vec<Feature>,
@@ -88,15 +134,11 @@ impl Pile {
     pub fn packed(&self, visible: Region) -> (Vec<usize>, usize) {
         let shown: Vec<usize> = (0..self.reads.len())
             .filter(|&index| {
-                let span = self.reads[index].alignment.span();
+                let span = self.reads[index].extent;
                 span.start() <= visible.end() && span.end() >= visible.start()
             })
             .collect();
-        let packed = rows::pack(
-            &shown,
-            |&index| self.reads[index].alignment.span(),
-            READ_GAP,
-        );
+        let packed = rows::pack(&shown, |&index| self.reads[index].extent, READ_GAP);
         let mut rows = vec![0; self.reads.len()];
         for (&index, &row) in shown.iter().zip(&packed) {
             rows[index] = row;
@@ -119,6 +161,7 @@ pub enum Content {
 #[derive(Debug, PartialEq)]
 pub struct Loaded {
     pub region: Region,
+    pub options: Options,
     pub content: Content,
 }
 
@@ -128,6 +171,7 @@ impl Loaded {
         let count = count(&rows);
         Self {
             region,
+            options: Options::default(),
             content: Content::Features(Annotation {
                 features,
                 rows,
@@ -141,19 +185,26 @@ impl Loaded {
         alignments: Vec<Alignment>,
         reference: Vec<u8>,
         offset: u64,
+        options: Options,
     ) -> Self {
         let mut coverage = Coverage::new(region);
         for alignment in &alignments {
             coverage.add(alignment);
         }
-        let reads: Vec<Read> = downsample(alignments, WINDOW, DEPTH)
+        let alignments = if options.downsample {
+            downsample(alignments, WINDOW, DEPTH)
+        } else {
+            alignments
+        };
+        let reads: Vec<Read> = alignments
             .into_iter()
-            .map(|alignment| Read::new(alignment, &reference, offset, false))
+            .map(|alignment| Read::new(alignment, &reference, offset, options.clips))
             .collect();
-        let rows = rows::pack(&reads, |read| read.alignment.span(), READ_GAP);
+        let rows = rows::pack(&reads, |read| read.extent, READ_GAP);
         let count = count(&rows);
         Self {
             region,
+            options,
             content: Content::Reads(Pile {
                 coverage,
                 reference,
@@ -185,6 +236,7 @@ pub struct Track {
     pub names: Option<Arc<Names>>,
     pub hue: Hue,
     pub mode: Option<Mode>,
+    pub options: Options,
     pub loaded: Option<(usize, Arc<Loaded>)>,
     pub wanted: Option<(usize, Region)>,
     pub error: Option<String>,
@@ -200,6 +252,7 @@ impl Track {
             names: None,
             hue: Hue::default(),
             mode: None,
+            options: Options::default(),
             loaded: None,
             wanted: None,
             error: None,
@@ -228,7 +281,10 @@ impl Track {
         let covers = |(wanted, region): (usize, Region)| {
             wanted == contig && region.start() <= visible.start() && visible.end() <= region.end()
         };
-        let loaded = self.data(contig).map(|data| (contig, data.region));
+        let loaded = self
+            .data(contig)
+            .filter(|data| data.options == self.options)
+            .map(|data| (contig, data.region));
         self.contigs.get(contig).is_some_and(Option::is_some)
             && visible.len() <= self.source.span()
             && !loaded.is_some_and(covers)
@@ -236,7 +292,10 @@ impl Track {
     }
 
     pub fn accept(&mut self, contig: usize, region: Region, result: Result<Arc<Loaded>, String>) {
-        if self.wanted != Some((contig, region)) {
+        let stale = result
+            .as_ref()
+            .is_ok_and(|data| data.options != self.options);
+        if self.wanted != Some((contig, region)) || stale {
             return;
         }
         self.wanted = None;
@@ -254,6 +313,7 @@ impl Track {
 pub enum Change {
     Mode(Mode),
     Hue(Hue),
+    Toggle(Toggle),
     Up,
     Down,
     Remove,
@@ -266,6 +326,11 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
     match change {
         Change::Mode(mode) => tracks[position].mode = Some(mode),
         Change::Hue(hue) => tracks[position].hue = hue,
+        Change::Toggle(toggle) => {
+            let track = &mut tracks[position];
+            track.options = track.options.toggled(toggle);
+            track.wanted = None;
+        }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
         Change::Down if position + 1 < tracks.len() => tracks.swap(position, position + 1),
         Change::Up | Change::Down => {}
@@ -353,6 +418,7 @@ pub fn load(
     source: &Source,
     contig: &str,
     region: Region,
+    options: Options,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let file = File::open(&source.path).map_err(|error| error.to_string())?;
@@ -368,7 +434,11 @@ pub fn load(
                 .iter()
                 .position(|known| known == contig)
                 .ok_or_else(|| format!("The file has no contig {contig}."))?;
-            let filter = Filter::default();
+            let filter = if options.duplicates {
+                Filter::default().showing(DUPLICATE)
+            } else {
+                Filter::default()
+            };
             let mut alignments = Vec::new();
             bam::query(index, &mut reader, id, region, |alignment| {
                 if filter.keeps(&alignment) {
@@ -382,7 +452,13 @@ pub fn load(
                 region.end().saturating_add(MARGIN),
             );
             let bases = reference(window)?;
-            Ok(Loaded::reads(region, alignments, bases, window.start()))
+            Ok(Loaded::reads(
+                region,
+                alignments,
+                bases,
+                window.start(),
+                options,
+            ))
         }
     }
 }
@@ -415,7 +491,8 @@ mod tests {
     use genie_render::scene::Hue;
 
     use super::{
-        Change, Content, Format, Loaded, Source, Track, change, contig_names, load, names, open,
+        Change, Content, Format, Loaded, Options, Source, Toggle, Track, change, contig_names,
+        load, names, open,
     };
     use crate::scratch::Scratch;
 
@@ -520,7 +597,8 @@ mod tests {
                 ..
             }
         ));
-        let loaded = load(&source, "chr1", region(50_000, 51_000), no_reference).unwrap();
+        let window = region(50_000, 51_000);
+        let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
         assert_eq!(loaded.region, region(50_000, 57_400));
         let Content::Features(annotation) = &loaded.content else {
             panic!("expected features");
@@ -541,7 +619,8 @@ mod tests {
         let source = open(fixture("reads.bam")).unwrap();
         assert_eq!(source.contigs(), ["chr1", "chr2"]);
         let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
-        let loaded = load(&source, "chr1", region(5_000, 8_000), reference).unwrap();
+        let window = region(5_000, 8_000);
+        let loaded = load(&source, "chr1", window, Options::default(), reference).unwrap();
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -555,20 +634,94 @@ mod tests {
         );
     }
 
+    fn alignment(start: u64, cigar: Vec<(Op, u32)>) -> Alignment {
+        let length = cigar
+            .iter()
+            .filter(|(op, _)| op.consumes_read())
+            .map(|(_, length)| *length as usize)
+            .sum();
+        Alignment {
+            name: format!("read{start}"),
+            start,
+            flags: 0,
+            mapq: 60,
+            cigar,
+            bases: vec![b'A'; length],
+            qualities: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn toggles_flip_options_and_drop_the_request() {
+        let mut tracks = three();
+        tracks[1].wanted = Some((0, region(0, 300)));
+        change(&mut tracks, 1, Change::Toggle(Toggle::Duplicates));
+        assert!(tracks[1].options.duplicates);
+        assert_eq!(tracks[1].wanted, None);
+        change(&mut tracks, 1, Change::Toggle(Toggle::Duplicates));
+        assert!(!tracks[1].options.duplicates);
+    }
+
+    #[test]
+    fn data_for_other_options_is_reloaded_or_dropped() {
+        let mut track = track();
+        track.wanted = Some((0, region(0, 300)));
+        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
+        assert!(!track.needs(0, region(100, 200)));
+        track.options = track.options.toggled(Toggle::Clips);
+        assert!(track.needs(0, region(100, 200)));
+        track.wanted = Some((0, region(0, 300)));
+        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 2)));
+        assert_eq!(track.data(0).unwrap().count(), 1);
+        assert_eq!(track.wanted, Some((0, region(0, 300))));
+    }
+
+    #[test]
+    fn read_options_shape_the_pile() {
+        let deep: Vec<Alignment> = (0..150)
+            .map(|index| alignment(10 + index % 10, vec![(Op::SoftClip, 2), (Op::Match, 10)]))
+            .collect();
+        let pile = |options| {
+            let loaded = Loaded::reads(region(0, 100), deep.clone(), vec![b'A'; 100], 0, options);
+            let Content::Reads(pile) = loaded.content else {
+                panic!("expected reads");
+            };
+            pile
+        };
+        let fixed = pile(Options::default());
+        assert_eq!(fixed.reads.len(), 100);
+        assert_eq!(fixed.reads[0].parts.clips.len(), 0);
+        let open = pile(Options {
+            clips: true,
+            downsample: false,
+            ..Options::default()
+        });
+        assert_eq!(open.reads.len(), 150);
+        assert_eq!(open.reads[0].parts.clips.len(), 2);
+    }
+
+    #[test]
+    fn duplicates_load_when_shown() {
+        let source = open(fixture("reads.bam")).unwrap();
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let options = Options {
+            duplicates: true,
+            ..Options::default()
+        };
+        let loaded = load(&source, "chr1", region(1_000, 41_000), options, reference).unwrap();
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert!(pile.reads.iter().any(|read| read.alignment.has(DUPLICATE)));
+    }
+
     #[test]
     fn packing_for_a_view_skips_reads_outside_it() {
         let alignments = [0, 50, 500, 510, 520]
-            .map(|start| Alignment {
-                name: format!("read{start}"),
-                start,
-                flags: 0,
-                mapq: 60,
-                cigar: vec![(Op::Match, 100)],
-                bases: vec![b'A'; 100],
-                qualities: Vec::new(),
-            })
+            .map(|start| alignment(start, vec![(Op::Match, 100)]))
             .to_vec();
-        let loaded = Loaded::reads(region(0, 1_000), alignments, vec![b'A'; 1_000], 0);
+        let options = Options::default();
+        let loaded = Loaded::reads(region(0, 1_000), alignments, vec![b'A'; 1_000], 0, options);
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };

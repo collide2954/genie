@@ -332,13 +332,7 @@ impl Genie {
             Message::TrackMenu(id, at) => {
                 self.menu = Some((id, Point::new(at.x, at.y - self.scroll)));
             }
-            Message::TrackChanged(id, change) => {
-                self.menu = None;
-                if change == Change::Remove {
-                    self.forget(id);
-                }
-                self.on_session(|session| track::change(&mut session.tracks, id, change));
-            }
+            Message::TrackChanged(id, change) => return self.change_track(id, change),
             Message::TrackHovered(id, pointer) => {
                 self.hover = pointer.and_then(|pointer| self.card(id, pointer));
             }
@@ -433,6 +427,15 @@ impl Genie {
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
         })
+    }
+
+    fn change_track(&mut self, id: u64, change: Change) -> Task<Message> {
+        self.menu = None;
+        if change == Change::Remove {
+            self.forget(id);
+        }
+        self.on_session(|session| track::change(&mut session.tracks, id, change));
+        self.fetch_features()
     }
 
     fn forget(&mut self, id: u64) {
@@ -625,13 +628,13 @@ impl Genie {
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;
                 track.wanted = Some((contig, wanted));
-                let (id, source) = (track.id, Arc::clone(&track.source));
+                let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let reference = Arc::clone(reference);
                 Some(Task::perform(
                     async move {
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        track::load(&source, &name, wanted, bases).map(Arc::new)
+                        track::load(&source, &name, wanted, options, bases).map(Arc::new)
                     },
                     move |result| Message::TrackLoaded(id, contig, wanted, result),
                 ))
@@ -1277,12 +1280,13 @@ mod tests {
 
     use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
     use crate::export;
+    use crate::menu;
     use crate::reference::Reference;
     use crate::scene::Pointer;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Change, Format, Loaded, Source};
+    use crate::track::{Change, Format, Loaded, Options, Source, Toggle};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
@@ -1895,8 +1899,40 @@ mod tests {
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.wanted = Some((0, region));
-        let loaded = Loaded::reads(region, reads, vec![b'A'; 1_000], 0);
+        let loaded = Loaded::reads(region, reads, vec![b'A'; 1_000], 0, Options::default());
         track.accept(0, region, Ok(Arc::new(loaded)));
+    }
+
+    #[test]
+    fn read_menus_offer_filter_toggles() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+    }
+
+    #[test]
+    fn toggling_a_filter_reloads_the_reads() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackChanged(0, Change::Toggle(Toggle::Duplicates)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert!(track.options.duplicates);
+        assert!(track.wanted.is_some());
+    }
+
+    #[test]
+    fn menus_know_their_height() {
+        for mut genie in [with_track(), with_reads()] {
+            let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+            let expected = menu::height(&genie.session.as_ref().unwrap().tracks[0]);
+            let mut ui = simulator(genie.view());
+            let height = ui.find(selector::id("menu")).unwrap().bounds().height;
+            assert!(
+                height <= expected && expected - height < 1.0,
+                "{height} {expected}"
+            );
+        }
     }
 
     fn with_reads() -> Genie {
