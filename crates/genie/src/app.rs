@@ -66,6 +66,7 @@ pub struct Genie {
     window: Size,
     hover: Option<Card>,
     pinned: Option<Card>,
+    pending: Vec<PathBuf>,
 }
 
 impl Default for Genie {
@@ -90,6 +91,7 @@ impl Default for Genie {
             window: chrome::WINDOW,
             hover: None,
             pinned: None,
+            pending: Vec::new(),
         }
     }
 }
@@ -245,13 +247,41 @@ impl Genie {
         let recent = paths::config_dir()
             .map(|folder| Recent::load(&folder))
             .unwrap_or_default();
+        let mut genie = Self {
+            recent,
+            ..Self::default()
+        };
+        let files = std::env::args_os().skip(1).map(PathBuf::from).collect();
+        let open = genie.launch(files);
         (
-            Self {
-                recent,
-                ..Self::default()
-            },
-            system::theme().map(Message::SystemModeChanged),
+            genie,
+            Task::batch([system::theme().map(Message::SystemModeChanged), open]),
         )
+    }
+
+    fn launch(&mut self, files: Vec<PathBuf>) -> Task<Message> {
+        let (tracks, references): (Vec<PathBuf>, Vec<PathBuf>) =
+            files.into_iter().partition(|path| track::is_track(path));
+        if let Some(reference) = references.into_iter().next() {
+            self.pending = tracks;
+            return self.open(reference);
+        }
+        let tasks: Vec<Task<Message>> = tracks.into_iter().map(|path| self.open(path)).collect();
+        Task::batch(tasks)
+    }
+
+    fn opened(&mut self, reference: Arc<Reference>) -> Task<Message> {
+        self.status = Status::Idle;
+        self.generation += 1;
+        self.tiles.clear();
+        self.recent.add(reference.path.clone());
+        (self.hover, self.pinned) = (None, None);
+        self.session = Some(Session::new(reference, self.width));
+        let mut tasks = vec![self.fetch(), self.remember()];
+        for path in std::mem::take(&mut self.pending) {
+            tasks.push(self.open(path));
+        }
+        Task::batch(tasks)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -271,16 +301,11 @@ impl Genie {
                 self.hovering = false;
                 return self.open(path);
             }
-            Message::Opened(Ok(reference)) => {
-                self.status = Status::Idle;
-                self.generation += 1;
-                self.tiles.clear();
-                self.recent.add(reference.path.clone());
-                (self.hover, self.pinned) = (None, None);
-                self.session = Some(Session::new(reference, self.width));
-                return Task::batch([self.fetch(), self.remember()]);
+            Message::Opened(Ok(reference)) => return self.opened(reference),
+            Message::Opened(Err(error)) | Message::TrackOpened(Err(error)) => {
+                self.pending.clear();
+                self.fail(error);
             }
-            Message::Opened(Err(error)) | Message::TrackOpened(Err(error)) => self.fail(error),
             Message::TrackOpened(Ok(source)) => return self.add_track(source),
             Message::TrackLoaded(id, contig, region, result) => {
                 self.on_session(|session| session.accept(id, contig, region, result));
@@ -1087,6 +1112,24 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
         genie.session.as_mut().unwrap().tracks[0].contigs = vec![Some("1".to_owned()), None];
         genie
+    }
+
+    #[test]
+    fn command_line_files_open_the_reference_then_the_tracks() {
+        let mut genie = Genie::default();
+        let track = PathBuf::from("/data/genes.bed.gz");
+        let _ = genie.launch(vec![track.clone(), PathBuf::from("/data/ref.fa")]);
+        assert!(shows(&genie, "Opening ref.fa…"));
+        assert_eq!(genie.pending, [track]);
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        assert_eq!(genie.pending, [] as [PathBuf; 0]);
+    }
+
+    #[test]
+    fn command_line_tracks_need_a_reference() {
+        let mut genie = Genie::default();
+        let _ = genie.launch(vec![PathBuf::from("/data/genes.bed.gz")]);
+        assert!(shows(&genie, NO_REFERENCE));
     }
 
     #[test]
