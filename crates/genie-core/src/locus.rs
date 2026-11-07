@@ -22,6 +22,8 @@ pub enum LocusError {
     BadNumber(String),
     ZeroPosition,
     Reversed,
+    UnknownContig(String),
+    PastEnd { name: String, length: u64 },
 }
 
 impl FromStr for Locus {
@@ -88,6 +90,8 @@ impl fmt::Display for LocusError {
             Self::BadNumber(text) => write!(f, "\"{text}\" is not a position."),
             Self::ZeroPosition => f.write_str("Positions start at 1."),
             Self::Reversed => f.write_str("The start is after the end."),
+            Self::UnknownContig(name) => write!(f, "The assembly has no contig \"{name}\"."),
+            Self::PastEnd { name, length } => write!(f, "{name} ends at {}.", grouped(*length)),
         }
     }
 }
