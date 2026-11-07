@@ -1,4 +1,4 @@
-use std::io::BufRead;
+use std::io::{self, BufRead, Write};
 
 use crate::{Error, Reason};
 
@@ -25,6 +25,17 @@ pub fn parse(reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
         records.push(record);
     }
     Ok(records)
+}
+
+pub fn write(records: &[FaiRecord], mut writer: impl Write) -> io::Result<()> {
+    for record in records {
+        writeln!(
+            writer,
+            "{}\t{}\t{}\t{}\t{}",
+            record.name, record.length, record.offset, record.line_bases, record.line_width
+        )?;
+    }
+    writer.flush()
 }
 
 pub fn build(mut reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
@@ -146,7 +157,7 @@ fn parse_line(line: &str) -> Result<FaiRecord, Reason> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FaiRecord, build, parse};
+    use super::{FaiRecord, build, parse, write};
     use crate::{Error, Reason};
 
     fn record(name: &str, length: u64, offset: u64, line_bases: u64, line_width: u64) -> FaiRecord {
@@ -240,6 +251,21 @@ mod tests {
             (4, Reason::UnevenLines)
         );
         assert_eq!(build_failure(">c\nACGT\n\nACGT\n"), (4, Reason::BlankLine));
+    }
+
+    #[test]
+    fn write_produces_samtools_text() {
+        let mut text = Vec::new();
+        write(&[record("chr1", 6, 11, 4, 5)], &mut text).unwrap();
+        assert_eq!(text, b"chr1\t6\t11\t4\t5\n");
+    }
+
+    #[test]
+    fn written_index_parses_back() {
+        let records = build(">a\nACGT\nAC\n>b x\nGG\n".as_bytes()).unwrap();
+        let mut text = Vec::new();
+        write(&records, &mut text).unwrap();
+        assert_eq!(parse(text.as_slice()).unwrap(), records);
     }
 
     #[test]
