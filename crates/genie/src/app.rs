@@ -18,6 +18,7 @@ use iced::{
 use crate::card::{self, Card, Detail};
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
+use crate::export;
 use crate::icon::{self, Icon};
 use crate::menu::{self, Place};
 use crate::motion::Transition;
@@ -39,10 +40,13 @@ const BASE_HEIGHT: f32 = 16.0;
 const TRACK_PADDING: f32 = 2.0;
 const EMPTY_HEIGHT: f32 = 20.0;
 const LABEL_SIZE: f32 = 10.0;
+const CAPTION_HEIGHT: f32 = 22.0;
+const CAPTION_SIZE: f32 = 11.0;
 const READ_HINT: &str = "Zoom in to see the reads";
 const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
+const DRAW_FAILED: &str = "The view could not be drawn.";
 const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
@@ -234,6 +238,8 @@ pub enum Message {
     TrackClicked(u64, Pointer),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
+    ExportPicked(Option<PathBuf>),
+    Exported(Result<PathBuf, String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -377,6 +383,8 @@ impl Genie {
                 return self.fetch();
             }
             Message::OverviewReleased => self.on_session(|session| session.grip = None),
+            Message::ExportPicked(path) => return self.export_to(path),
+            Message::Exported(result) => self.notice = Some(saved(result)),
         }
         Task::none()
     }
@@ -457,6 +465,7 @@ impl Genie {
                 self.pinned = None;
                 Task::none()
             }
+            Command::Export => self.export(),
         }
     }
 
@@ -867,7 +876,7 @@ impl Genie {
         .discard()
     }
 
-    fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+    fn tracks<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let viewport = session.viewport;
         let bases = sequence::scene(
             viewport,
@@ -882,6 +891,11 @@ impl Genie {
         for track in &session.tracks {
             data = data.push(track_view(session, track)).push(hairline());
         }
+        data.into()
+    }
+
+    fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+        let viewport = session.viewport;
         let tracks = column![
             container(
                 scene::view(overview::scene(viewport, OVERVIEW_HEIGHT), OVERVIEW_HEIGHT)
@@ -890,13 +904,9 @@ impl Genie {
                     .on_release(Message::OverviewReleased)
             )
             .id("overview"),
-            container(scene::view(
-                ruler::scene(viewport, RULER_HEIGHT),
-                RULER_HEIGHT
-            ))
-            .id("ruler"),
+            ruler_view(viewport),
             hairline(),
-            scrollable(data)
+            scrollable(self.tracks(session))
                 .direction(Direction::Vertical(
                     Scrollbar::new().width(6).scroller_width(6).margin(0)
                 ))
@@ -910,6 +920,53 @@ impl Genie {
             .on_zoom(Message::Zoom)
             .on_resize(Message::Resized)
             .into()
+    }
+
+    fn export_view<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+        let caption = container(
+            row![
+                text(&session.reference.name).size(CAPTION_SIZE),
+                text("·").size(CAPTION_SIZE).style(style::muted),
+                text(session.locus())
+                    .font(font::MONO)
+                    .size(CAPTION_SIZE)
+                    .style(style::muted),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([0, 8])
+        .height(CAPTION_HEIGHT)
+        .align_y(Alignment::Center);
+        column![
+            caption,
+            hairline(),
+            ruler_view(session.viewport),
+            hairline(),
+            self.tracks(session)
+        ]
+        .into()
+    }
+
+    fn export(&self) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let contig = &session.reference.assembly.contigs()[session.contig].name;
+        let name = export::file_name(contig, session.viewport.visible());
+        Task::perform(save_as(name), Message::ExportPicked)
+    }
+
+    fn export_to(&mut self, path: Option<PathBuf>) -> Task<Message> {
+        let (Some(path), Some(session)) = (path, &self.session) else {
+            return Task::none();
+        };
+        if let Some(image) = export::render(self.export_view(session), self.width, &self.theme()) {
+            Task::perform(async move { export::save(path, &image) }, Message::Exported)
+        } else {
+            self.notice = Some(DRAW_FAILED.to_owned());
+            Task::none()
+        }
     }
 
     fn title(&self) -> String {
@@ -1005,6 +1062,19 @@ fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
         ],
         move |at| Message::TrackMenu(id, at),
     )
+    .into()
+}
+
+fn saved(result: Result<PathBuf, String>) -> String {
+    result.map_or_else(|error| error, |path| format!("Saved {}.", file_name(&path)))
+}
+
+fn ruler_view<'a>(viewport: Viewport) -> Element<'a, Message> {
+    container(scene::view(
+        ruler::scene(viewport, RULER_HEIGHT),
+        RULER_HEIGHT,
+    ))
+    .id("ruler")
     .into()
 }
 
@@ -1107,6 +1177,16 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
     dialog.pick_file().await.map(|file| file.path().to_owned())
 }
 
+async fn save_as(name: String) -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Export PNG")
+        .set_file_name(name)
+        .add_filter("PNG image", &["png"])
+        .save_file()
+        .await
+        .map(|file| file.path().to_owned())
+}
+
 pub fn run() -> iced::Result {
     font::FILES
         .into_iter()
@@ -1140,6 +1220,7 @@ mod tests {
     use iced::{Point, Size};
 
     use super::{DROP_HINT, Genie, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
+    use crate::export;
     use crate::reference::Reference;
     use crate::scene::Pointer;
     use crate::shortcuts::Command;
@@ -1910,5 +1991,36 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::SystemModeChanged(Mode::Dark));
         assert!(genie.theme().extended_palette().is_dark);
+    }
+
+    #[test]
+    fn export_view_has_a_locus_line_and_every_track() {
+        let genie = with_track();
+        let session = genie.session.as_ref().unwrap();
+        let mut ui = simulator(genie.export_view(session));
+        for text in ["ref.fa", "chr1:1-1,000", "Sequence", "genes.bed.gz"] {
+            assert!(ui.find(text).is_ok(), "{text}");
+        }
+        assert!(ui.find(selector::id("overview")).is_err());
+    }
+
+    #[test]
+    fn export_renders_at_twice_the_width() {
+        let genie = with_track();
+        let session = genie.session.as_ref().unwrap();
+        let image = export::render(genie.export_view(session), genie.width, &genie.theme());
+        let image = image.unwrap();
+        assert_eq!(image.width, 2_000);
+        assert!(image.height > 100);
+    }
+
+    #[test]
+    fn saved_exports_are_announced() {
+        let mut genie = opened();
+        let path = PathBuf::from("/data/chr1_1-1000.png");
+        let _ = genie.update(Message::Exported(Ok(path)));
+        assert!(shows(&genie, "Saved chr1_1-1000.png."));
+        let _ = genie.update(Message::Exported(Err("The disk is full.".to_owned())));
+        assert!(shows(&genie, "The disk is full."));
     }
 }

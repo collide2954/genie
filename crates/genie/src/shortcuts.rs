@@ -13,6 +13,7 @@ pub enum Command {
     NextSuggestion,
     PreviousSuggestion,
     Dismiss,
+    Export,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -26,6 +27,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
+        Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         _ => None,
     }
 }
@@ -77,6 +79,15 @@ mod tests {
             Some(Command::FocusLocus)
         );
         assert_eq!(command(&character("l"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_e_exports() {
+        assert_eq!(
+            command(&character("e"), Modifiers::COMMAND),
+            Some(Command::Export)
+        );
+        assert_eq!(command(&character("e"), Modifiers::empty()), None);
     }
 
     #[test]
