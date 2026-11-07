@@ -2,22 +2,42 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use genie_core::alignment::{Alignment, Filter};
+use genie_core::pileup::{Coverage, Read, downsample};
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind};
-use genie_formats::tabix::Index;
+use genie_formats::{bai, bam, tabix};
 use genie_render::features::Mode;
-use genie_render::rows;
 use genie_render::scene::Hue;
+use genie_render::{alignments, rows};
 
 use crate::paths::file_name;
+
+const FEATURE_SPAN: u64 = 10_000_000;
+const READ_SPAN: u64 = 30_000;
+const WINDOW: u64 = 50;
+const DEPTH: usize = 100;
+const READ_GAP: u64 = 2;
+const MARGIN: u64 = 1_000;
+
+#[derive(Debug)]
+pub enum Format {
+    Features {
+        kind: Kind,
+        index: tabix::Index,
+    },
+    Reads {
+        index: bai::Index,
+        contigs: Vec<String>,
+    },
+}
 
 #[derive(Debug)]
 pub struct Source {
     pub path: PathBuf,
     pub name: String,
-    pub kind: Kind,
-    pub index: Index,
+    pub format: Format,
 }
 
 impl PartialEq for Source {
@@ -26,25 +46,116 @@ impl PartialEq for Source {
     }
 }
 
+impl Source {
+    pub fn contigs(&self) -> &[String] {
+        match &self.format {
+            Format::Features { index, .. } => index.names(),
+            Format::Reads { contigs, .. } => contigs,
+        }
+    }
+
+    pub fn has_reads(&self) -> bool {
+        matches!(self.format, Format::Reads { .. })
+    }
+
+    pub fn span(&self) -> u64 {
+        if self.has_reads() {
+            READ_SPAN
+        } else {
+            FEATURE_SPAN
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
-pub struct Loaded {
-    pub region: Region,
+pub struct Annotation {
     pub features: Vec<Feature>,
     pub rows: Vec<usize>,
     pub count: usize,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct Pile {
+    pub coverage: Coverage,
+    pub reference: Vec<u8>,
+    pub offset: u64,
+    pub reads: Vec<Read>,
+    pub rows: Vec<usize>,
+    pub count: usize,
+}
+
+impl Pile {
+    pub fn base(&self, position: u64) -> Option<u8> {
+        let index = usize::try_from(position.checked_sub(self.offset)?).ok()?;
+        self.reference.get(index).copied()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Content {
+    Features(Annotation),
+    Reads(Pile),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Loaded {
+    pub region: Region,
+    pub content: Content,
+}
+
 impl Loaded {
-    pub fn new(region: Region, features: Vec<Feature>) -> Self {
+    pub fn features(region: Region, features: Vec<Feature>) -> Self {
         let rows = rows::pack(&features, Feature::span, 0);
-        let count = rows.iter().max().map_or(0, |row| row + 1);
+        let count = count(&rows);
         Self {
             region,
-            features,
-            rows,
-            count,
+            content: Content::Features(Annotation {
+                features,
+                rows,
+                count,
+            }),
         }
     }
+
+    pub fn reads(
+        region: Region,
+        alignments: Vec<Alignment>,
+        reference: Vec<u8>,
+        offset: u64,
+    ) -> Self {
+        let mut coverage = Coverage::new(region);
+        for alignment in &alignments {
+            coverage.add(alignment);
+        }
+        let reads: Vec<Read> = downsample(alignments, WINDOW, DEPTH)
+            .into_iter()
+            .map(|alignment| Read::new(alignment, &reference, offset))
+            .collect();
+        let rows = rows::pack(&reads, |read| read.alignment.span(), READ_GAP);
+        let count = count(&rows);
+        Self {
+            region,
+            content: Content::Reads(Pile {
+                coverage,
+                reference,
+                offset,
+                reads,
+                rows,
+                count,
+            }),
+        }
+    }
+
+    pub fn count(&self) -> usize {
+        match &self.content {
+            Content::Features(annotation) => annotation.count,
+            Content::Reads(pile) => pile.count,
+        }
+    }
+}
+
+fn count(rows: &[usize]) -> usize {
+    rows.iter().max().map_or(0, |row| row + 1)
 }
 
 #[derive(Debug)]
@@ -62,7 +173,7 @@ pub struct Track {
 
 impl Track {
     pub fn new(id: u64, source: Arc<Source>, assembly: &Assembly) -> Self {
-        let contigs = contig_names(source.index.names(), assembly);
+        let contigs = contig_names(source.contigs(), assembly);
         Self {
             id,
             source,
@@ -84,8 +195,14 @@ impl Track {
     }
 
     pub fn mode(&self, contig: usize) -> Mode {
-        self.mode
-            .unwrap_or_else(|| Mode::fit(self.data(contig).map_or(0, |data| data.count)))
+        self.mode.unwrap_or_else(|| {
+            let count = self.data(contig).map_or(0, Loaded::count);
+            if self.source.has_reads() {
+                alignments::fit(count)
+            } else {
+                Mode::fit(count)
+            }
+        })
     }
 
     pub fn needs(&self, contig: usize, visible: Region) -> bool {
@@ -94,6 +211,7 @@ impl Track {
         };
         let loaded = self.data(contig).map(|data| (contig, data.region));
         self.contigs.get(contig).is_some_and(Option::is_some)
+            && visible.len() <= self.source.span()
             && !loaded.is_some_and(covers)
             && !self.wanted.is_some_and(covers)
     }
@@ -149,13 +267,21 @@ pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>
 }
 
 pub fn is_track(path: &Path) -> bool {
-    Kind::of(&file_name(path)).is_some()
+    is_bam(path) || Kind::of(&file_name(path)).is_some()
+}
+
+fn is_bam(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
 }
 
 pub fn open(path: PathBuf) -> Result<Source, String> {
     let name = file_name(&path);
-    let kind =
-        Kind::of(&name).ok_or_else(|| format!("The file {name} is not a BED or GFF3 file."))?;
+    if is_bam(&path) {
+        return open_reads(path, name);
+    }
+    let kind = Kind::of(&name)
+        .ok_or_else(|| format!("The file {name} is not a BED, GFF3 or BAM file."))?;
     let compressed = path.extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
     });
@@ -164,33 +290,90 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
             "Compress {name} with bgzip, then index it with tabix."
         ));
     }
-    let mut index = path.clone().into_os_string();
-    index.push(".tbi");
-    let file = File::open(&index)
+    let file = File::open(with_suffix(&path, ".tbi"))
         .map_err(|_| format!("There is no index {name}.tbi. Index the file with tabix."))?;
-    let index =
-        Index::read(file).map_err(|error| format!("The index {name}.tbi is not valid. {error}"))?;
+    let index = tabix::Index::read(file)
+        .map_err(|error| format!("The index {name}.tbi is not valid. {error}"))?;
     Ok(Source {
         path,
         name,
-        kind,
-        index,
+        format: Format::Features { kind, index },
     })
 }
 
-pub fn load(source: &Source, contig: &str, region: Region) -> Result<Loaded, String> {
+fn open_reads(path: PathBuf, name: String) -> Result<Source, String> {
+    let file = [with_suffix(&path, ".bai"), path.with_extension("bai")]
+        .into_iter()
+        .find_map(|candidate| File::open(candidate).ok())
+        .ok_or_else(|| {
+            format!("There is no index {name}.bai. Index the file with samtools index.")
+        })?;
+    let index = bai::Index::read(file)
+        .map_err(|error| format!("The index {name}.bai is not valid. {error}"))?;
+    let file = File::open(&path).map_err(|error| error.to_string())?;
+    let header = bam::header(&mut Bgzf::new(file)).map_err(|error| error.to_string())?;
+    let contigs = header
+        .references
+        .into_iter()
+        .map(|(contig, _)| contig)
+        .collect();
+    Ok(Source {
+        path,
+        name,
+        format: Format::Reads { index, contigs },
+    })
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut text = path.as_os_str().to_owned();
+    text.push(suffix);
+    PathBuf::from(text)
+}
+
+pub fn load(
+    source: &Source,
+    contig: &str,
+    region: Region,
+    reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
+) -> Result<Loaded, String> {
     let file = File::open(&source.path).map_err(|error| error.to_string())?;
     let mut reader = Bgzf::new(file);
-    let (region, features) =
-        features::query(source.kind, &source.index, &mut reader, contig, region)
+    match &source.format {
+        Format::Features { kind, index } => {
+            let (region, features) = features::query(*kind, index, &mut reader, contig, region)
+                .map_err(|error| error.to_string())?;
+            Ok(Loaded::features(region, features))
+        }
+        Format::Reads { index, contigs } => {
+            let id = contigs
+                .iter()
+                .position(|known| known == contig)
+                .ok_or_else(|| format!("The file has no contig {contig}."))?;
+            let filter = Filter::default();
+            let mut alignments = Vec::new();
+            bam::query(index, &mut reader, id, region, |alignment| {
+                if filter.keeps(&alignment) {
+                    alignments.push(alignment);
+                }
+                Ok(())
+            })
             .map_err(|error| error.to_string())?;
-    Ok(Loaded::new(region, features))
+            let window = Region::between(
+                region.start().saturating_sub(MARGIN),
+                region.end().saturating_add(MARGIN),
+            );
+            let bases = reference(window)?;
+            Ok(Loaded::reads(region, alignments, bases, window.start()))
+        }
+    }
 }
 
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
+    let Format::Features { kind, .. } = &source.format else {
+        return Ok(Names::default());
+    };
     let file = File::open(&source.path).map_err(|error| error.to_string())?;
-    let entries =
-        features::names(source.kind, Bgzf::new(file)).map_err(|error| error.to_string())?;
+    let entries = features::names(*kind, Bgzf::new(file)).map_err(|error| error.to_string())?;
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
         Some(Named {
             contig: assembly.find(&entry.contig)?,
@@ -205,13 +388,16 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use genie_core::alignment::{DUPLICATE, QC_FAIL, SECONDARY};
     use genie_core::{Assembly, Contig, Feature, Region, Strand};
     use genie_formats::features::Kind;
-    use genie_formats::tabix::Index;
+    use genie_formats::tabix;
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
 
-    use super::{Change, Loaded, Source, Track, change, contig_names, load, names, open};
+    use super::{
+        Change, Content, Format, Loaded, Source, Track, change, contig_names, load, names, open,
+    };
     use crate::scratch::Scratch;
 
     fn region(start: u64, end: u64) -> Region {
@@ -234,8 +420,10 @@ mod tests {
         let source = Source {
             path: PathBuf::from("/data/genes.bed.gz"),
             name: "genes.bed.gz".to_owned(),
-            kind: Kind::Bed,
-            index: Index::default(),
+            format: Format::Features {
+                kind: Kind::Bed,
+                index: tabix::Index::default(),
+            },
         };
         let mut track = Track::new(7, Arc::new(source), &assembly());
         track.contigs = vec![Some("1".to_owned()), None, None];
@@ -246,7 +434,7 @@ mod tests {
         let features = (0..count)
             .map(|_| Feature::new("", region, Strand::Forward))
             .collect();
-        Arc::new(Loaded::new(region, features))
+        Arc::new(Loaded::features(region, features))
     }
 
     fn ids(tracks: &[Track]) -> Vec<u64> {
@@ -299,14 +487,27 @@ mod tests {
             .join(name)
     }
 
+    fn no_reference(_: Region) -> Result<Vec<u8>, String> {
+        Err("There is no reference.".to_owned())
+    }
+
     #[test]
     fn opens_loads_and_names_tracks_made_by_htslib() {
         let source = open(fixture("genes.gff3.gz")).unwrap();
-        assert_eq!(source.kind, Kind::Gff);
-        let loaded = load(&source, "chr1", region(50_000, 51_000)).unwrap();
+        assert!(matches!(
+            source.format,
+            Format::Features {
+                kind: Kind::Gff,
+                ..
+            }
+        ));
+        let loaded = load(&source, "chr1", region(50_000, 51_000), no_reference).unwrap();
         assert_eq!(loaded.region, region(50_000, 57_400));
+        let Content::Features(annotation) = &loaded.content else {
+            panic!("expected features");
+        };
         assert!(
-            loaded
+            annotation
                 .features
                 .iter()
                 .any(|feature| feature.name() == "GENE1003")
@@ -314,6 +515,35 @@ mod tests {
         let names = names(&source, &assembly()).unwrap();
         let gene = names.find("gene1003").unwrap();
         assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
+    }
+
+    #[test]
+    fn opens_and_loads_reads_made_by_samtools() {
+        let source = open(fixture("reads.bam")).unwrap();
+        assert_eq!(source.contigs(), ["chr1", "chr2"]);
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let loaded = load(&source, "chr1", region(5_000, 8_000), reference).unwrap();
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert!(pile.reads.len() >= 10, "{}", pile.reads.len());
+        assert!(pile.coverage.depth(6_000) > 0);
+        assert_eq!(pile.base(6_000), Some(b'A'));
+        assert!(
+            pile.reads
+                .iter()
+                .all(|read| !read.alignment.has(DUPLICATE | QC_FAIL | SECONDARY))
+        );
+    }
+
+    #[test]
+    fn asks_for_a_bam_index_when_it_is_missing() {
+        let scratch = Scratch::new("track-bam");
+        let error = open(scratch.file("reads.bam", b"")).unwrap_err();
+        assert_eq!(
+            error,
+            "There is no index reads.bam.bai. Index the file with samtools index."
+        );
     }
 
     #[test]
@@ -330,6 +560,7 @@ mod tests {
         let mut track = track();
         assert!(track.needs(0, region(100, 200)));
         assert!(!track.needs(1, region(100, 200)));
+        assert!(!track.needs(0, region(0, 20_000_000)));
         track.wanted = Some((0, region(0, 300)));
         assert!(!track.needs(0, region(100, 200)));
         assert!(track.needs(0, region(250, 350)));
@@ -368,7 +599,10 @@ mod tests {
     #[test]
     fn rejects_files_that_are_not_tracks() {
         let error = open(PathBuf::from("/data/calls.vcf.gz")).unwrap_err();
-        assert_eq!(error, "The file calls.vcf.gz is not a BED or GFF3 file.");
+        assert_eq!(
+            error,
+            "The file calls.vcf.gz is not a BED, GFF3 or BAM file."
+        );
     }
 
     #[test]

@@ -28,6 +28,20 @@ impl Op {
         )
     }
 
+    pub const fn letter(self) -> char {
+        match self {
+            Self::Match => 'M',
+            Self::Insertion => 'I',
+            Self::Deletion => 'D',
+            Self::Skip => 'N',
+            Self::SoftClip => 'S',
+            Self::HardClip => 'H',
+            Self::Padding => 'P',
+            Self::Equal => '=',
+            Self::Diff => 'X',
+        }
+    }
+
     pub const fn consumes_read(self) -> bool {
         matches!(
             self,
@@ -291,6 +305,23 @@ mod tests {
         let read = alignment(0, cigar);
         assert_eq!(read.end(), 124);
         assert_eq!(read.span(), Region::new(100, 124).unwrap());
+    }
+
+    #[test]
+    fn letters_follow_the_sam_specification() {
+        let ops = [
+            Op::Match,
+            Op::Insertion,
+            Op::Deletion,
+            Op::Skip,
+            Op::SoftClip,
+            Op::HardClip,
+            Op::Padding,
+            Op::Equal,
+            Op::Diff,
+        ];
+        let letters: String = ops.into_iter().map(Op::letter).collect();
+        assert_eq!(letters, "MIDNSHP=X");
     }
 
     #[test]

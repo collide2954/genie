@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
-use genie_render::{features, overview, ruler, sequence};
+use genie_render::{alignments, features, overview, ruler, sequence};
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -15,7 +15,7 @@ use iced::{
     window,
 };
 
-use crate::card::{self, Card};
+use crate::card::{self, Card, Detail};
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
 use crate::icon::{self, Icon};
@@ -29,7 +29,7 @@ use crate::scene::Pointer;
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
-use crate::track::{self, Change, Loaded, Source, Track};
+use crate::track::{self, Change, Content, Loaded, Source, Track};
 use crate::{font, paths, scene, style};
 
 const INITIAL_WIDTH: f32 = 1_000.0;
@@ -39,7 +39,7 @@ const BASE_HEIGHT: f32 = 16.0;
 const TRACK_PADDING: f32 = 2.0;
 const EMPTY_HEIGHT: f32 = 20.0;
 const LABEL_SIZE: f32 = 10.0;
-const FEATURE_SPAN: u64 = 10_000_000;
+const READ_HINT: &str = "Zoom in to see the reads";
 const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -392,14 +392,24 @@ impl Genie {
         let track = session.tracks.iter().find(|track| track.id == id)?;
         let data = track.data(session.contig)?;
         let mode = track.mode(session.contig);
-        let (x, y) = (pointer.local.x, pointer.local.y);
-        let index = features::hit(session.viewport, &data.features, &data.rows, mode, x, y)?;
+        let (viewport, x, y) = (session.viewport, pointer.local.x, pointer.local.y);
+        let detail = match &data.content {
+            Content::Features(annotation) => {
+                let index =
+                    features::hit(viewport, &annotation.features, &annotation.rows, mode, x, y)?;
+                Detail::Feature(annotation.features[index].clone())
+            }
+            Content::Reads(pile) => {
+                let index = alignments::hit(viewport, &pile.reads, &pile.rows, mode, x, y)?;
+                Detail::Read(pile.reads[index].alignment.clone())
+            }
+        };
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[session.contig]
                 .name
                 .clone(),
-            feature: data.features[index].clone(),
+            detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
         })
     }
@@ -582,11 +592,10 @@ impl Genie {
         };
         let viewport = session.destination();
         let visible = viewport.visible();
-        if visible.len() > FEATURE_SPAN {
-            return Task::none();
-        }
         let contig = session.contig;
-        let wanted = visible.expand(visible.len(), viewport.length());
+        let length = viewport.length();
+        let wanted = visible.expand(visible.len(), length);
+        let reference = &session.reference;
         let tasks: Vec<Task<Message>> = session
             .tracks
             .iter_mut()
@@ -595,8 +604,13 @@ impl Genie {
                 let name = track.contigs[contig].clone()?;
                 track.wanted = Some((contig, wanted));
                 let (id, source) = (track.id, Arc::clone(&track.source));
+                let reference = Arc::clone(reference);
                 Some(Task::perform(
-                    async move { track::load(&source, &name, wanted).map(Arc::new) },
+                    async move {
+                        let bases =
+                            |window: Region| reference.fetch(contig, window.clamp_to(length));
+                        track::load(&source, &name, wanted, bases).map(Arc::new)
+                    },
                     move |result| Message::TrackLoaded(id, contig, wanted, result),
                 ))
             })
@@ -657,7 +671,7 @@ impl Genie {
             && self
                 .pinned
                 .as_ref()
-                .is_none_or(|pinned| pinned.feature != hover.feature)
+                .is_none_or(|pinned| pinned.detail != hover.detail)
         {
             layers = layers.push(card::view(hover, false, self.window));
         }
@@ -823,6 +837,9 @@ impl Genie {
         self.next_track += 1;
         let track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
         session.tracks.push(track);
+        if source.has_reads() {
+            return self.fetch_features();
+        }
         let reference = Arc::clone(&session.reference);
         let names = Task::perform(
             async move { track::names(&source, &reference.assembly).map(Arc::new) },
@@ -928,27 +945,59 @@ impl Genie {
 fn track_view<'a>(session: &Session, track: &'a Track) -> Element<'a, Message> {
     let viewport = session.viewport;
     let contig = session.contig;
-    let body: Element<'a, Message> = if let Some(error) = &track.error {
-        hint(error.clone())
-    } else if viewport.visible().len() > FEATURE_SPAN {
-        hint(ZOOM_HINT.to_owned())
-    } else if let Some(data) = track.data(contig) {
-        let mode = track.mode(contig);
-        let rows = if mode == features::Mode::Collapsed {
-            1
-        } else {
-            data.count.max(1)
-        };
-        let primitives = features::scene(viewport, &data.features, &data.rows, mode, track.hue);
-        let id = track.id;
-        scene::view(primitives, rows as f32 * mode.row_height())
+    let id = track.id;
+    let interactive = |primitives, height| {
+        scene::view(primitives, height)
             .on_hover(move |pointer| Message::TrackHovered(id, pointer))
             .on_click(move |pointer| Message::TrackClicked(id, pointer))
-            .into()
-    } else {
-        space().width(Length::Fill).height(EMPTY_HEIGHT).into()
     };
-    let id = track.id;
+    let mode = track.mode(contig);
+    let body: Element<'a, Message> = if let Some(error) = &track.error {
+        hint(error.clone())
+    } else if viewport.visible().len() > track.source.span() {
+        hint(
+            if track.source.has_reads() {
+                READ_HINT
+            } else {
+                ZOOM_HINT
+            }
+            .to_owned(),
+        )
+    } else {
+        match track.data(contig).map(|data| &data.content) {
+            Some(Content::Features(annotation)) => {
+                let rows = if mode == features::Mode::Collapsed {
+                    1
+                } else {
+                    annotation.count.max(1)
+                };
+                let primitives = features::scene(
+                    viewport,
+                    &annotation.features,
+                    &annotation.rows,
+                    mode,
+                    track.hue,
+                );
+                interactive(primitives, rows as f32 * mode.row_height()).into()
+            }
+            Some(Content::Reads(pile)) => {
+                let depth = alignments::coverage(
+                    viewport,
+                    &pile.coverage,
+                    |at| pile.base(at),
+                    alignments::COVERAGE_HEIGHT,
+                );
+                let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
+                if mode != features::Mode::Collapsed {
+                    let primitives = alignments::reads(viewport, &pile.reads, &pile.rows, mode);
+                    let height = pile.count.max(1) as f32 * alignments::row_height(mode);
+                    body = body.push(interactive(primitives, height));
+                }
+                body.into()
+            }
+            None => space().width(Length::Fill).height(EMPTY_HEIGHT).into(),
+        }
+    };
     Context::new(
         stack![
             container(body).padding([TRACK_PADDING, 0.0]),
@@ -1048,7 +1097,7 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
             .set_title("Open a track or a reference sequence")
-            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3"])
+            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3", "bam"])
             .add_filter("Reference sequences", &references)
     } else {
         rfd::AsyncFileDialog::new()
@@ -1096,14 +1145,16 @@ mod tests {
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Change, Loaded, Source};
+    use crate::track::{Change, Format, Loaded, Source};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
             path: PathBuf::from(format!("/data/{name}")),
             name: name.to_owned(),
-            kind: Kind::Bed,
-            index: Index::default(),
+            format: Format::Features {
+                kind: Kind::Bed,
+                index: Index::default(),
+            },
         })
     }
 
@@ -1176,10 +1227,10 @@ mod tests {
         let _ = genie.update(Message::Zoom(2.0, 0.0));
         let region = Region::between(0, 1_000);
         let feature = Feature::new("a", Region::between(10, 20), Strand::Forward);
-        let loaded = Arc::new(Loaded::new(region, vec![feature; 12]));
+        let loaded = Arc::new(Loaded::features(region, vec![feature; 12]));
         let _ = genie.update(Message::TrackLoaded(0, 0, region, Ok(loaded)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
-        assert_eq!(track.data(0).unwrap().count, 12);
+        assert_eq!(track.data(0).unwrap().count(), 12);
         assert_eq!(track.mode(0), Rows::Squished);
     }
 
@@ -1605,7 +1656,11 @@ mod tests {
         let feature = Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.wanted = Some((0, region));
-        track.accept(0, region, Ok(Arc::new(Loaded::new(region, vec![feature]))));
+        track.accept(
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, vec![feature]))),
+        );
         genie
     }
 
@@ -1676,6 +1731,62 @@ mod tests {
         let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
         assert!(genie.hover.is_none());
+    }
+
+    fn with_reads() -> Genie {
+        let mut genie = opened();
+        let source = Arc::new(Source {
+            path: PathBuf::from("/data/reads.bam"),
+            name: "reads.bam".to_owned(),
+            format: Format::Reads {
+                index: genie_formats::bai::Index::default(),
+                contigs: vec!["chr1".to_owned()],
+            },
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let read = genie_core::alignment::Alignment {
+            name: "read7".to_owned(),
+            start: 10,
+            flags: 0,
+            mapq: 60,
+            cigar: vec![(genie_core::alignment::Op::Match, 40)],
+            bases: vec![b'A'; 40],
+            qualities: Vec::new(),
+        };
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.wanted = Some((0, region));
+        let loaded = Loaded::reads(region, vec![read], vec![b'A'; 1_000], 0);
+        track.accept(0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    #[test]
+    fn hovering_a_read_shows_its_card() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(20.0, 5.0))));
+        assert!(shows(&genie, "read7"));
+        assert!(shows(&genie, "CIGAR 40M"));
+        assert!(shows(&genie, "40 bp · forward strand · MAPQ 60"));
+    }
+
+    #[test]
+    fn only_feature_tracks_offer_colors() {
+        let mut reads = with_reads();
+        let _ = reads.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&reads, "Squished"));
+        assert!(
+            simulator(reads.view())
+                .find(selector::id("swatches"))
+                .is_err()
+        );
+        let mut features = with_track();
+        let _ = features.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(
+            simulator(features.view())
+                .find(selector::id("swatches"))
+                .is_ok()
+        );
     }
 
     #[test]

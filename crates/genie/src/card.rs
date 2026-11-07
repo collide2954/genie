@@ -1,6 +1,7 @@
-use genie_core::{Feature, Locus, Span, Strand, grouped};
+use genie_core::alignment::Alignment;
+use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use iced::widget::{button, column, container, pin, row, text};
-use iced::{Alignment, Element, Length, Point, Size};
+use iced::{Alignment as Align, Element, Length, Point, Size};
 
 use crate::app::Message;
 use crate::icon::{self, Icon};
@@ -13,20 +14,30 @@ const OFFSET_Y: f32 = 16.0;
 const EDGE: f32 = 4.0;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Detail {
+    Feature(Feature),
+    Read(Alignment),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub track: u64,
     pub contig: String,
-    pub feature: Feature,
+    pub detail: Detail,
     pub at: Point,
+}
+
+fn strand(strand: Strand) -> Option<&'static str> {
+    match strand {
+        Strand::Forward => Some("forward strand"),
+        Strand::Reverse => Some("reverse strand"),
+        Strand::Unknown => None,
+    }
 }
 
 pub fn facts(feature: &Feature) -> String {
     let mut facts = vec![format!("{} bp", grouped(feature.span().len()))];
-    match feature.strand() {
-        Strand::Forward => facts.push("forward strand".to_owned()),
-        Strand::Reverse => facts.push("reverse strand".to_owned()),
-        Strand::Unknown => {}
-    }
+    facts.extend(strand(feature.strand()).map(str::to_owned));
     let blocks = feature.blocks().len();
     if blocks > 1 {
         facts.push(format!("{blocks} exons"));
@@ -45,16 +56,52 @@ pub fn coding(feature: &Feature) -> Option<String> {
     ))
 }
 
-pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
-    let feature = &card.feature;
-    let title = if feature.name().is_empty() {
-        "Feature".to_owned()
+pub fn read_facts(read: &Alignment) -> String {
+    let length = if read.bases.is_empty() {
+        read.span().len()
     } else {
-        feature.name().to_owned()
+        read.bases.len() as u64
     };
+    let mut facts = vec![format!("{} bp", grouped(length))];
+    facts.extend(strand(read.strand()).map(str::to_owned));
+    facts.push(format!("MAPQ {}", read.mapq));
+    facts.join(" · ")
+}
+
+pub fn cigar(read: &Alignment) -> String {
+    let mut text = String::from("CIGAR ");
+    for (op, length) in &read.cigar {
+        text.push_str(&length.to_string());
+        text.push(op.letter());
+    }
+    text
+}
+
+fn content(detail: &Detail) -> (String, Region, Vec<String>) {
+    match detail {
+        Detail::Feature(feature) => {
+            let title = if feature.name().is_empty() {
+                "Feature".to_owned()
+            } else {
+                feature.name().to_owned()
+            };
+            let mut lines = vec![facts(feature)];
+            lines.extend(coding(feature));
+            (title, feature.span(), lines)
+        }
+        Detail::Read(read) => (
+            read.name.clone(),
+            read.span(),
+            vec![read_facts(read), cigar(read)],
+        ),
+    }
+}
+
+pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
+    let (title, span, lines) = content(&card.detail);
     let locus = Locus {
         name: card.contig.clone(),
-        span: Span::Region(feature.span()),
+        span: Span::Region(span),
     };
     let mut heading = row![
         text(title)
@@ -62,7 +109,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .size(12)
             .width(Length::Fill)
     ]
-    .align_y(Alignment::Center);
+    .align_y(Align::Center);
     if pinned {
         heading = heading.push(
             button(icon::view(Icon::Close, 10.0))
@@ -73,19 +120,20 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
                 .on_press(Message::CardClosed),
         );
     }
-    let mut lines = column![
+    let body = column![
         heading,
         text(locus.to_string())
             .font(font::MONO)
             .size(11)
             .style(style::muted),
-        text(facts(feature)).size(11).style(style::muted),
     ]
+    .extend(
+        lines
+            .into_iter()
+            .map(|line| text(line).size(11).style(style::muted).into()),
+    )
     .spacing(2);
-    if let Some(coding) = coding(feature) {
-        lines = lines.push(text(coding).size(11).style(style::muted));
-    }
-    let body = container(lines)
+    let body = container(body)
         .width(WIDTH)
         .padding([6, 8])
         .style(style::menu);
@@ -102,9 +150,10 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
 
 #[cfg(test)]
 mod tests {
+    use genie_core::alignment::{Alignment, Op, REVERSE};
     use genie_core::{Feature, Region, Strand};
 
-    use super::{coding, facts};
+    use super::{cigar, coding, facts, read_facts};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -129,5 +178,20 @@ mod tests {
         assert_eq!(coding(&transcript).as_deref(), Some("Coding 10-90"));
         let simple = Feature::new("b", region(0, 100), Strand::Forward);
         assert_eq!(coding(&simple), None);
+    }
+
+    #[test]
+    fn reads_show_length_strand_quality_and_cigar() {
+        let read = Alignment {
+            name: "read7".to_owned(),
+            start: 100,
+            flags: REVERSE,
+            mapq: 42,
+            cigar: vec![(Op::Match, 40), (Op::Deletion, 3), (Op::Match, 60)],
+            bases: vec![b'A'; 100],
+            qualities: Vec::new(),
+        };
+        assert_eq!(read_facts(&read), "100 bp · reverse strand · MAPQ 42");
+        assert_eq!(cigar(&read), "CIGAR 40M3D60M");
     }
 }

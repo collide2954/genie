@@ -47,22 +47,23 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let content = column![
-        column(modes).spacing(1),
-        separator(),
-        row(swatches).spacing(6).padding([3, 8]),
-        separator(),
+    let mut content = column![column(modes).spacing(1), separator()].spacing(1);
+    if !track.source.has_reads() {
+        content = content
+            .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
+            .push(separator());
+    }
+    let content = content.extend([
         item("Move up", Change::Up, false, place.position > 0),
         item(
             "Move down",
             Change::Down,
             false,
-            place.position + 1 < place.count
+            place.position + 1 < place.count,
         ),
         separator(),
         item("Remove", Change::Remove, false, true),
-    ]
-    .spacing(1);
+    ]);
     let card = container(content)
         .width(WIDTH)
         .padding(4)
