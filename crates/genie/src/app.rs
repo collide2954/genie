@@ -2110,7 +2110,7 @@ mod tests {
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
-    use crate::track::{Change, Content, Format, Loaded, Options, Source, Toggle};
+    use crate::track::{Change, Content, Format, Grouping, Loaded, Options, Source, Toggle};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
@@ -3059,6 +3059,18 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn read_menus_group_by_phase_or_strand() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for item in ["Group by phase", "Group by strand"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+        let _ = genie.update(Message::TrackChanged(0, Change::Group(Grouping::Strand)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.options.group, Grouping::Strand);
     }
 
     #[test]

@@ -8,11 +8,11 @@ use iced::{Element, Length, Point, Size};
 use crate::app::Message;
 use crate::style;
 use crate::theme::tokens;
-use crate::track::{Change, Toggle, Track};
+use crate::track::{Change, Grouping, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
-const READS_HEIGHT: f32 = 288.0;
+const READS_HEIGHT: f32 = 341.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
 const SIGNAL_HEIGHT: f32 = 200.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
@@ -21,6 +21,10 @@ const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
     ("Squished", Mode::Squished),
     ("Collapsed", Mode::Collapsed),
+];
+const GROUPS: [(&str, Grouping); 2] = [
+    ("Group by phase", Grouping::Phase),
+    ("Group by strand", Grouping::Strand),
 ];
 const TOGGLES: [(&str, Toggle); 3] = [
     ("Show duplicates", Toggle::Duplicates),
@@ -132,6 +136,15 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
                 false,
                 true,
             ))
+            .push(separator())
+            .extend(GROUPS.map(|(label, grouping)| {
+                item(
+                    label,
+                    Change::Group(grouping),
+                    options.group == grouping,
+                    true,
+                )
+            }))
             .push(separator());
     } else if !track.source.has_variants() {
         content = content

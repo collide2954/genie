@@ -528,6 +528,7 @@ pub enum Change {
     Link,
     Pairs,
     Sort(u64),
+    Group(Grouping),
     Up,
     Down,
     Remove,
@@ -548,6 +549,15 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Pairs => {
             let plot = &mut tracks[position].plot;
             plot.pairs = !plot.pairs;
+        }
+        Change::Group(grouping) => {
+            let track = &mut tracks[position];
+            track.options.group = if track.options.group == grouping {
+                Grouping::None
+            } else {
+                grouping
+            };
+            track.wanted = None;
         }
         Change::Sort(at) => {
             let track = &mut tracks[position];
@@ -1020,6 +1030,19 @@ mod tests {
         let (rows, count, groups) = pile.packed(region(30, 100));
         assert_eq!((rows[4], count), (0, 1));
         assert_eq!(groups, [(0, "Haplotype 1".to_owned())]);
+    }
+
+    #[test]
+    fn changes_switch_the_grouping_and_reload() {
+        let mut tracks = three();
+        tracks[1].wanted = Some((0, region(0, 10)));
+        change(&mut tracks, 1, Change::Group(Grouping::Phase));
+        assert_eq!(tracks[1].options.group, Grouping::Phase);
+        assert_eq!(tracks[1].wanted, None);
+        change(&mut tracks, 1, Change::Group(Grouping::Strand));
+        assert_eq!(tracks[1].options.group, Grouping::Strand);
+        change(&mut tracks, 1, Change::Group(Grouping::Strand));
+        assert_eq!(tracks[1].options.group, Grouping::None);
     }
 
     #[test]
