@@ -650,7 +650,8 @@ impl Genie {
             }
             Content::Reads(pile) => {
                 let rows = track.rows(pile);
-                let index = alignments::hit(viewport, &pile.reads, rows, mode, x, y)?;
+                let groups = &pile.groups;
+                let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
                 Detail::Read(pile.reads[index].alignment.clone())
             }
             Content::Variants(calls) => {
@@ -1690,20 +1691,24 @@ fn track_body<'a>(
             );
             let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
             if mode != features::Mode::Collapsed {
-                let packed;
-                let rows = if repack {
-                    let rows = pile.packed(viewport.visible()).0;
+                let (packed, bands);
+                let (rows, groups) = if repack {
+                    let (rows, _, groups) = pile.packed(viewport.visible());
+                    let starts: Vec<usize> = groups.iter().map(|(first, _)| *first).collect();
                     packed = match &track.order {
-                        Some((at, _)) => sort_rows(&pile.reads, &rows, *at),
+                        Some((at, _)) => sort_rows(&pile.reads, &rows, &starts, *at),
                         None => rows,
                     };
-                    packed.as_slice()
+                    bands = groups;
+                    (packed.as_slice(), bands.as_slice())
                 } else {
-                    track.rows(pile)
+                    (track.rows(pile), pile.groups.as_slice())
                 };
                 let pairs = track.plot.pairs;
-                let primitives = alignments::reads(viewport, &pile.reads, rows, mode, pairs);
-                body = body.push(interactive(primitives, shape.height - shape.fixed));
+                let primitives =
+                    alignments::reads(viewport, &pile.reads, rows, groups, mode, pairs);
+                let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
+                body = body.push(interactive(primitives, height));
             }
             body.into()
         }
@@ -1828,14 +1833,15 @@ fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
             Shape::plain(alignments::COVERAGE_HEIGHT)
         }
         Some(Content::Reads(pile)) => {
-            let count = if repack {
-                pile.packed(viewport.visible()).1
+            let (count, groups) = if repack {
+                let (_, count, groups) = pile.packed(viewport.visible());
+                (count, groups.len())
             } else {
-                pile.count
-            }
-            .max(1);
+                (pile.count, pile.groups.len())
+            };
+            let count = count.max(1);
             let row_height = alignments::row_height(mode);
-            let fixed = alignments::COVERAGE_HEIGHT + 1.0;
+            let fixed = alignments::COVERAGE_HEIGHT + 1.0 + groups as f32 * alignments::GROUP_GAP;
             Shape {
                 height: fixed + count as f32 * row_height,
                 rows: count,

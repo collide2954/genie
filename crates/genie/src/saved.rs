@@ -8,7 +8,7 @@ use genie_render::scene::Hue;
 use genie_render::signal::Style;
 
 use crate::reading::{Frames, Reading};
-use crate::track::{Options, Plot};
+use crate::track::{Grouping, Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -16,6 +16,7 @@ const MODES: [(&str, Mode); 3] = [
     ("squished", Mode::Squished),
     ("collapsed", Mode::Collapsed),
 ];
+const GROUPS: [(&str, Grouping); 2] = [("phase", Grouping::Phase), ("strand", Grouping::Strand)];
 const HUES: [(&str, Hue); 5] = [
     ("blue", Hue::Blue),
     ("green", Hue::Green),
@@ -74,6 +75,10 @@ impl Saved {
                         duplicates: on("duplicates"),
                         clips: on("clips"),
                         downsample: section.value("downsample") != Some("off"),
+                        group: section
+                            .value("group")
+                            .and_then(|name| find(&GROUPS, name))
+                            .unwrap_or_default(),
                     },
                     plot: Plot {
                         style: if section.value("style") == Some("line") {
@@ -126,6 +131,9 @@ impl Saved {
             }
             if !track.options.downsample {
                 entries.push(("downsample", "off".to_owned()));
+            }
+            if track.options.group != Grouping::None {
+                entries.push(("group", name(&GROUPS, track.options.group).to_owned()));
             }
             if track.plot.style == Style::Line {
                 entries.push(("style", "line".to_owned()));
@@ -210,7 +218,7 @@ mod tests {
 
     use super::{Saved, SavedTrack, is_session};
     use crate::reading::{Frames, Reading};
-    use crate::track::{Options, Plot};
+    use crate::track::{Grouping, Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -234,6 +242,7 @@ mod tests {
                         duplicates: true,
                         clips: true,
                         downsample: false,
+                        group: Grouping::Phase,
                     },
                     plot: Plot {
                         pairs: false,
@@ -277,6 +286,7 @@ mod tests {
         assert!(text.contains("scale = shared"), "{text}");
         assert_eq!(text.matches("style =").count(), 1, "{text}");
         assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
+        assert_eq!(text.matches("group = phase").count(), 1, "{text}");
     }
 
     #[test]

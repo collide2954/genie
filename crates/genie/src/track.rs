@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, DUPLICATE, Filter, expected_inserts};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter, REVERSE, expected_inserts};
 use genie_core::pileup::{Coverage, Read, downsample, sort_rows};
 use genie_core::signal::{self, Summary};
 use genie_core::variant::Variant;
@@ -143,11 +143,20 @@ pub struct Calls {
     pub samples: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Grouping {
+    #[default]
+    None,
+    Phase,
+    Strand,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
     pub duplicates: bool,
     pub clips: bool,
     pub downsample: bool,
+    pub group: Grouping,
 }
 
 impl Default for Options {
@@ -156,6 +165,7 @@ impl Default for Options {
             duplicates: false,
             clips: false,
             downsample: true,
+            group: Grouping::None,
         }
     }
 }
@@ -221,22 +231,80 @@ pub struct Pile {
     pub reads: Vec<Read>,
     pub rows: Vec<usize>,
     pub count: usize,
+    pub groups: Vec<(usize, String)>,
+    pub grouping: Grouping,
+}
+
+fn group_key(read: &Read, grouping: Grouping) -> (u8, i64) {
+    match grouping {
+        Grouping::None => (0, 0),
+        Grouping::Phase => read.alignment.tags.phase.map_or((1, 0), |phase| (0, phase)),
+        Grouping::Strand => (u8::from(read.alignment.has(REVERSE)), 0),
+    }
+}
+
+fn group_label(grouping: Grouping, key: (u8, i64)) -> String {
+    match (grouping, key) {
+        (Grouping::Phase, (0, phase)) => format!("Haplotype {phase}"),
+        (Grouping::Phase, _) => "No haplotype".to_owned(),
+        (Grouping::Strand, (0, _)) => "Forward strand".to_owned(),
+        (Grouping::Strand, _) => "Reverse strand".to_owned(),
+        (Grouping::None, _) => String::new(),
+    }
+}
+
+fn pack(
+    reads: &[Read],
+    members: &[usize],
+    grouping: Grouping,
+) -> (Vec<usize>, Vec<(usize, String)>) {
+    let extent = |&index: &usize| reads[index].extent;
+    if grouping == Grouping::None {
+        return (rows::pack(members, extent, READ_GAP), Vec::new());
+    }
+    let keys: Vec<(u8, i64)> = members
+        .iter()
+        .map(|&index| group_key(&reads[index], grouping))
+        .collect();
+    let mut order = keys.clone();
+    order.sort_unstable();
+    order.dedup();
+    let mut rows = vec![0; members.len()];
+    let mut groups = Vec::new();
+    let mut next = 0;
+    for key in order {
+        let places: Vec<usize> = (0..members.len())
+            .filter(|&place| keys[place] == key)
+            .collect();
+        let chosen: Vec<usize> = places.iter().map(|&place| members[place]).collect();
+        let layout = rows::pack(&chosen, extent, READ_GAP);
+        for (&place, &row) in places.iter().zip(&layout) {
+            rows[place] = next + row;
+        }
+        groups.push((next, group_label(grouping, key)));
+        next += count(&layout);
+    }
+    (rows, groups)
 }
 
 impl Pile {
-    pub fn packed(&self, visible: Region) -> (Vec<usize>, usize) {
+    pub fn packed(&self, visible: Region) -> (Vec<usize>, usize, Vec<(usize, String)>) {
         let shown: Vec<usize> = (0..self.reads.len())
             .filter(|&index| {
                 let span = self.reads[index].extent;
                 span.start() <= visible.end() && span.end() >= visible.start()
             })
             .collect();
-        let packed = rows::pack(&shown, |&index| self.reads[index].extent, READ_GAP);
+        let (packed, groups) = pack(&self.reads, &shown, self.grouping);
         let mut rows = vec![0; self.reads.len()];
         for (&index, &row) in shown.iter().zip(&packed) {
             rows[index] = row;
         }
-        (rows, count(&packed))
+        (rows, count(&packed), groups)
+    }
+
+    pub fn starts(&self) -> Vec<usize> {
+        self.groups.iter().map(|(first, _)| *first).collect()
     }
 
     pub fn base(&self, position: u64) -> Option<u8> {
@@ -301,7 +369,8 @@ impl Loaded {
                 read
             })
             .collect();
-        let rows = rows::pack(&reads, |read| read.extent, READ_GAP);
+        let members: Vec<usize> = (0..reads.len()).collect();
+        let (rows, groups) = pack(&reads, &members, options.group);
         let count = count(&rows);
         Self {
             region,
@@ -313,6 +382,8 @@ impl Loaded {
                 reads,
                 rows,
                 count,
+                groups,
+                grouping: options.group,
             }),
         }
     }
@@ -484,7 +555,9 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
                 .loaded
                 .as_ref()
                 .and_then(|(_, data)| match &data.content {
-                    Content::Reads(pile) => Some((at, sort_rows(&pile.reads, &pile.rows, at))),
+                    Content::Reads(pile) => {
+                        Some((at, sort_rows(&pile.reads, &pile.rows, &pile.starts(), at)))
+                    }
                     _ => None,
                 });
         }
@@ -808,7 +881,8 @@ mod tests {
     use std::sync::Arc;
 
     use genie_core::alignment::{
-        Alignment, DUPLICATE, MATE_REVERSE, Mate, Op, PAIRED, PROPER, Pairing, QC_FAIL, SECONDARY,
+        Alignment, DUPLICATE, MATE_REVERSE, Mate, Op, PAIRED, PROPER, Pairing, QC_FAIL, REVERSE,
+        SECONDARY, Tags,
     };
     use genie_core::{Assembly, Contig, Feature, Names, Region, Strand};
     use genie_formats::features::Kind;
@@ -818,7 +892,7 @@ mod tests {
     use genie_render::signal::Style;
 
     use super::{
-        Change, Content, Format, Loaded, Options, Plot, Source, Toggle, Track, change,
+        Change, Content, Format, Grouping, Loaded, Options, Plot, Source, Toggle, Track, change,
         contig_names, fits, is_track, load, names, open, step,
     };
     use crate::scratch::Scratch;
@@ -908,6 +982,70 @@ mod tests {
         change(&mut tracks, 1, Change::Pairs);
         assert!(!tracks[1].plot.pairs);
         assert_eq!(tracks[1].wanted, Some((0, region(0, 10))));
+    }
+
+    #[test]
+    fn grouping_packs_each_group_under_its_label() {
+        let phased = |start: u64, phase: Option<i64>| Alignment {
+            tags: Tags { phase, group: None },
+            ..alignment(start, vec![(Op::Match, 10)])
+        };
+        let reads = vec![
+            phased(10, Some(2)),
+            phased(10, None),
+            phased(12, Some(1)),
+            phased(14, Some(2)),
+            phased(40, Some(1)),
+        ];
+        let options = Options {
+            group: Grouping::Phase,
+            downsample: false,
+            ..Options::default()
+        };
+        let loaded = Loaded::reads(region(0, 100), 0, reads, vec![b'A'; 100], 0, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let labels: Vec<(usize, &str)> = pile
+            .groups
+            .iter()
+            .map(|(row, label)| (*row, label.as_str()))
+            .collect();
+        assert_eq!(
+            labels,
+            [(0, "Haplotype 1"), (1, "Haplotype 2"), (3, "No haplotype")]
+        );
+        assert_eq!(pile.rows, [1, 3, 0, 2, 0]);
+        assert_eq!(pile.count, 4);
+        let (rows, count, groups) = pile.packed(region(30, 100));
+        assert_eq!((rows[4], count), (0, 1));
+        assert_eq!(groups, [(0, "Haplotype 1".to_owned())]);
+    }
+
+    #[test]
+    fn strand_groups_put_forward_reads_first() {
+        let reads = vec![
+            Alignment {
+                flags: REVERSE,
+                ..alignment(10, vec![(Op::Match, 10)])
+            },
+            alignment(10, vec![(Op::Match, 10)]),
+        ];
+        let options = Options {
+            group: Grouping::Strand,
+            ..Options::default()
+        };
+        let loaded = Loaded::reads(region(0, 100), 0, reads, vec![b'A'; 100], 0, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let labels: Vec<&str> = pile
+            .groups
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .collect();
+        assert_eq!(labels, ["Forward strand", "Reverse strand"]);
+        assert_eq!(pile.rows, [1, 0]);
     }
 
     #[test]
@@ -1388,7 +1526,7 @@ mod tests {
             panic!("expected reads");
         };
         assert_eq!(pile.count, 3);
-        let (rows, count) = pile.packed(region(0, 200));
+        let (rows, count, _) = pile.packed(region(0, 200));
         assert_eq!(count, 2);
         let mut shown: Vec<usize> = pile
             .reads

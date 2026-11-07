@@ -160,7 +160,7 @@ fn key(read: &Read, position: u64) -> (u8, u8) {
     (3, 0)
 }
 
-pub fn sort_rows(reads: &[Read], rows: &[usize], position: u64) -> Vec<usize> {
+pub fn sort_rows(reads: &[Read], rows: &[usize], starts: &[usize], position: u64) -> Vec<usize> {
     let count = rows.iter().max().map_or(0, |row| row + 1);
     let mut keys = vec![(3, 0); count];
     for (read, &row) in reads.iter().zip(rows) {
@@ -168,8 +168,9 @@ pub fn sort_rows(reads: &[Read], rows: &[usize], position: u64) -> Vec<usize> {
             keys[row] = keys[row].min(key(read, position));
         }
     }
+    let group = |row: usize| starts.partition_point(|start| *start <= row);
     let mut order: Vec<usize> = (0..count).collect();
-    order.sort_by_key(|&row| keys[row]);
+    order.sort_by_key(|&row| (group(row), keys[row]));
     let mut placed = vec![0; count];
     for (new, &old) in order.iter().enumerate() {
         placed[old] = new;
@@ -202,8 +203,9 @@ mod tests {
             read(40, vec![(Op::Match, 10)], b"AAAAAAAAAA"),
         ];
         let rows = [0, 1, 2, 3, 4, 3];
-        assert_eq!(sort_rows(&reads, &rows, 15), [3, 1, 2, 4, 0, 4]);
-        assert_eq!(sort_rows(&reads, &rows, 90), rows);
+        assert_eq!(sort_rows(&reads, &rows, &[], 15), [3, 1, 2, 4, 0, 4]);
+        assert_eq!(sort_rows(&reads, &rows, &[], 90), rows);
+        assert_eq!(sort_rows(&reads, &rows, &[0, 2], 15), [1, 0, 3, 4, 2, 4]);
     }
 
     fn region(start: u64, end: u64) -> Region {
