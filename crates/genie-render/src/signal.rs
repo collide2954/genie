@@ -41,6 +41,11 @@ pub struct Column {
     pub bin: Bin,
 }
 
+fn same(a: Bin, b: Bin) -> bool {
+    let close = (a.mean() - b.mean()).abs() <= 1e-9 * a.mean().abs().max(1.0);
+    a.min.to_bits() == b.min.to_bits() && a.max.to_bits() == b.max.to_bits() && close
+}
+
 pub fn columns(viewport: Viewport, summaries: &[Summary]) -> Vec<Column> {
     let visible = viewport.visible();
     let left = viewport.to_px(visible.start() as f64).floor().max(0.0) as u64;
@@ -65,9 +70,11 @@ pub fn columns(viewport: Viewport, summaries: &[Summary]) -> Vec<Column> {
         };
         let x = pixel as f32;
         match found.last_mut() {
-            Some(last) if last.bin == bin && (last.x + last.width - x).abs() < 0.5 => {
+            Some(last) if same(last.bin, bin) && (last.x + last.width - x).abs() < 0.5 => {
                 last.width += 1.0;
                 last.span = last.span.hull(span);
+                last.bin.count += bin.count;
+                last.bin.sum += bin.sum;
             }
             _ => found.push(Column {
                 x,
@@ -272,6 +279,24 @@ mod tests {
         let zoomed = columns(view(10, 20), &[value(12, 13, 2.0)]);
         assert_eq!(zoomed.len(), 1);
         assert_eq!((zoomed[0].x, zoomed[0].width), (20.0, 10.0));
+    }
+
+    #[test]
+    fn pixels_with_the_same_value_make_one_column() {
+        let found = columns(view(0, 150), &[value(30, 60, 2.0), value(60, 90, 2.5)]);
+        let shape: Vec<(f32, f32, Region)> = found
+            .iter()
+            .map(|column| (column.x, column.width, column.span))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (20.0, 20.0, Region::between(30, 60)),
+                (40.0, 20.0, Region::between(60, 90)),
+            ]
+        );
+        assert!((found[0].bin.mean() - 2.0).abs() < 1e-9);
+        assert!((found[0].bin.count - 30.0).abs() < 1e-9);
     }
 
     #[test]
