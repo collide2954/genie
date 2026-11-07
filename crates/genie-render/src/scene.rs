@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use genie_core::Strand;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Base {
     A,
@@ -45,7 +47,11 @@ impl Hue {
 pub enum Paint {
     Base(Base),
     OnBase(Base),
+    Faded(Base),
     Hue(Hue),
+    Strand(Strand),
+    Coverage,
+    Insertion,
     Text,
     Muted,
     Line,
@@ -64,6 +70,7 @@ pub enum Font {
 pub enum Align {
     Start,
     Center,
+    End,
 }
 
 #[derive(Debug, Clone, PartialEq)]

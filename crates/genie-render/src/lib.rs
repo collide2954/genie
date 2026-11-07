@@ -1,3 +1,4 @@
+pub mod alignments;
 pub mod features;
 pub mod overview;
 pub mod rows;

@@ -1,5 +1,18 @@
 use crate::Region;
-use crate::alignment::{Alignment, Op};
+use crate::alignment::{Alignment, Op, Parts};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Read {
+    pub alignment: Alignment,
+    pub parts: Parts,
+}
+
+impl Read {
+    pub fn new(alignment: Alignment, reference: &[u8], offset: u64) -> Self {
+        let parts = alignment.parts(reference, offset);
+        Self { alignment, parts }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Coverage {

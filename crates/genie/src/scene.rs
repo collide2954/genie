@@ -1,3 +1,4 @@
+use genie_core::Strand;
 use genie_render::scene::{Align, Font, Paint, Primitive};
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
@@ -15,6 +16,7 @@ use crate::font;
 use crate::theme::{DataColors, Tokens, data, tokens};
 
 const CLICK_SLOP: f32 = 3.0;
+const FADED: f32 = 0.35;
 
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
 
@@ -128,7 +130,12 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
     match paint {
         Paint::Base(base) => data.bases[base as usize],
         Paint::OnBase(base) => data.on_bases[base as usize],
+        Paint::Faded(base) => data.bases[base as usize].scale_alpha(FADED),
         Paint::Hue(hue) => data.hues[hue as usize],
+        Paint::Strand(Strand::Reverse) => data.strands[1],
+        Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
+        Paint::Coverage => data.coverage,
+        Paint::Insertion => data.insertion,
         Paint::Text => tokens.text,
         Paint::Muted => tokens.muted,
         Paint::Line => tokens.line,
@@ -304,6 +311,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                             align_x: match align {
                                 Align::Start => text::Alignment::Left,
                                 Align::Center => text::Alignment::Center,
+                                Align::End => text::Alignment::Right,
                             },
                             align_y: alignment::Vertical::Center,
                             shaping: text::Shaping::Basic,
@@ -324,6 +332,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    use genie_core::Strand;
     use genie_render::scene::{Base, Hue, Paint};
     use iced::widget::container;
     use iced::{Element, Event, Point, Settings, mouse};
@@ -353,6 +362,30 @@ mod tests {
         assert_eq!(
             color(Paint::Hue(Hue::Purple), &DARK, &DARK_DATA),
             DARK_DATA.hues[4]
+        );
+    }
+
+    #[test]
+    fn read_paints_use_data_colors() {
+        assert_eq!(
+            color(Paint::Strand(Strand::Forward), &LIGHT, &LIGHT_DATA),
+            LIGHT_DATA.strands[0]
+        );
+        assert_eq!(
+            color(Paint::Strand(Strand::Reverse), &DARK, &DARK_DATA),
+            DARK_DATA.strands[1]
+        );
+        assert_eq!(
+            color(Paint::Coverage, &DARK, &DARK_DATA),
+            DARK_DATA.coverage
+        );
+        assert_eq!(
+            color(Paint::Insertion, &LIGHT, &LIGHT_DATA),
+            LIGHT_DATA.insertion
+        );
+        assert_eq!(
+            color(Paint::Faded(Base::C), &LIGHT, &LIGHT_DATA),
+            LIGHT_DATA.bases[1].scale_alpha(0.35)
         );
     }
 
