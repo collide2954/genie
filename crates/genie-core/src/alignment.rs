@@ -76,6 +76,96 @@ impl Alignment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gap {
+    Deletion,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mismatch {
+    pub position: u64,
+    pub base: u8,
+    pub quality: u8,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Parts {
+    pub blocks: Vec<Region>,
+    pub gaps: Vec<(Region, Gap)>,
+    pub insertions: Vec<(u64, u32)>,
+    pub mismatches: Vec<Mismatch>,
+}
+
+impl Alignment {
+    pub fn parts(&self, reference: &[u8], offset: u64) -> Parts {
+        let mut parts = Parts::default();
+        let (mut position, mut index) = (self.start, 0_usize);
+        for &(op, length) in &self.cigar {
+            let size = u64::from(length);
+            let count = length as usize;
+            match op {
+                Op::Match | Op::Equal | Op::Diff => {
+                    let block = Region::between(position, position + size);
+                    match parts.blocks.last_mut() {
+                        Some(last) if last.end() == position => *last = last.hull(block),
+                        _ => parts.blocks.push(block),
+                    }
+                    for step in 0..count {
+                        let at = position + step as u64;
+                        let Some(&base) = self.bases.get(index + step) else {
+                            break;
+                        };
+                        let expected = at
+                            .checked_sub(offset)
+                            .and_then(|delta| reference.get(usize::try_from(delta).ok()?));
+                        let differs = match op {
+                            Op::Diff => true,
+                            Op::Equal => false,
+                            _ => expected.is_some_and(|expected| {
+                                base != b'='
+                                    && !expected.eq_ignore_ascii_case(&b'N')
+                                    && !base.eq_ignore_ascii_case(expected)
+                            }),
+                        };
+                        if differs {
+                            parts.mismatches.push(Mismatch {
+                                position: at,
+                                base,
+                                quality: self
+                                    .qualities
+                                    .get(index + step)
+                                    .copied()
+                                    .unwrap_or(u8::MAX),
+                            });
+                        }
+                    }
+                    position += size;
+                    index += count;
+                }
+                Op::Insertion => {
+                    parts.insertions.push((position, length));
+                    index += count;
+                }
+                Op::Deletion | Op::Skip => {
+                    let gap = if op == Op::Deletion {
+                        Gap::Deletion
+                    } else {
+                        Gap::Skip
+                    };
+                    parts
+                        .gaps
+                        .push((Region::between(position, position + size), gap));
+                    position += size;
+                }
+                Op::SoftClip => index += count,
+                Op::HardClip | Op::Padding => {}
+            }
+        }
+        parts
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Filter {
     hidden: u16,
 }
@@ -97,9 +187,81 @@ impl Filter {
 #[cfg(test)]
 mod tests {
     use super::{
-        Alignment, DUPLICATE, Filter, Op, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, UNMAPPED,
+        Alignment, DUPLICATE, Filter, Gap, Mismatch, Op, Parts, QC_FAIL, REVERSE, SECONDARY,
+        SUPPLEMENTARY, UNMAPPED,
     };
     use crate::{Region, Strand};
+
+    fn region(start: u64, end: u64) -> Region {
+        Region::new(start, end).unwrap()
+    }
+
+    #[test]
+    fn parts_follow_the_cigar_and_the_reference() {
+        let read = Alignment {
+            bases: b"TTACGTAGGACGCGTTA".to_vec(),
+            qualities: (0..17).collect(),
+            ..alignment(
+                0,
+                vec![
+                    (Op::SoftClip, 2),
+                    (Op::Match, 5),
+                    (Op::Insertion, 2),
+                    (Op::Match, 3),
+                    (Op::Deletion, 2),
+                    (Op::Equal, 3),
+                    (Op::Skip, 100),
+                    (Op::Diff, 2),
+                ],
+            )
+        };
+        let reference = b"ACGTTACGxxGTAxxxxx";
+        assert_eq!(
+            read.parts(reference, 100),
+            Parts {
+                blocks: vec![region(100, 108), region(110, 113), region(213, 215)],
+                gaps: vec![
+                    (region(108, 110), Gap::Deletion),
+                    (region(113, 213), Gap::Skip)
+                ],
+                insertions: vec![(105, 2)],
+                mismatches: vec![
+                    Mismatch {
+                        position: 104,
+                        base: b'A',
+                        quality: 6
+                    },
+                    Mismatch {
+                        position: 213,
+                        base: b'T',
+                        quality: 15
+                    },
+                    Mismatch {
+                        position: 214,
+                        base: b'A',
+                        quality: 16
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn parts_skip_mismatches_without_bases_or_reference() {
+        let read = alignment(0, vec![(Op::Match, 4)]);
+        assert_eq!(read.parts(b"", 0).mismatches, []);
+        let read = Alignment {
+            bases: b"ACGN".to_vec(),
+            ..alignment(0, vec![(Op::Match, 4)])
+        };
+        let mismatches = read.parts(b"TTTT", 102).mismatches;
+        let positions: Vec<u64> = mismatches
+            .iter()
+            .map(|mismatch| mismatch.position)
+            .collect();
+        assert_eq!(positions, [102, 103]);
+        assert_eq!(mismatches[1].base, b'N');
+    }
 
     fn alignment(flags: u16, cigar: Vec<(Op, u32)>) -> Alignment {
         Alignment {
