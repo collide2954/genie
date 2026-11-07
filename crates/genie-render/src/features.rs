@@ -12,6 +12,7 @@ const GLYPH_WIDTH: f32 = 0.6;
 const CHEVRON_SIZE: f32 = 2.5;
 const CHEVRON_SPACING: f32 = 24.0;
 const CHEVRON_MIN: f32 = 12.0;
+const REACH: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mode {
@@ -63,6 +64,37 @@ impl Mode {
             Self::Squished => &SQUISHED,
         }
     }
+}
+
+pub fn hit(
+    viewport: Viewport,
+    features: &[Feature],
+    rows: &[usize],
+    mode: Mode,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    if y < 0.0 {
+        return None;
+    }
+    let row = (y / mode.shape().row) as usize;
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    features
+        .iter()
+        .zip(rows)
+        .enumerate()
+        .filter(|(_, (_, own))| match mode {
+            Mode::Collapsed => row == 0,
+            Mode::Expanded | Mode::Squished => **own == row,
+        })
+        .map(|(index, (feature, _))| {
+            let span = feature.span();
+            let distance = (px(span.start()) - x).max(x - px(span.end())).max(0.0);
+            (index, distance)
+        })
+        .filter(|(_, distance)| *distance <= REACH)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(index, _)| index)
 }
 
 pub fn scene(
@@ -230,7 +262,7 @@ pub fn pack(features: &[Feature], gap: u64) -> Vec<usize> {
 mod tests {
     use genie_core::{Feature, Region, Strand, Viewport};
 
-    use super::{LIMIT, Mode, pack, scene};
+    use super::{LIMIT, Mode, hit, pack, scene};
     use crate::scene::{Hue, Paint, Primitive};
 
     fn region(start: u64, end: u64) -> Region {
@@ -291,6 +323,31 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn hits_the_feature_under_the_pointer() {
+        let features = [named("a", 10, 20), named("b", 10, 20), named("c", 50, 60)];
+        let rows = [0, 1, 0];
+        let at = |mode, x, y| hit(view(), &features, &rows, mode, x, y);
+        assert_eq!(at(Mode::Expanded, 15.0, 5.0), Some(0));
+        assert_eq!(at(Mode::Expanded, 15.0, 25.0), Some(1));
+        assert_eq!(at(Mode::Expanded, 55.0, 5.0), Some(2));
+        assert_eq!(at(Mode::Expanded, 35.0, 5.0), None);
+        assert_eq!(at(Mode::Squished, 15.0, 7.0), Some(1));
+        assert_eq!(at(Mode::Collapsed, 55.0, 5.0), Some(2));
+        assert_eq!(at(Mode::Collapsed, 15.0, 25.0), None);
+    }
+
+    #[test]
+    fn hits_small_features_near_the_pointer() {
+        let wide = Viewport::new(1_000_000, 100.0).show(region(0, 10_000));
+        let features = [named("a", 1_000, 1_001)];
+        assert_eq!(
+            hit(wide, &features, &[0], Mode::Expanded, 11.5, 5.0),
+            Some(0)
+        );
+        assert_eq!(hit(wide, &features, &[0], Mode::Expanded, 14.0, 5.0), None);
     }
 
     #[test]
