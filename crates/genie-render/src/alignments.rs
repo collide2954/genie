@@ -156,7 +156,7 @@ pub fn reads(viewport: Viewport, reads: &[Read], rows: &[usize], mode: Mode) -> 
     let mut primitives = Vec::new();
     let mut marks = Vec::new();
     for (read, &row) in reads.iter().zip(rows) {
-        let span = read.alignment.span();
+        let span = read.extent;
         if span.start() > visible.end() || span.end() < visible.start() {
             continue;
         }
@@ -172,7 +172,7 @@ pub fn reads(viewport: Viewport, reads: &[Read], rows: &[usize], mode: Mode) -> 
             };
             primitives.push(bar(*gap, top + size / 2.0 - 0.5, 1.0, paint));
         }
-        for mismatch in &read.parts.mismatches {
+        for mismatch in read.parts.mismatches.iter().chain(&read.parts.clips) {
             let base = Base::from_byte(mismatch.base);
             let paint = if mismatch.quality < FADED_BELOW {
                 Paint::Faded(base)
@@ -234,7 +234,7 @@ pub fn hit(
         .enumerate()
         .filter(|(_, (_, own))| **own == row)
         .map(|(index, (read, _))| {
-            let span = read.alignment.span();
+            let span = read.extent;
             let distance = (px(span.start()) - x).max(x - px(span.end())).max(0.0);
             (index, distance)
         })
@@ -462,6 +462,30 @@ mod tests {
         assert_eq!(
             hit(view(0, 100), &pair, &rows, Mode::Expanded, 45.0, 5.0),
             None
+        );
+    }
+
+    fn clipped(start: u64, cigar: Vec<(Op, u32)>, bases: &[u8]) -> Read {
+        Read::new(alignment(start, 0, cigar, bases), &[b'A'; 200], 0, true)
+    }
+
+    #[test]
+    fn soft_clips_draw_as_bases_beside_the_read() {
+        let read = clipped(10, vec![(Op::SoftClip, 2), (Op::Match, 4)], b"GTAAAA");
+        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded));
+        assert!(found.contains(&([8.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
+        assert!(found.contains(&([9.0, 1.0, 1.0, 8.0], Paint::Base(Base::T))));
+    }
+
+    #[test]
+    fn soft_clips_count_for_drawing_and_hits() {
+        let read = clipped(103, vec![(Op::SoftClip, 6), (Op::Match, 4)], b"GGGGGGAAAA");
+        let found = rects(&reads(view(0, 100), &[read], &[0], Mode::Expanded));
+        assert!(found.contains(&([97.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
+        let read = clipped(50, vec![(Op::SoftClip, 10), (Op::Match, 4)], &[b'C'; 14]);
+        assert_eq!(
+            hit(view(0, 100), &[read], &[0], Mode::Expanded, 42.0, 5.0),
+            Some(0)
         );
     }
 }
