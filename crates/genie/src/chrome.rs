@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, mouse_area, row, space, text};
+use iced::widget::{button, column, container, mouse_area, row, space, text, text_input};
 use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
 
 use crate::app::Message;
@@ -115,10 +115,18 @@ fn platform() -> window::settings::PlatformSpecific {
     window::settings::PlatformSpecific::default()
 }
 
+pub const LOCUS: &str = "locus";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocusField {
+    pub value: String,
+    pub error: Option<String>,
+}
+
 pub fn title_bar<'a>(
     controls: Controls,
     appearance: Icon,
-    locus: Option<String>,
+    locus: Option<LocusField>,
 ) -> Element<'a, Message> {
     let logo = container(space())
         .width(14)
@@ -131,14 +139,8 @@ pub fn title_bar<'a>(
     let brand = row![logo, text("genie").font(font::UI_STRONG).size(12)]
         .spacing(6)
         .align_y(Alignment::Center);
-    let locus = locus.map(|locus| {
-        container(text(locus).font(font::MONO).size(12))
-            .padding([2, 8])
-            .width(240)
-            .style(style::field)
-    });
     let navigation = row![tool(Icon::Open, "open", Message::Open)]
-        .push(locus)
+        .push(locus.map(locus_box))
         .spacing(6)
         .align_y(Alignment::Center);
     let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
@@ -211,6 +213,27 @@ pub fn resize_handles<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
+    let input = text_input("chr1:1,000-2,000", &field.value)
+        .id(LOCUS)
+        .font(font::MONO)
+        .size(12)
+        .padding([2, 8])
+        .width(240)
+        .style(style::locus)
+        .on_input(Message::LocusEdited)
+        .on_submit(Message::LocusSubmitted);
+    row![input]
+        .push(
+            field
+                .error
+                .map(|error| text(error).size(11).style(style::muted)),
+        )
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+}
+
 fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Message> {
     container(
         button(icon::view(icon, TOOL_ICON))
@@ -240,10 +263,11 @@ fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a
 #[cfg(test)]
 mod tests {
     use iced::Point;
+    use iced::keyboard::key::Named;
     use iced_test::selector;
     use iced_test::simulator::{self, simulator};
 
-    use super::{Action, Controls, Edge, resize_handles, title_bar};
+    use super::{Action, Controls, Edge, LOCUS, LocusField, resize_handles, title_bar};
     use crate::app::Message;
     use crate::icon::Icon;
 
@@ -285,14 +309,51 @@ mod tests {
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), [Message::Open]);
     }
 
+    fn field(value: &str, error: Option<&str>) -> LocusField {
+        LocusField {
+            value: value.to_owned(),
+            error: error.map(str::to_owned),
+        }
+    }
+
     #[test]
     fn shows_the_locus_when_there_is_one() {
         let mut ui = simulator(title_bar(
             Controls::Custom,
             Icon::Monitor,
-            Some("chr1:1-4".to_owned()),
+            Some(field("chr1:1-4", None)),
         ));
         assert!(ui.find("chr1:1-4").is_ok());
+    }
+
+    #[test]
+    fn locus_box_reports_edits_and_submits() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        ui.click(selector::id(LOCUS)).unwrap();
+        let _ = ui.typewrite("0");
+        let _ = ui.tap_key(Named::Enter);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::LocusEdited(_)))
+        );
+        assert_eq!(messages.last(), Some(&Message::LocusSubmitted));
+    }
+
+    #[test]
+    fn locus_errors_show_beside_the_box() {
+        let error = "The assembly has no contig \"chr9\".";
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr9", Some(error))),
+        ));
+        assert!(ui.find(error).is_ok());
     }
 
     #[test]

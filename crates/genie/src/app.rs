@@ -7,7 +7,7 @@ use iced::theme::Mode;
 use iced::widget::{button, center, column, container, space, stack, text};
 use iced::{Alignment, Border, Element, Length, Task, Theme, system};
 
-use crate::chrome::{self, Controls};
+use crate::chrome::{self, Controls, LocusField};
 use crate::icon::Icon;
 use crate::navigator::Navigator;
 use crate::reference::{self, Reference};
@@ -31,6 +31,8 @@ pub struct Genie {
     width: f32,
     tiles: Tiles,
     generation: u64,
+    draft: Option<String>,
+    locus_error: Option<String>,
 }
 
 impl Default for Genie {
@@ -43,6 +45,8 @@ impl Default for Genie {
             width: INITIAL_WIDTH,
             tiles: Tiles::default(),
             generation: 0,
+            draft: None,
+            locus_error: None,
         }
     }
 }
@@ -93,6 +97,8 @@ pub enum Message {
     Zoom(f32, f32),
     Resized(f32),
     TileLoaded(u64, Key, Result<Arc<[u8]>, String>),
+    LocusEdited(String),
+    LocusSubmitted,
 }
 
 impl Genie {
@@ -125,8 +131,12 @@ impl Genie {
                 return self.fetch();
             }
             Message::Opened(Err(error)) => self.status = Status::Failed(error),
-            Message::Pan(dx) => return self.navigate(|viewport| viewport.pan(f64::from(dx))),
+            Message::Pan(dx) => {
+                self.drop_draft();
+                return self.navigate(|viewport| viewport.pan(f64::from(dx)));
+            }
             Message::Zoom(factor, anchor) => {
+                self.drop_draft();
                 return self
                     .navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
             }
@@ -142,8 +152,42 @@ impl Genie {
                     }
                 }
             }
+            Message::LocusEdited(text) => {
+                self.draft = Some(text);
+                self.locus_error = None;
+            }
+            Message::LocusSubmitted => return self.submit(),
         }
         Task::none()
+    }
+
+    fn drop_draft(&mut self) {
+        self.draft = None;
+        self.locus_error = None;
+    }
+
+    fn submit(&mut self) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let text = self.draft.take().unwrap_or_else(|| session.locus());
+        match session.reference.assembly.resolve(&text) {
+            Ok(target) => {
+                if target.contig != session.contig {
+                    let length = session.reference.assembly.contigs()[target.contig].length;
+                    session.viewport = session.viewport.retarget(length);
+                    session.contig = target.contig;
+                }
+                session.viewport = session.viewport.jump(target.span);
+                self.locus_error = None;
+                self.fetch()
+            }
+            Err(error) => {
+                self.locus_error = Some(error.to_string());
+                self.draft = Some(text);
+                Task::none()
+            }
+        }
     }
 
     fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
@@ -188,7 +232,10 @@ impl Genie {
             Appearance::Light => Icon::Sun,
             Appearance::Dark => Icon::Moon,
         };
-        let locus = self.session.as_ref().map(Session::locus);
+        let locus = self.session.as_ref().map(|session| LocusField {
+            value: self.draft.clone().unwrap_or_else(|| session.locus()),
+            error: self.locus_error.clone(),
+        });
         let content = column![
             chrome::title_bar(Controls::CURRENT, appearance, locus),
             self.body()
@@ -204,8 +251,8 @@ impl Genie {
             return self.browser(session);
         }
         let message = match &self.status {
-            Status::Idle => text("Open a reference sequence to start.").style(muted),
-            Status::Opening(name) => text(format!("Opening {name}…")).style(muted),
+            Status::Idle => text("Open a reference sequence to start.").style(style::muted),
+            Status::Opening(name) => text(format!("Opening {name}â€¦")).style(style::muted),
             Status::Failed(error) => text(error.as_str()),
         };
         let open = button(text("Open FASTA").font(font::UI_STRONG).size(13))
@@ -264,7 +311,7 @@ impl Genie {
 }
 
 fn label(name: &str) -> Element<'_, Message> {
-    container(text(name).size(LABEL_SIZE).style(muted))
+    container(text(name).size(LABEL_SIZE).style(style::muted))
         .padding([0, 4])
         .style(|theme| container::Style {
             background: Some(tokens(theme).canvas.scale_alpha(0.85).into()),
@@ -280,12 +327,6 @@ fn hairline<'a>() -> Element<'a, Message> {
         .height(1)
         .style(|theme| container::background(tokens(theme).line))
         .into()
-}
-
-fn muted(theme: &Theme) -> text::Style {
-    text::Style {
-        color: Some(tokens(theme).muted),
-    }
 }
 
 fn file_name(path: &Path) -> String {
@@ -335,22 +376,71 @@ mod tests {
     use crate::tiles::Key;
 
     fn reference() -> Arc<Reference> {
-        let record = FaiRecord {
-            name: "chr1".to_owned(),
-            length: 1_000,
-            offset: 6,
-            line_bases: 60,
-            line_width: 61,
-        };
+        let records = vec![
+            FaiRecord {
+                name: "chr1".to_owned(),
+                length: 1_000,
+                offset: 6,
+                line_bases: 60,
+                line_width: 61,
+            },
+            FaiRecord {
+                name: "chr2".to_owned(),
+                length: 500,
+                offset: 1_029,
+                line_bases: 60,
+                line_width: 61,
+            },
+        ];
         Arc::new(Reference {
             path: PathBuf::from("ref.fa"),
             name: "ref.fa".to_owned(),
-            assembly: Assembly::new(vec![Contig {
-                name: record.name.clone(),
-                length: record.length,
-            }]),
-            records: vec![record],
+            assembly: Assembly::new(
+                records
+                    .iter()
+                    .map(|record| Contig {
+                        name: record.name.clone(),
+                        length: record.length,
+                    })
+                    .collect(),
+            ),
+            records,
         })
+    }
+
+    fn go(genie: &mut Genie, locus: &str) {
+        let _ = genie.update(Message::LocusEdited(locus.to_owned()));
+        let _ = genie.update(Message::LocusSubmitted);
+    }
+
+    #[test]
+    fn submitting_a_locus_jumps_there() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn submitting_another_contig_switches_to_it() {
+        let mut genie = opened();
+        go(&mut genie, "2");
+        assert!(shows(&genie, "chr2:1-500"));
+    }
+
+    #[test]
+    fn bad_loci_keep_the_draft_and_explain() {
+        let mut genie = opened();
+        go(&mut genie, "chr9:1-10");
+        assert!(shows(&genie, "chr9:1-10"));
+        assert!(shows(&genie, "The assembly has no contig \"chr9\"."));
+    }
+
+    #[test]
+    fn navigating_drops_an_unsubmitted_draft() {
+        let mut genie = opened();
+        let _ = genie.update(Message::LocusEdited("chr1:5".to_owned()));
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        assert!(shows(&genie, "chr1:1-500"));
     }
 
     #[test]
