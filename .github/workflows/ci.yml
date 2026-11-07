@@ -33,3 +33,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+
+  build:
+    name: build (${{ matrix.os }})
+    if: github.event_name == 'push'
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p genie
+      - uses: actions/upload-artifact@v7
+        with:
+          name: genie-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/release/genie
+            target/release/genie.exe
+          if-no-files-found: error
+          retention-days: 30
