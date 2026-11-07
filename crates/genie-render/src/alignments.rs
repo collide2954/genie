@@ -8,7 +8,7 @@ use crate::features::Mode;
 use crate::scene::{Align, Base, Font, Paint, Primitive};
 
 pub const COVERAGE_HEIGHT: f32 = 36.0;
-pub const LIMIT: usize = 40;
+pub const LIMIT: usize = 100;
 
 const VARIANT: f32 = 0.2;
 const FADED_BELOW: u8 = 20;
