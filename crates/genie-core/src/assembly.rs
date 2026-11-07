@@ -55,6 +55,25 @@ impl Assembly {
             .or_else(|| self.aliases.get(&alias(name)).copied().flatten())
     }
 
+    pub fn suggest(&self, prefix: &str, limit: usize) -> Vec<usize> {
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let lower = prefix.to_ascii_lowercase();
+        let key = alias(prefix);
+        self.contigs
+            .iter()
+            .enumerate()
+            .filter(|(_, contig)| {
+                contig.name.to_ascii_lowercase().starts_with(&lower)
+                    || alias(&contig.name).starts_with(&key)
+            })
+            .map(|(index, _)| index)
+            .take(limit)
+            .collect()
+    }
+
     pub fn resolve(&self, text: &str) -> Result<Target, LocusError> {
         if let Some(contig) = self.find(text.trim()) {
             return Ok(Target {
@@ -193,6 +212,29 @@ mod tests {
         assert_eq!(assembly.resolve("chr1:1,001"), Err(past_end.clone()));
         assert_eq!(assembly.resolve("chr1:1,001-2,000"), Err(past_end.clone()));
         assert_eq!(past_end.to_string(), "chr1 ends at 1,000.");
+    }
+
+    #[test]
+    fn suggests_contigs_by_name_prefix_in_assembly_order() {
+        let assembly = assembly(&["chr1", "chr2", "chr10", "chrX", "chrM"]);
+        assert_eq!(assembly.suggest("chr1", 8), [0, 2]);
+        assert_eq!(assembly.suggest("CHRX", 8), [3]);
+        assert_eq!(assembly.suggest("c", 8), [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn suggests_contigs_by_alias() {
+        let assembly = assembly(&["chr1", "chr2", "chr10", "chrX", "chrM"]);
+        assert_eq!(assembly.suggest("1", 8), [0, 2]);
+        assert_eq!(assembly.suggest("x", 8), [3]);
+        assert_eq!(assembly.suggest("MT", 8), [4]);
+    }
+
+    #[test]
+    fn suggestions_respect_the_limit_and_need_text() {
+        let assembly = assembly(&["chr1", "chr2", "chr10"]);
+        assert_eq!(assembly.suggest("chr", 2), [0, 1]);
+        assert_eq!(assembly.suggest("  ", 8), []);
     }
 
     #[test]
