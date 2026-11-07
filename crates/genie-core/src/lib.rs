@@ -7,6 +7,7 @@ mod names;
 mod number;
 pub mod pileup;
 mod region;
+pub mod signal;
 mod tile;
 pub mod variant;
 mod viewport;
