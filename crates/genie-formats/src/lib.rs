@@ -14,5 +14,6 @@ pub mod png;
 mod sidecar;
 pub mod tabix;
 pub mod twobit;
+pub mod vcf;
 
 pub use error::{Error, Reason};
