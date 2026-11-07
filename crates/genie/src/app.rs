@@ -4,13 +4,14 @@ use std::sync::Arc;
 use genie_core::{Locus, Span, Viewport};
 use genie_render::{overview, ruler, sequence};
 use iced::theme::Mode;
-use iced::widget::{button, center, column, container, space, stack, text};
-use iced::{Alignment, Border, Element, Length, Task, Theme, system};
+use iced::widget::{button, center, column, container, operation, space, stack, text};
+use iced::{Alignment, Border, Element, Length, Subscription, Task, Theme, keyboard, system};
 
 use crate::chrome::{self, Controls, LocusField};
 use crate::icon::Icon;
 use crate::navigator::Navigator;
 use crate::reference::{self, Reference};
+use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
 use crate::tiles::{Key, TILING, Tiles};
 use crate::{font, paths, scene, style};
@@ -99,6 +100,7 @@ pub enum Message {
     TileLoaded(u64, Key, Result<Arc<[u8]>, String>),
     LocusEdited(String),
     LocusSubmitted,
+    Command(Command),
 }
 
 impl Genie {
@@ -157,8 +159,26 @@ impl Genie {
                 self.locus_error = None;
             }
             Message::LocusSubmitted => return self.submit(),
+            Message::Command(command) => return self.command(command),
         }
         Task::none()
+    }
+
+    fn command(&mut self, command: Command) -> Task<Message> {
+        match command {
+            Command::Pan(share) => {
+                self.drop_draft();
+                self.navigate(|viewport| viewport.pan(f64::from(share) * viewport.width()))
+            }
+            Command::Zoom(factor) => {
+                self.drop_draft();
+                self.navigate(|viewport| viewport.zoom(f64::from(factor), viewport.width() / 2.0))
+            }
+            Command::FocusLocus => Task::batch([
+                operation::focus(chrome::LOCUS),
+                operation::select_all(chrome::LOCUS),
+            ]),
+        }
     }
 
     fn drop_draft(&mut self) {
@@ -329,6 +349,15 @@ fn hairline<'a>() -> Element<'a, Message> {
         .into()
 }
 
+fn shortcut(event: keyboard::Event) -> Option<Message> {
+    match event {
+        keyboard::Event::KeyPressed { key, modifiers, .. } => {
+            shortcuts::command(&key, modifiers).map(Message::Command)
+        }
+        _ => None,
+    }
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -356,7 +385,12 @@ pub fn run() -> iced::Result {
         .title("genie")
         .window(chrome::settings())
         .theme(Genie::theme)
-        .subscription(|_| system::theme_changes().map(Message::SystemModeChanged))
+        .subscription(|_| {
+            Subscription::batch([
+                system::theme_changes().map(Message::SystemModeChanged),
+                keyboard::listen().filter_map(shortcut),
+            ])
+        })
         .run()
 }
 
@@ -367,11 +401,13 @@ mod tests {
 
     use genie_core::{Assembly, Contig, Region};
     use genie_formats::fai::FaiRecord;
+    use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
     use iced_test::{selector, simulator};
 
-    use super::{Genie, Message};
+    use super::{Genie, Message, shortcut};
     use crate::reference::Reference;
+    use crate::shortcuts::Command;
     use crate::theme::Appearance;
     use crate::tiles::Key;
 
@@ -433,6 +469,41 @@ mod tests {
         go(&mut genie, "chr9:1-10");
         assert!(shows(&genie, "chr9:1-10"));
         assert!(shows(&genie, "The assembly has no contig \"chr9\"."));
+    }
+
+    #[test]
+    fn arrow_keys_pan_a_quarter_view() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Command(Command::Pan(-0.25)));
+        assert!(shows(&genie, "chr1:126-625"));
+    }
+
+    #[test]
+    fn plus_zooms_in_around_the_center() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Command(Command::Zoom(2.0)));
+        assert!(shows(&genie, "chr1:251-750"));
+    }
+
+    #[test]
+    fn key_presses_become_commands() {
+        let press = keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(Named::ArrowLeft),
+            modified_key: keyboard::Key::Named(Named::ArrowLeft),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::ArrowLeft),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        };
+        assert_eq!(shortcut(press), Some(Message::Command(Command::Pan(0.25))));
+        assert_eq!(
+            shortcut(keyboard::Event::ModifiersChanged(
+                keyboard::Modifiers::SHIFT
+            )),
+            None
+        );
     }
 
     #[test]

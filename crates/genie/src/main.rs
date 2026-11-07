@@ -6,6 +6,7 @@ mod navigator;
 mod paths;
 mod reference;
 mod scene;
+mod shortcuts;
 mod style;
 mod theme;
 mod tiles;
