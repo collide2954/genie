@@ -32,27 +32,8 @@ mod view;
 use tracks::pick;
 
 const INITIAL_WIDTH: f32 = 1_000.0;
-const OVERVIEW_HEIGHT: f32 = 12.0;
-const RULER_HEIGHT: f32 = 20.0;
-const BASE_HEIGHT: f32 = 16.0;
-const EMPTY_HEIGHT: f32 = 20.0;
-const MIN_HEIGHT: f32 = 10.0;
-const EDGE: f32 = 4.0;
-const GRAB: f32 = 8.0;
-const LABEL_SIZE: f32 = 10.0;
-const CAPTION_HEIGHT: f32 = 22.0;
-const CAPTION_SIZE: f32 = 11.0;
-const READ_HINT: &str = "Zoom in to see the reads";
-const VARIANT_HINT: &str = "Zoom in to see the variants";
-const SIGNAL_HINT: &str = "Zoom in to see the signal";
-const DROP_HINT: &str = "Drop the file to open it";
-const ZOOM_HINT: &str = "Zoom in to see the features";
-const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
-const DRAW_FAILED: &str = "The view could not be drawn.";
-const EXPORT_CUT: &str = "The view is too tall. The image shows only the top part.";
 const FADE: Duration = Duration::from_secs(4);
 const LAST: &str = "last.genie";
-const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
 pub struct Genie {
@@ -642,10 +623,9 @@ mod tests {
 
     use iced::{Point, Size};
 
-    use super::{
-        DROP_HINT, Genie, Lane, Message, NO_REFERENCE, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT,
-        shortcut, window_event,
-    };
+    use super::tracks::NO_REFERENCE;
+    use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
+    use super::{Genie, Lane, Message, shortcut, window_event};
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};

@@ -8,7 +8,12 @@ use crate::paths::file_name;
 use crate::{font, style};
 
 use super::view::{hairline, ruler_view};
-use super::{CAPTION_HEIGHT, CAPTION_SIZE, DRAW_FAILED, EXPORT_CUT, Genie, Message, Session};
+use super::{Genie, Message, Session};
+
+const CAPTION_HEIGHT: f32 = 22.0;
+const CAPTION_SIZE: f32 = 11.0;
+const DRAW_FAILED: &str = "The view could not be drawn.";
+const EXPORT_CUT: &str = "The view is too tall. The image shows only the top part.";
 
 impl Genie {
     pub(super) fn exported(&mut self, result: Result<PathBuf, String>, cut: bool) -> Task<Message> {

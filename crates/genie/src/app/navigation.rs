@@ -8,7 +8,9 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, Message, SUGGESTIONS, Suggestion};
+use super::{Genie, Message, Suggestion};
+
+const SUGGESTIONS: usize = 8;
 
 impl Genie {
     pub(super) fn command(&mut self, command: Command) -> Task<Message> {

@@ -18,7 +18,11 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Source, Track};
 
 use super::view::{body_height, signal_columns};
-use super::{GRAB, Genie, Lane, MIN_HEIGHT, Message, NO_REFERENCE, Opening, Status};
+use super::{Genie, Lane, Message, Opening, Status};
+
+const MIN_HEIGHT: f32 = 10.0;
+const GRAB: f32 = 8.0;
+pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 
 impl Genie {
     pub(super) fn track_opened(&mut self, result: Result<Arc<Source>, String>) -> Task<Message> {

@@ -28,10 +28,19 @@ use crate::tiles;
 use crate::track::{Content, Track};
 use crate::{font, scene, style};
 
-use super::{
-    BASE_HEIGHT, DROP_HINT, EDGE, EMPTY_HEIGHT, Genie, LABEL_SIZE, Lane, Message, OVERVIEW_HEIGHT,
-    READ_HINT, RULER_HEIGHT, SIGNAL_HINT, Session, Status, Suggestion, VARIANT_HINT, ZOOM_HINT,
-};
+use super::{Genie, Lane, Message, Session, Status, Suggestion};
+
+const OVERVIEW_HEIGHT: f32 = 12.0;
+const RULER_HEIGHT: f32 = 20.0;
+const BASE_HEIGHT: f32 = 16.0;
+const EMPTY_HEIGHT: f32 = 20.0;
+const EDGE: f32 = 4.0;
+const LABEL_SIZE: f32 = 10.0;
+const READ_HINT: &str = "Zoom in to see the reads";
+pub(super) const VARIANT_HINT: &str = "Zoom in to see the variants";
+pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
+pub(super) const DROP_HINT: &str = "Drop the file to open it";
+pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
 
 impl Genie {
     pub(super) fn figures(&self) -> Vec<(&'static str, String)> {
