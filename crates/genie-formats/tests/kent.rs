@@ -1,11 +1,11 @@
 use std::fs::{self, File};
 use std::path::PathBuf;
 
-use genie_core::Region;
 use genie_core::signal::Summary;
+use genie_core::{Feature, Region};
 use genie_formats::bbi::Index;
 use genie_formats::bgzf::Bgzf;
-use genie_formats::{bedgraph, tabix};
+use genie_formats::{bed, bedgraph, tabix};
 
 const FILES: [&str; 3] = ["signal.bw", "steps.bw", "plain.bw"];
 
@@ -161,6 +161,89 @@ fn bedgraph_matches_the_bigwig_of_the_same_data() {
         assert_eq!(clip(queried), expected, "{region:?}");
         assert_eq!(clip(table.query("chr2", region)), expected, "{region:?}");
     }
+}
+
+fn sections(file: &str) -> Vec<(String, Vec<String>)> {
+    let text = fs::read_to_string(data(&format!("{file}.expected"))).unwrap();
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        match line.strip_prefix('>') {
+            Some(header) => sections.push((header.to_owned(), Vec::new())),
+            None => sections.last_mut().unwrap().1.push(line.to_owned()),
+        }
+    }
+    sections
+}
+
+fn bed_lines(lines: &[String]) -> Vec<(String, Feature)> {
+    lines
+        .iter()
+        .map(|line| {
+            let (contig, feature) = bed::parse(line).unwrap().unwrap();
+            (contig.to_owned(), feature)
+        })
+        .collect()
+}
+
+#[test]
+fn bigbed_matches_ucsc_tools() {
+    let mut reader = File::open(data("genes.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    assert!(index.is_bed());
+    let mut checked = 0;
+    for (header, lines) in sections("genes.bb") {
+        let fields: Vec<&str> = header.split(' ').collect();
+        match fields[0] {
+            "records" => {
+                let (contig, region) = match fields[1].split_once(':') {
+                    Some((contig, range)) => {
+                        let (start, end) = range.split_once('-').unwrap();
+                        let region = Region::new(start.parse().unwrap(), end.parse().unwrap());
+                        (contig, region.unwrap())
+                    }
+                    None => (fields[1], Region::new(0, 1 << 32).unwrap()),
+                };
+                let found = index.features(&mut reader, contig, region).unwrap();
+                let found: Vec<(String, Feature)> = found
+                    .into_iter()
+                    .map(|feature| (contig.to_owned(), feature))
+                    .collect();
+                assert_eq!(found, bed_lines(&lines), "{header}");
+            }
+            "name" => {
+                let found = index.find(&mut reader, fields[1]).unwrap();
+                assert_eq!(found, bed_lines(&lines), "{header}");
+            }
+            kind => {
+                let start: u64 = fields[2].parse().unwrap();
+                let end: u64 = fields[3].parse().unwrap();
+                let count: usize = fields[4].parse().unwrap();
+                let region = Region::new(start, end).unwrap();
+                let bins = index.bins(&mut reader, fields[1], region, count).unwrap();
+                let expected: Vec<&str> = lines[0].split('\t').collect();
+                for (place, (bin, text)) in bins.iter().zip(expected).enumerate() {
+                    let low = start + (end - start) * place as u64 / count as u64;
+                    let high = start + (end - start) * (place as u64 + 1) / count as u64;
+                    let found = bin.map(|bin| match kind {
+                        "mean" => bin.mean(),
+                        _ => bin.count / (high - low) as f64,
+                    });
+                    match (found, text) {
+                        (None, "n/a") => {}
+                        (Some(found), text) => {
+                            assert!(
+                                close(found, text.parse().unwrap()),
+                                "{header}: {found} {text}"
+                            );
+                        }
+                        (None, text) => panic!("{header}: no bin for {text}"),
+                    }
+                }
+            }
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 15);
 }
 
 #[test]

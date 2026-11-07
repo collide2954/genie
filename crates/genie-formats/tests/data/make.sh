@@ -34,8 +34,39 @@ BEGIN {
     }
 }' | sort -k1,1 -k2,2n > genes.bed.tmp
 { printf '#chrom\tstart\tend\tname\n'; cat genes.bed.tmp; } | bgzip > genes.bed.gz
-rm genes.bed.tmp
+awk -v OFS='\t' '
+{
+    color = NR % 5 == 0 ? "0" : $6 == "+" ? "200,40,40" : "40,40,200"
+    if (NF == 6) print $1, $2, $3, $4, $5, $6, $2, $3, color, 1, ($3 - $2) ",", "0,"
+    else { $9 = color; print }
+}' genes.bed.tmp > genes.bb.tmp
+printf 'chr1\t3000000\nchr2\t3000000\nchrX\t3000000\n' > genes.sizes
+bedToBigBed -type=bed12 -extraIndex=name -blockSize=4 -itemsPerSlot=8 genes.bb.tmp genes.sizes genes.bb > /dev/null
+rm genes.bed.tmp genes.bb.tmp genes.sizes
 tabix -f -p bed genes.bed.gz
+{
+    for region in chr1:0-20000 chr1:350000-420000 chr2:300000-301000 chrX chr9:0-100; do
+        chrom=${region%%:*}
+        printf '>records %s\n' "$region"
+        if [ "$chrom" = "$region" ]; then
+            bigBedToBed -chrom="$chrom" genes.bb stdout 2> /dev/null || true
+        else
+            range=${region#*:}
+            bigBedToBed -chrom="$chrom" -start="${range%-*}" -end="${range#*-}" genes.bb stdout \
+                2> /dev/null || true
+        fi
+    done
+    for name in chr1_003 chr2_450 chrX_900 missing; do
+        printf '>name %s\n' "$name"
+        bigBedNamedItems genes.bb "$name" stdout 2> /dev/null || true
+    done
+    for query in "chr1 0 3000000 50" "chr2 100000 200000 20" "chrX 0 600000 7"; do
+        for kind in mean coverage; do
+            printf '>%s %s\n' "$kind" "$query"
+            bigBedSummary -type="$kind" genes.bb $query 2> /dev/null || echo none
+        done
+    done
+} > genes.bb.expected
 
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }

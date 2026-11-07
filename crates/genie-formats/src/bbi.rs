@@ -1,12 +1,14 @@
 use std::io::{Read, Seek, SeekFrom};
 
-use genie_core::Region;
 use genie_core::signal::{self, Bin, Summary};
+use genie_core::{Feature, Region};
 use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
 
-use crate::{Error, Reason};
+use crate::{Error, Reason, bed};
 
 const MAGIC: u32 = 0x888F_FC26;
+const BED_MAGIC: u32 = 0x8789_F2EB;
+const NAME_FIELD: u16 = 3;
 const CHROMOSOMES: u32 = 0x78CA_8C91;
 const BLOCKS: u32 = 0x2468_ACE0;
 const HEADER: usize = 64;
@@ -25,11 +27,164 @@ struct Zoom {
 #[derive(Debug, Clone)]
 pub struct Index {
     big: bool,
+    bed: bool,
     buffer: u32,
     names: Vec<String>,
     ids: Vec<u32>,
     full: u64,
     zooms: Vec<Zoom>,
+    lookup: Option<u64>,
+}
+
+struct Item<'a> {
+    chromosome: u32,
+    start: u64,
+    end: u64,
+    rest: &'a str,
+}
+
+fn items(block: &[u8], big: bool) -> Result<Vec<Item<'_>>, Error> {
+    let mut found = Vec::new();
+    let mut bytes = Bytes::new(block, big);
+    while bytes.at + 12 <= block.len() {
+        let chromosome = bytes.u32()?;
+        let start = u64::from(bytes.u32()?);
+        let end = u64::from(bytes.u32()?);
+        let tail = &block[bytes.at..];
+        let length = tail
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(tail.len());
+        let rest =
+            std::str::from_utf8(&tail[..length]).map_err(|_| Error::Invalid(Reason::BadBlock))?;
+        bytes.at += (length + 1).min(tail.len());
+        found.push(Item {
+            chromosome,
+            start,
+            end,
+            rest,
+        });
+    }
+    Ok(found)
+}
+
+fn touches(start: u64, end: u64, region: Region) -> bool {
+    (start < region.end() && end > region.start())
+        || (start == end && (start == region.end() || end == region.start()))
+}
+
+fn feature(contig: &str, item: &Item<'_>) -> Result<Feature, Error> {
+    let mut line = format!("{contig}\t{}\t{}", item.start, item.end);
+    if !item.rest.is_empty() {
+        line.push('\t');
+        line.push_str(item.rest);
+    }
+    bed::parse(&line)
+        .map_err(Error::Invalid)?
+        .map(|(_, feature)| feature)
+        .ok_or(Error::Invalid(Reason::BadRecord))
+}
+
+fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
+    let mut events: Vec<(u64, i64)> = Vec::new();
+    for span in spans.filter_map(|span| span.intersection(region)) {
+        events.push((span.start(), 1));
+        events.push((span.end(), -1));
+    }
+    events.sort_unstable();
+    let mut found = Vec::new();
+    let mut depth = 0;
+    let mut last = region.start();
+    for (position, change) in events {
+        if depth > 0 && position > last {
+            found.push(Summary::single(
+                Region::between(last, position),
+                depth as f32,
+            ));
+        }
+        depth += change;
+        last = position;
+    }
+    found
+}
+
+fn name_index(
+    reader: &mut (impl Read + Seek),
+    extension: u64,
+    big: bool,
+) -> Result<Option<u64>, Error> {
+    let head = chunk(reader, extension, 12)?;
+    let mut bytes = Bytes::new(&head, big);
+    let _size = bytes.u16()?;
+    let count = bytes.u16()?;
+    let mut at = bytes.u64()?;
+    for _ in 0..count {
+        let entry = chunk(reader, at, 16)?;
+        let mut bytes = Bytes::new(&entry, big);
+        let _kind = bytes.u16()?;
+        let fields = usize::from(bytes.u16()?);
+        let offset = bytes.u64()?;
+        let list = chunk(reader, at + 16, fields * 4)?;
+        let first = Bytes::new(&list, big).u16().ok();
+        if fields == 1 && first == Some(NAME_FIELD) {
+            return Ok(Some(offset));
+        }
+        at += 16 + fields as u64 * 4;
+    }
+    Ok(None)
+}
+
+fn tree_find(
+    reader: &mut (impl Read + Seek),
+    offset: u64,
+    big: bool,
+    key: &[u8],
+) -> Result<Vec<(u64, u64)>, Error> {
+    let head = chunk(reader, offset, 32)?;
+    let mut bytes = Bytes::new(&head, big);
+    let bad = || Error::Invalid(Reason::BadIndex);
+    if bytes.u32()? != CHROMOSOMES {
+        return Err(bad());
+    }
+    let _block = bytes.u32()?;
+    let size = bytes.u32()? as usize;
+    if size > KEY_LIMIT || bytes.u32()? != 16 {
+        return Err(bad());
+    }
+    if key.len() > size {
+        return Ok(Vec::new());
+    }
+    let mut wanted = key.to_vec();
+    wanted.resize(size, 0);
+    let mut found = Vec::new();
+    let mut nodes = vec![(offset + 32, 0)];
+    while let Some((at, depth)) = nodes.pop() {
+        if depth > DEPTH {
+            return Err(bad());
+        }
+        let (leaf, count, items) = node(reader, at, big, |leaf| size + if leaf { 16 } else { 8 })?;
+        let mut bytes = Bytes::new(&items, big);
+        let mut entries = Vec::with_capacity(count);
+        for _ in 0..count {
+            let name = bytes.skip(size)?;
+            let first = bytes.u64()?;
+            let second = if leaf { bytes.u64()? } else { 0 };
+            entries.push((name, first, second));
+        }
+        for (place, (name, first, second)) in entries.iter().enumerate() {
+            if leaf {
+                if *name == wanted.as_slice() {
+                    found.push((*first, *second));
+                }
+                continue;
+            }
+            let next = entries.get(place + 1).map(|(next, ..)| *next);
+            if *name <= wanted.as_slice() && next.is_none_or(|next| wanted.as_slice() <= next) {
+                nodes.push((*first, depth + 1));
+            }
+        }
+    }
+    Ok(found)
 }
 
 struct Bytes<'a> {
@@ -264,10 +419,11 @@ impl Index {
     pub fn read(reader: &mut (impl Read + Seek)) -> Result<Self, Error> {
         let header = chunk(reader, 0, HEADER)?;
         let magic = [header[0], header[1], header[2], header[3]];
-        let big = if u32::from_le_bytes(magic) == MAGIC {
-            false
-        } else if u32::from_be_bytes(magic) == MAGIC {
-            true
+        let (little, swapped) = (u32::from_le_bytes(magic), u32::from_be_bytes(magic));
+        let (big, bed) = if little == MAGIC || little == BED_MAGIC {
+            (false, little == BED_MAGIC)
+        } else if swapped == MAGIC || swapped == BED_MAGIC {
+            (true, swapped == BED_MAGIC)
         } else {
             return Err(Error::Invalid(Reason::NotBigWig));
         };
@@ -282,6 +438,7 @@ impl Index {
         let _schema = bytes.u64()?;
         let _total = bytes.u64()?;
         let buffer = bytes.u32()?;
+        let extension = bytes.u64()?;
         let table = chunk(reader, HEADER as u64, levels * ZOOM)?;
         let mut bytes = Bytes::new(&table, big);
         let mut zooms = Vec::with_capacity(levels);
@@ -293,14 +450,78 @@ impl Index {
             zooms.push(Zoom { reduction, index });
         }
         let (names, ids) = chromosomes(reader, tree, big)?.into_iter().unzip();
+        let lookup = if bed && extension != 0 {
+            name_index(reader, extension, big)?
+        } else {
+            None
+        };
         Ok(Self {
             big,
+            bed,
             buffer,
             names,
             ids,
             full,
             zooms,
+            lookup,
         })
+    }
+
+    pub fn is_bed(&self) -> bool {
+        self.bed
+    }
+
+    pub fn has_lookup(&self) -> bool {
+        self.lookup.is_some()
+    }
+
+    fn contig(&self, id: u32) -> Option<&str> {
+        let slot = self.ids.iter().position(|known| *known == id)?;
+        Some(&self.names[slot])
+    }
+
+    pub fn features(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+        region: Region,
+    ) -> Result<Vec<Feature>, Error> {
+        let Some(id) = self.id(contig) else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for (offset, size) in blocks(reader, self.full, self.big, id, region)? {
+            let block = self.block(reader, offset, size)?;
+            for item in items(&block, self.big)? {
+                if item.chromosome == id && touches(item.start, item.end, region) {
+                    found.push(feature(contig, &item)?);
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    pub fn find(
+        &self,
+        reader: &mut (impl Read + Seek),
+        name: &str,
+    ) -> Result<Vec<(String, Feature)>, Error> {
+        let Some(tree) = self.lookup else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for (offset, size) in tree_find(reader, tree, self.big, name.as_bytes())? {
+            let block = self.block(reader, offset, size)?;
+            for item in items(&block, self.big)? {
+                if item.rest.split('\t').next() != Some(name) {
+                    continue;
+                }
+                if let Some(contig) = self.contig(item.chromosome) {
+                    found.push((contig.to_owned(), feature(contig, &item)?));
+                }
+            }
+        }
+        Ok(found)
     }
 
     fn zoom(&self, desired: u64) -> Option<Zoom> {
@@ -322,6 +543,10 @@ impl Index {
         desired: u64,
     ) -> Result<Vec<Summary>, Error> {
         let Some(zoom) = self.zoom(desired) else {
+            if self.bed {
+                let features = self.features(reader, contig, region)?;
+                return Ok(depths(features.iter().map(Feature::span), region));
+            }
             return self.records(reader, contig, region);
         };
         let Some(id) = self.id(contig) else {
