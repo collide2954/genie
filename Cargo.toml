@@ -11,7 +11,7 @@ publish = false
 
 [workspace.dependencies]
 genie-core = { path = "crates/genie-core" }
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "web-colors", "thread-pool", "x11", "wayland"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "web-colors", "thread-pool", "x11", "wayland", "canvas"] }
 iced_test = "0.14"
 fontdb = { version = "0.23", default-features = false }
 

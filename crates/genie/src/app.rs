@@ -1,9 +1,10 @@
 use iced::theme::Mode;
 use iced::widget::{button, center, column, container, row, space, text};
-use iced::{Element, Task, Theme, system};
+use iced::{Alignment, Element, Task, Theme, system};
 
-use crate::font;
+use crate::icon::{self, Icon};
 use crate::theme::{self, Appearance, tokens};
+use crate::{font, style};
 
 #[derive(Debug, Default)]
 pub struct Genie {
@@ -34,12 +35,26 @@ impl Genie {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let appearance = match self.appearance {
+            Appearance::System => Icon::Monitor,
+            Appearance::Light => Icon::Sun,
+            Appearance::Dark => Icon::Moon,
+        };
         let bar = container(
             row![
                 text("genie"),
                 space::horizontal(),
-                button(text(self.appearance.label())).on_press(Message::CycleAppearance),
+                container(
+                    button(icon::view(appearance, 16.0))
+                        .width(28)
+                        .height(28)
+                        .padding(0)
+                        .style(style::ghost)
+                        .on_press(Message::CycleAppearance)
+                )
+                .id("appearance"),
             ]
+            .align_y(Alignment::Center)
             .padding(8),
         )
         .style(|theme| container::background(tokens(theme).bar));
@@ -75,7 +90,7 @@ pub fn run() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use iced::theme::Mode;
-    use iced_test::simulator;
+    use iced_test::{selector, simulator};
 
     use super::{Genie, Message};
     use crate::theme::Appearance;
@@ -91,7 +106,7 @@ mod tests {
     fn appearance_button_cycles_appearance() {
         let mut genie = Genie::default();
         let mut ui = simulator(genie.view());
-        ui.click("System").unwrap();
+        ui.click(selector::id("appearance")).unwrap();
         for message in ui.into_messages() {
             let _ = genie.update(message);
         }
