@@ -1,5 +1,6 @@
 pub mod alignment;
 mod assembly;
+pub mod codon;
 mod feature;
 mod locus;
 mod names;
