@@ -13,6 +13,9 @@ version = "0.1.0"
 [[package]]
 name = "genie-formats"
 version = "0.1.0"
+dependencies = [
+ "genie-core",
+]
 
 [[package]]
 name = "genie-render"
