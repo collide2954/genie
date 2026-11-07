@@ -1,4 +1,5 @@
-use std::fs::File;
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -6,7 +7,7 @@ use genie_core::alignment::{Alignment, DUPLICATE, Filter};
 use genie_core::pileup::{Coverage, Read, downsample};
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
-use genie_formats::features::{self, Kind};
+use genie_formats::features::{self, Kind, Table};
 use genie_formats::{bai, bam, tabix};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
@@ -20,12 +21,17 @@ const WINDOW: u64 = 50;
 const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
 const MARGIN: u64 = 1_000;
+const PLAIN_LIMIT: u64 = 50 << 20;
 
 #[derive(Debug)]
 pub enum Format {
     Features {
         kind: Kind,
         index: tabix::Index,
+    },
+    Table {
+        kind: Kind,
+        table: Table,
     },
     Reads {
         index: bai::Index,
@@ -50,6 +56,7 @@ impl Source {
     pub fn contigs(&self) -> &[String] {
         match &self.format {
             Format::Features { index, .. } => index.names(),
+            Format::Table { table, .. } => table.contigs(),
             Format::Reads { contigs, .. } => contigs,
         }
     }
@@ -370,9 +377,18 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
         extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
     });
     if !compressed {
-        return Err(format!(
-            "Compress {name} with bgzip, then index it with tabix."
-        ));
+        let size = fs::metadata(&path)
+            .map_err(|error| error.to_string())?
+            .len();
+        fits(&name, size)?;
+        let file = File::open(&path).map_err(|error| error.to_string())?;
+        let table = Table::read(kind, BufReader::new(file))
+            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
+        return Ok(Source {
+            path,
+            name,
+            format: Format::Table { kind, table },
+        });
     }
     let file = File::open(with_suffix(&path, ".tbi"))
         .map_err(|_| format!("There is no index {name}.tbi. Index the file with tabix."))?;
@@ -383,6 +399,15 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
         name,
         format: Format::Features { kind, index },
     })
+}
+
+fn fits(name: &str, size: u64) -> Result<(), String> {
+    if size > PLAIN_LIMIT {
+        return Err(format!(
+            "The file {name} is larger than 50 MB. Compress it with bgzip, then index it with tabix."
+        ));
+    }
+    Ok(())
 }
 
 fn open_reads(path: PathBuf, name: String) -> Result<Source, String> {
@@ -421,15 +446,20 @@ pub fn load(
     options: Options,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
-    let file = File::open(&source.path).map_err(|error| error.to_string())?;
-    let mut reader = Bgzf::new(file);
+    let reader = || {
+        File::open(&source.path)
+            .map(Bgzf::new)
+            .map_err(|error| error.to_string())
+    };
     match &source.format {
+        Format::Table { table, .. } => Ok(Loaded::features(region, table.query(contig, region))),
         Format::Features { kind, index } => {
-            let (region, features) = features::query(*kind, index, &mut reader, contig, region)
+            let (region, features) = features::query(*kind, index, &mut reader()?, contig, region)
                 .map_err(|error| error.to_string())?;
             Ok(Loaded::features(region, features))
         }
         Format::Reads { index, contigs } => {
+            let mut reader = reader()?;
             let id = contigs
                 .iter()
                 .position(|known| known == contig)
@@ -464,11 +494,13 @@ pub fn load(
 }
 
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
-    let Format::Features { kind, .. } = &source.format else {
-        return Ok(Names::default());
-    };
-    let file = File::open(&source.path).map_err(|error| error.to_string())?;
-    let entries = features::names(*kind, Bgzf::new(file)).map_err(|error| error.to_string())?;
+    let file = || File::open(&source.path).map_err(|error| error.to_string());
+    let entries = match &source.format {
+        Format::Features { kind, .. } => features::names(*kind, Bgzf::new(file()?)),
+        Format::Table { kind, .. } => features::names(*kind, BufReader::new(file()?)),
+        Format::Reads { .. } => return Ok(Names::default()),
+    }
+    .map_err(|error| error.to_string())?;
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
         Some(Named {
             contig: assembly.find(&entry.contig)?,
@@ -492,7 +524,7 @@ mod tests {
 
     use super::{
         Change, Content, Format, Loaded, Options, Source, Toggle, Track, change, contig_names,
-        load, names, open,
+        fits, load, names, open,
     };
     use crate::scratch::Scratch;
 
@@ -612,6 +644,54 @@ mod tests {
         let names = names(&source, &assembly()).unwrap();
         let gene = names.find("gene1003").unwrap();
         assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
+    }
+
+    #[test]
+    fn opens_small_plain_feature_files() {
+        let scratch = Scratch::new("plain");
+        let text = "chr1\t10\t20\tgeneA\t0\t+\nchr2\t5\t9\tgeneB\t0\t-\n";
+        let source = open(scratch.file("genes.bed", text)).unwrap();
+        assert!(matches!(
+            source.format,
+            Format::Table {
+                kind: Kind::Bed,
+                ..
+            }
+        ));
+        assert_eq!(source.contigs(), ["chr1", "chr2"]);
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 100),
+            Options::default(),
+            no_reference,
+        )
+        .unwrap();
+        assert_eq!(loaded.count(), 1);
+        let names = names(&source, &assembly()).unwrap();
+        assert_eq!(names.find("geneb").unwrap().contig, 1);
+    }
+
+    #[test]
+    fn large_plain_files_need_tabix() {
+        assert_eq!(fits("genes.bed", 50 << 20), Ok(()));
+        assert_eq!(
+            fits("genes.bed", (50 << 20) + 1),
+            Err(
+                "The file genes.bed is larger than 50 MB. Compress it with bgzip, then index it with tabix."
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn plain_files_report_bad_lines() {
+        let scratch = Scratch::new("plain-bad");
+        let error = open(scratch.file("genes.bed", "chr1\tx\t9\tbad\n")).unwrap_err();
+        assert_eq!(
+            error,
+            "The file genes.bed is not valid. Line 1: a number is not valid."
+        );
     }
 
     #[test]
@@ -805,15 +885,6 @@ mod tests {
         assert_eq!(
             error,
             "The file calls.vcf.gz is not a BED, GFF3 or BAM file."
-        );
-    }
-
-    #[test]
-    fn asks_for_bgzip_when_the_file_is_plain() {
-        let error = open(PathBuf::from("/data/genes.bed")).unwrap_err();
-        assert_eq!(
-            error,
-            "Compress genes.bed with bgzip, then index it with tabix."
         );
     }
 
