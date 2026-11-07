@@ -20,7 +20,7 @@ pub const CHIP: f32 = 0.85;
 const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
 const HALF: f32 = 0.5;
-const PAIR: f32 = 0.6;
+const PAIR: f32 = 0.85;
 const CHIP_PADDING: f32 = 4.0;
 const CHIP_LINE: f32 = 1.3;
 
@@ -441,7 +441,7 @@ mod tests {
         );
         assert_eq!(
             color(Paint::Pair(Hue::Vermillion), &DARK, &DARK_DATA),
-            DARK_DATA.hues[3].scale_alpha(0.6)
+            DARK_DATA.hues[3].scale_alpha(0.85)
         );
     }
 
