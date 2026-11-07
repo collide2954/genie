@@ -8,6 +8,7 @@ mod number;
 pub mod pileup;
 mod region;
 mod tile;
+pub mod variant;
 mod viewport;
 
 pub use assembly::{Assembly, Contig, Target};
