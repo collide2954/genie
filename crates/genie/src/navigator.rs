@@ -150,7 +150,13 @@ impl<Message> Widget<Message, Theme, Renderer> for Navigator<'_, Message> {
                         let anchor = position.x - bounds.x - self.inset;
                         return self.zoom(shell, (dy * ZOOM_RATE).exp(), anchor);
                     }
-                    let dx = if state.modifiers.shift() { dy } else { dx };
+                    let dx = if state.modifiers.shift() {
+                        dy
+                    } else if dx.abs() > dy.abs() {
+                        dx
+                    } else {
+                        0.0
+                    };
                     if dx.abs() > f32::EPSILON {
                         return self.pan(shell, dx);
                     }
@@ -359,6 +365,24 @@ mod tests {
     #[test]
     fn plain_wheel_is_left_for_scrolling() {
         assert_eq!(run(380.0, Point::new(100.0, 50.0), vec![wheel(1.0)]), []);
+    }
+
+    fn swipe(x: f32, y: f32) -> Event {
+        Event::Mouse(mouse::Event::WheelScrolled {
+            delta: ScrollDelta::Pixels { x, y },
+        })
+    }
+
+    #[test]
+    fn mostly_vertical_swipes_are_left_for_scrolling() {
+        let events = vec![swipe(3.0, 40.0), swipe(-2.0, -30.0)];
+        assert_eq!(run(380.0, Point::new(100.0, 50.0), events), []);
+    }
+
+    #[test]
+    fn mostly_horizontal_swipes_pan() {
+        let messages = run(380.0, Point::new(100.0, 50.0), vec![swipe(40.0, 3.0)]);
+        assert_eq!(messages, [Probe::Pan(40.0)]);
     }
 
     #[test]
