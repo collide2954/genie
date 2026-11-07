@@ -41,9 +41,13 @@ pub struct Column {
     pub bin: Bin,
 }
 
-fn same(a: Bin, b: Bin) -> bool {
-    let close = (a.mean() - b.mean()).abs() <= 1e-9 * a.mean().abs().max(1.0);
-    a.min.to_bits() == b.min.to_bits() && a.max.to_bits() == b.max.to_bits() && close
+fn same(a: &Column, b: Bin, span: Region) -> bool {
+    let near = |x: f64, y: f64| (x - y).abs() <= 1e-9 * x.abs().max(1.0);
+    let cover = |bin: Bin, span: Region| bin.count / span.len() as f64;
+    a.bin.min.to_bits() == b.min.to_bits()
+        && a.bin.max.to_bits() == b.max.to_bits()
+        && near(a.bin.mean(), b.mean())
+        && near(cover(a.bin, a.span), cover(b, span))
 }
 
 pub fn columns(viewport: Viewport, summaries: &[Summary]) -> Vec<Column> {
@@ -70,11 +74,13 @@ pub fn columns(viewport: Viewport, summaries: &[Summary]) -> Vec<Column> {
         };
         let x = pixel as f32;
         match found.last_mut() {
-            Some(last) if same(last.bin, bin) && (last.x + last.width - x).abs() < 0.5 => {
+            Some(last) if same(last, bin, span) && (last.x + last.width - x).abs() < 0.5 => {
                 last.width += 1.0;
+                if span.start() >= last.span.end() {
+                    last.bin.count += bin.count;
+                    last.bin.sum += bin.sum;
+                }
                 last.span = last.span.hull(span);
-                last.bin.count += bin.count;
-                last.bin.sum += bin.sum;
             }
             _ => found.push(Column {
                 x,
@@ -85,6 +91,23 @@ pub fn columns(viewport: Viewport, summaries: &[Summary]) -> Vec<Column> {
         }
     }
     found
+}
+
+pub fn density(columns: Vec<Column>) -> Vec<Column> {
+    columns
+        .into_iter()
+        .map(|mut column| {
+            let bases = column.span.len() as f64;
+            let mean = (column.bin.sum / bases) as f32;
+            column.bin = Bin {
+                count: bases,
+                min: mean,
+                max: mean,
+                sum: column.bin.sum,
+            };
+            column
+        })
+        .collect()
 }
 
 pub fn range(columns: &[Column]) -> Option<Scale> {
@@ -205,7 +228,7 @@ mod tests {
     use genie_core::signal::{Bin, Summary};
     use genie_core::{Region, Viewport};
 
-    use super::{Column, Scale, Style, columns, hit, range, scene};
+    use super::{Column, Scale, Style, columns, density, hit, range, scene};
     use crate::scene::{Hue, Paint, Primitive};
 
     fn view(start: u64, end: u64) -> Viewport {
@@ -294,6 +317,27 @@ mod tests {
         );
         assert!((found[0].bin.mean() - 2.0).abs() < 1e-9);
         assert!((found[0].bin.count - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn density_counts_every_base_of_the_pixel() {
+        let shown = density(columns(
+            view(0, 10_000),
+            &[value(0, 10, 1.0), value(5, 10, 1.0)],
+        ));
+        assert_eq!(shown.len(), 1);
+        let bin = shown[0].bin;
+        assert!((bin.mean() - 0.15).abs() < 1e-9, "{}", bin.mean());
+        assert!((f64::from(bin.max) - 0.15).abs() < 1e-6);
+        assert!((f64::from(bin.min) - 0.15).abs() < 1e-6);
+        let sparse = [value(0, 10, 1.0), value(100, 150, 1.0)];
+        let shown = density(columns(view(0, 10_000), &sparse));
+        let means: Vec<f64> = shown.iter().map(|column| column.bin.mean()).collect();
+        assert_eq!(means.len(), 2);
+        assert!(
+            (means[0] - 0.1).abs() < 1e-9 && (means[1] - 0.5).abs() < 1e-9,
+            "{means:?}"
+        );
     }
 
     #[test]

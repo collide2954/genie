@@ -673,7 +673,7 @@ impl Genie {
                 Detail::Variant { variant, sample }
             }
             Content::Signal(data) => {
-                let column = signal::hit(&signal::columns(viewport, &data.summaries), x)?;
+                let column = signal::hit(&signal_columns(track, viewport, &data.summaries), x)?;
                 Detail::Signal {
                     span: column.span,
                     bin: column.bin,
@@ -1700,7 +1700,7 @@ fn track_body<'a>(
     match track.data(contig).map(|data| &data.content) {
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
-            let columns = signal::columns(viewport, &data.summaries);
+            let columns = signal_columns(track, viewport, &data.summaries);
             let Some(scale) = signal_scale(session, track, &columns) else {
                 return space().width(Length::Fill).height(height).into();
             };
@@ -1897,6 +1897,19 @@ fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
     }
 }
 
+fn signal_columns(
+    track: &Track,
+    viewport: Viewport,
+    summaries: &[genie_core::signal::Summary],
+) -> Vec<signal::Column> {
+    let columns = signal::columns(viewport, summaries);
+    if track.source.is_bigbed() {
+        signal::density(columns)
+    } else {
+        columns
+    }
+}
+
 fn signal_scale(
     session: &Session,
     track: &Track,
@@ -1911,7 +1924,7 @@ fn signal_scale(
         .filter(|other| other.plot.linked)
         .filter_map(|other| match other.data(session.contig)?.content {
             Content::Signal(ref data) => {
-                signal::range(&signal::columns(session.viewport, &data.summaries))
+                signal::range(&signal_columns(other, session.viewport, &data.summaries))
             }
             _ => None,
         })
