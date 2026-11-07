@@ -1,4 +1,6 @@
-use genie_core::alignment::Alignment;
+use genie_core::alignment::{
+    Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, REVERSE, SECOND,
+};
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
@@ -10,7 +12,8 @@ use crate::icon::{self, Icon};
 use crate::{font, style};
 
 pub const WIDTH: f32 = 240.0;
-const HEIGHT: f32 = 84.0;
+const BASE_HEIGHT: f32 = 52.0;
+const LINE_HEIGHT: f32 = 16.0;
 const OFFSET_X: f32 = 12.0;
 const OFFSET_Y: f32 = 16.0;
 const EDGE: f32 = 4.0;
@@ -21,7 +24,11 @@ const INFO_ENTRIES: usize = 3;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detail {
     Feature(Feature),
-    Read(Alignment),
+    Read {
+        read: Alignment,
+        mate: Option<String>,
+        same: bool,
+    },
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -88,6 +95,54 @@ pub fn cigar(read: &Alignment) -> String {
         text.push(op.letter());
     }
     text
+}
+
+fn mate_line(read: &Alignment, mate: Option<&str>, same: bool) -> Option<String> {
+    if !read.has(PAIRED) {
+        return None;
+    }
+    if read.has(MATE_UNMAPPED) {
+        return Some("Mate unmapped".to_owned());
+    }
+    let (position, name) = (read.mate?, mate?);
+    let mut parts = vec![format!("Mate {name}:{}", grouped(position.start + 1))];
+    if position.insert != 0 {
+        parts.push(format!(
+            "insert {}",
+            grouped(position.insert.unsigned_abs())
+        ));
+    }
+    if same {
+        let letter = |reverse| if reverse { 'R' } else { 'F' };
+        let (own, other) = (letter(read.has(REVERSE)), letter(read.has(MATE_REVERSE)));
+        let (left, right) = if read.start <= position.start {
+            (own, other)
+        } else {
+            (other, own)
+        };
+        parts.push(format!("{left}{right}"));
+    }
+    if read.has(FIRST) {
+        parts.push("first".to_owned());
+    } else if read.has(SECOND) {
+        parts.push("second".to_owned());
+    }
+    Some(parts.join(" · "))
+}
+
+pub fn pair_lines(read: &Alignment, mate: Option<&str>, same: bool) -> Vec<String> {
+    let mut lines: Vec<String> = mate_line(read, mate, same).into_iter().collect();
+    let mut tags = Vec::new();
+    if let Some(phase) = read.tags.phase {
+        tags.push(format!("HP {phase}"));
+    }
+    if let Some(group) = &read.tags.group {
+        tags.push(format!("RG {group}"));
+    }
+    if !tags.is_empty() {
+        lines.push(tags.join(" · "));
+    }
+    lines
 }
 
 fn allele(text: &str) -> String {
@@ -183,16 +238,17 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             lines.extend(coding(feature));
             (title, feature.span(), lines)
         }
-        Detail::Read(read) => (
-            read.name.clone(),
-            read.span(),
-            vec![read_facts(read), cigar(read)],
-        ),
+        Detail::Read { read, mate, same } => {
+            let mut lines = vec![read_facts(read), cigar(read)];
+            lines.extend(pair_lines(read, mate.as_deref(), *same));
+            (read.name.clone(), read.span(), lines)
+        }
     }
 }
 
 pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
     let (title, span, lines) = content(&card.detail);
+    let height = BASE_HEIGHT + LINE_HEIGHT * lines.len() as f32;
     let locus = Locus {
         name: card.contig.clone(),
         span: Span::Region(span),
@@ -234,8 +290,8 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     let x = (card.at.x + OFFSET_X)
         .min(window.width - WIDTH - EDGE)
         .max(0.0);
-    let y = if card.at.y + OFFSET_Y + HEIGHT > window.height {
-        (card.at.y - HEIGHT - EDGE).max(0.0)
+    let y = if card.at.y + OFFSET_Y + height > window.height {
+        (card.at.y - height - EDGE).max(0.0)
     } else {
         card.at.y + OFFSET_Y
     };
@@ -244,13 +300,16 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
 
 #[cfg(test)]
 mod tests {
-    use genie_core::alignment::{Alignment, Op, REVERSE};
+    use genie_core::alignment::{
+        Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, Mate, Op, PAIRED, REVERSE, SECOND, Tags,
+    };
     use genie_core::signal::Bin;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Region, Strand};
 
     use super::{
-        change, cigar, coding, facts, genotype, info, read_facts, signal_facts, variant_facts,
+        change, cigar, coding, facts, genotype, info, pair_lines, read_facts, signal_facts,
+        variant_facts,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -331,6 +390,61 @@ mod tests {
             sum: 0.000_25,
         };
         assert_eq!(signal_facts(tiny).0, "Value 2.50e-4");
+    }
+
+    #[test]
+    fn pair_lines_show_the_mate_insert_orientation_and_tags() {
+        let read = Alignment {
+            name: "p1".to_owned(),
+            start: 100,
+            flags: PAIRED | MATE_REVERSE | FIRST,
+            mapq: 60,
+            cigar: vec![(Op::Match, 50)],
+            bases: Vec::new(),
+            qualities: Vec::new(),
+            mate: Some(Mate {
+                contig: 0,
+                start: 4_400,
+                insert: 4_350,
+            }),
+            tags: Tags {
+                phase: Some(1),
+                group: Some("groupA".to_owned()),
+            },
+        };
+        assert_eq!(
+            pair_lines(&read, Some("chr1"), true),
+            [
+                "Mate chr1:4,401 · insert 4,350 · FR · first",
+                "HP 1 · RG groupA"
+            ]
+        );
+        assert_eq!(
+            pair_lines(&read, Some("chr2"), false)[0],
+            "Mate chr2:4,401 · insert 4,350 · first"
+        );
+        let outward = Alignment {
+            flags: PAIRED | REVERSE | SECOND,
+            tags: Tags::default(),
+            ..read.clone()
+        };
+        assert_eq!(
+            pair_lines(&outward, Some("chr1"), true),
+            ["Mate chr1:4,401 · insert 4,350 · RF · second"]
+        );
+        let lost = Alignment {
+            flags: PAIRED | MATE_UNMAPPED,
+            tags: Tags::default(),
+            ..read.clone()
+        };
+        assert_eq!(pair_lines(&lost, None, false), ["Mate unmapped"]);
+        let single = Alignment {
+            flags: 0,
+            mate: None,
+            tags: Tags::default(),
+            ..read
+        };
+        assert_eq!(pair_lines(&single, None, false), [] as [String; 0]);
     }
 
     #[test]

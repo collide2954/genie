@@ -652,7 +652,14 @@ impl Genie {
                 let rows = track.rows(pile);
                 let groups = &pile.groups;
                 let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
-                Detail::Read(pile.reads[index].alignment.clone())
+                let read = pile.reads[index].alignment.clone();
+                let names = track.source.contigs();
+                let own = track.contigs[session.contig]
+                    .as_ref()
+                    .and_then(|name| names.iter().position(|known| known == name));
+                let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
+                let same = read.mate.is_some_and(|mate| Some(mate.contig) == own);
+                Detail::Read { read, mate, same }
             }
             Content::Variants(calls) => {
                 let (index, sample) = variants::hit(viewport, &calls.variants, mode, x, y)?;
@@ -3059,6 +3066,24 @@ mod tests {
         for item in ["Show duplicates", "Show soft clips", "Down-sample"] {
             assert!(shows(&genie, item), "{item}");
         }
+    }
+
+    #[test]
+    fn hovering_a_paired_read_shows_its_mate() {
+        use genie_core::alignment::{FIRST, MATE_REVERSE, Mate, PAIRED};
+        let mut genie = opened();
+        let paired = genie_core::alignment::Alignment {
+            flags: PAIRED | MATE_REVERSE | FIRST,
+            mate: Some(Mate {
+                contig: 0,
+                start: 300,
+                insert: 330,
+            }),
+            ..read("pair1", 10)
+        };
+        add_reads(&mut genie, vec![paired]);
+        let _ = genie.update(Message::TrackHovered(0, Some(over(20.0, 5.0))));
+        assert!(shows(&genie, "Mate chr1:301 · insert 330 · FR · first"));
     }
 
     #[test]
