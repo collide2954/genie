@@ -83,49 +83,66 @@ impl Coverage {
     }
 }
 
-pub fn downsample(alignments: Vec<Alignment>, window: u64, limit: usize) -> Vec<Alignment> {
-    let window = window.max(1);
-    let mut kept = Vec::with_capacity(alignments.len());
-    let mut group = Vec::new();
-    let mut current = None;
-    for alignment in alignments {
-        let bucket = alignment.start / window;
-        if current != Some(bucket) {
-            sample(&mut group, &mut kept, limit, current.unwrap_or(0));
-            current = Some(bucket);
-        }
-        group.push(alignment);
-    }
-    sample(&mut group, &mut kept, limit, current.unwrap_or(0));
-    kept
+#[derive(Debug)]
+pub struct Sampler {
+    window: u64,
+    limit: usize,
+    bucket: Option<u64>,
+    seen: usize,
+    state: u64,
+    sample: Vec<(usize, Alignment)>,
+    kept: Vec<Alignment>,
 }
 
-fn sample(group: &mut Vec<Alignment>, kept: &mut Vec<Alignment>, limit: usize, seed: u64) {
-    if group.len() <= limit {
-        kept.append(group);
-        return;
-    }
-    let mut chosen: Vec<usize> = (0..limit).collect();
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    for index in limit..group.len() {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        let pick = (state % (index as u64 + 1)) as usize;
-        if pick < limit {
-            chosen[pick] = index;
+impl Sampler {
+    pub fn new(window: u64, limit: usize) -> Self {
+        Self {
+            window: window.max(1),
+            limit,
+            bucket: None,
+            seen: 0,
+            state: 1,
+            sample: Vec::new(),
+            kept: Vec::new(),
         }
     }
-    let mut keep = vec![false; group.len()];
-    for index in chosen {
-        keep[index] = true;
+
+    pub fn push(&mut self, alignment: Alignment) {
+        let bucket = alignment.start / self.window;
+        if self.bucket != Some(bucket) {
+            self.flush();
+            self.bucket = Some(bucket);
+            self.state = bucket.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        }
+        if self.sample.len() < self.limit {
+            self.sample.push((self.seen, alignment));
+        } else {
+            self.state ^= self.state << 13;
+            self.state ^= self.state >> 7;
+            self.state ^= self.state << 17;
+            let pick = (self.state % (self.seen as u64 + 1)) as usize;
+            if pick < self.limit {
+                self.sample[pick] = (self.seen, alignment);
+            }
+        }
+        self.seen += 1;
     }
-    kept.extend(
-        group
-            .drain(..)
-            .zip(keep)
-            .filter_map(|(alignment, keep)| keep.then_some(alignment)),
-    );
+
+    pub fn held(&self) -> usize {
+        self.sample.len() + self.kept.len()
+    }
+
+    pub fn finish(mut self) -> Vec<Alignment> {
+        self.flush();
+        self.kept
+    }
+
+    fn flush(&mut self) {
+        self.sample.sort_unstable_by_key(|(seen, _)| *seen);
+        self.kept
+            .extend(self.sample.drain(..).map(|(_, alignment)| alignment));
+        self.seen = 0;
+    }
 }
 
 fn bucket(base: u8) -> usize {
@@ -180,7 +197,7 @@ pub fn sort_rows(reads: &[Read], rows: &[usize], starts: &[usize], position: u64
 
 #[cfg(test)]
 mod tests {
-    use super::{Coverage, Read, downsample, sort_rows};
+    use super::{Coverage, Read, Sampler, sort_rows};
     use crate::Region;
     use crate::alignment::{Alignment, Op};
 
@@ -263,12 +280,20 @@ mod tests {
         assert_eq!(coverage.counts(1), Some([0, 0, 0, 0, 1]));
     }
 
+    fn downsample(reads: Vec<Alignment>) -> Vec<Alignment> {
+        let mut sampler = Sampler::new(50, 100);
+        for read in reads {
+            sampler.push(read);
+        }
+        sampler.finish()
+    }
+
     #[test]
     fn downsampling_keeps_windows_under_the_limit() {
         let reads: Vec<Alignment> = (0..5)
             .map(|index| read(index * 10, vec![(Op::Match, 10)], b""))
             .collect();
-        assert_eq!(downsample(reads.clone(), 50, 100), reads);
+        assert_eq!(downsample(reads.clone()), reads);
     }
 
     #[test]
@@ -276,10 +301,20 @@ mod tests {
         let reads: Vec<Alignment> = (0..300)
             .map(|index| read(index / 3, vec![(Op::Match, 10)], b""))
             .collect();
-        let kept = downsample(reads.clone(), 50, 100);
+        let kept = downsample(reads.clone());
         assert_eq!(kept.len(), 200);
         assert!(kept.windows(2).all(|pair| pair[0].start <= pair[1].start));
         assert_eq!(kept.iter().filter(|read| read.start < 50).count(), 100);
-        assert_eq!(downsample(reads, 50, 100), kept);
+        assert_eq!(downsample(reads), kept);
+    }
+
+    #[test]
+    fn downsampling_holds_one_sample_for_each_window() {
+        let mut sampler = Sampler::new(50, 100);
+        for index in 0..10_000 {
+            sampler.push(read(index / 100, vec![(Op::Match, 10)], b""));
+            assert!(sampler.held() <= 200, "{}", sampler.held());
+        }
+        assert_eq!(sampler.finish().len(), 200);
     }
 }

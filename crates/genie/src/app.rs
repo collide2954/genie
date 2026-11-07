@@ -3097,7 +3097,11 @@ mod tests {
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.wanted = Some((0, region));
-        let loaded = Loaded::reads(region, 0, reads, vec![b'A'; 1_000], 0, Options::default());
+        let mut gather = crate::track::Gather::new(region, 0, Options::default());
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
         track.accept(0, region, Ok(Arc::new(loaded)));
     }
 

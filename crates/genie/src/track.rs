@@ -3,8 +3,8 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, DUPLICATE, Filter, REVERSE, expected_inserts};
-use genie_core::pileup::{Coverage, Read, downsample, sort_rows};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter, Inserts, REVERSE};
+use genie_core::pileup::{Coverage, Read, Sampler, sort_rows};
 use genie_core::signal::{self, Summary};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
@@ -353,6 +353,38 @@ pub enum Content {
     Signal(Signal),
 }
 
+#[derive(Debug)]
+pub struct Gather {
+    contig: usize,
+    options: Options,
+    coverage: Coverage,
+    inserts: Inserts,
+    sampler: Sampler,
+}
+
+impl Gather {
+    pub fn new(region: Region, contig: usize, options: Options) -> Self {
+        let limit = if options.downsample {
+            DEPTH
+        } else {
+            usize::MAX
+        };
+        Self {
+            contig,
+            options,
+            coverage: Coverage::new(region),
+            inserts: Inserts::new(contig),
+            sampler: Sampler::new(WINDOW, limit),
+        }
+    }
+
+    pub fn add(&mut self, alignment: Alignment) {
+        self.coverage.add(&alignment);
+        self.inserts.add(&alignment);
+        self.sampler.push(alignment);
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Loaded {
     pub region: Region,
@@ -375,25 +407,18 @@ impl Loaded {
         }
     }
 
-    pub fn reads(
-        region: Region,
-        contig: usize,
-        alignments: Vec<Alignment>,
-        reference: Vec<u8>,
-        offset: u64,
-        options: Options,
-    ) -> Self {
-        let mut coverage = Coverage::new(region);
-        for alignment in &alignments {
-            coverage.add(alignment);
-        }
-        let range = expected_inserts(alignments.iter(), contig);
-        let alignments = if options.downsample {
-            downsample(alignments, WINDOW, DEPTH)
-        } else {
-            alignments
-        };
-        let reads: Vec<Read> = alignments
+    pub fn reads(gather: Gather, reference: Vec<u8>, offset: u64) -> Self {
+        let Gather {
+            contig,
+            options,
+            coverage,
+            inserts,
+            sampler,
+        } = gather;
+        let region = coverage.region();
+        let range = inserts.expected();
+        let reads: Vec<Read> = sampler
+            .finish()
             .into_iter()
             .map(|alignment| {
                 let mut read = Read::new(alignment, &reference, offset, options.clips);
@@ -910,10 +935,10 @@ pub fn load(
             } else {
                 Filter::default()
             };
-            let mut alignments = Vec::new();
+            let mut gather = Gather::new(region, id, options);
             bam::query(index, &mut reader, id, region, |alignment| {
                 if filter.keeps(&alignment) {
-                    alignments.push(alignment);
+                    gather.add(alignment);
                 }
                 Ok(())
             })
@@ -923,14 +948,7 @@ pub fn load(
                 region.end().saturating_add(MARGIN),
             );
             let bases = reference(window)?;
-            Ok(Loaded::reads(
-                region,
-                id,
-                alignments,
-                bases,
-                window.start(),
-                options,
-            ))
+            Ok(Loaded::reads(gather, bases, window.start()))
         }
     }
 }
@@ -1028,8 +1046,8 @@ mod tests {
     use genie_render::signal::Style;
 
     use super::{
-        Change, Content, Format, Grouping, Loaded, Options, Plot, Source, Toggle, Track, change,
-        contig_names, fits, is_track, load, lookup, names, open, step,
+        Change, Content, Format, Gather, Grouping, Loaded, Options, Plot, Source, Toggle, Track,
+        change, contig_names, fits, is_track, load, lookup, names, open, step,
     };
     use crate::scratch::Scratch;
 
@@ -1147,7 +1165,7 @@ mod tests {
             downsample: false,
             ..Options::default()
         };
-        let loaded = Loaded::reads(region(0, 100), 0, reads, vec![b'A'; 100], 0, options);
+        let loaded = piled(region(0, 100), reads, options);
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -1193,7 +1211,7 @@ mod tests {
             group: Grouping::Strand,
             ..Options::default()
         };
-        let loaded = Loaded::reads(region(0, 100), 0, reads, vec![b'A'; 100], 0, options);
+        let loaded = piled(region(0, 100), reads, options);
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -1214,7 +1232,7 @@ mod tests {
             alignment(12, vec![(Op::Match, 10)]),
         ];
         let wide = region(0, 100);
-        let loaded = Loaded::reads(wide, 0, reads, vec![b'A'; 100], 0, Options::default());
+        let loaded = piled(wide, reads, Options::default());
         tracks[1].wanted = Some((0, wide));
         tracks[1].accept(0, wide, Ok(Arc::new(loaded)));
         change(&mut tracks, 1, Change::Sort(15));
@@ -1226,14 +1244,15 @@ mod tests {
 
     fn loaded_reads(wide: Region) -> Arc<Loaded> {
         let reads = vec![alignment(30, vec![(Op::Match, 10)])];
-        Arc::new(Loaded::reads(
-            wide,
-            0,
-            reads,
-            vec![b'A'; 100],
-            0,
-            Options::default(),
-        ))
+        Arc::new(piled(wide, reads, Options::default()))
+    }
+
+    fn piled(region: Region, alignments: Vec<Alignment>, options: Options) -> Loaded {
+        let mut gather = Gather::new(region, 0, options);
+        for alignment in alignments {
+            gather.add(alignment);
+        }
+        Loaded::reads(gather, vec![b'A'; region.end() as usize], 0)
     }
 
     #[test]
@@ -1259,14 +1278,7 @@ mod tests {
             downsample: false,
             ..Options::default()
         };
-        let loaded = Loaded::reads(
-            region(0, 1_000),
-            0,
-            alignments,
-            vec![b'A'; 1_000],
-            0,
-            options,
-        );
+        let loaded = piled(region(0, 1_000), alignments, options);
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -1751,8 +1763,7 @@ mod tests {
             .map(|index| alignment(10 + index % 10, vec![(Op::SoftClip, 2), (Op::Match, 10)]))
             .collect();
         let pile = |options| {
-            let loaded =
-                Loaded::reads(region(0, 100), 0, deep.clone(), vec![b'A'; 100], 0, options);
+            let loaded = piled(region(0, 100), deep.clone(), options);
             let Content::Reads(pile) = loaded.content else {
                 panic!("expected reads");
             };
@@ -1760,6 +1771,7 @@ mod tests {
         };
         let fixed = pile(Options::default());
         assert_eq!(fixed.reads.len(), 100);
+        assert_eq!(fixed.coverage.depth(19), 150);
         assert_eq!(fixed.reads[0].parts.clips.len(), 0);
         let open = pile(Options {
             clips: true,
@@ -1800,14 +1812,7 @@ mod tests {
             .map(|start| alignment(start, vec![(Op::Match, 100)]))
             .to_vec();
         let options = Options::default();
-        let loaded = Loaded::reads(
-            region(0, 1_000),
-            0,
-            alignments,
-            vec![b'A'; 1_000],
-            0,
-            options,
-        );
+        let loaded = piled(region(0, 1_000), alignments, options);
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };

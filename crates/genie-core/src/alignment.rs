@@ -302,46 +302,58 @@ impl Alignment {
     }
 }
 
-pub fn expected_inserts<'a>(
-    alignments: impl Iterator<Item = &'a Alignment>,
+#[derive(Debug, Clone, Default)]
+pub struct Inserts {
     contig: usize,
-) -> Option<(u64, u64)> {
-    let (mut proper, mut inward) = (Vec::new(), Vec::new());
-    for alignment in alignments {
+    proper: Vec<u64>,
+    inward: Vec<u64>,
+}
+
+impl Inserts {
+    pub fn new(contig: usize) -> Self {
+        Self {
+            contig,
+            ..Self::default()
+        }
+    }
+
+    pub fn add(&mut self, alignment: &Alignment) {
         let Some(mate) = alignment.paired_mate() else {
-            continue;
+            return;
         };
         let size = mate.insert.unsigned_abs();
-        if size == 0 || alignment.pairing(contig, None) != Pairing::Normal {
-            continue;
+        if size == 0 || alignment.pairing(self.contig, None) != Pairing::Normal {
+            return;
         }
-        inward.push(size);
+        self.inward.push(size);
         if alignment.has(PROPER) {
-            proper.push(size);
+            self.proper.push(size);
         }
     }
-    let mut sizes = if proper.len() >= MIN_PAIRS {
-        proper
-    } else {
-        inward
-    };
-    if sizes.len() < MIN_PAIRS {
-        return None;
+
+    pub fn expected(self) -> Option<(u64, u64)> {
+        let mut sizes = if self.proper.len() >= MIN_PAIRS {
+            self.proper
+        } else {
+            self.inward
+        };
+        if sizes.len() < MIN_PAIRS {
+            return None;
+        }
+        sizes.sort_unstable();
+        let count = sizes.len();
+        Some((
+            sizes[count * 5 / 1000],
+            sizes[(count * 995).div_ceil(1000) - 1],
+        ))
     }
-    sizes.sort_unstable();
-    let count = sizes.len();
-    Some((
-        sizes[count * 5 / 1000],
-        sizes[(count * 995).div_ceil(1000) - 1],
-    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Alignment, DUPLICATE, Filter, Gap, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch, Op, PAIRED,
-        PROPER, Pairing, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, UNMAPPED,
-        expected_inserts,
+        Alignment, DUPLICATE, Filter, Gap, Inserts, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch,
+        Op, PAIRED, PROPER, Pairing, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, UNMAPPED,
     };
     use crate::{Region, Strand};
 
@@ -398,8 +410,15 @@ mod tests {
             .map(|index| pair(PROPER | MATE_REVERSE, 100, 0, 400, 300 + index))
             .collect();
         reads.extend((0..20).map(|_| pair(MATE_REVERSE, 100, 0, 9_000, 8_950)));
-        assert_eq!(expected_inserts(reads.iter(), 0), Some((301, 598)));
-        assert_eq!(expected_inserts(reads[..50].iter(), 0), None);
+        let expected = |reads: &[Alignment]| {
+            let mut inserts = Inserts::new(0);
+            for read in reads {
+                inserts.add(read);
+            }
+            inserts.expected()
+        };
+        assert_eq!(expected(&reads), Some((301, 598)));
+        assert_eq!(expected(&reads[..50]), None);
     }
 
     #[test]
