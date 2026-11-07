@@ -95,7 +95,7 @@ If a file is in the folder of the session file, the session file has its path re
 
 ## Export
 
-To save the view as a PNG image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. The scale of the image is 2, and the image uses the current theme.
+To save the view as a PNG image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. The scale of the image is 2, and the image uses the current theme. The maximum height of the image is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
 
 ## Settings
 

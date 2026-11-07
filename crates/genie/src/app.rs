@@ -62,6 +62,7 @@ const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 const DRAW_FAILED: &str = "The view could not be drawn.";
+const EXPORT_CUT: &str = "The view is too tall. The image shows only the top part.";
 const FADE: Duration = Duration::from_secs(4);
 const LAST: &str = "last.genie";
 const SUGGESTIONS: usize = 8;
@@ -297,7 +298,7 @@ pub enum Message {
     Looked(Option<Named>, String),
     ExportPicked(Option<PathBuf>),
     SessionPicked(Option<PathBuf>),
-    Exported(Result<PathBuf, String>),
+    Exported(Result<PathBuf, String>, bool),
     NoticeExpired(u64),
     Indexing(String, u8),
     SequenceMenu(Point),
@@ -504,7 +505,7 @@ impl Genie {
             Message::OverviewReleased => self.on_session(|session| session.grip = None),
             Message::ExportPicked(path) => return self.export_to(path),
             Message::SessionPicked(path) => return self.session_picked(path),
-            Message::Exported(result) => return self.exported(result),
+            Message::Exported(result, cut) => return self.exported(result, cut),
             Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
@@ -1456,8 +1457,12 @@ impl Genie {
         }
     }
 
-    fn exported(&mut self, result: Result<PathBuf, String>) -> Task<Message> {
+    fn exported(&mut self, result: Result<PathBuf, String>, cut: bool) -> Task<Message> {
         match result {
+            Ok(path) if cut => {
+                self.warn(format!("Saved {}. {EXPORT_CUT}", file_name(&path)));
+                Task::none()
+            }
             Ok(path) => self.inform(format!("Saved {}.", file_name(&path))),
             Err(error) => {
                 self.warn(error);
@@ -1635,6 +1640,7 @@ impl Genie {
             return Task::none();
         };
         if let Some(image) = export::render(self.export_view(session), self.width, &self.theme()) {
+            let cut = image.cut;
             Task::perform(
                 async move {
                     let result = export::save(path, &image);
@@ -1648,7 +1654,7 @@ impl Genie {
                     }
                     result
                 },
-                Message::Exported,
+                move |result| Message::Exported(result, cut),
             )
         } else {
             self.warn(DRAW_FAILED.to_owned());
@@ -3650,10 +3656,13 @@ mod tests {
     #[test]
     fn info_notices_fade_but_errors_stay() {
         let mut genie = opened();
-        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png"))));
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png")), false));
         let _ = genie.update(Message::NoticeExpired(notice_id(&genie)));
         assert!(genie.notice.is_none());
-        let _ = genie.update(Message::Exported(Err("The disk is full.".to_owned())));
+        let _ = genie.update(Message::Exported(
+            Err("The disk is full.".to_owned()),
+            false,
+        ));
         let _ = genie.update(Message::NoticeExpired(notice_id(&genie)));
         assert!(shows(&genie, "The disk is full."));
     }
@@ -3661,9 +3670,9 @@ mod tests {
     #[test]
     fn old_timers_leave_newer_notices() {
         let mut genie = opened();
-        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png"))));
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/a.png")), false));
         let first = notice_id(&genie);
-        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/b.png"))));
+        let _ = genie.update(Message::Exported(Ok(PathBuf::from("/data/b.png")), false));
         let _ = genie.update(Message::NoticeExpired(first));
         assert!(shows(&genie, "Saved b.png."));
     }
@@ -3672,9 +3681,24 @@ mod tests {
     fn saved_exports_are_announced() {
         let mut genie = opened();
         let path = PathBuf::from("/data/chr1_1-1000.png");
-        let _ = genie.update(Message::Exported(Ok(path)));
+        let _ = genie.update(Message::Exported(Ok(path), false));
         assert!(shows(&genie, "Saved chr1_1-1000.png."));
-        let _ = genie.update(Message::Exported(Err("The disk is full.".to_owned())));
+        let _ = genie.update(Message::Exported(
+            Err("The disk is full.".to_owned()),
+            false,
+        ));
         assert!(shows(&genie, "The disk is full."));
+    }
+
+    #[test]
+    fn cut_exports_say_so_until_the_next_notice() {
+        let mut genie = opened();
+        let path = PathBuf::from("/data/chr1_1-1000.png");
+        let _ = genie.update(Message::Exported(Ok(path), true));
+        let _ = genie.update(Message::NoticeExpired(notice_id(&genie)));
+        assert!(shows(
+            &genie,
+            "Saved chr1_1-1000.png. The view is too tall. The image shows only the top part."
+        ));
     }
 }

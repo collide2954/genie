@@ -21,6 +21,7 @@ pub struct Image {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    pub cut: bool,
 }
 
 pub fn render<Message>(
@@ -34,11 +35,12 @@ pub fn render<Message>(
         Some("tiny-skia"),
     ))?;
     let mut tree = Tree::new(element.as_widget());
-    let limits = layout::Limits::new(Size::ZERO, Size::new(width, LIMIT));
+    let limits = layout::Limits::new(Size::ZERO, Size::new(width, LIMIT + 1.0));
     let node = element
         .as_widget_mut()
         .layout(&mut tree, &renderer, &limits);
-    let bounds = Rectangle::with_size(node.size());
+    let cut = node.size().height > LIMIT;
+    let bounds = Rectangle::with_size(Size::new(node.size().width, node.size().height.min(LIMIT)));
     let size = Size::new(
         (bounds.width * SCALE).round() as u32,
         (bounds.height * SCALE).round() as u32,
@@ -64,6 +66,7 @@ pub fn render<Message>(
         width: size.width,
         height: size.height,
         rgba,
+        cut,
     })
 }
 
@@ -127,6 +130,7 @@ mod tests {
             width: 1,
             height: 1,
             rgba: vec![1, 2, 3, 255],
+            cut: false,
         };
         let path = scratch.file("view.png", "");
         assert_eq!(save(path.clone(), &image).unwrap(), path);
@@ -175,5 +179,9 @@ mod tests {
     fn cuts_very_tall_views() {
         let image = render(block(LIMIT * 2.0, Color::BLACK), 10.0, &theme::dark()).unwrap();
         assert_eq!(image.height, (LIMIT * 2.0) as u32);
+        assert!(image.cut);
+        let image = render(block(LIMIT, Color::BLACK), 10.0, &theme::dark()).unwrap();
+        assert_eq!(image.height, (LIMIT * 2.0) as u32);
+        assert!(!image.cut);
     }
 }
