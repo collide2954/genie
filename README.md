@@ -30,3 +30,5 @@ cargo test --workspace
 ## License
 
 Apache-2.0. Refer to [LICENSE](LICENSE).
+
+The fonts in `crates/genie/assets/fonts` (Inter, JetBrains Mono) use the SIL Open Font License 1.1. The license texts are in the same folder.
