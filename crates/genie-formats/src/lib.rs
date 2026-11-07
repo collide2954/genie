@@ -1,5 +1,6 @@
 pub mod bed;
 pub mod bgzf;
+mod binning;
 mod error;
 pub mod fai;
 pub mod fasta;
