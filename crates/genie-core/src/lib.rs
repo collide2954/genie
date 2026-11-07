@@ -4,6 +4,7 @@ mod feature;
 mod locus;
 mod names;
 mod number;
+pub mod pileup;
 mod region;
 mod tile;
 mod viewport;
