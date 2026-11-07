@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -14,8 +15,8 @@ use iced::widget::{
     text,
 };
 use iced::{
-    Alignment, Border, Element, Length, Point, Size, Subscription, Task, Theme, keyboard, system,
-    window,
+    Alignment, Border, Element, Length, Padding, Point, Size, Subscription, Task, Theme, keyboard,
+    system, window,
 };
 
 use crate::card::{self, Card, Detail};
@@ -33,7 +34,7 @@ use crate::reference::{self, Reference};
 use crate::scene::Pointer;
 use crate::shortcuts::{self, Command};
 use crate::theme::{self, Appearance, tokens};
-use crate::tiles::{Key, TILING, Tiles};
+use crate::tiles::{self, Key, TILING, Tiles};
 use crate::track::{self, Change, Content, Loaded, Source, Track};
 use crate::{font, paths, scene, style, timer};
 
@@ -72,6 +73,8 @@ pub struct Genie {
     notice: Option<Notice>,
     notices: u64,
     indexing: Option<(String, u8)>,
+    diagnostics: bool,
+    stats: Stats,
     menu: Option<(u64, Point)>,
     sequence_menu: Option<Point>,
     scroll: f32,
@@ -100,6 +103,8 @@ impl Default for Genie {
             notice: None,
             notices: 0,
             indexing: None,
+            diagnostics: false,
+            stats: Stats::default(),
             menu: None,
             sequence_menu: None,
             scroll: 0.0,
@@ -109,6 +114,14 @@ impl Default for Genie {
             pending: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct Stats {
+    update: Duration,
+    view: Cell<Duration>,
+    frame: Option<Duration>,
+    last_frame: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -329,6 +342,13 @@ impl Genie {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let started = Instant::now();
+        let task = self.handle(message);
+        self.stats.update = started.elapsed();
+        task
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CycleAppearance => self.appearance = self.appearance.next(),
             Message::SystemModeChanged(mode) => self.system = mode,
@@ -401,7 +421,7 @@ impl Genie {
             }
             Message::SuggestionChosen(position) => return self.choose(position),
             Message::Command(command) => return self.command(command),
-            Message::Frame(now) => self.on_session(|session| session.advance(now)),
+            Message::Frame(now) => self.frame(now),
             Message::OverviewPressed(share) => {
                 self.drop_draft();
                 self.on_session(|session| session.grab(share));
@@ -432,6 +452,72 @@ impl Genie {
                 Err(_) => self.tiles.cancel(key),
             }
         }
+    }
+
+    fn frame(&mut self, now: Instant) {
+        if let Some(last) = self.stats.last_frame {
+            let interval = now.saturating_duration_since(last);
+            if interval < Duration::from_secs(1) {
+                self.stats.frame = Some(interval);
+            }
+        }
+        self.stats.last_frame = Some(now);
+        self.on_session(|session| session.advance(now));
+    }
+
+    fn figures(&self) -> Vec<(&'static str, String)> {
+        let millis = |duration: Duration| format!("{:.2} ms", duration.as_secs_f64() * 1_000.0);
+        let (mut reads, mut features) = (0, 0);
+        if let Some(session) = &self.session {
+            for track in &session.tracks {
+                match track.data(session.contig).map(|data| &data.content) {
+                    Some(Content::Reads(pile)) => reads += pile.reads.len(),
+                    Some(Content::Features(annotation)) => features += annotation.features.len(),
+                    None => {}
+                }
+            }
+        }
+        vec![
+            ("update", millis(self.stats.update)),
+            ("view", millis(self.stats.view.get())),
+            (
+                "frame",
+                self.stats.frame.map_or_else(|| "idle".to_owned(), millis),
+            ),
+            (
+                "tiles",
+                format!("{} of {}", self.tiles.count(), tiles::CAPACITY),
+            ),
+            ("reads", grouped(reads as u64)),
+            ("features", grouped(features as u64)),
+        ]
+    }
+
+    fn diagnostics_view(&self) -> Element<'_, Message> {
+        let rows = self.figures().into_iter().map(|(label, value)| {
+            row![
+                text(label)
+                    .font(font::MONO)
+                    .size(11)
+                    .width(64)
+                    .style(style::muted),
+                text(value).font(font::MONO).size(11),
+            ]
+            .into()
+        });
+        let card = container(column(rows).spacing(2))
+            .id("diagnostics")
+            .padding([6, 8])
+            .style(style::menu);
+        container(card)
+            .width(Length::Fill)
+            .align_right(Length::Fill)
+            .padding(Padding {
+                top: chrome::BAR_HEIGHT + 8.0,
+                right: 8.0,
+                ..Padding::ZERO
+            })
+            .into()
     }
 
     fn close_menus(&mut self) {
@@ -524,6 +610,12 @@ impl Genie {
                 Task::none()
             }
             Command::Export => self.export(),
+            Command::Diagnostics => {
+                if cfg!(debug_assertions) {
+                    self.diagnostics = !self.diagnostics;
+                }
+                Task::none()
+            }
         }
     }
 
@@ -728,6 +820,13 @@ impl Genie {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let started = Instant::now();
+        let element = self.window_view();
+        self.stats.view.set(started.elapsed());
+        element
+    }
+
+    fn window_view(&self) -> Element<'_, Message> {
         let appearance = match self.appearance {
             Appearance::System => Icon::Monitor,
             Appearance::Light => Icon::Sun,
@@ -772,6 +871,9 @@ impl Genie {
         }
         if self.hovering {
             layers = layers.push(drop_hint());
+        }
+        if self.diagnostics {
+            layers = layers.push(self.diagnostics_view());
         }
         if Controls::CURRENT == Controls::Custom {
             layers = layers.push(chrome::resize_handles());
@@ -2094,6 +2196,35 @@ mod tests {
         let height = ui.find(selector::id("menu")).unwrap().bounds().height;
         let expected = reading::MENU_HEIGHT;
         assert!(height <= expected && expected - height < 1.0, "{height}");
+    }
+
+    #[test]
+    fn f12_toggles_the_diagnostics_panel() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::Command(Command::Diagnostics));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("diagnostics"))
+                .is_ok()
+        );
+        let figures = genie.figures();
+        assert!(figures.contains(&("reads", "1".to_owned())), "{figures:?}");
+        assert!(figures.contains(&("tiles", "0 of 64".to_owned())));
+        let _ = genie.update(Message::Command(Command::Diagnostics));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("diagnostics"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn frames_report_their_interval() {
+        let mut genie = opened();
+        let now = Instant::now();
+        let _ = genie.update(Message::Frame(now));
+        let _ = genie.update(Message::Frame(now + Duration::from_millis(16)));
+        assert!(genie.figures().contains(&("frame", "16.00 ms".to_owned())));
     }
 
     #[test]

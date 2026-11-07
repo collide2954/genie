@@ -14,6 +14,7 @@ pub enum Command {
     PreviousSuggestion,
     Dismiss,
     Export,
+    Diagnostics,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -24,6 +25,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Named(Named::ArrowDown) => Some(Command::NextSuggestion),
         Key::Named(Named::ArrowUp) => Some(Command::PreviousSuggestion),
         Key::Named(Named::Escape) => Some(Command::Dismiss),
+        Key::Named(Named::F12) => Some(Command::Diagnostics),
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
@@ -88,6 +90,14 @@ mod tests {
             Some(Command::Export)
         );
         assert_eq!(command(&character("e"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn f12_toggles_diagnostics() {
+        assert_eq!(
+            command(&Key::Named(Named::F12), Modifiers::empty()),
+            Some(Command::Diagnostics)
+        );
     }
 
     #[test]

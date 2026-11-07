@@ -56,6 +56,10 @@ impl Tiles {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    pub fn count(&self) -> usize {
+        self.loaded.len()
+    }
 }
 
 #[cfg(test)]
