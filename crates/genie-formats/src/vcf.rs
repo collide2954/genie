@@ -50,7 +50,12 @@ pub fn parse(line: &str) -> Result<Option<(&str, Variant)>, Reason> {
     let alternates = field(&mut fields)?;
     let quality = match field(&mut fields)? {
         "." => None,
-        text => Some(text.parse::<f32>().map_err(|_| Reason::BadNumber)?),
+        text => Some(
+            text.parse::<f32>()
+                .ok()
+                .filter(|quality| quality.is_finite())
+                .ok_or(Reason::BadNumber)?,
+        ),
     };
     let filter = field(&mut fields)?;
     let info = field(&mut fields)?;
@@ -243,10 +248,10 @@ mod tests {
         assert_eq!(parse("#CHROM\tPOS"), Ok(None));
         assert_eq!(parse(""), Ok(None));
         assert_eq!(parse("chr1\tx\t.\tA\tG\t.\t.\t."), Err(Reason::BadNumber));
-        assert_eq!(
-            parse("chr1\t10\t.\tA\tG\tlow\t.\t."),
-            Err(Reason::BadNumber)
-        );
+        for quality in ["low", "nan", "NaN", "inf", "-infinity"] {
+            let line = format!("chr1\t10\t.\tA\tG\t{quality}\t.\t.");
+            assert_eq!(parse(&line), Err(Reason::BadNumber), "{quality}");
+        }
         assert_eq!(parse("chr1\t10\t.\tA"), Err(Reason::MissingField));
     }
 

@@ -13,19 +13,18 @@ pub enum Call {
 impl Call {
     pub fn parse(genotype: &str) -> Self {
         let genotype = genotype.split(':').next().unwrap_or_default();
-        let (mut reference, mut alternate) = (false, false);
-        for allele in genotype.split(['/', '|']) {
-            match allele {
-                "0" => reference = true,
-                "." | "" => {}
-                _ => alternate = true,
-            }
-        }
-        match (reference, alternate) {
-            (false, false) => Self::Missing,
-            (true, false) => Self::Reference,
-            (false, true) => Self::Alternate,
-            (true, true) => Self::Het,
+        let mut called = genotype
+            .split(['/', '|'])
+            .filter(|allele| !matches!(*allele, "." | ""));
+        let Some(first) = called.next() else {
+            return Self::Missing;
+        };
+        if called.any(|allele| allele != first) {
+            Self::Het
+        } else if first == "0" {
+            Self::Reference
+        } else {
+            Self::Alternate
         }
     }
 }
@@ -137,6 +136,8 @@ mod tests {
             "0",
             "./1",
             "0/0:30:12",
+            "2/2",
+            "1/1/2",
         ]
         .iter()
         .map(|genotype| Call::parse(genotype))
@@ -148,13 +149,15 @@ mod tests {
                 Call::Het,
                 Call::Het,
                 Call::Alternate,
-                Call::Alternate,
+                Call::Het,
                 Call::Missing,
                 Call::Missing,
                 Call::Alternate,
                 Call::Reference,
                 Call::Alternate,
                 Call::Reference,
+                Call::Alternate,
+                Call::Het,
             ]
         );
     }
