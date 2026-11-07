@@ -2,7 +2,7 @@ use iced::widget::{button, column, container, mouse_area, row, space, text};
 use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
 
 use crate::app::Message;
-use crate::icon::{self, Hover, Icon};
+use crate::icon::{self, Icon};
 use crate::theme::tokens;
 use crate::{font, style};
 
@@ -213,7 +213,7 @@ pub fn resize_handles<'a>() -> Element<'a, Message> {
 
 fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Message> {
     container(
-        button(icon::view(icon, TOOL_ICON, Hover::Text))
+        button(icon::view(icon, TOOL_ICON))
             .width(TOOL_SIZE)
             .height(TOOL_SIZE)
             .padding(0)
@@ -225,18 +225,12 @@ fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Messa
 }
 
 fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a, Message> {
-    let (hover, style): (Hover, fn(&iced::Theme, button::Status) -> button::Style) =
-        if action == Action::Close {
-            (Hover::White, style::window_close)
-        } else {
-            (Hover::Text, style::window_control)
-        };
     container(
-        button(icon::view(icon, WINDOW_ICON, hover))
+        button(icon::view(icon, WINDOW_ICON))
             .width(WINDOW_BUTTON_WIDTH)
             .height(BAR_HEIGHT)
             .padding(0)
-            .style(style)
+            .style(style::window_control)
             .on_press(Message::Window(action)),
     )
     .id(id)

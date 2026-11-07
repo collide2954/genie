@@ -1,5 +1,5 @@
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke, path::Arc};
-use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::theme::tokens;
 
@@ -15,12 +15,6 @@ pub enum Icon {
     Maximize,
     Close,
     Open,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Hover {
-    Text,
-    White,
 }
 
 enum Shape {
@@ -104,8 +98,8 @@ impl Shape {
     }
 }
 
-pub fn view<'a, Message: 'a>(icon: Icon, size: f32, hover: Hover) -> Element<'a, Message> {
-    canvas::Canvas::new(Program { icon, size, hover })
+pub fn view<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
+    canvas::Canvas::new(Program { icon, size })
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -114,7 +108,6 @@ pub fn view<'a, Message: 'a>(icon: Icon, size: f32, hover: Hover) -> Element<'a,
 struct Program {
     icon: Icon,
     size: f32,
-    hover: Hover,
 }
 
 impl<Message> canvas::Program<Message> for Program {
@@ -129,10 +122,10 @@ impl<Message> canvas::Program<Message> for Program {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let tokens = tokens(theme);
-        let color = match (cursor.is_over(bounds), self.hover) {
-            (false, _) => tokens.muted,
-            (true, Hover::Text) => tokens.text,
-            (true, Hover::White) => Color::WHITE,
+        let color = if cursor.is_over(bounds) {
+            tokens.text
+        } else {
+            tokens.muted
         };
         let scale = self.size / GRID;
         let origin = Point::new(

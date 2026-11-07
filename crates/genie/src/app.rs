@@ -119,9 +119,7 @@ impl Genie {
         let message = match &self.status {
             Status::Idle => text("Open a reference sequence to start.").style(muted),
             Status::Opening(name) => text(format!("Opening {name}…")).style(muted),
-            Status::Failed(error) => text(error.as_str()).style(|theme| text::Style {
-                color: Some(tokens(theme).danger),
-            }),
+            Status::Failed(error) => text(error.as_str()),
         };
         let open = button(text("Open FASTA").font(font::UI_STRONG).size(13))
             .padding([8, 16])

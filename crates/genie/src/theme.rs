@@ -43,7 +43,6 @@ pub struct Tokens {
     pub accent_soft: Color,
     pub on_accent: Color,
     pub field: Color,
-    pub danger: Color,
 }
 
 pub const LIGHT: Tokens = Tokens {
@@ -53,11 +52,10 @@ pub const LIGHT: Tokens = Tokens {
     line: color!(0xE5E5E5),
     text: color!(0x2B2B2B),
     muted: color!(0x6E6E6E),
-    accent: color!(0x0F766E),
-    accent_soft: color!(0x0F766E, 0.14),
+    accent: color!(0x2B2B2B),
+    accent_soft: color!(0x000000, 0.08),
     on_accent: color!(0xFFFFFF),
     field: color!(0xFFFFFF),
-    danger: color!(0xB42318),
 };
 
 pub const DARK: Tokens = Tokens {
@@ -67,14 +65,11 @@ pub const DARK: Tokens = Tokens {
     line: color!(0x2B2B2B),
     text: color!(0xCCCCCC),
     muted: color!(0x9D9D9D),
-    accent: color!(0x2AA198),
-    accent_soft: color!(0x2AA198, 0.16),
-    on_accent: color!(0x04211D),
+    accent: color!(0xCCCCCC),
+    accent_soft: color!(0xFFFFFF, 0.10),
+    on_accent: color!(0x181818),
     field: color!(0x313131),
-    danger: color!(0xF85149),
 };
-
-pub const CLOSE: Color = color!(0xC42B1C);
 
 pub fn light() -> Theme {
     static THEME: LazyLock<Theme> = LazyLock::new(|| build("genie light", &LIGHT));
@@ -101,9 +96,9 @@ fn build(name: &'static str, tokens: &Tokens) -> Theme {
             background: tokens.canvas,
             text: tokens.text,
             primary: tokens.accent,
-            success: tokens.accent,
-            warning: color!(0xB54708),
-            danger: tokens.danger,
+            success: tokens.text,
+            warning: tokens.text,
+            danger: tokens.text,
         },
     )
 }
@@ -127,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn surfaces_and_text_are_neutral_grey() {
+    fn chrome_is_monochrome() {
         for tokens in [LIGHT, DARK] {
             for color in [
                 tokens.canvas,
@@ -137,10 +132,13 @@ mod tests {
                 tokens.field,
                 tokens.text,
                 tokens.muted,
+                tokens.accent,
+                tokens.accent_soft,
+                tokens.on_accent,
             ] {
                 assert!(
                     (color.r - color.g).abs() < 1e-6 && (color.g - color.b).abs() < 1e-6,
-                    "{color:?} is tinted"
+                    "{color:?} has a hue"
                 );
             }
         }
