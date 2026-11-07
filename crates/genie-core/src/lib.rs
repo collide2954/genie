@@ -1,4 +1,5 @@
 mod assembly;
+mod feature;
 mod locus;
 mod number;
 mod region;
@@ -6,6 +7,7 @@ mod tile;
 mod viewport;
 
 pub use assembly::{Assembly, Contig, Target};
+pub use feature::{Feature, Strand};
 pub use locus::{Locus, LocusError, Span};
 pub use number::{grouped, parse_bases};
 pub use region::Region;

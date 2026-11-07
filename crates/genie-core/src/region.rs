@@ -46,6 +46,12 @@ impl Region {
         self.start < other.end && other.start < self.end
     }
 
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let start = self.start.max(other.start);
+        let end = self.end.min(other.end);
+        (start < end).then_some(Self { start, end })
+    }
+
     pub fn expand(self, amount: u64, limit: u64) -> Self {
         Self::between(
             self.start.saturating_sub(amount).min(limit),
@@ -107,6 +113,15 @@ mod tests {
     fn expand_grows_both_sides_up_to_the_limit() {
         assert_eq!(region(100, 200).expand(50, 1_000), region(50, 250));
         assert_eq!(region(10, 200).expand(50, 220), region(0, 220));
+    }
+
+    #[test]
+    fn intersection_is_the_shared_part() {
+        assert_eq!(
+            region(0, 20).intersection(region(10, 30)),
+            Some(region(10, 20))
+        );
+        assert_eq!(region(0, 10).intersection(region(10, 20)), None);
     }
 
     #[test]
