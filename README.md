@@ -73,6 +73,9 @@ genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows
 - Right-click a signal track to show a line instead of bars. Turn on "Shared scale" on two or more signal tracks to give them the same range.
 - Right-click a track to set its rows, its color or its place.
 - Right-click a read track to show duplicate reads and soft clips, or to keep all reads.
+- genie colors unusual read pairs: vermillion for an insert size that is larger than expected, blue for a smaller one, green for two mates on the same strand, purple for mates that point away from each other, and orange for a mate on a different chromosome. The expected insert sizes come from the loaded pairs. Right-click a read track to turn these colors off.
+- Right-click a read track to sort the rows by the base at that position, or to group the reads by phase (HP tag) or by strand.
+- The card of a paired read shows the mate position, the insert size, the pair orientation and the HP and RG tags.
 - Right-click the sequence to show the reverse strand and 3 or 6 reading frames.
 - Drag a track name to move the track.
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
