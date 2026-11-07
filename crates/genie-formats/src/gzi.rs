@@ -31,7 +31,7 @@ impl Index {
         let mut compressed = Vec::new();
         let mut next = (0, 0);
         while let Some((size, length)) = bgzf::read_block(&mut reader, &mut compressed)? {
-            if next.0 > 0 {
+            if next.0 > 0 && length > 0 {
                 blocks.push(next);
             }
             next.0 += size as u64;
@@ -147,9 +147,9 @@ mod tests {
     #[test]
     fn builds_from_block_headers() {
         let first = block(b"hello ").len() as u64;
-        let second = block(b"world\n").len() as u64;
-        let built = Index::build(Cursor::new(file(&[b"hello ", b"world\n"]))).unwrap();
-        assert_eq!(built, index(&[(first, 6), (first + second, 12)]));
+        let second = block(b"").len() as u64;
+        let built = Index::build(Cursor::new(file(&[b"hello ", b"", b"world\n"]))).unwrap();
+        assert_eq!(built, index(&[(first + second, 6)]));
     }
 
     #[test]

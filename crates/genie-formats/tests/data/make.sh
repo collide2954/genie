@@ -111,6 +111,31 @@ samtools sort -o reads.bam reads.sam 2> /dev/null
 samtools index reads.bam
 rm reads.sam
 
+awk '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+BEGIN {
+    seed = 3
+    split("chr1 chr2 chrM", contigs, " ")
+    split("120000 50003 16569", lengths, " ")
+    split("60 70 80", widths, " ")
+    for (c = 1; c <= 3; c++) {
+        print ">" contigs[c] " synthetic"
+        line = ""
+        for (i = 0; i < lengths[c]; i++) {
+            base = substr("ACGT", draw(4) + 1, 1)
+            if (int(i / 5000) % 7 == 3) base = tolower(base)
+            if (int(i / 1000) % 50 == 17) base = "N"
+            line = line base
+            if (length(line) == widths[c]) { print line; line = "" }
+        }
+        if (line != "") print line
+    }
+}' | bgzip > reference.fa.gz
+rm -f reference.fa.gz.fai reference.fa.gz.gzi
+samtools faidx reference.fa.gz
+samtools faidx reference.fa.gz chr1:1-100 chr1:60000-70000 chr1:119990-120000 chr2 \
+    chr2:12345-12345 chrM:16000-16569 > reference.fa.expected
+
 expect() {
     local file=$1
     shift

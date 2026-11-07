@@ -1,13 +1,14 @@
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 use genie_core::Region;
 use genie_core::alignment::{Alignment, Op};
 use genie_formats::bgzf::Bgzf;
+use genie_formats::fai::{self, FaiRecord};
 use genie_formats::features::{self, Kind};
 use genie_formats::tabix::Index;
-use genie_formats::{bai, bam};
+use genie_formats::{bai, bam, fasta, gzi};
 
 const WHOLE: u64 = 1 << 29;
 
@@ -173,6 +174,42 @@ fn bam_queries_match_samtools() {
         let expected: Vec<String> = expected.iter().map(|line| columns(line)).collect();
         assert_eq!(found, expected, "{wanted}");
     }
+}
+
+fn fai(file: &str) -> Vec<FaiRecord> {
+    fai::parse(BufReader::new(
+        File::open(data(&format!("{file}.fai"))).unwrap(),
+    ))
+    .unwrap()
+}
+
+fn gzi(file: &str) -> gzi::Index {
+    gzi::Index::read(File::open(data(&format!("{file}.gzi"))).unwrap()).unwrap()
+}
+
+#[test]
+fn bgzip_fasta_matches_samtools_faidx() {
+    let records = fai("reference.fa.gz");
+    let index = gzi("reference.fa.gz");
+    let mut reader = reader("reference.fa.gz");
+    for (wanted, expected) in sections("reference.fa.expected") {
+        let (name, region) = locus(&wanted);
+        let record = records.iter().find(|record| record.name == name).unwrap();
+        let found = fasta::fetch_bgzf(&mut reader, &index, record, region).unwrap();
+        assert_eq!(
+            String::from_utf8(found).unwrap(),
+            expected.concat(),
+            "{wanted}"
+        );
+    }
+}
+
+#[test]
+fn built_fasta_indexes_match_samtools() {
+    let records = fai::build(reader("reference.fa.gz")).unwrap();
+    assert_eq!(records, fai("reference.fa.gz"));
+    let index = gzi::Index::build(File::open(data("reference.fa.gz")).unwrap()).unwrap();
+    assert_eq!(index, gzi("reference.fa.gz"));
 }
 
 #[test]

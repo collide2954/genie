@@ -2,3 +2,6 @@
 *.ttf binary
 *.gz binary
 *.tbi binary
+*.gzi binary
+*.bam binary
+*.bai binary
