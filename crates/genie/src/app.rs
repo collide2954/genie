@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
-use genie_render::{alignments, features, overview, ruler, sequence, translation};
+use genie_render::{alignments, features, overview, ruler, sequence, translation, variants};
 use iced::futures::channel::mpsc;
 use iced::theme::Mode;
 use iced::time::Instant;
@@ -53,6 +53,7 @@ const LABEL_SIZE: f32 = 10.0;
 const CAPTION_HEIGHT: f32 = 22.0;
 const CAPTION_SIZE: f32 = 11.0;
 const READ_HINT: &str = "Zoom in to see the reads";
+const VARIANT_HINT: &str = "Zoom in to see the variants";
 const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -508,12 +509,13 @@ impl Genie {
 
     fn figures(&self) -> Vec<(&'static str, String)> {
         let millis = |duration: Duration| format!("{:.2} ms", duration.as_secs_f64() * 1_000.0);
-        let (mut reads, mut features) = (0, 0);
+        let (mut reads, mut features, mut sites) = (0, 0, 0);
         if let Some(session) = &self.session {
             for track in &session.tracks {
                 match track.data(session.contig).map(|data| &data.content) {
                     Some(Content::Reads(pile)) => reads += pile.reads.len(),
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
+                    Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     None => {}
                 }
             }
@@ -531,6 +533,7 @@ impl Genie {
             ),
             ("reads", grouped(reads as u64)),
             ("features", grouped(features as u64)),
+            ("variants", grouped(sites as u64)),
         ]
     }
 
@@ -642,6 +645,15 @@ impl Genie {
             Content::Reads(pile) => {
                 let index = alignments::hit(viewport, &pile.reads, &pile.rows, mode, x, y)?;
                 Detail::Read(pile.reads[index].alignment.clone())
+            }
+            Content::Variants(calls) => {
+                let (index, sample) = variants::hit(viewport, &calls.variants, mode, x, y)?;
+                let variant = calls.variants[index].clone();
+                let sample = sample.and_then(|sample| {
+                    let name = track.source.samples().get(sample)?.clone();
+                    Some((name, variant.calls[sample]))
+                });
+                Detail::Variant { variant, sample }
             }
         };
         Some(Card {
@@ -1595,11 +1607,11 @@ impl Genie {
     }
 }
 
-fn track_view<'a>(
+fn track_body<'a>(
     session: &Session,
     track: &'a Track,
+    shape: Shape,
     repack: bool,
-    padding: f32,
 ) -> Element<'a, Message> {
     let viewport = session.viewport;
     let contig = session.contig;
@@ -1610,54 +1622,68 @@ fn track_view<'a>(
             .on_click(move |pointer| Message::TrackClicked(id, pointer))
     };
     let mode = track.mode(contig);
-    let shape = shape(session, track, repack);
-    let body: Element<'a, Message> = if let Some(error) = &track.error {
-        hint(error.clone())
-    } else if viewport.visible().len() > track.source.span() {
-        hint(
-            if track.source.has_reads() {
-                READ_HINT
-            } else {
-                ZOOM_HINT
-            }
-            .to_owned(),
-        )
-    } else {
-        match track.data(contig).map(|data| &data.content) {
-            Some(Content::Features(annotation)) => {
-                let primitives = features::scene(
-                    viewport,
-                    &annotation.features,
-                    &annotation.rows,
-                    mode,
-                    track.hue,
-                );
-                interactive(primitives, shape.height).into()
-            }
-            Some(Content::Reads(pile)) => {
-                let depth = alignments::coverage(
-                    viewport,
-                    &pile.coverage,
-                    |at| pile.base(at),
-                    alignments::COVERAGE_HEIGHT,
-                );
-                let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
-                if mode != features::Mode::Collapsed {
-                    let packed;
-                    let rows = if repack {
-                        packed = pile.packed(viewport.visible()).0;
-                        packed.as_slice()
-                    } else {
-                        pile.rows.as_slice()
-                    };
-                    let primitives = alignments::reads(viewport, &pile.reads, rows, mode);
-                    body = body.push(interactive(primitives, shape.height - shape.fixed));
-                }
-                body.into()
-            }
-            None => space().width(Length::Fill).height(EMPTY_HEIGHT).into(),
+    if let Some(error) = &track.error {
+        return hint(error.clone());
+    }
+    if viewport.visible().len() > track.source.span() {
+        let words = if track.source.has_reads() {
+            READ_HINT
+        } else if track.source.has_variants() {
+            VARIANT_HINT
+        } else {
+            ZOOM_HINT
+        };
+        return hint(words.to_owned());
+    }
+    match track.data(contig).map(|data| &data.content) {
+        Some(Content::Variants(calls)) => {
+            let primitives = variants::scene(viewport, &calls.variants, mode);
+            interactive(primitives, shape.height).into()
         }
-    };
+        Some(Content::Features(annotation)) => {
+            let primitives = features::scene(
+                viewport,
+                &annotation.features,
+                &annotation.rows,
+                mode,
+                track.hue,
+            );
+            interactive(primitives, shape.height).into()
+        }
+        Some(Content::Reads(pile)) => {
+            let depth = alignments::coverage(
+                viewport,
+                &pile.coverage,
+                |at| pile.base(at),
+                alignments::COVERAGE_HEIGHT,
+            );
+            let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
+            if mode != features::Mode::Collapsed {
+                let packed;
+                let rows = if repack {
+                    packed = pile.packed(viewport.visible()).0;
+                    packed.as_slice()
+                } else {
+                    pile.rows.as_slice()
+                };
+                let primitives = alignments::reads(viewport, &pile.reads, rows, mode);
+                body = body.push(interactive(primitives, shape.height - shape.fixed));
+            }
+            body.into()
+        }
+        None => space().width(Length::Fill).height(EMPTY_HEIGHT).into(),
+    }
+}
+
+fn track_view<'a>(
+    session: &Session,
+    track: &'a Track,
+    repack: bool,
+    padding: f32,
+) -> Element<'a, Message> {
+    let id = track.id;
+    let shape = shape(session, track, repack);
+    let body = track_body(session, track, shape, repack);
     let height = track.height.unwrap_or(shape.height);
     let edge = Grip::new(
         space().width(Length::Fill).height(EDGE),
@@ -1746,6 +1772,19 @@ fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
                 height: rows as f32 * row_height,
                 rows,
                 fixed: 0.0,
+                row_height,
+            }
+        }
+        Some(Content::Variants(calls)) => {
+            if mode == features::Mode::Collapsed || calls.samples == 0 {
+                return Shape::plain(variants::SITE_HEIGHT);
+            }
+            let row_height = variants::row_height(mode);
+            let fixed = variants::SITE_HEIGHT + 1.0;
+            Shape {
+                height: fixed + calls.samples as f32 * row_height,
+                rows: calls.samples,
+                fixed,
                 row_height,
             }
         }
@@ -1919,7 +1958,7 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
             .set_title("Open a track, a reference sequence or a session")
-            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3", "bam"])
+            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3", "vcf", "bam"])
             .add_filter("Reference sequences", &references)
     } else {
         rfd::AsyncFileDialog::new()
@@ -1971,6 +2010,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Names, Region, Strand};
     use genie_formats::fai::FaiRecord;
     use genie_formats::features::Kind;
@@ -1984,7 +2024,10 @@ mod tests {
 
     use iced::{Point, Size};
 
-    use super::{DROP_HINT, Genie, Lane, Message, NO_REFERENCE, ZOOM_HINT, shortcut, window_event};
+    use super::{
+        DROP_HINT, Genie, Lane, Message, NO_REFERENCE, VARIANT_HINT, ZOOM_HINT, shortcut,
+        window_event,
+    };
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};
@@ -2129,6 +2172,8 @@ mod tests {
         let _ = genie.update(Message::Opened(Ok(Arc::new(reference))));
         let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
         assert!(shows(&genie, ZOOM_HINT));
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        assert!(shows(&genie, VARIANT_HINT));
     }
 
     fn reference() -> Arc<Reference> {
@@ -2750,7 +2795,7 @@ mod tests {
 
     #[test]
     fn lanes_have_the_height_the_app_expects() {
-        for genie in [with_rows(3), with_reads()] {
+        for genie in [with_rows(3), with_reads(), with_variants()] {
             let session = genie.session.as_ref().unwrap();
             let expected = super::body_height(session, &session.tracks[0]) + 4.0;
             let mut ui = simulator(genie.view());
@@ -2946,7 +2991,7 @@ mod tests {
 
     #[test]
     fn menus_know_their_height() {
-        for mut genie in [with_track(), with_reads()] {
+        for mut genie in [with_track(), with_reads(), with_variants()] {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
             let expected = menu::height(&genie.session.as_ref().unwrap().tracks[0]);
             let mut ui = simulator(genie.view());
@@ -2962,6 +3007,70 @@ mod tests {
         let mut genie = opened();
         add_reads(&mut genie, vec![read("read7", 10)]);
         genie
+    }
+
+    fn site(start: u64, calls: Vec<Call>) -> Variant {
+        Variant {
+            id: format!("rs{start}"),
+            span: Region::between(start, start + 1),
+            reference: "A".to_owned(),
+            alternates: vec!["G".to_owned()],
+            quality: Some(50.0),
+            filter: "PASS".to_owned(),
+            info: "DP=12".to_owned(),
+            calls,
+        }
+    }
+
+    fn variant_source() -> Arc<Source> {
+        Arc::new(Source {
+            path: PathBuf::from("/data/calls.vcf"),
+            name: "calls.vcf".to_owned(),
+            format: Format::VariantTable {
+                table: genie_formats::features::Table::new(Vec::new()),
+                samples: vec!["NA1".to_owned(), "NA2".to_owned()],
+            },
+        })
+    }
+
+    fn with_variants() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.wanted = Some((0, region));
+        let variants = vec![site(20, vec![Call::Het, Call::Alternate])];
+        let loaded = Loaded::variants(region, variants, 2);
+        track.accept(0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    #[test]
+    fn variant_lanes_hold_a_row_per_sample() {
+        let genie = with_variants();
+        let session = genie.session.as_ref().unwrap();
+        let height = super::body_height(session, &session.tracks[0]);
+        assert!((height - 33.0).abs() < f32::EPSILON, "{height}");
+    }
+
+    #[test]
+    fn variant_menus_offer_no_read_toggles() {
+        let mut genie = with_variants();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Move up"));
+        assert!(!shows(&genie, "Show duplicates"));
+    }
+
+    #[test]
+    fn hovering_a_genotype_shows_the_sample() {
+        let mut genie = with_variants();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(20.5, 5.0))));
+        assert!(shows(&genie, "rs20"));
+        assert!(shows(&genie, "A > G · QUAL 50 · PASS"));
+        assert!(shows(&genie, "DP=12"));
+        assert!(!shows(&genie, "NA2 · homozygous alternate"));
+        let _ = genie.update(Message::TrackHovered(0, Some(over(20.5, 28.0))));
+        assert!(shows(&genie, "NA2 · homozygous alternate"));
     }
 
     #[test]
@@ -2991,14 +3100,15 @@ mod tests {
 
     #[test]
     fn only_feature_tracks_offer_colors() {
-        let mut reads = with_reads();
-        let _ = reads.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
-        assert!(shows(&reads, "Squished"));
-        assert!(
-            simulator(reads.view())
-                .find(selector::id("swatches"))
-                .is_err()
-        );
+        for mut other in [with_reads(), with_variants()] {
+            let _ = other.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+            assert!(shows(&other, "Squished"));
+            assert!(
+                simulator(other.view())
+                    .find(selector::id("swatches"))
+                    .is_err()
+            );
+        }
         let mut features = with_track();
         let _ = features.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(

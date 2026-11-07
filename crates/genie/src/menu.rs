@@ -11,6 +11,7 @@ use crate::track::{Change, Toggle, Track};
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
 const READS_HEIGHT: f32 = 235.0;
+const VARIANTS_HEIGHT: f32 = 159.0;
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
@@ -26,6 +27,8 @@ const TOGGLES: [(&str, Toggle); 3] = [
 pub fn height(track: &Track) -> f32 {
     if track.source.has_reads() {
         READS_HEIGHT
+    } else if track.source.has_variants() {
+        VARIANTS_HEIGHT
     } else {
         FEATURES_HEIGHT
     }
@@ -92,7 +95,7 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
                 item(label, Change::Toggle(toggle), options.is_on(toggle), true)
             }))
             .push(separator());
-    } else {
+    } else if !track.source.has_variants() {
         content = content
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());

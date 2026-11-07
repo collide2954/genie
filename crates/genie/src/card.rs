@@ -1,4 +1,5 @@
 use genie_core::alignment::Alignment;
+use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use iced::widget::{button, column, container, pin, row, text};
 use iced::{Alignment as Align, Element, Length, Point, Size};
@@ -12,11 +13,18 @@ const HEIGHT: f32 = 84.0;
 const OFFSET_X: f32 = 12.0;
 const OFFSET_Y: f32 = 16.0;
 const EDGE: f32 = 4.0;
+const ALLELE_LIMIT: usize = 12;
+const ALLELE_KEEP: usize = 8;
+const INFO_ENTRIES: usize = 3;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detail {
     Feature(Feature),
     Read(Alignment),
+    Variant {
+        variant: Variant,
+        sample: Option<(String, Call)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,8 +85,65 @@ pub fn cigar(read: &Alignment) -> String {
     text
 }
 
+fn allele(text: &str) -> String {
+    if text.len() <= ALLELE_LIMIT {
+        return text.to_owned();
+    }
+    let start: String = text.chars().take(ALLELE_KEEP).collect();
+    format!("{start}… ({} bp)", grouped(text.len() as u64))
+}
+
+pub fn change(variant: &Variant) -> String {
+    let alternates: Vec<String> = variant
+        .alternates
+        .iter()
+        .map(|alternate| allele(alternate))
+        .collect();
+    format!("{} > {}", allele(&variant.reference), alternates.join(", "))
+}
+
+pub fn variant_facts(variant: &Variant) -> String {
+    let mut facts = vec![change(variant)];
+    facts.extend(variant.quality.map(|quality| format!("QUAL {quality}")));
+    if variant.filter != "." {
+        facts.push(variant.filter.clone());
+    }
+    facts.join(" · ")
+}
+
+pub fn info(variant: &Variant) -> Option<String> {
+    let entries: Vec<&str> = variant
+        .info
+        .split(';')
+        .filter(|entry| !entry.is_empty() && *entry != ".")
+        .take(INFO_ENTRIES)
+        .collect();
+    (!entries.is_empty()).then(|| entries.join(" · "))
+}
+
+pub fn genotype(name: &str, call: Call) -> String {
+    let words = match call {
+        Call::Missing => "no call",
+        Call::Reference => "homozygous reference",
+        Call::Het => "heterozygous",
+        Call::Alternate => "homozygous alternate",
+    };
+    format!("{name} · {words}")
+}
+
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
+        Detail::Variant { variant, sample } => {
+            let title = if variant.id.is_empty() {
+                change(variant)
+            } else {
+                variant.id.clone()
+            };
+            let mut lines = vec![variant_facts(variant)];
+            lines.extend(info(variant));
+            lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
+            (title, variant.span, lines)
+        }
         Detail::Feature(feature) => {
             let title = if feature.name().is_empty() {
                 "Feature".to_owned()
@@ -151,9 +216,10 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
 #[cfg(test)]
 mod tests {
     use genie_core::alignment::{Alignment, Op, REVERSE};
+    use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Region, Strand};
 
-    use super::{cigar, coding, facts, read_facts};
+    use super::{change, cigar, coding, facts, genotype, info, read_facts, variant_facts};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -178,6 +244,30 @@ mod tests {
         assert_eq!(coding(&transcript).as_deref(), Some("Coding 10-90"));
         let simple = Feature::new("b", region(0, 100), Strand::Forward);
         assert_eq!(coding(&simple), None);
+    }
+
+    fn site(reference: &str, alternates: &[&str], quality: Option<f32>, info: &str) -> Variant {
+        Variant {
+            id: "rs7".to_owned(),
+            span: region(99, 100),
+            reference: reference.to_owned(),
+            alternates: alternates.iter().map(|alt| (*alt).to_owned()).collect(),
+            quality,
+            filter: "PASS".to_owned(),
+            info: info.to_owned(),
+            calls: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn variants_show_change_quality_filter_and_info() {
+        let snv = site("A", &["G", "T"], Some(50.5), "DP=10;AF=0.5;MQ=60;FS=1.2");
+        assert_eq!(variant_facts(&snv), "A > G, T · QUAL 50.5 · PASS");
+        assert_eq!(info(&snv).as_deref(), Some("DP=10 · AF=0.5 · MQ=60"));
+        let long = site(&"ACGT".repeat(10), &["A"], None, ".");
+        assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
+        assert_eq!(info(&long), None);
+        assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");
     }
 
     #[test]

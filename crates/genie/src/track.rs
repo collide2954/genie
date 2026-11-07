@@ -5,17 +5,19 @@ use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, DUPLICATE, Filter};
 use genie_core::pileup::{Coverage, Read, downsample};
+use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind, Table};
-use genie_formats::{bai, bam, tabix};
+use genie_formats::{bai, bam, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
-use genie_render::{alignments, rows};
+use genie_render::{alignments, rows, variants};
 
 use crate::paths::file_name;
 
 const FEATURE_SPAN: u64 = 10_000_000;
+const VARIANT_SPAN: u64 = 1_000_000;
 const READ_SPAN: u64 = 30_000;
 const WINDOW: u64 = 50;
 const DEPTH: usize = 100;
@@ -32,6 +34,14 @@ pub enum Format {
     Table {
         kind: Kind,
         table: Table<Feature>,
+    },
+    Variants {
+        index: tabix::Index,
+        samples: Vec<String>,
+    },
+    VariantTable {
+        table: Table<Variant>,
+        samples: Vec<String>,
     },
     Reads {
         index: bai::Index,
@@ -55,8 +65,9 @@ impl PartialEq for Source {
 impl Source {
     pub fn contigs(&self) -> &[String] {
         match &self.format {
-            Format::Features { index, .. } => index.names(),
+            Format::Features { index, .. } | Format::Variants { index, .. } => index.names(),
             Format::Table { table, .. } => table.contigs(),
+            Format::VariantTable { table, .. } => table.contigs(),
             Format::Reads { contigs, .. } => contigs,
         }
     }
@@ -65,13 +76,35 @@ impl Source {
         matches!(self.format, Format::Reads { .. })
     }
 
+    pub fn has_variants(&self) -> bool {
+        matches!(
+            self.format,
+            Format::Variants { .. } | Format::VariantTable { .. }
+        )
+    }
+
+    pub fn samples(&self) -> &[String] {
+        match &self.format {
+            Format::Variants { samples, .. } | Format::VariantTable { samples, .. } => samples,
+            _ => &[],
+        }
+    }
+
     pub fn span(&self) -> u64 {
         if self.has_reads() {
             READ_SPAN
+        } else if self.has_variants() {
+            VARIANT_SPAN
         } else {
             FEATURE_SPAN
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Calls {
+    pub variants: Vec<Variant>,
+    pub samples: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +196,7 @@ impl Pile {
 pub enum Content {
     Features(Annotation),
     Reads(Pile),
+    Variants(Calls),
 }
 
 #[derive(Debug, PartialEq)]
@@ -223,10 +257,19 @@ impl Loaded {
         }
     }
 
+    pub fn variants(region: Region, variants: Vec<Variant>, samples: usize) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Variants(Calls { variants, samples }),
+        }
+    }
+
     pub fn count(&self) -> usize {
         match &self.content {
             Content::Features(annotation) => annotation.count,
             Content::Reads(pile) => pile.count,
+            Content::Variants(calls) => calls.samples,
         }
     }
 }
@@ -280,6 +323,8 @@ impl Track {
             let count = self.data(contig).map_or(0, Loaded::count);
             if self.source.has_reads() {
                 alignments::fit(count)
+            } else if self.source.has_variants() {
+                variants::fit(count)
             } else {
                 Mode::fit(count)
             }
@@ -360,7 +405,8 @@ pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>
 }
 
 pub fn is_track(path: &Path) -> bool {
-    is_bam(path) || Kind::of(&file_name(path)).is_some()
+    let name = file_name(path);
+    is_bam(path) || is_vcf(&name) || Kind::of(&name).is_some()
 }
 
 fn is_bam(path: &Path) -> bool {
@@ -368,23 +414,52 @@ fn is_bam(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
 }
 
+fn is_vcf(name: &str) -> bool {
+    let path = Path::new(name);
+    let stem = if is_compressed(path) {
+        path.file_stem().map(Path::new)
+    } else {
+        Some(path)
+    };
+    stem.and_then(Path::extension)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vcf"))
+}
+
+fn is_compressed(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
+    })
+}
+
+fn plain(path: &Path, name: &str) -> Result<BufReader<File>, String> {
+    let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
+    fits(name, size)?;
+    File::open(path)
+        .map(BufReader::new)
+        .map_err(|error| error.to_string())
+}
+
+fn tabix_index(path: &Path, name: &str) -> Result<tabix::Index, String> {
+    let (file, suffix) = [".tbi", ".csi"]
+        .into_iter()
+        .find_map(|suffix| Some((File::open(with_suffix(path, suffix)).ok()?, suffix)))
+        .ok_or_else(|| format!("There is no index {name}.tbi. Index the file with tabix."))?;
+    tabix::Index::read(file)
+        .map_err(|error| format!("The index {name}{suffix} is not valid. {error}"))
+}
+
 pub fn open(path: PathBuf) -> Result<Source, String> {
     let name = file_name(&path);
     if is_bam(&path) {
         return open_reads(path, name);
     }
+    if is_vcf(&name) {
+        return open_variants(path, name);
+    }
     let kind = Kind::of(&name)
-        .ok_or_else(|| format!("The file {name} is not a BED, GFF3 or BAM file."))?;
-    let compressed = path.extension().is_some_and(|extension| {
-        extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
-    });
-    if !compressed {
-        let size = fs::metadata(&path)
-            .map_err(|error| error.to_string())?
-            .len();
-        fits(&name, size)?;
-        let file = File::open(&path).map_err(|error| error.to_string())?;
-        let table = features::read_table(kind, BufReader::new(file))
+        .ok_or_else(|| format!("The file {name} is not a BED, GFF3, VCF or BAM file."))?;
+    if !is_compressed(&path) {
+        let table = features::read_table(kind, plain(&path, &name)?)
             .map_err(|error| format!("The file {name} is not valid. {error}"))?;
         return Ok(Source {
             path,
@@ -392,14 +467,37 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
             format: Format::Table { kind, table },
         });
     }
-    let file = File::open(with_suffix(&path, ".tbi"))
-        .map_err(|_| format!("There is no index {name}.tbi. Index the file with tabix."))?;
-    let index = tabix::Index::read(file)
-        .map_err(|error| format!("The index {name}.tbi is not valid. {error}"))?;
+    let index = tabix_index(&path, &name)?;
     Ok(Source {
         path,
         name,
         format: Format::Features { kind, index },
+    })
+}
+
+fn open_variants(path: PathBuf, name: String) -> Result<Source, String> {
+    if !is_compressed(&path) {
+        let (header, table) = vcf::read_table(plain(&path, &name)?)
+            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
+        return Ok(Source {
+            path,
+            name,
+            format: Format::VariantTable {
+                table,
+                samples: header.samples,
+            },
+        });
+    }
+    let index = tabix_index(&path, &name)?;
+    let file = File::open(&path).map_err(|error| error.to_string())?;
+    let header = vcf::header(Bgzf::new(file)).map_err(|error| error.to_string())?;
+    Ok(Source {
+        path,
+        name,
+        format: Format::Variants {
+            index,
+            samples: header.samples,
+        },
     })
 }
 
@@ -413,12 +511,14 @@ fn fits(name: &str, size: u64) -> Result<(), String> {
 }
 
 fn open_reads(path: PathBuf, name: String) -> Result<Source, String> {
-    let file = [with_suffix(&path, ".bai"), path.with_extension("bai")]
-        .into_iter()
-        .find_map(|candidate| File::open(candidate).ok())
-        .ok_or_else(|| {
-            format!("There is no index {name}.bai. Index the file with samtools index.")
-        })?;
+    let file = [
+        with_suffix(&path, ".bai"),
+        path.with_extension("bai"),
+        with_suffix(&path, ".csi"),
+    ]
+    .into_iter()
+    .find_map(|candidate| File::open(candidate).ok())
+    .ok_or_else(|| format!("There is no index {name}.bai. Index the file with samtools index."))?;
     let index = bai::Index::read(file)
         .map_err(|error| format!("The index {name}.bai is not valid. {error}"))?;
     let file = File::open(&path).map_err(|error| error.to_string())?;
@@ -455,6 +555,16 @@ pub fn load(
     };
     match &source.format {
         Format::Table { table, .. } => Ok(Loaded::features(region, table.query(contig, region))),
+        Format::VariantTable { table, samples } => Ok(Loaded::variants(
+            region,
+            table.query(contig, region),
+            samples.len(),
+        )),
+        Format::Variants { index, samples } => {
+            let variants = vcf::query(index, &mut reader()?, contig, region)
+                .map_err(|error| error.to_string())?;
+            Ok(Loaded::variants(region, variants, samples.len()))
+        }
         Format::Features { kind, index } => {
             let (region, features) = features::query(*kind, index, &mut reader()?, contig, region)
                 .map_err(|error| error.to_string())?;
@@ -500,6 +610,14 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
     let entries = match &source.format {
         Format::Features { kind, .. } => features::names(*kind, Bgzf::new(file()?)),
         Format::Table { kind, .. } => features::names(*kind, BufReader::new(file()?)),
+        Format::VariantTable { .. } => vcf::names(BufReader::new(file()?)),
+        Format::Variants { .. } => {
+            let size = fs::metadata(&source.path).map_or(u64::MAX, |metadata| metadata.len());
+            if size > PLAIN_LIMIT {
+                return Ok(Names::default());
+            }
+            vcf::names(Bgzf::new(file()?))
+        }
         Format::Reads { .. } => return Ok(Names::default()),
     }
     .map_err(|error| error.to_string())?;
@@ -646,6 +764,61 @@ mod tests {
         let names = names(&source, &assembly()).unwrap();
         let gene = names.find("gene1003").unwrap();
         assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
+    }
+
+    #[test]
+    fn opens_bgzip_vcf_with_a_tbi_or_a_csi() {
+        for suffix in ["tbi", "csi"] {
+            let scratch = Scratch::new(&format!("vcf-{suffix}"));
+            let data = std::fs::read(fixture("variants.vcf.gz")).unwrap();
+            let path = scratch.file("calls.vcf.gz", data);
+            let index = std::fs::read(fixture(&format!("variants.vcf.gz.{suffix}"))).unwrap();
+            scratch.file(&format!("calls.vcf.gz.{suffix}"), index);
+            let source = open(path).unwrap();
+            assert_eq!(source.samples(), ["S1", "S2", "S3"]);
+            assert_eq!(source.span(), 1_000_000);
+            let window = region(1_000, 60_000);
+            let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
+            let Content::Variants(calls) = &loaded.content else {
+                panic!("expected variants");
+            };
+            assert!(calls.variants.len() > 10, "{}", calls.variants.len());
+            assert_eq!(loaded.count(), 3);
+            let names = names(&source, &assembly()).unwrap();
+            assert!(names.find("rs1001").is_some() || names.find("rs1002").is_some());
+        }
+    }
+
+    #[test]
+    fn opens_small_plain_vcf_files() {
+        let scratch = Scratch::new("plain-vcf");
+        let text = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\n\
+                    chr1\t20\trs9\tA\tG\t.\tPASS\t.\tGT\t0/1\n";
+        let source = open(scratch.file("calls.vcf", text)).unwrap();
+        assert!(matches!(source.format, Format::VariantTable { .. }));
+        assert_eq!(source.contigs(), ["chr1"]);
+        let window = region(0, 100);
+        let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
+        assert_eq!(loaded.count(), 1);
+        assert_eq!(
+            names(&source, &assembly())
+                .unwrap()
+                .find("rs9")
+                .unwrap()
+                .contig,
+            0
+        );
+    }
+
+    #[test]
+    fn vcf_files_ask_for_an_index() {
+        let scratch = Scratch::new("vcf-no-index");
+        let data = std::fs::read(fixture("variants.vcf.gz")).unwrap();
+        let error = open(scratch.file("calls.vcf.gz", data)).unwrap_err();
+        assert_eq!(
+            error,
+            "There is no index calls.vcf.gz.tbi. Index the file with tabix."
+        );
     }
 
     #[test]
@@ -883,10 +1056,10 @@ mod tests {
 
     #[test]
     fn rejects_files_that_are_not_tracks() {
-        let error = open(PathBuf::from("/data/calls.vcf.gz")).unwrap_err();
+        let error = open(PathBuf::from("/data/calls.bcf")).unwrap_err();
         assert_eq!(
             error,
-            "The file calls.vcf.gz is not a BED, GFF3 or BAM file."
+            "The file calls.bcf is not a BED, GFF3, VCF or BAM file."
         );
     }
 
