@@ -20,6 +20,7 @@ cargo run -p genie
 | Feature track | BED and GFF3: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
 | Alignment track | BAM, sorted by position and indexed with samtools |
 | Variant track | VCF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix. genie does not read BCF. |
+| Signal track | bigWig (`.bw`); bedGraph: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
 | Session | genie session (`.genie`) |
 
 Open a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi`, `.csi` or `.bai`) must be next to the track file.
@@ -54,12 +55,22 @@ bgzip calls.vcf && tabix -p vcf calls.vcf.gz
 
 genie shows variants when the view is 1 Mb or less.
 
+To prepare a large bedGraph track:
+
+```bash
+sort -k1,1 -k2,2n signal.bedGraph | bgzip > signal.bedGraph.gz && tabix -p bed signal.bedGraph.gz
+```
+
+genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows a bedGraph track that has a tabix index when the view is 10 Mb or less. For the best speed, convert bedGraph to bigWig with bedGraphToBigWig.
+
 ## Tracks
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
 - Type a feature name or a variant ID in the locus box to go to it. genie finds variant IDs in VCF files up to 50 MB.
 - In a variant track, the color of a site shows the change: the color of the new base for an SNV, purple for an insertion and dark grey for a deletion. A site that does not pass FILTER has a light color.
 - Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin.
+- A signal track has a bar for each pixel. The bar goes to the mean value, and a light color goes to the maximum value. Values below zero go down from a zero line. The range of the values in view is at the top right.
+- Right-click a signal track to show a line instead of bars. Turn on "Shared scale" on two or more signal tracks to give them the same range.
 - Right-click a track to set its rows, its color or its place.
 - Right-click a read track to show duplicate reads and soft clips, or to keep all reads.
 - Right-click the sequence to show the reverse strand and 3 or 6 reading frames.
