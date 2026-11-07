@@ -3,6 +3,7 @@ use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, windo
 
 use crate::app::Message;
 use crate::icon::{self, Icon};
+use crate::shortcuts::Command;
 use crate::theme::tokens;
 use crate::{font, style};
 
@@ -160,13 +161,19 @@ pub fn title_bar<'a>(
             .align_y(Alignment::Center),
     )
     .width(BRAND_WIDTH);
+    let export = locus
+        .is_some()
+        .then(|| tool(Icon::Camera, "export", Message::Command(Command::Export)));
     let navigation = row![tool(Icon::Open, "open", Message::Open)]
         .push(locus.map(locus_box))
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
-    let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
-        .spacing(2)
-        .align_y(Alignment::Center);
+    let tools = row![
+        export,
+        tool(appearance, "appearance", Message::CycleAppearance)
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
     let mut bar = row![
         brand,
         space().width(BRAND_GAP),
@@ -287,6 +294,7 @@ mod tests {
     use super::{Action, Controls, Edge, LOCUS, LocusField, locus_x, resize_handles, title_bar};
     use crate::app::Message;
     use crate::icon::Icon;
+    use crate::shortcuts::Command;
 
     fn press_at(element: iced::Element<'_, Message>, point: Point) -> Vec<Message> {
         let mut ui =
@@ -384,6 +392,22 @@ mod tests {
             Some(field("chr9", Some(error))),
         ));
         assert!(ui.find(error).is_ok());
+    }
+
+    #[test]
+    fn export_button_shows_with_a_locus() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        ui.click(selector::id("export")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Command(Command::Export)]
+        );
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        assert!(ui.find(selector::id("export")).is_err());
     }
 
     #[test]

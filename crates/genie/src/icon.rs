@@ -15,6 +15,7 @@ pub enum Icon {
     Maximize,
     Close,
     Open,
+    Camera,
 }
 
 enum Shape {
@@ -63,6 +64,11 @@ impl Icon {
                 [3.0, 18.0],
                 [3.0, 6.0],
             ])],
+            Self::Camera => &[
+                Shape::Rect([2.0, 7.0], [22.0, 20.0], 2.0),
+                Shape::Polyline(&[[8.0, 7.0], [9.5, 4.0], [14.5, 4.0], [16.0, 7.0]]),
+                Shape::Circle([12.0, 13.5], 3.5),
+            ],
         }
     }
 }
@@ -149,7 +155,7 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 7] = [
+    const ICONS: [Icon; 8] = [
         Icon::Sun,
         Icon::Moon,
         Icon::Monitor,
@@ -157,6 +163,7 @@ mod tests {
         Icon::Maximize,
         Icon::Close,
         Icon::Open,
+        Icon::Camera,
     ];
 
     fn bounds(shape: &Shape) -> [f32; 4] {
