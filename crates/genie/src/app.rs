@@ -1093,7 +1093,7 @@ fn shortcut(event: keyboard::Event) -> Option<Message> {
 }
 
 async fn pick(tracks: bool) -> Option<PathBuf> {
-    let references = ["fa", "fasta", "fna", "fas", "2bit"];
+    let references = ["fa", "fasta", "fna", "fas", "gz", "bgz", "2bit"];
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
             .set_title("Open a track or a reference sequence")

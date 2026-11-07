@@ -3,15 +3,17 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use genie_core::{Assembly, Contig, Region};
+use genie_formats::bgzf::{self, Bgzf};
 use genie_formats::fai::{self, FaiRecord};
-use genie_formats::fasta;
 use genie_formats::twobit::{self, TwoBit};
+use genie_formats::{fasta, gzi};
 
 use crate::paths;
 
 #[derive(Debug)]
 enum Source {
     Fasta(Vec<FaiRecord>),
+    Bgzf(Vec<FaiRecord>, gzi::Index),
     TwoBit(TwoBit),
 }
 
@@ -46,23 +48,29 @@ pub fn open(path: PathBuf, cache: Option<&Path>) -> Result<Reference, String> {
                 length: entry.length,
             })
             .collect();
-        Reference::new(path, contigs, Source::TwoBit(reader))
-    } else {
-        let records = fai::load(&path, cache).map_err(|error| error.to_string())?;
-        Reference::fasta(path, records)
+        return Reference::new(path, contigs, Source::TwoBit(reader));
     }
+    let records = fai::load(&path, cache).map_err(|error| error.to_string())?;
+    if !bgzf::sniff(&head) {
+        return Reference::fasta(path, records);
+    }
+    let index = gzi::load(&path, cache).map_err(|error| error.to_string())?;
+    Reference::new(path, contigs(&records), Source::Bgzf(records, index))
+}
+
+fn contigs(records: &[FaiRecord]) -> Vec<Contig> {
+    records
+        .iter()
+        .map(|record| Contig {
+            name: record.name.clone(),
+            length: record.length,
+        })
+        .collect()
 }
 
 impl Reference {
     pub fn fasta(path: PathBuf, records: Vec<FaiRecord>) -> Result<Self, String> {
-        let contigs = records
-            .iter()
-            .map(|record| Contig {
-                name: record.name.clone(),
-                length: record.length,
-            })
-            .collect();
-        Self::new(path, contigs, Source::Fasta(records))
+        Self::new(path, contigs(&records), Source::Fasta(records))
     }
 
     fn new(path: PathBuf, contigs: Vec<Contig>, source: Source) -> Result<Self, String> {
@@ -81,6 +89,9 @@ impl Reference {
         let mut file = File::open(&self.path).map_err(|error| error.to_string())?;
         match &self.source {
             Source::Fasta(records) => fasta::fetch(&mut file, &records[contig], region),
+            Source::Bgzf(records, index) => {
+                fasta::fetch_bgzf(&mut Bgzf::new(file), index, &records[contig], region)
+            }
             Source::TwoBit(reader) => reader.fetch(&mut file, contig, region),
         }
         .map_err(|error| error.to_string())
@@ -126,6 +137,44 @@ mod tests {
         let reference = open(scratch.file("ref.fa", ">a\nACGT\n"), None).unwrap();
         let region = genie_core::Region::new(1, 3).unwrap();
         assert_eq!(reference.fetch(0, region).unwrap(), b"CG");
+    }
+
+    fn bgzip(parts: &[&[u8]]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for part in parts.iter().copied().chain([&b""[..]]) {
+            let length = u16::try_from(part.len()).unwrap();
+            bytes.extend([31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, b'B', b'C', 2, 0]);
+            bytes.extend((length + 30).to_le_bytes());
+            bytes.push(1);
+            bytes.extend(length.to_le_bytes());
+            bytes.extend((!length).to_le_bytes());
+            bytes.extend(part);
+            bytes.extend([0; 4]);
+            bytes.extend(u32::from(length).to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn open_reads_bgzip_fasta() {
+        let scratch = Scratch::new("bgzip");
+        let file = scratch.file("ref.fa.gz", bgzip(&[b">a\nAC", b"GT\n>b\nGG\n"]));
+        let reference = open(file, None).unwrap();
+        assert_eq!(reference.assembly.contigs()[0].length, 4);
+        assert_eq!(reference.assembly.contigs()[1].name, "b");
+        let region = genie_core::Region::new(1, 4).unwrap();
+        assert_eq!(reference.fetch(0, region).unwrap(), b"CGT");
+        let region = genie_core::Region::new(0, 2).unwrap();
+        assert_eq!(reference.fetch(1, region).unwrap(), b"GG");
+    }
+
+    #[test]
+    fn open_rejects_plain_gzip() {
+        let scratch = Scratch::new("gzip");
+        let mut plain = bgzip(&[b">a\nACGT\n"]);
+        plain[3] = 0;
+        let error = open(scratch.file("ref.fa.gz", plain), None).unwrap_err();
+        assert_eq!(error, "The file is not compressed with bgzip.");
     }
 
     #[test]
