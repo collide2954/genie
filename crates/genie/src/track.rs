@@ -6,7 +6,8 @@ use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind};
 use genie_formats::tabix::Index;
-use genie_render::features::{Mode, pack};
+use genie_render::features::Mode;
+use genie_render::rows;
 use genie_render::scene::Hue;
 
 use crate::paths::file_name;
@@ -35,7 +36,7 @@ pub struct Loaded {
 
 impl Loaded {
     pub fn new(region: Region, features: Vec<Feature>) -> Self {
-        let rows = pack(&features, 0);
+        let rows = rows::pack(&features, Feature::span, 0);
         let count = rows.iter().max().map_or(0, |row| row + 1);
         Self {
             region,
