@@ -115,6 +115,7 @@ pub fn settings() -> window::Settings {
         size: WINDOW,
         min_size: Some(Size::new(720.0, 480.0)),
         decorations: Controls::CURRENT == Controls::Native,
+        exit_on_close_request: false,
         platform_specific: platform(),
         ..window::Settings::default()
     }

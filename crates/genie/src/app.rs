@@ -20,7 +20,7 @@ use iced::{
 };
 
 use crate::card::{self, Card, Detail};
-use crate::chrome::{self, Controls, LocusField};
+use crate::chrome::{self, Action, Controls, LocusField};
 use crate::context::Context;
 use crate::export;
 use crate::grip::Grip;
@@ -58,6 +58,7 @@ const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 const DRAW_FAILED: &str = "The view could not be drawn.";
 const FADE: Duration = Duration::from_secs(4);
+const LAST: &str = "last.genie";
 const SUGGESTIONS: usize = 8;
 
 #[derive(Debug)]
@@ -80,6 +81,7 @@ pub struct Genie {
     notices: u64,
     indexing: Option<(String, u8)>,
     restoring: Option<Saved>,
+    last: Option<Saved>,
     diagnostics: bool,
     stats: Stats,
     menu: Option<(u64, Point)>,
@@ -114,6 +116,7 @@ impl Default for Genie {
             notices: 0,
             indexing: None,
             restoring: None,
+            last: None,
             diagnostics: false,
             stats: Stats::default(),
             menu: None,
@@ -294,6 +297,7 @@ pub enum Message {
     ToggleSettings,
     SettingChanged(Setting),
     Lane(u64, Lane),
+    RestoreLast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -322,6 +326,9 @@ impl Genie {
         let mut genie = Self {
             recent: folder.as_deref().map(Recent::load).unwrap_or_default(),
             settings: folder.as_deref().map(Settings::load).unwrap_or_default(),
+            last: folder
+                .as_deref()
+                .and_then(|folder| Saved::load(&folder.join(LAST)).ok()),
             ..Self::default()
         };
         let files = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -381,7 +388,7 @@ impl Genie {
                 return self.save_settings();
             }
             Message::SystemModeChanged(mode) => self.system = mode,
-            Message::Window(action) => return chrome::perform(action),
+            Message::Window(action) => return self.window(action),
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
             Message::Picked(Some(path)) => return self.open(path),
             Message::Picked(None) | Message::NamesLoaded(_, Err(_)) => {}
@@ -422,10 +429,8 @@ impl Genie {
             Message::SequenceChanged(change) => self.change_reading(change),
             Message::ToggleSettings => self.settings_open = !self.settings_open,
             Message::Lane(id, lane) => self.lane(id, lane),
-            Message::SettingChanged(setting) => {
-                self.settings = self.settings.apply(setting);
-                return self.save_settings();
-            }
+            Message::RestoreLast => return self.restore_last(),
+            Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
                 self.drop_draft();
@@ -1076,6 +1081,32 @@ impl Genie {
         let mut welcome = column![message, open]
             .spacing(16)
             .align_x(Alignment::Center);
+        if let Some(last) = &self.last {
+            let tracks = match last.tracks.len() {
+                0 => String::new(),
+                1 => " · 1 track".to_owned(),
+                count => format!(" · {count} tracks"),
+            };
+            let locus = last
+                .locus
+                .as_deref()
+                .map(|locus| format!(" · {locus}"))
+                .unwrap_or_default();
+            let detail = format!("{}{locus}{tracks}", file_name(&last.reference));
+            welcome = welcome.push(
+                button(
+                    column![
+                        text("Restore last session").size(12),
+                        text(detail).size(11).style(style::muted)
+                    ]
+                    .spacing(2)
+                    .align_x(Alignment::Center),
+                )
+                .padding([6, 12])
+                .style(style::ghost)
+                .on_press(Message::RestoreLast),
+            );
+        }
         if !self.recent.paths().is_empty() {
             let files = self.recent.paths().iter().map(|path| {
                 let folder = path
@@ -1338,6 +1369,36 @@ impl Genie {
                 Task::none()
             }
         }
+    }
+
+    fn window(&self, action: Action) -> Task<Message> {
+        if action == Action::Close {
+            return self.save_last().chain(chrome::perform(action));
+        }
+        chrome::perform(action)
+    }
+
+    fn restore_last(&mut self) -> Task<Message> {
+        match self.last.clone() {
+            Some(last) => self.restore(last),
+            None => Task::none(),
+        }
+    }
+
+    fn change_setting(&mut self, setting: Setting) -> Task<Message> {
+        self.settings = self.settings.apply(setting);
+        self.save_settings()
+    }
+
+    fn save_last(&self) -> Task<Message> {
+        let (Some(folder), Some(saved)) = (paths::config_dir(), self.saved()) else {
+            return Task::none();
+        };
+        Task::future(async move {
+            let _ = std::fs::create_dir_all(&folder);
+            let _ = saved.save(&folder.join(LAST));
+        })
+        .discard()
     }
 
     fn save_settings(&self) -> Task<Message> {
@@ -1827,6 +1888,7 @@ fn window_event((_, event): (window::Id, window::Event)) -> Option<Message> {
     match event {
         window::Event::FileHovered(_) => Some(Message::FileHovered),
         window::Event::FilesHoveredLeft => Some(Message::FileHoverEnded),
+        window::Event::CloseRequested => Some(Message::Window(Action::Close)),
         window::Event::FileDropped(path) => Some(Message::FileDropped(path)),
         window::Event::Opened { size, .. } | window::Event::Resized(size) => {
             Some(Message::WindowResized(size))
@@ -2449,6 +2511,38 @@ mod tests {
             Some(Message::WindowResized(size))
         );
         assert_eq!(window_event((id, iced::window::Event::Focused)), None);
+        assert_eq!(
+            window_event((id, iced::window::Event::CloseRequested)),
+            Some(Message::Window(crate::chrome::Action::Close))
+        );
+    }
+
+    #[test]
+    fn welcome_offers_to_restore_the_last_session() {
+        let last = crate::saved::Saved {
+            reference: PathBuf::from("/data/hg38.fa"),
+            locus: Some("chr1:1,000-2,000".to_owned()),
+            reading: crate::reading::Reading::default(),
+            tracks: vec![crate::saved::SavedTrack {
+                path: PathBuf::from("/data/reads.bam"),
+                mode: None,
+                hue: Hue::Blue,
+                height: None,
+                options: crate::track::Options::default(),
+            }],
+        };
+        let mut genie = Genie {
+            last: Some(last),
+            ..Genie::default()
+        };
+        let mut ui = simulator(genie.view());
+        assert!(ui.find("hg38.fa · chr1:1,000-2,000 · 1 track").is_ok());
+        ui.click("Restore last session").unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+        assert_eq!(genie.pending, [PathBuf::from("/data/reads.bam")]);
+        assert!(genie.restoring.is_some());
     }
 
     fn with_menu() -> Genie {
