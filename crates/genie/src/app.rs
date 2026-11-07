@@ -47,6 +47,7 @@ const BASE_HEIGHT: f32 = 16.0;
 const EMPTY_HEIGHT: f32 = 20.0;
 const MIN_HEIGHT: f32 = 10.0;
 const EDGE: f32 = 4.0;
+const GRAB: f32 = 8.0;
 const LABEL_SIZE: f32 = 10.0;
 const CAPTION_HEIGHT: f32 = 22.0;
 const CAPTION_SIZE: f32 = 11.0;
@@ -82,6 +83,7 @@ pub struct Genie {
     menu: Option<(u64, Point)>,
     sequence_menu: Option<Point>,
     resize: Option<(u64, f32)>,
+    moving: Option<(u64, f32)>,
     scroll: f32,
     window: Size,
     hover: Option<Card>,
@@ -114,6 +116,7 @@ impl Default for Genie {
             menu: None,
             sequence_menu: None,
             resize: None,
+            moving: None,
             scroll: 0.0,
             window: chrome::WINDOW,
             hover: None,
@@ -294,6 +297,8 @@ pub enum Lane {
     Resized(f32),
     Released,
     Fit,
+    Moved(f32),
+    Dropped,
 }
 
 enum Opening {
@@ -546,6 +551,17 @@ impl Genie {
     }
 
     fn lane(&mut self, id: u64, lane: Lane) {
+        if let Lane::Dropped = lane {
+            let target = self.drop_target();
+            self.moving = None;
+            if let (Some((from, gap)), Some(session)) = (target, &mut self.session) {
+                let track = session.tracks.remove(from);
+                session
+                    .tracks
+                    .insert(if gap > from { gap - 1 } else { gap }, track);
+            }
+            return;
+        }
         let Some(session) = &mut self.session else {
             return;
         };
@@ -563,7 +579,30 @@ impl Genie {
             }
             Lane::Released => self.resize = None,
             Lane::Fit => session.tracks[position].height = None,
+            Lane::Moved(delta) => self.moving = Some((id, delta)),
+            Lane::Dropped => {}
         }
+    }
+
+    fn drop_target(&self) -> Option<(usize, usize)> {
+        let (id, delta) = self.moving?;
+        let session = self.session.as_ref()?;
+        let padding = self.settings.density.padding();
+        let heights: Vec<f32> = session
+            .tracks
+            .iter()
+            .map(|track| body_height(session, track) + 2.0 * padding + 1.0)
+            .collect();
+        let from = session.tracks.iter().position(|track| track.id == id)?;
+        let pointer = heights[..from].iter().sum::<f32>() + GRAB + delta;
+        let mut top = 0.0;
+        for (gap, height) in heights.iter().enumerate() {
+            if pointer < top + height / 2.0 {
+                return Some((from, gap));
+            }
+            top += height;
+        }
+        Some((from, heights.len()))
     }
 
     fn close_menus(&mut self) {
@@ -1215,11 +1254,22 @@ impl Genie {
             ],
             Message::SequenceMenu,
         );
-        let mut data = column![container(sequence).id("sequence"), hairline()];
-        for track in &session.tracks {
+        let gap = self
+            .drop_target()
+            .filter(|(from, gap)| gap != from && *gap != from + 1)
+            .map(|(_, gap)| gap);
+        let line = |at: usize| {
+            if gap == Some(at) {
+                drop_line()
+            } else {
+                hairline()
+            }
+        };
+        let mut data = column![container(sequence).id("sequence"), line(0)];
+        for (index, track) in session.tracks.iter().enumerate() {
             data = data
                 .push(track_view(session, track, repack, padding))
-                .push(hairline());
+                .push(line(index + 1));
         }
         data.into()
     }
@@ -1418,12 +1468,17 @@ fn track_view<'a>(
     )
     .on_double_click(Message::Lane(id, Lane::Fit))
     .interaction(mouse::Interaction::ResizingVertically);
+    let handle = Grip::new(
+        label(&track.source.name),
+        move |delta| Message::Lane(id, Lane::Moved(delta)),
+        Message::Lane(id, Lane::Dropped),
+    );
     let mut layers = stack![
         container(body)
             .height(height + 2.0 * padding)
             .padding([padding, 0.0])
             .clip(true),
-        label(&track.source.name),
+        handle,
         container(edge)
             .height(Length::Fill)
             .align_bottom(Length::Fill),
@@ -1519,6 +1574,15 @@ fn body_height(session: &Session, track: &Track) -> f32 {
     track
         .height
         .unwrap_or_else(|| shape(session, track, false).height)
+}
+
+fn drop_line<'a>() -> Element<'a, Message> {
+    container(space())
+        .id("drop")
+        .width(Length::Fill)
+        .height(2)
+        .style(|theme| container::background(tokens(theme).text))
+        .into()
 }
 
 fn note<'a>(hidden: usize) -> Element<'a, Message> {
@@ -2336,6 +2400,28 @@ mod tests {
 
     fn first_height(genie: &Genie) -> Option<f32> {
         genie.session.as_ref().unwrap().tracks[0].height
+    }
+
+    #[test]
+    fn dragging_a_label_moves_the_track() {
+        let mut genie = with_menu();
+        let _ = genie.update(Message::MenuDismissed);
+        let _ = genie.update(Message::Lane(1, Lane::Moved(-25.0)));
+        assert!(simulator(genie.view()).find(selector::id("drop")).is_ok());
+        let _ = genie.update(Message::Lane(1, Lane::Dropped));
+        assert_eq!(ids(&genie), [1, 0]);
+        assert!(simulator(genie.view()).find(selector::id("drop")).is_err());
+    }
+
+    #[test]
+    fn short_label_drags_keep_the_order() {
+        let mut genie = with_menu();
+        let _ = genie.update(Message::Lane(0, Lane::Moved(5.0)));
+        let _ = genie.update(Message::Lane(0, Lane::Dropped));
+        assert_eq!(ids(&genie), [0, 1]);
+        let _ = genie.update(Message::Lane(0, Lane::Moved(40.0)));
+        let _ = genie.update(Message::Lane(0, Lane::Dropped));
+        assert_eq!(ids(&genie), [1, 0]);
     }
 
     #[test]
