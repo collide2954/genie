@@ -10,6 +10,7 @@ pub mod features;
 pub mod gff;
 pub mod gzi;
 pub mod ini;
+pub mod png;
 mod sidecar;
 pub mod tabix;
 pub mod twobit;
