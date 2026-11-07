@@ -1,4 +1,5 @@
 use genie_core::alignment::Alignment;
+use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use iced::widget::{button, column, container, pin, row, text};
@@ -24,6 +25,10 @@ pub enum Detail {
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
+    },
+    Signal {
+        span: Region,
+        bin: Bin,
     },
 }
 
@@ -131,8 +136,32 @@ pub fn genotype(name: &str, call: Call) -> String {
     format!("{name} · {words}")
 }
 
+fn amount(value: f64) -> String {
+    if value != 0.0 && value.abs() < 0.001 {
+        return format!("{value:.2e}");
+    }
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+pub fn signal_facts(bin: Bin) -> (String, Option<String>) {
+    if bin.max - bin.min <= f32::EPSILON * bin.max.abs().max(1.0) {
+        return (format!("Value {}", amount(f64::from(bin.max))), None);
+    }
+    let range = format!(
+        "Min {} · Max {}",
+        amount(f64::from(bin.min)),
+        amount(f64::from(bin.max))
+    );
+    (format!("Mean {}", amount(bin.mean())), Some(range))
+}
+
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
+        Detail::Signal { span, bin } => {
+            let (title, range) = signal_facts(*bin);
+            (title, *span, range.into_iter().collect())
+        }
         Detail::Variant { variant, sample } => {
             let title = if variant.id.is_empty() {
                 change(variant)
@@ -216,10 +245,13 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
 #[cfg(test)]
 mod tests {
     use genie_core::alignment::{Alignment, Op, REVERSE};
+    use genie_core::signal::Bin;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Region, Strand};
 
-    use super::{change, cigar, coding, facts, genotype, info, read_facts, variant_facts};
+    use super::{
+        change, cigar, coding, facts, genotype, info, read_facts, signal_facts, variant_facts,
+    };
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -268,6 +300,37 @@ mod tests {
         assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
         assert_eq!(info(&long), None);
         assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");
+    }
+
+    #[test]
+    fn signal_cards_show_the_value_or_the_range() {
+        let one = Bin {
+            count: 10.0,
+            min: 2.5,
+            max: 2.5,
+            sum: 25.0,
+        };
+        assert_eq!(signal_facts(one), ("Value 2.5".to_owned(), None));
+        let many = Bin {
+            count: 4.0,
+            min: -1.0,
+            max: 7.125,
+            sum: 13.0,
+        };
+        assert_eq!(
+            signal_facts(many),
+            (
+                "Mean 3.25".to_owned(),
+                Some("Min -1 · Max 7.125".to_owned())
+            )
+        );
+        let tiny = Bin {
+            count: 1.0,
+            min: 0.000_25,
+            max: 0.000_25,
+            sum: 0.000_25,
+        };
+        assert_eq!(signal_facts(tiny).0, "Value 2.50e-4");
     }
 
     #[test]

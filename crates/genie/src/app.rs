@@ -5,7 +5,9 @@ use std::thread;
 use std::time::Duration;
 
 use genie_core::{Locus, Named, Names, Region, Span, Target, Viewport, grouped};
-use genie_render::{alignments, features, overview, ruler, sequence, translation, variants};
+use genie_render::{
+    alignments, features, overview, ruler, sequence, signal, translation, variants,
+};
 use iced::futures::channel::mpsc;
 use iced::theme::Mode;
 use iced::time::Instant;
@@ -54,6 +56,7 @@ const CAPTION_HEIGHT: f32 = 22.0;
 const CAPTION_SIZE: f32 = 11.0;
 const READ_HINT: &str = "Zoom in to see the reads";
 const VARIANT_HINT: &str = "Zoom in to see the variants";
+const SIGNAL_HINT: &str = "Zoom in to see the signal";
 const DROP_HINT: &str = "Drop the file to open it";
 const ZOOM_HINT: &str = "Zoom in to see the features";
 const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -509,13 +512,14 @@ impl Genie {
 
     fn figures(&self) -> Vec<(&'static str, String)> {
         let millis = |duration: Duration| format!("{:.2} ms", duration.as_secs_f64() * 1_000.0);
-        let (mut reads, mut features, mut sites) = (0, 0, 0);
+        let (mut reads, mut features, mut sites, mut values) = (0, 0, 0, 0);
         if let Some(session) = &self.session {
             for track in &session.tracks {
                 match track.data(session.contig).map(|data| &data.content) {
                     Some(Content::Reads(pile)) => reads += pile.reads.len(),
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
+                    Some(Content::Signal(data)) => values += data.summaries.len(),
                     None => {}
                 }
             }
@@ -534,6 +538,7 @@ impl Genie {
             ("reads", grouped(reads as u64)),
             ("features", grouped(features as u64)),
             ("variants", grouped(sites as u64)),
+            ("signal", grouped(values as u64)),
         ]
     }
 
@@ -654,6 +659,13 @@ impl Genie {
                     Some((name, variant.calls[sample]))
                 });
                 Detail::Variant { variant, sample }
+            }
+            Content::Signal(data) => {
+                let column = signal::hit(&signal::columns(viewport, &data.summaries), x)?;
+                Detail::Signal {
+                    span: column.span,
+                    bin: column.bin,
+                }
             }
         };
         Some(Card {
@@ -867,11 +879,12 @@ impl Genie {
         let contig = session.contig;
         let length = viewport.length();
         let wanted = visible.expand(visible.len(), length);
+        let step = track::step(viewport.scale());
         let reference = &session.reference;
         let tasks: Vec<Task<Message>> = session
             .tracks
             .iter_mut()
-            .filter(|track| track.needs(contig, visible))
+            .filter(|track| track.needs(contig, visible, step))
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;
                 track.wanted = Some((contig, wanted));
@@ -882,7 +895,7 @@ impl Genie {
                         let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        let result = track::load(&source, &name, wanted, options, bases);
+                        let result = track::load(&source, &name, wanted, options, step, bases);
                         match &result {
                             Ok(loaded) => log::debug!(
                                 "Loaded {} items of {} at {name}:{}-{} in {:.0?}",
@@ -1630,12 +1643,25 @@ fn track_body<'a>(
             READ_HINT
         } else if track.source.has_variants() {
             VARIANT_HINT
+        } else if track.source.has_signal() {
+            SIGNAL_HINT
         } else {
             ZOOM_HINT
         };
         return hint(words.to_owned());
     }
     match track.data(contig).map(|data| &data.content) {
+        Some(Content::Signal(data)) => {
+            let height = track.height.unwrap_or(shape.height);
+            let columns = signal::columns(viewport, &data.summaries);
+            let Some(scale) = signal::range(&columns) else {
+                return space().width(Length::Fill).height(height).into();
+            };
+            let width = viewport.width() as f32;
+            let style = signal::Style::default();
+            let primitives = signal::scene(&columns, scale, style, track.hue, height, width);
+            interactive(primitives, height).into()
+        }
         Some(Content::Variants(calls)) => {
             let primitives = variants::scene(viewport, &calls.variants, mode);
             interactive(primitives, shape.height).into()
@@ -1807,6 +1833,8 @@ fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
                 row_height,
             }
         }
+        Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
+        None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
 }
@@ -1958,7 +1986,13 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
             .set_title("Open a track, a reference sequence or a session")
-            .add_filter("Tracks", &["gz", "bgz", "bed", "gff", "gff3", "vcf", "bam"])
+            .add_filter(
+                "Tracks",
+                &[
+                    "gz", "bgz", "bed", "gff", "gff3", "vcf", "bam", "bw", "bigwig", "bedgraph",
+                    "bdg",
+                ],
+            )
             .add_filter("Reference sequences", &references)
     } else {
         rfd::AsyncFileDialog::new()
@@ -2010,6 +2044,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use genie_core::signal::Summary;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Names, Region, Strand};
     use genie_formats::fai::FaiRecord;
@@ -2025,8 +2060,8 @@ mod tests {
     use iced::{Point, Size};
 
     use super::{
-        DROP_HINT, Genie, Lane, Message, NO_REFERENCE, VARIANT_HINT, ZOOM_HINT, shortcut,
-        window_event,
+        DROP_HINT, Genie, Lane, Message, NO_REFERENCE, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT,
+        shortcut, window_event,
     };
     use crate::export;
     use crate::menu;
@@ -2174,6 +2209,11 @@ mod tests {
         assert!(shows(&genie, ZOOM_HINT));
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
         assert!(shows(&genie, VARIANT_HINT));
+        let indexed = Format::BedGraph {
+            index: Index::default(),
+        };
+        let _ = genie.update(Message::TrackOpened(Ok(signal_source(indexed))));
+        assert!(shows(&genie, SIGNAL_HINT));
     }
 
     fn reference() -> Arc<Reference> {
@@ -2795,7 +2835,7 @@ mod tests {
 
     #[test]
     fn lanes_have_the_height_the_app_expects() {
-        for genie in [with_rows(3), with_reads(), with_variants()] {
+        for genie in [with_rows(3), with_reads(), with_variants(), with_signal()] {
             let session = genie.session.as_ref().unwrap();
             let expected = super::body_height(session, &session.tracks[0]) + 4.0;
             let mut ui = simulator(genie.view());
@@ -2991,7 +3031,7 @@ mod tests {
 
     #[test]
     fn menus_know_their_height() {
-        for mut genie in [with_track(), with_reads(), with_variants()] {
+        for mut genie in [with_track(), with_reads(), with_variants(), with_signal()] {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
             let expected = menu::height(&genie.session.as_ref().unwrap().tracks[0]);
             let mut ui = simulator(genie.view());
@@ -3043,6 +3083,65 @@ mod tests {
         let loaded = Loaded::variants(region, variants, 2);
         track.accept(0, region, Ok(Arc::new(loaded)));
         genie
+    }
+
+    fn signal_source(format: Format) -> Arc<Source> {
+        Arc::new(Source {
+            path: PathBuf::from("/data/coverage.bedGraph"),
+            name: "coverage.bedGraph".to_owned(),
+            format,
+        })
+    }
+
+    fn signal_table() -> Format {
+        Format::BedGraphTable {
+            table: genie_formats::table::Table::new(Vec::new()),
+        }
+    }
+
+    fn with_signal() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(signal_source(signal_table()))));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.wanted = Some((0, region));
+        let values = vec![
+            Summary::single(Region::between(0, 100), 1.0),
+            Summary::single(Region::between(100, 200), 4.0),
+        ];
+        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        genie
+    }
+
+    #[test]
+    fn signal_lanes_have_a_fixed_height() {
+        let genie = with_signal();
+        let session = genie.session.as_ref().unwrap();
+        let height = super::body_height(session, &session.tracks[0]);
+        assert!((height - 48.0).abs() < f32::EPSILON, "{height}");
+    }
+
+    #[test]
+    fn hovering_a_signal_shows_its_value() {
+        let mut genie = with_signal();
+        let _ = genie.update(Message::TrackHovered(0, Some(over(150.0, 20.0))));
+        assert!(shows(&genie, "Value 4"));
+        assert!(shows(&genie, "chr1:101-200"));
+        let _ = genie.update(Message::TrackHovered(0, Some(over(500.0, 20.0))));
+        assert!(genie.hover.is_none());
+    }
+
+    #[test]
+    fn signal_menus_offer_colors_but_no_rows() {
+        let mut genie = with_signal();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Move up"));
+        assert!(!shows(&genie, "Squished"));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("swatches"))
+                .is_ok()
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 192.0;
 const READS_HEIGHT: f32 = 235.0;
 const VARIANTS_HEIGHT: f32 = 159.0;
+const SIGNAL_HEIGHT: f32 = 116.0;
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
@@ -29,6 +30,8 @@ pub fn height(track: &Track) -> f32 {
         READS_HEIGHT
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
+    } else if track.source.has_signal() {
+        SIGNAL_HEIGHT
     } else {
         FEATURES_HEIGHT
     }
@@ -87,7 +90,11 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let mut content = column![column(modes).spacing(1), separator()].spacing(1);
+    let mut content = if track.source.has_signal() {
+        column![].spacing(1)
+    } else {
+        column![column(modes).spacing(1), separator()].spacing(1)
+    };
     if track.source.has_reads() {
         let options = track.options;
         content = content

@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, DUPLICATE, Filter};
 use genie_core::pileup::{Coverage, Read, downsample};
+use genie_core::signal::{self, Summary};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Kind, Table};
-use genie_formats::{bai, bam, tabix, vcf};
+use genie_formats::{bai, bam, bedgraph, bigwig, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::{alignments, rows, variants};
@@ -47,6 +48,15 @@ pub enum Format {
         index: bai::Index,
         contigs: Vec<String>,
     },
+    BigWig {
+        index: bigwig::Index,
+    },
+    BedGraph {
+        index: tabix::Index,
+    },
+    BedGraphTable {
+        table: Table<Summary>,
+    },
 }
 
 #[derive(Debug)]
@@ -65,11 +75,22 @@ impl PartialEq for Source {
 impl Source {
     pub fn contigs(&self) -> &[String] {
         match &self.format {
-            Format::Features { index, .. } | Format::Variants { index, .. } => index.names(),
+            Format::Features { index, .. }
+            | Format::Variants { index, .. }
+            | Format::BedGraph { index } => index.names(),
             Format::Table { table, .. } => table.contigs(),
             Format::VariantTable { table, .. } => table.contigs(),
+            Format::BedGraphTable { table } => table.contigs(),
             Format::Reads { contigs, .. } => contigs,
+            Format::BigWig { index } => index.names(),
         }
+    }
+
+    pub fn has_signal(&self) -> bool {
+        matches!(
+            self.format,
+            Format::BigWig { .. } | Format::BedGraph { .. } | Format::BedGraphTable { .. }
+        )
     }
 
     pub fn has_reads(&self) -> bool {
@@ -91,14 +112,28 @@ impl Source {
     }
 
     pub fn span(&self) -> u64 {
-        if self.has_reads() {
-            READ_SPAN
-        } else if self.has_variants() {
-            VARIANT_SPAN
-        } else {
-            FEATURE_SPAN
+        match self.format {
+            Format::Reads { .. } => READ_SPAN,
+            Format::Variants { .. } | Format::VariantTable { .. } => VARIANT_SPAN,
+            Format::BigWig { .. } | Format::BedGraphTable { .. } => u64::MAX,
+            _ => FEATURE_SPAN,
         }
     }
+}
+
+pub fn step(bases_per_pixel: f64) -> u64 {
+    let desired = (bases_per_pixel / 2.0).floor().max(1.0) as u64;
+    let mut step = 1;
+    while step * 4 <= desired {
+        step *= 4;
+    }
+    step
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Signal {
+    pub summaries: Vec<Summary>,
+    pub step: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -197,6 +232,7 @@ pub enum Content {
     Features(Annotation),
     Reads(Pile),
     Variants(Calls),
+    Signal(Signal),
 }
 
 #[derive(Debug, PartialEq)]
@@ -265,11 +301,27 @@ impl Loaded {
         }
     }
 
+    pub fn signal(region: Region, summaries: Vec<Summary>, step: u64) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Signal(Signal { summaries, step }),
+        }
+    }
+
     pub fn count(&self) -> usize {
         match &self.content {
             Content::Features(annotation) => annotation.count,
             Content::Reads(pile) => pile.count,
             Content::Variants(calls) => calls.samples,
+            Content::Signal(_) => 0,
+        }
+    }
+
+    fn step(&self) -> u64 {
+        match &self.content {
+            Content::Signal(signal) => signal.step,
+            _ => 1,
         }
     }
 }
@@ -331,13 +383,13 @@ impl Track {
         })
     }
 
-    pub fn needs(&self, contig: usize, visible: Region) -> bool {
+    pub fn needs(&self, contig: usize, visible: Region, step: u64) -> bool {
         let covers = |(wanted, region): (usize, Region)| {
             wanted == contig && region.start() <= visible.start() && visible.end() <= region.end()
         };
         let loaded = self
             .data(contig)
-            .filter(|data| data.options == self.options)
+            .filter(|data| data.options == self.options && data.step() <= step)
             .map(|data| (contig, data.region));
         self.contigs.get(contig).is_some_and(Option::is_some)
             && visible.len() <= self.source.span()
@@ -406,7 +458,7 @@ pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>
 
 pub fn is_track(path: &Path) -> bool {
     let name = file_name(path);
-    is_bam(path) || is_vcf(&name) || Kind::of(&name).is_some()
+    is_bam(path) || is_vcf(&name) || is_signal(&name) || Kind::of(&name).is_some()
 }
 
 fn is_bam(path: &Path) -> bool {
@@ -414,15 +466,36 @@ fn is_bam(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
 }
 
-fn is_vcf(name: &str) -> bool {
+fn inner_extension(name: &str, wanted: &[&str]) -> bool {
     let path = Path::new(name);
     let stem = if is_compressed(path) {
         path.file_stem().map(Path::new)
     } else {
         Some(path)
     };
-    stem.and_then(Path::extension)
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("vcf"))
+    stem.and_then(Path::extension).is_some_and(|extension| {
+        wanted
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
+    })
+}
+
+fn is_vcf(name: &str) -> bool {
+    inner_extension(name, &["vcf"])
+}
+
+fn is_bigwig(name: &str) -> bool {
+    Path::new(name).extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("bw") || extension.eq_ignore_ascii_case("bigwig")
+    })
+}
+
+fn is_bedgraph(name: &str) -> bool {
+    inner_extension(name, &["bedgraph", "bdg"])
+}
+
+fn is_signal(name: &str) -> bool {
+    is_bigwig(name) || is_bedgraph(name)
 }
 
 fn is_compressed(path: &Path) -> bool {
@@ -456,8 +529,12 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
     if is_vcf(&name) {
         return open_variants(path, name);
     }
-    let kind = Kind::of(&name)
-        .ok_or_else(|| format!("The file {name} is not a BED, GFF3, VCF or BAM file."))?;
+    if is_signal(&name) {
+        return open_signal(path, name);
+    }
+    let kind = Kind::of(&name).ok_or_else(|| {
+        format!("The file {name} is not a BED, GFF3, VCF, BAM, bigWig or bedGraph file.")
+    })?;
     if !is_compressed(&path) {
         let table = features::read_table(kind, plain(&path, &name)?)
             .map_err(|error| format!("The file {name} is not valid. {error}"))?;
@@ -499,6 +576,24 @@ fn open_variants(path: PathBuf, name: String) -> Result<Source, String> {
             samples: header.samples,
         },
     })
+}
+
+fn open_signal(path: PathBuf, name: String) -> Result<Source, String> {
+    let format = if is_bigwig(&name) {
+        let mut file = File::open(&path).map_err(|error| error.to_string())?;
+        let index = bigwig::Index::read(&mut file)
+            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
+        Format::BigWig { index }
+    } else if is_compressed(&path) {
+        Format::BedGraph {
+            index: tabix_index(&path, &name)?,
+        }
+    } else {
+        let table = bedgraph::read_table(plain(&path, &name)?)
+            .map_err(|error| format!("The file {name} is not valid. {error}"))?;
+        Format::BedGraphTable { table }
+    };
+    Ok(Source { path, name, format })
 }
 
 fn fits(name: &str, size: u64) -> Result<(), String> {
@@ -546,6 +641,7 @@ pub fn load(
     contig: &str,
     region: Region,
     options: Options,
+    step: u64,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let reader = || {
@@ -554,6 +650,22 @@ pub fn load(
             .map_err(|error| error.to_string())
     };
     match &source.format {
+        Format::BigWig { index } => {
+            let file = File::open(&source.path).map_err(|error| error.to_string())?;
+            let summaries = index
+                .summaries(&mut BufReader::new(file), contig, region, step)
+                .map_err(|error| error.to_string())?;
+            Ok(Loaded::signal(region, summaries, step))
+        }
+        Format::BedGraphTable { table } => {
+            let records = table.query(contig, region);
+            Ok(Loaded::signal(region, signal::reduce(&records, step), step))
+        }
+        Format::BedGraph { index } => {
+            let records = bedgraph::query(index, &mut reader()?, contig, region)
+                .map_err(|error| error.to_string())?;
+            Ok(Loaded::signal(region, signal::reduce(&records, step), step))
+        }
         Format::Table { table, .. } => Ok(Loaded::features(region, table.query(contig, region))),
         Format::VariantTable { table, samples } => Ok(Loaded::variants(
             region,
@@ -618,7 +730,10 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
             }
             vcf::names(Bgzf::new(file()?))
         }
-        Format::Reads { .. } => return Ok(Names::default()),
+        Format::Reads { .. }
+        | Format::BigWig { .. }
+        | Format::BedGraph { .. }
+        | Format::BedGraphTable { .. } => return Ok(Names::default()),
     }
     .map_err(|error| error.to_string())?;
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
@@ -636,7 +751,7 @@ mod tests {
     use std::sync::Arc;
 
     use genie_core::alignment::{Alignment, DUPLICATE, Op, QC_FAIL, SECONDARY};
-    use genie_core::{Assembly, Contig, Feature, Region, Strand};
+    use genie_core::{Assembly, Contig, Feature, Names, Region, Strand};
     use genie_formats::features::Kind;
     use genie_formats::tabix;
     use genie_render::features::Mode;
@@ -644,7 +759,7 @@ mod tests {
 
     use super::{
         Change, Content, Format, Loaded, Options, Source, Toggle, Track, change, contig_names,
-        fits, load, names, open,
+        fits, is_track, load, names, open, step,
     };
     use crate::scratch::Scratch;
 
@@ -750,7 +865,7 @@ mod tests {
             }
         ));
         let window = region(50_000, 51_000);
-        let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
+        let loaded = load(&source, "chr1", window, Options::default(), 1, no_reference).unwrap();
         assert_eq!(loaded.region, region(50_000, 57_400));
         let Content::Features(annotation) = &loaded.content else {
             panic!("expected features");
@@ -778,7 +893,8 @@ mod tests {
             assert_eq!(source.samples(), ["S1", "S2", "S3"]);
             assert_eq!(source.span(), 1_000_000);
             let window = region(1_000, 60_000);
-            let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
+            let loaded =
+                load(&source, "chr1", window, Options::default(), 1, no_reference).unwrap();
             let Content::Variants(calls) = &loaded.content else {
                 panic!("expected variants");
             };
@@ -798,7 +914,7 @@ mod tests {
         assert!(matches!(source.format, Format::VariantTable { .. }));
         assert_eq!(source.contigs(), ["chr1"]);
         let window = region(0, 100);
-        let loaded = load(&source, "chr1", window, Options::default(), no_reference).unwrap();
+        let loaded = load(&source, "chr1", window, Options::default(), 1, no_reference).unwrap();
         assert_eq!(loaded.count(), 1);
         assert_eq!(
             names(&source, &assembly())
@@ -808,6 +924,122 @@ mod tests {
                 .contig,
             0
         );
+    }
+
+    fn signal(loaded: &Loaded) -> &[genie_core::signal::Summary] {
+        let Content::Signal(signal) = &loaded.content else {
+            panic!("expected signal");
+        };
+        &signal.summaries
+    }
+
+    #[test]
+    fn knows_signal_files_by_name() {
+        for name in [
+            "a.bw",
+            "B.BigWig",
+            "c.bedGraph",
+            "d.bdg",
+            "e.bedgraph.gz",
+            "f.bdg.bgz",
+        ] {
+            assert!(is_track(&PathBuf::from(name)), "{name}");
+        }
+        assert!(!is_track(&PathBuf::from("g.wig")));
+    }
+
+    #[test]
+    fn steps_follow_the_zoom_in_powers_of_four() {
+        let found: Vec<u64> = [0.5, 2.0, 8.0, 10.0, 32.0, 1_000.0]
+            .into_iter()
+            .map(step)
+            .collect();
+        assert_eq!(found, [1, 1, 4, 4, 16, 256]);
+    }
+
+    #[test]
+    fn opens_bigwig_and_loads_the_zoom_level_for_the_step() {
+        let source = open(fixture("signal.bw")).unwrap();
+        assert!(source.has_signal());
+        assert_eq!(source.span(), u64::MAX);
+        assert!(source.contigs().contains(&"chrX".to_owned()));
+        let fine = load(
+            &source,
+            "chr1",
+            region(0, 5_000),
+            Options::default(),
+            1,
+            no_reference,
+        );
+        assert_eq!(signal(&fine.unwrap()).len(), 9);
+        let whole = region(0, 3_000_000);
+        let coarse = load(
+            &source,
+            "chr1",
+            whole,
+            Options::default(),
+            16_384,
+            no_reference,
+        );
+        let count = signal(&coarse.unwrap()).len();
+        assert!((1..1_000).contains(&count), "{count}");
+        assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
+    }
+
+    #[test]
+    fn opens_plain_and_indexed_bedgraph() {
+        let scratch = Scratch::new("bedgraph");
+        let text = "track type=bedGraph\nchr1\t0\t10\t1.5\nchr1\t10\t20\t2.5\n";
+        let plain = open(scratch.file("coverage.bedGraph", text)).unwrap();
+        assert!(matches!(plain.format, Format::BedGraphTable { .. }));
+        assert_eq!(plain.span(), u64::MAX);
+        let window = region(0, 100);
+        let raw = load(&plain, "chr1", window, Options::default(), 1, no_reference).unwrap();
+        assert_eq!(signal(&raw).len(), 2);
+        let reduced = load(&plain, "chr1", window, Options::default(), 16, no_reference).unwrap();
+        let spans: Vec<Region> = signal(&reduced)
+            .iter()
+            .map(|summary| summary.span)
+            .collect();
+        assert_eq!(spans, [region(0, 16), region(16, 20)]);
+        let data = std::fs::read(fixture("plain.bedGraph.gz")).unwrap();
+        let path = scratch.file("coverage.bedGraph.gz", data);
+        let index = std::fs::read(fixture("plain.bedGraph.gz.tbi")).unwrap();
+        scratch.file("coverage.bedGraph.gz.tbi", index);
+        let indexed = open(path).unwrap();
+        assert!(matches!(indexed.format, Format::BedGraph { .. }));
+        assert_eq!(indexed.span(), 10_000_000);
+        let window = region(0, 10_000);
+        let loaded = load(
+            &indexed,
+            "chr2",
+            window,
+            Options::default(),
+            1,
+            no_reference,
+        )
+        .unwrap();
+        assert_ne!(signal(&loaded), []);
+    }
+
+    #[test]
+    fn signal_tracks_reload_when_the_step_gets_finer() {
+        let source = Source {
+            path: PathBuf::from("/data/coverage.bedGraph"),
+            name: "coverage.bedGraph".to_owned(),
+            format: Format::BedGraphTable {
+                table: genie_formats::table::Table::new(Vec::new()),
+            },
+        };
+        let mut track = Track::new(3, Arc::new(source), &assembly());
+        track.contigs = vec![Some("chr1".to_owned()), None, None];
+        let wide = region(0, 1_000);
+        track.wanted = Some((0, wide));
+        track.accept(0, wide, Ok(Arc::new(Loaded::signal(wide, Vec::new(), 16))));
+        let shown = region(100, 200);
+        assert!(!track.needs(0, shown, 16));
+        assert!(!track.needs(0, shown, 64));
+        assert!(track.needs(0, shown, 4));
     }
 
     #[test]
@@ -839,6 +1071,7 @@ mod tests {
             "chr1",
             region(0, 100),
             Options::default(),
+            1,
             no_reference,
         )
         .unwrap();
@@ -875,7 +1108,7 @@ mod tests {
         assert_eq!(source.contigs(), ["chr1", "chr2"]);
         let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
         let window = region(5_000, 8_000);
-        let loaded = load(&source, "chr1", window, Options::default(), reference).unwrap();
+        let loaded = load(&source, "chr1", window, Options::default(), 1, reference).unwrap();
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -922,9 +1155,9 @@ mod tests {
         let mut track = track();
         track.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
-        assert!(!track.needs(0, region(100, 200)));
+        assert!(!track.needs(0, region(100, 200), 1));
         track.options = track.options.toggled(Toggle::Clips);
-        assert!(track.needs(0, region(100, 200)));
+        assert!(track.needs(0, region(100, 200), 1));
         track.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 2)));
         assert_eq!(track.data(0).unwrap().count(), 1);
@@ -963,7 +1196,15 @@ mod tests {
             duplicates: true,
             ..Options::default()
         };
-        let loaded = load(&source, "chr1", region(1_000, 41_000), options, reference).unwrap();
+        let loaded = load(
+            &source,
+            "chr1",
+            region(1_000, 41_000),
+            options,
+            1,
+            reference,
+        )
+        .unwrap();
         let Content::Reads(pile) = &loaded.content else {
             panic!("expected reads");
         };
@@ -1016,12 +1257,12 @@ mod tests {
     #[test]
     fn needs_data_until_a_request_covers_the_view() {
         let mut track = track();
-        assert!(track.needs(0, region(100, 200)));
-        assert!(!track.needs(1, region(100, 200)));
-        assert!(!track.needs(0, region(0, 20_000_000)));
+        assert!(track.needs(0, region(100, 200), 1));
+        assert!(!track.needs(1, region(100, 200), 1));
+        assert!(!track.needs(0, region(0, 20_000_000), 1));
         track.wanted = Some((0, region(0, 300)));
-        assert!(!track.needs(0, region(100, 200)));
-        assert!(track.needs(0, region(250, 350)));
+        assert!(!track.needs(0, region(100, 200), 1));
+        assert!(track.needs(0, region(250, 350), 1));
     }
 
     #[test]
@@ -1032,7 +1273,7 @@ mod tests {
         assert!(track.data(0).is_none());
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
         assert_eq!(track.data(0).unwrap().region, region(0, 300));
-        assert!(!track.needs(0, region(100, 200)));
+        assert!(!track.needs(0, region(100, 200), 1));
         assert!(track.data(1).is_none());
     }
 
@@ -1059,7 +1300,7 @@ mod tests {
         let error = open(PathBuf::from("/data/calls.bcf")).unwrap_err();
         assert_eq!(
             error,
-            "The file calls.bcf is not a BED, GFF3, VCF or BAM file."
+            "The file calls.bcf is not a BED, GFF3, VCF, BAM, bigWig or bedGraph file."
         );
     }
 
