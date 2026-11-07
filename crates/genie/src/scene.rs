@@ -147,6 +147,7 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::OnBase(base) => data.on_bases[base as usize],
         Paint::Faded(base) => data.bases[base as usize].scale_alpha(FADED),
         Paint::Hue(hue) => data.hues[hue as usize],
+        Paint::Tint(hue) => data.hues[hue as usize].scale_alpha(FADED),
         Paint::Strand(Strand::Reverse) => data.strands[1],
         Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
         Paint::Coverage => data.coverage,
@@ -378,6 +379,10 @@ mod tests {
         assert_eq!(
             color(Paint::Hue(Hue::Purple), &DARK, &DARK_DATA),
             DARK_DATA.hues[4]
+        );
+        assert_eq!(
+            color(Paint::Tint(Hue::Green), &LIGHT, &LIGHT_DATA),
+            LIGHT_DATA.hues[1].scale_alpha(0.35)
         );
     }
 

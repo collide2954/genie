@@ -5,5 +5,6 @@ pub mod rows;
 pub mod ruler;
 pub mod scene;
 pub mod sequence;
+pub mod signal;
 pub mod translation;
 pub mod variants;

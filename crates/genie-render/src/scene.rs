@@ -66,6 +66,7 @@ pub enum Paint {
     OnBase(Base),
     Faded(Base),
     Hue(Hue),
+    Tint(Hue),
     Strand(Strand),
     Coverage,
     Insertion,
