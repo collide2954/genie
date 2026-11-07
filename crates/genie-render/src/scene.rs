@@ -26,11 +26,13 @@ pub enum Paint {
     Base(Base),
     OnBase(Base),
     Muted,
+    Line,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Font {
     Ui,
+    Mono,
     MonoStrong,
 }
 
