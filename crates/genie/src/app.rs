@@ -86,6 +86,7 @@ pub struct Genie {
     notices: u64,
     indexing: Option<(String, u8)>,
     restoring: Option<Saved>,
+    waiting: usize,
     last: Option<Saved>,
     diagnostics: bool,
     stats: Stats,
@@ -121,6 +122,7 @@ impl Default for Genie {
             notices: 0,
             indexing: None,
             restoring: None,
+            waiting: 0,
             last: None,
             diagnostics: false,
             stats: Stats::default(),
@@ -374,10 +376,32 @@ impl Genie {
         self.session = Some(Session::new(reference, self.width));
         self.resume();
         let mut tasks = vec![self.fetch(), self.remember()];
-        for path in std::mem::take(&mut self.pending) {
+        let pending = std::mem::take(&mut self.pending);
+        self.waiting = pending.len();
+        if self.waiting == 0 {
+            self.restoring = None;
+        }
+        for path in pending {
             tasks.push(self.open(path));
         }
         Task::batch(tasks)
+    }
+
+    fn track_opened(&mut self, result: Result<Arc<Source>, String>) -> Task<Message> {
+        let task = match result {
+            Ok(source) => self.add_track(source),
+            Err(error) => {
+                self.fail(error);
+                Task::none()
+            }
+        };
+        if self.restoring.is_some() {
+            self.waiting = self.waiting.saturating_sub(1);
+            if self.waiting == 0 {
+                self.restoring = None;
+            }
+        }
+        task
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -410,8 +434,7 @@ impl Genie {
             }
             Message::Opened(result) => return self.opened(result),
             Message::Indexing(name, percent) => self.indexing = Some((name, percent)),
-            Message::TrackOpened(Err(error)) => self.fail(error),
-            Message::TrackOpened(Ok(source)) => return self.add_track(source),
+            Message::TrackOpened(result) => return self.track_opened(result),
             Message::TrackLoaded(id, contig, region, result) => {
                 self.on_session(|session| session.accept(id, contig, region, result));
             }
@@ -2701,6 +2724,43 @@ mod tests {
             window_event((id, iced::window::Event::CloseRequested)),
             Some(Message::Window(crate::chrome::Action::Close))
         );
+    }
+
+    #[test]
+    fn tracks_opened_after_a_restore_keep_their_moves() {
+        let saved_track = |name: &str| crate::saved::SavedTrack {
+            path: PathBuf::from(format!("/data/{name}")),
+            mode: None,
+            hue: Hue::Blue,
+            height: None,
+            options: crate::track::Options::default(),
+            plot: crate::track::Plot::default(),
+        };
+        let saved = crate::saved::Saved {
+            reference: PathBuf::from("ref.fa"),
+            locus: None,
+            reading: crate::reading::Reading::default(),
+            tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
+        };
+        let mut genie = Genie::default();
+        let _ = genie.restore(saved);
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        let _ = genie.update(Message::TrackOpened(Ok(source("b.bed.gz"))));
+        let _ = genie.update(Message::TrackOpened(Ok(source("a.bed.gz"))));
+        let names = |genie: &Genie| -> Vec<String> {
+            let session = genie.session.as_ref().unwrap();
+            session
+                .tracks
+                .iter()
+                .map(|track| track.source.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&genie), ["a.bed.gz", "b.bed.gz"]);
+        let b = genie.session.as_ref().unwrap().tracks[1].id;
+        let _ = genie.update(Message::TrackChanged(b, Change::Up));
+        let _ = genie.update(Message::TrackOpened(Ok(source("c.bed.gz"))));
+        assert_eq!(names(&genie), ["b.bed.gz", "a.bed.gz", "c.bed.gz"]);
+        assert!(genie.restoring.is_none());
     }
 
     #[test]
