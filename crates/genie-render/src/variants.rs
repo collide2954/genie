@@ -8,7 +8,7 @@ pub const SITE_HEIGHT: f32 = 12.0;
 pub const LIMIT: usize = 100;
 
 const REACH: f32 = 3.0;
-const GAPS_FROM: f32 = 3.0;
+const NARROWEST: f32 = 3.0;
 
 pub fn fit(samples: usize) -> Mode {
     if samples <= LIMIT {
@@ -69,12 +69,15 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primit
             continue;
         }
         let left = px(span.start());
-        let mut width = (px(span.end()) - left).max(1.0);
-        if width >= GAPS_FROM {
-            width -= 1.0;
-        }
+        let extent = px(span.end()) - left;
+        let width = if extent > NARROWEST + 1.0 {
+            extent - 1.0
+        } else {
+            NARROWEST
+        };
+        let x = left + (extent - width).min(0.0) / 2.0;
         let column = left.floor() as i64;
-        let narrow = width <= 1.0;
+        let narrow = extent <= 1.0;
         let allele = allele(variant);
         let shade = if variant.passes() {
             Shade::Full
@@ -98,7 +101,7 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primit
         };
         if place(0, 1) {
             primitives.push(Primitive::Rect {
-                x: left,
+                x,
                 y: 1.0,
                 width,
                 height: SITE_HEIGHT - 2.0,
@@ -114,7 +117,7 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primit
             };
             if place(sample + 1, strength(*call)) {
                 primitives.push(Primitive::Rect {
-                    x: left,
+                    x,
                     y: SITE_HEIGHT + 1.0 + sample as f32 * row + offset,
                     width,
                     height: size,
@@ -212,15 +215,15 @@ mod tests {
             found,
             [
                 (
-                    [10.0, 1.0, 1.0, 10.0],
+                    [9.0, 1.0, 3.0, 10.0],
                     Paint::Allele(Allele::Base(Base::G), Shade::Full)
                 ),
                 (
-                    [20.0, 1.0, 1.0, 10.0],
+                    [19.0, 1.0, 3.0, 10.0],
                     Paint::Allele(Allele::Insertion, Shade::Full)
                 ),
                 (
-                    [30.0, 1.0, 1.0, 10.0],
+                    [29.0, 1.0, 3.0, 10.0],
                     Paint::Allele(Allele::Base(Base::C), Shade::Faded)
                 ),
                 (
@@ -245,18 +248,33 @@ mod tests {
             rows,
             [
                 (
-                    [10.0, top + 1.0, 1.0, 8.0],
+                    [9.0, top + 1.0, 3.0, 8.0],
                     Paint::Allele(Allele::Base(Base::T), Shade::Half)
                 ),
-                ([10.0, top + 11.0, 1.0, 8.0], Paint::HomRef),
+                ([9.0, top + 11.0, 3.0, 8.0], Paint::HomRef),
                 (
-                    [10.0, top + 31.0, 1.0, 8.0],
+                    [9.0, top + 31.0, 3.0, 8.0],
                     Paint::Allele(Allele::Base(Base::T), Shade::Full)
                 ),
             ]
         );
         assert!((row_height(Mode::Expanded) - 10.0).abs() < f32::EPSILON);
         assert!((row_height(Mode::Squished) - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn narrow_sites_are_three_pixels_wide() {
+        let sites = [
+            variant(10, "A", "G", &[]),
+            variant(20, "AC", "A", &[]),
+            variant(30, "ACGT", "A", &[]),
+            variant(40, "ACGTAC", "A", &[]),
+        ];
+        let found: Vec<[f32; 2]> = rects(&scene(view(0, 100), &sites, Mode::Collapsed))
+            .into_iter()
+            .map(|(rect, _)| [rect[0], rect[2]])
+            .collect();
+        assert_eq!(found, [[9.0, 3.0], [19.5, 3.0], [30.0, 3.0], [40.0, 5.0]]);
     }
 
     #[test]
