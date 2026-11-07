@@ -17,6 +17,7 @@ struct Query {
     kind: String,
     contig: String,
     region: Region,
+    bins: usize,
     lines: Vec<String>,
 }
 
@@ -33,6 +34,7 @@ fn queries(file: &str) -> Vec<Query> {
             kind: fields[0].to_owned(),
             contig: fields[1].to_owned(),
             region: Region::new(fields[2].parse().unwrap(), fields[3].parse().unwrap()).unwrap(),
+            bins: fields.get(4).map_or(0, |bins| bins.parse().unwrap()),
             lines: Vec::new(),
         });
     }
@@ -69,6 +71,61 @@ fn records_match_bigwig_to_bedgraph() {
             }
         }
     }
+}
+
+#[test]
+fn summaries_match_bigwig_summary() {
+    for file in FILES {
+        let mut reader = File::open(data(file)).unwrap();
+        let index = Index::read(&mut reader).unwrap();
+        for query in queries(file).iter().filter(|query| query.kind != "records") {
+            let label = format!("{file} {} {} {:?}", query.kind, query.contig, query.region);
+            let bins = index
+                .bins(&mut reader, &query.contig, query.region, query.bins)
+                .unwrap();
+            if query.lines == ["none"] {
+                assert!(bins.iter().all(Option::is_none), "{label}");
+                continue;
+            }
+            let expected: Vec<&str> = query.lines[0].split('\t').collect();
+            assert_eq!(bins.len(), expected.len(), "{label}");
+            for (bin, text) in bins.iter().zip(expected) {
+                match (bin, text) {
+                    (None, "n/a") => {}
+                    (Some(bin), text) if text != "n/a" => {
+                        let found = match query.kind.as_str() {
+                            "mean" => bin.mean(),
+                            "min" => f64::from(bin.min),
+                            _ => f64::from(bin.max),
+                        };
+                        assert!(
+                            close(found, text.parse().unwrap()),
+                            "{label}: {found} {text}"
+                        );
+                    }
+                    _ => panic!("{label}: {bin:?} {text}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn zoom_levels_give_fewer_records() {
+    let mut reader = File::open(data("signal.bw")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let whole = Region::new(0, 3_000_000).unwrap();
+    let raw = index.records(&mut reader, "chr1", whole).unwrap();
+    let zoomed = index.summaries(&mut reader, "chr1", whole, 15_000).unwrap();
+    assert!(
+        zoomed.len() * 10 < raw.len(),
+        "{} {}",
+        zoomed.len(),
+        raw.len()
+    );
+    let bases: u64 = raw.iter().map(|record| u64::from(record.count)).sum();
+    let counted: u64 = zoomed.iter().map(|summary| u64::from(summary.count)).sum();
+    assert_eq!(counted, bases);
 }
 
 #[test]

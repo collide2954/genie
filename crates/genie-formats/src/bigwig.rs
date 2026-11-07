@@ -1,7 +1,7 @@
 use std::io::{Read, Seek, SeekFrom};
 
 use genie_core::Region;
-use genie_core::signal::Summary;
+use genie_core::signal::{self, Bin, Summary};
 use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
 
 use crate::{Error, Reason};
@@ -10,9 +10,17 @@ const MAGIC: u32 = 0x888F_FC26;
 const CHROMOSOMES: u32 = 0x78CA_8C91;
 const BLOCKS: u32 = 0x2468_ACE0;
 const HEADER: usize = 64;
+const ZOOM: usize = 24;
+const RECORD: usize = 32;
 const DEPTH: usize = 32;
 const KEY_LIMIT: usize = 256;
 const BLOCK_LIMIT: u64 = 1 << 26;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Zoom {
+    reduction: u64,
+    index: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct Index {
@@ -21,6 +29,7 @@ pub struct Index {
     names: Vec<String>,
     ids: Vec<u32>,
     full: u64,
+    zooms: Vec<Zoom>,
 }
 
 struct Bytes<'a> {
@@ -223,6 +232,34 @@ fn section(block: &[u8], big: bool, id: u32, region: Region) -> Result<Vec<Summa
     Ok(found)
 }
 
+fn records(block: &[u8], big: bool, id: u32, region: Region) -> Result<Vec<Summary>, Error> {
+    let mut bytes = Bytes::new(block, big);
+    let mut found = Vec::new();
+    for _ in 0..block.len() / RECORD {
+        let chromosome = bytes.u32()?;
+        let start = u64::from(bytes.u32()?);
+        let end = u64::from(bytes.u32()?);
+        let count = bytes.u32()?;
+        let min = bytes.f32()?;
+        let max = bytes.f32()?;
+        let sum = f64::from(bytes.f32()?);
+        let _squares = bytes.f32()?;
+        let Some(span) = Region::new(start, end) else {
+            continue;
+        };
+        if chromosome == id && span.intersection(region).is_some() {
+            found.push(Summary {
+                span,
+                count,
+                min,
+                max,
+                sum,
+            });
+        }
+    }
+    Ok(found)
+}
+
 impl Index {
     pub fn read(reader: &mut (impl Read + Seek)) -> Result<Self, Error> {
         let header = chunk(reader, 0, HEADER)?;
@@ -237,7 +274,7 @@ impl Index {
         let mut bytes = Bytes::new(&header, big);
         let _magic = bytes.u32()?;
         let _version = bytes.u16()?;
-        let _levels = bytes.u16()?;
+        let levels = usize::from(bytes.u16()?);
         let tree = bytes.u64()?;
         let _data = bytes.u64()?;
         let full = bytes.u64()?;
@@ -245,6 +282,16 @@ impl Index {
         let _schema = bytes.u64()?;
         let _total = bytes.u64()?;
         let buffer = bytes.u32()?;
+        let table = chunk(reader, HEADER as u64, levels * ZOOM)?;
+        let mut bytes = Bytes::new(&table, big);
+        let mut zooms = Vec::with_capacity(levels);
+        for _ in 0..levels {
+            let reduction = u64::from(bytes.u32()?);
+            let _reserved = bytes.u32()?;
+            let _data = bytes.u64()?;
+            let index = bytes.u64()?;
+            zooms.push(Zoom { reduction, index });
+        }
         let (names, ids) = chromosomes(reader, tree, big)?.into_iter().unzip();
         Ok(Self {
             big,
@@ -252,7 +299,55 @@ impl Index {
             names,
             ids,
             full,
+            zooms,
         })
+    }
+
+    fn zoom(&self, desired: u64) -> Option<Zoom> {
+        if desired <= 1 {
+            return None;
+        }
+        self.zooms
+            .iter()
+            .filter(|zoom| zoom.reduction <= desired)
+            .max_by_key(|zoom| zoom.reduction)
+            .copied()
+    }
+
+    pub fn summaries(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+        region: Region,
+        desired: u64,
+    ) -> Result<Vec<Summary>, Error> {
+        let Some(zoom) = self.zoom(desired) else {
+            return self.records(reader, contig, region);
+        };
+        let Some(id) = self.id(contig) else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for (offset, size) in blocks(reader, zoom.index, self.big, id, region)? {
+            let block = self.block(reader, offset, size)?;
+            found.extend(records(&block, self.big, id, region)?);
+        }
+        Ok(found)
+    }
+
+    pub fn bins(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+        region: Region,
+        count: usize,
+    ) -> Result<Vec<Option<Bin>>, Error> {
+        if count == 0 || region.is_empty() {
+            return Ok(vec![None; count]);
+        }
+        let desired = region.len() / count as u64 / 2;
+        let summaries = self.summaries(reader, contig, region, desired)?;
+        Ok(signal::bins(&summaries, region, count))
     }
 
     pub fn names(&self) -> &[String] {
