@@ -1,6 +1,12 @@
-use std::io::{self, BufRead, Write};
+use std::collections::hash_map::DefaultHasher;
+use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use crate::{Error, Reason};
+
+const SCAN_BUFFER: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaiRecord {
@@ -9,6 +15,54 @@ pub struct FaiRecord {
     pub offset: u64,
     pub line_bases: u64,
     pub line_width: u64,
+}
+
+pub fn load(fasta: &Path, cache: Option<&Path>) -> Result<Vec<FaiRecord>, Error> {
+    let sidecar = sidecar(fasta);
+    if sidecar.is_file() {
+        return read(&sidecar);
+    }
+    let cached = cache.and_then(|cache| {
+        fingerprint(fasta)
+            .ok()
+            .map(|key| cache.join(format!("{key:016x}.fai")))
+    });
+    if let Some(cached) = cached.as_deref().filter(|path| path.is_file()) {
+        return read(cached);
+    }
+    let records = build(BufReader::with_capacity(SCAN_BUFFER, File::open(fasta)?))?;
+    if let Some(cached) = &cached {
+        let _ = store(cached, &records);
+    }
+    Ok(records)
+}
+
+fn sidecar(fasta: &Path) -> PathBuf {
+    let mut path = fasta.as_os_str().to_owned();
+    path.push(".fai");
+    PathBuf::from(path)
+}
+
+fn read(path: &Path) -> Result<Vec<FaiRecord>, Error> {
+    parse(BufReader::new(File::open(path)?))
+}
+
+fn fingerprint(fasta: &Path) -> io::Result<u64> {
+    let metadata = fs::metadata(fasta)?;
+    let mut hasher = DefaultHasher::new();
+    fs::canonicalize(fasta)?.hash(&mut hasher);
+    metadata.len().hash(&mut hasher);
+    metadata.modified()?.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
+fn store(path: &Path, records: &[FaiRecord]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let partial = path.with_extension("partial");
+    write(records, BufWriter::new(File::create(&partial)?))?;
+    fs::rename(partial, path)
 }
 
 pub fn parse(reader: impl BufRead) -> Result<Vec<FaiRecord>, Error> {
@@ -157,8 +211,72 @@ fn parse_line(line: &str) -> Result<FaiRecord, Reason> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FaiRecord, build, parse, write};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use super::{FaiRecord, build, load, parse, write};
     use crate::{Error, Reason};
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("genie-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn file(&self, name: &str, content: &str) -> PathBuf {
+            let path = self.0.join(name);
+            fs::write(&path, content).unwrap();
+            path
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn cached(cache: &Path) -> Vec<PathBuf> {
+        fs::read_dir(cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect()
+    }
+
+    #[test]
+    fn load_prefers_the_index_next_to_the_fasta() {
+        let scratch = Scratch::new("sidecar");
+        let fasta = scratch.file("ref.fa", ">a\nACGT\n");
+        scratch.file("ref.fa.fai", "a\t4\t3\t4\t5\nb\t1\t9\t1\t2\n");
+        assert_eq!(load(&fasta, None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn load_builds_and_caches_a_missing_index() {
+        let scratch = Scratch::new("build");
+        let fasta = scratch.file("ref.fa", ">a\nACGT\nAC\n");
+        let cache = scratch.0.join("cache");
+        assert_eq!(
+            load(&fasta, Some(&cache)).unwrap(),
+            [record("a", 6, 3, 4, 5)]
+        );
+        assert_eq!(cached(&cache).len(), 1);
+        assert!(!scratch.0.join("ref.fa.fai").exists());
+    }
+
+    #[test]
+    fn load_reads_the_cached_index() {
+        let scratch = Scratch::new("cached");
+        let fasta = scratch.file("ref.fa", ">a\nACGT\nAC\n");
+        let cache = scratch.0.join("cache");
+        load(&fasta, Some(&cache)).unwrap();
+        fs::write(&cached(&cache)[0], "a\t6\t3\t4\t5\nz\t1\t1\t1\t2\n").unwrap();
+        assert_eq!(load(&fasta, Some(&cache)).unwrap().len(), 2);
+    }
 
     fn record(name: &str, length: u64, offset: u64, line_bases: u64, line_width: u64) -> FaiRecord {
         FaiRecord {
