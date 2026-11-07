@@ -890,6 +890,7 @@ impl Genie {
         let length = viewport.length();
         let wanted = visible.expand(visible.len(), length);
         let step = track::step(viewport.scale());
+        let detail = track::detailed(visible);
         let reference = &session.reference;
         let tasks: Vec<Task<Message>> = session
             .tracks
@@ -905,7 +906,8 @@ impl Genie {
                         let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        let result = track::load(&source, &name, wanted, options, step, bases);
+                        let result =
+                            track::load(&source, &name, wanted, options, step, detail, bases);
                         match &result {
                             Ok(loaded) => log::debug!(
                                 "Loaded {} items of {} at {name}:{}-{} in {:.0?}",
@@ -2034,8 +2036,8 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
             .add_filter(
                 "Tracks",
                 &[
-                    "gz", "bgz", "bed", "gff", "gff3", "gtf", "vcf", "bam", "bw", "bigwig",
-                    "bedgraph", "bdg",
+                    "gz", "bgz", "bed", "gff", "gff3", "gtf", "vcf", "bam", "bw", "bigwig", "bb",
+                    "bigbed", "bedgraph", "bdg",
                 ],
             )
             .add_filter("Reference sequences", &references)
