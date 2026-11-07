@@ -210,7 +210,7 @@ mod tests {
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
 
-    use super::{Change, Loaded, Source, Track, change, contig_names, open};
+    use super::{Change, Loaded, Source, Track, change, contig_names, load, names, open};
     use crate::scratch::Scratch;
 
     fn region(start: u64, end: u64) -> Region {
@@ -290,6 +290,29 @@ mod tests {
         change(&mut tracks, 1, Change::Remove);
         change(&mut tracks, 9, Change::Remove);
         assert_eq!(ids(&tracks), [0, 2]);
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../genie-formats/tests/data")
+            .join(name)
+    }
+
+    #[test]
+    fn opens_loads_and_names_tracks_made_by_htslib() {
+        let source = open(fixture("genes.gff3.gz")).unwrap();
+        assert_eq!(source.kind, Kind::Gff);
+        let loaded = load(&source, "chr1", region(50_000, 51_000)).unwrap();
+        assert_eq!(loaded.region, region(50_000, 57_400));
+        assert!(
+            loaded
+                .features
+                .iter()
+                .any(|feature| feature.name() == "GENE1003")
+        );
+        let names = names(&source, &assembly()).unwrap();
+        let gene = names.find("gene1003").unwrap();
+        assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
     }
 
     #[test]
