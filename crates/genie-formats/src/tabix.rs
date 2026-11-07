@@ -4,14 +4,16 @@ use genie_core::Region;
 
 pub use crate::binning::Chunk;
 use crate::binning::{Bins, read_count, read_u32};
-use crate::{Error, Reason, bgzf::Bgzf};
+use crate::{Error, Reason, bgzf::Bgzf, vcf};
 
 const MAGIC: &[u8; 4] = b"TBI\x01";
 const ZERO_BASED: u32 = 0x10000;
+const VCF: u32 = 2;
 
 #[derive(Debug, Default)]
 pub struct Index {
     zero_based: bool,
+    vcf: bool,
     columns: [usize; 3],
     meta: u8,
     names: Vec<String>,
@@ -47,6 +49,7 @@ impl Index {
             .collect::<Result<_, _>>()?;
         Ok(Self {
             zero_based: format & ZERO_BASED != 0,
+            vcf: format & 0xFFFF == VCF,
             columns,
             meta,
             names,
@@ -112,6 +115,10 @@ impl Index {
         } else {
             first.saturating_sub(1)
         };
+        if self.vcf {
+            let span = vcf::extent(first, field(4)?, field(8).unwrap_or_default());
+            return Some((field(name)?, span));
+        }
         let last = if end == 0 {
             first + 1
         } else {
@@ -150,6 +157,7 @@ pub mod tests {
 
     pub const BED: [usize; 4] = [0x10000, 1, 2, 3];
     pub const GFF: [usize; 4] = [0, 1, 4, 5];
+    pub const VCF: [usize; 4] = [2, 1, 2, 0];
 
     pub type Bins<'a> = &'a [(u32, &'a [(u64, u64)])];
 
@@ -270,6 +278,19 @@ pub mod tests {
         );
         assert_eq!(lines(BED, parts, region(0, 15)), ["chr1\t10\t20\ta"]);
         assert_eq!(lines(BED, parts, region(20, 30)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn vcf_lines_end_after_their_reference_or_at_info_end() {
+        let parts: &[&[u8]] = &[
+            b"#CHROM\tPOS\nchr1\t10\t.\tACGTACGTAC\tA\t.\t.\t.\n",
+            b"chr1\t30\t.\tA\t<DEL>\t.\t.\tSVTYPE=DEL;END=80\nchr1\t100\t.\tA\tG\t.\t.\t.\n",
+        ];
+        let first = "chr1\t10\t.\tACGTACGTAC\tA\t.\t.\t.";
+        let second = "chr1\t30\t.\tA\t<DEL>\t.\t.\tSVTYPE=DEL;END=80";
+        assert_eq!(lines(VCF, parts, region(15, 20)), [first]);
+        assert_eq!(lines(VCF, parts, region(50, 60)), [second]);
+        assert_eq!(lines(VCF, parts, region(80, 99)), Vec::<String>::new());
     }
 
     #[test]
