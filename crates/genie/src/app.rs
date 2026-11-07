@@ -70,6 +70,7 @@ struct Session {
     contig: usize,
     viewport: Viewport,
     transition: Option<Transition>,
+    grip: Option<f64>,
 }
 
 impl Session {
@@ -80,6 +81,25 @@ impl Session {
             contig: 0,
             viewport: Viewport::new(length, f64::from(width)),
             transition: None,
+            grip: None,
+        }
+    }
+
+    fn grab(&mut self, share: f32) {
+        self.transition = None;
+        let position = f64::from(share) * self.viewport.length() as f64;
+        if position >= self.viewport.start() && position <= self.viewport.end() {
+            self.grip = Some(position - self.viewport.center());
+        } else {
+            self.viewport = self.viewport.center_on(position);
+            self.grip = Some(0.0);
+        }
+    }
+
+    fn slide(&mut self, share: f32) {
+        if let Some(grip) = self.grip {
+            let position = f64::from(share) * self.viewport.length() as f64;
+            self.viewport = self.viewport.center_on(position - grip);
         }
     }
 
@@ -118,6 +138,9 @@ pub enum Message {
     LocusSubmitted,
     Command(Command),
     Frame(Instant),
+    OverviewPressed(f32),
+    OverviewDragged(f32),
+    OverviewReleased,
 }
 
 impl Genie {
@@ -185,6 +208,24 @@ impl Genie {
                     if transition.is_done(now) {
                         session.transition = None;
                     }
+                }
+            }
+            Message::OverviewPressed(share) => {
+                self.drop_draft();
+                if let Some(session) = &mut self.session {
+                    session.grab(share);
+                }
+                return self.fetch();
+            }
+            Message::OverviewDragged(share) => {
+                if let Some(session) = &mut self.session {
+                    session.slide(share);
+                }
+                return self.fetch();
+            }
+            Message::OverviewReleased => {
+                if let Some(session) = &mut self.session {
+                    session.grip = None;
                 }
             }
         }
@@ -342,10 +383,12 @@ impl Genie {
             label("Sequence"),
         ];
         let tracks = column![
-            container(scene::view(
-                overview::scene(viewport, OVERVIEW_HEIGHT),
-                OVERVIEW_HEIGHT
-            ))
+            container(
+                scene::view(overview::scene(viewport, OVERVIEW_HEIGHT), OVERVIEW_HEIGHT)
+                    .on_press(Message::OverviewPressed)
+                    .on_drag(Message::OverviewDragged)
+                    .on_release(Message::OverviewReleased)
+            )
             .id("overview"),
             container(scene::view(
                 ruler::scene(viewport, RULER_HEIGHT),
@@ -701,6 +744,34 @@ mod tests {
         let _ = genie.update(Message::Picked(None));
         let mut ui = simulator(genie.view());
         assert!(ui.find("Open a reference sequence to start.").is_ok());
+    }
+
+    #[test]
+    fn dragging_the_overview_window_moves_the_view() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::OverviewPressed(0.0625));
+        let _ = genie.update(Message::OverviewDragged(0.5));
+        let _ = genie.update(Message::OverviewReleased);
+        assert!(shows(&genie, "chr1:438-688"));
+    }
+
+    #[test]
+    fn pressing_the_overview_outside_the_window_centers_there() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::OverviewPressed(0.75));
+        assert!(shows(&genie, "chr1:626-875"));
+    }
+
+    #[test]
+    fn overview_drags_stop_at_release() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::OverviewPressed(0.1));
+        let _ = genie.update(Message::OverviewReleased);
+        let _ = genie.update(Message::OverviewDragged(0.9));
+        assert!(shows(&genie, "chr1:1-250"));
     }
 
     #[test]
