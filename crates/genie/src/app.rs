@@ -27,6 +27,7 @@ const RULER_HEIGHT: f32 = 20.0;
 const BASE_HEIGHT: f32 = 16.0;
 const TRACK_PADDING: f32 = 2.0;
 const LABEL_SIZE: f32 = 10.0;
+const DROP_HINT: &str = "Drop the file to open it";
 
 #[derive(Debug)]
 pub struct Genie {
@@ -40,6 +41,7 @@ pub struct Genie {
     draft: Option<String>,
     locus_error: Option<String>,
     recent: Recent,
+    hovering: bool,
 }
 
 impl Default for Genie {
@@ -55,6 +57,7 @@ impl Default for Genie {
             draft: None,
             locus_error: None,
             recent: Recent::default(),
+            hovering: false,
         }
     }
 }
@@ -144,6 +147,9 @@ pub enum Message {
     OverviewPressed(f32),
     OverviewDragged(f32),
     OverviewReleased,
+    FileHovered,
+    FileHoverEnded,
+    FileDropped(PathBuf),
 }
 
 impl Genie {
@@ -166,14 +172,14 @@ impl Genie {
             Message::SystemModeChanged(mode) => self.system = mode,
             Message::Window(action) => return chrome::perform(action),
             Message::Open => return Task::perform(pick(), Message::Picked),
-            Message::Picked(Some(path)) => {
-                self.status = Status::Opening(file_name(&path));
-                return Task::perform(
-                    async move { reference::open(path, paths::cache_dir().as_deref()).map(Arc::new) },
-                    Message::Opened,
-                );
-            }
+            Message::Picked(Some(path)) => return self.open(path),
             Message::Picked(None) => {}
+            Message::FileHovered => self.hovering = true,
+            Message::FileHoverEnded => self.hovering = false,
+            Message::FileDropped(path) => {
+                self.hovering = false;
+                return self.open(path);
+            }
             Message::Opened(Ok(reference)) => {
                 self.status = Status::Idle;
                 self.generation += 1;
@@ -350,14 +356,17 @@ impl Genie {
             value: self.draft.clone().unwrap_or_else(|| session.locus()),
             error: self.locus_error.clone(),
         });
-        let content = column![
+        let mut layers = stack![column![
             chrome::title_bar(Controls::CURRENT, appearance, locus),
             self.body()
-        ];
-        match Controls::CURRENT {
-            Controls::Native => content.into(),
-            Controls::Custom => stack![content, chrome::resize_handles()].into(),
+        ]];
+        if self.hovering {
+            layers = layers.push(drop_hint());
         }
+        if Controls::CURRENT == Controls::Custom {
+            layers = layers.push(chrome::resize_handles());
+        }
+        layers.into()
     }
 
     fn body(&self) -> Element<'_, Message> {
@@ -402,6 +411,14 @@ impl Genie {
             );
         }
         center(welcome).into()
+    }
+
+    fn open(&mut self, path: PathBuf) -> Task<Message> {
+        self.status = Status::Opening(file_name(&path));
+        Task::perform(
+            async move { reference::open(path, paths::cache_dir().as_deref()).map(Arc::new) },
+            Message::Opened,
+        )
     }
 
     fn remember(&self) -> Task<Message> {
@@ -475,6 +492,7 @@ impl Genie {
         Subscription::batch([
             system::theme_changes().map(Message::SystemModeChanged),
             keyboard::listen().filter_map(shortcut),
+            window::events().filter_map(file_drop),
             frames,
         ])
     }
@@ -497,6 +515,27 @@ fn hairline<'a>() -> Element<'a, Message> {
         .height(1)
         .style(|theme| container::background(tokens(theme).line))
         .into()
+}
+
+fn drop_hint<'a>() -> Element<'a, Message> {
+    let frame = container(center(text(DROP_HINT).size(13))).style(|theme| {
+        let tokens = tokens(theme);
+        container::Style {
+            background: Some(tokens.canvas.scale_alpha(0.92).into()),
+            border: Border::default().rounded(8).width(1).color(tokens.muted),
+            ..container::Style::default()
+        }
+    });
+    container(frame).padding(8).into()
+}
+
+fn file_drop((_, event): (window::Id, window::Event)) -> Option<Message> {
+    match event {
+        window::Event::FileHovered(_) => Some(Message::FileHovered),
+        window::Event::FilesHoveredLeft => Some(Message::FileHoverEnded),
+        window::Event::FileDropped(path) => Some(Message::FileDropped(path)),
+        _ => None,
+    }
 }
 
 fn shortcut(event: keyboard::Event) -> Option<Message> {
@@ -554,7 +593,7 @@ mod tests {
     use iced::time::{Duration, Instant};
     use iced_test::{selector, simulator};
 
-    use super::{Genie, Message, shortcut};
+    use super::{DROP_HINT, Genie, Message, file_drop, shortcut};
     use crate::reference::Reference;
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
@@ -850,6 +889,39 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Picked(Some(PathBuf::from("/data/ref.fa"))));
         assert!(shows(&genie, "Opening ref.fa…"));
+    }
+
+    #[test]
+    fn dropping_a_file_opens_it() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::FileHovered);
+        let _ = genie.update(Message::FileDropped(PathBuf::from("/data/ref.fa")));
+        assert!(shows(&genie, "Opening ref.fa…"));
+        assert!(!shows(&genie, DROP_HINT));
+    }
+
+    #[test]
+    fn hovering_a_file_shows_the_drop_hint() {
+        let mut genie = opened();
+        let _ = genie.update(Message::FileHovered);
+        assert!(shows(&genie, DROP_HINT));
+        let _ = genie.update(Message::FileHoverEnded);
+        assert!(!shows(&genie, DROP_HINT));
+    }
+
+    #[test]
+    fn window_file_events_become_messages() {
+        let id = iced::window::Id::unique();
+        let path = PathBuf::from("/data/ref.fa");
+        assert_eq!(
+            file_drop((id, iced::window::Event::FileDropped(path.clone()))),
+            Some(Message::FileDropped(path))
+        );
+        assert_eq!(
+            file_drop((id, iced::window::Event::FilesHoveredLeft)),
+            Some(Message::FileHoverEnded)
+        );
+        assert_eq!(file_drop((id, iced::window::Event::Focused)), None);
     }
 
     #[test]
