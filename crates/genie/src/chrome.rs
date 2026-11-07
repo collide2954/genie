@@ -6,7 +6,11 @@ use crate::icon::{self, Hover, Icon};
 use crate::theme::tokens;
 use crate::{font, style};
 
-const BAR_HEIGHT: f32 = 40.0;
+const BAR_HEIGHT: f32 = 32.0;
+const TOOL_SIZE: f32 = 24.0;
+const TOOL_ICON: f32 = 14.0;
+const WINDOW_BUTTON_WIDTH: f32 = 46.0;
+const WINDOW_ICON: f32 = 16.0;
 const GRIP: f32 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,36 +121,36 @@ pub fn title_bar<'a>(
     locus: Option<String>,
 ) -> Element<'a, Message> {
     let logo = container(space())
-        .width(18)
-        .height(18)
+        .width(14)
+        .height(14)
         .style(|theme| container::Style {
             background: Some(tokens(theme).accent.into()),
-            border: Border::default().rounded(5),
+            border: Border::default().rounded(4),
             ..container::Style::default()
         });
-    let brand = row![logo, text("genie").font(font::UI_STRONG).size(13)]
-        .spacing(8)
+    let brand = row![logo, text("genie").font(font::UI_STRONG).size(12)]
+        .spacing(6)
         .align_y(Alignment::Center);
     let locus = locus.map(|locus| {
         container(text(locus).font(font::MONO).size(12))
-            .padding([5, 10])
+            .padding([2, 8])
             .width(240)
             .style(style::field)
     });
     let navigation = row![tool(Icon::Open, "open", Message::Open)]
         .push(locus)
-        .spacing(8)
+        .spacing(6)
         .align_y(Alignment::Center);
     let tools = row![tool(appearance, "appearance", Message::CycleAppearance)]
-        .spacing(4)
+        .spacing(2)
         .align_y(Alignment::Center);
     let (inset, end) = match controls {
-        Controls::Native => (78.0, 8.0),
-        Controls::Custom => (12.0, 8.0),
+        Controls::Native => (76.0, 6.0),
+        Controls::Custom => (10.0, 6.0),
     };
     let mut bar = row![
         brand,
-        space().width(16),
+        space().width(12),
         navigation,
         space::horizontal(),
         tools,
@@ -209,9 +213,9 @@ pub fn resize_handles<'a>() -> Element<'a, Message> {
 
 fn tool<'a>(icon: Icon, id: &'static str, message: Message) -> Element<'a, Message> {
     container(
-        button(icon::view(icon, 16.0, Hover::Text))
-            .width(28)
-            .height(28)
+        button(icon::view(icon, TOOL_ICON, Hover::Text))
+            .width(TOOL_SIZE)
+            .height(TOOL_SIZE)
             .padding(0)
             .style(style::ghost)
             .on_press(message),
@@ -228,8 +232,8 @@ fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a
             (Hover::Text, style::window_control)
         };
     container(
-        button(icon::view(icon, 14.0, hover))
-            .width(46)
+        button(icon::view(icon, WINDOW_ICON, hover))
+            .width(WINDOW_BUTTON_WIDTH)
             .height(BAR_HEIGHT)
             .padding(0)
             .style(style)
@@ -271,6 +275,13 @@ mod tests {
                 [Message::Window(action)]
             );
         }
+    }
+
+    #[test]
+    fn bar_is_thirty_two_pixels_tall() {
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        let close = ui.find(selector::id("close")).unwrap();
+        assert!((close.bounds().height - 32.0).abs() < 0.5);
     }
 
     #[test]
