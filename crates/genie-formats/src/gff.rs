@@ -8,18 +8,59 @@ use crate::{
 };
 
 const COLUMNS: usize = 9;
-const PARTS: [&str; 7] = [
+const PARTS: [&str; 9] = [
     "exon",
     "CDS",
     "five_prime_UTR",
     "three_prime_UTR",
+    "five_prime_utr",
+    "three_prime_utr",
     "UTR",
     "start_codon",
     "stop_codon",
 ];
 const EXONS: [&str; 1] = ["exon"];
 const CODING: [&str; 1] = ["CDS"];
-const PIECES: [&str; 4] = ["CDS", "five_prime_UTR", "three_prime_UTR", "UTR"];
+const PIECES: [&str; 6] = [
+    "CDS",
+    "five_prime_UTR",
+    "three_prime_UTR",
+    "five_prime_utr",
+    "three_prime_utr",
+    "UTR",
+];
+
+pub(crate) struct Columns<'a> {
+    pub contig: &'a str,
+    pub kind: &'a str,
+    pub span: Region,
+    pub strand: Strand,
+    pub attributes: &'a str,
+}
+
+pub(crate) fn columns(line: &str) -> Result<Option<Columns<'_>>, Reason> {
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+    let mut fields = [""; COLUMNS];
+    let mut count = 0;
+    for (slot, field) in fields.iter_mut().zip(line.splitn(COLUMNS, '\t')) {
+        *slot = field;
+        count += 1;
+    }
+    if count < COLUMNS {
+        return Err(Reason::MissingField);
+    }
+    let start = number(fields[3])?;
+    let span = Region::new(start.saturating_sub(1), number(fields[4])?).ok_or(Reason::BadSpan)?;
+    Ok(Some(Columns {
+        contig: fields[0],
+        kind: fields[2],
+        span,
+        strand: strand(fields[6])?,
+        attributes: fields[8],
+    }))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
@@ -45,24 +86,12 @@ pub fn is_part(kind: &str) -> bool {
 }
 
 pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
-    if line.is_empty() || line.starts_with('#') {
+    let Some(columns) = columns(line)? else {
         return Ok(None);
-    }
-    let mut fields = [""; COLUMNS];
-    let mut count = 0;
-    for (slot, field) in fields.iter_mut().zip(line.splitn(COLUMNS, '\t')) {
-        *slot = field;
-        count += 1;
-    }
-    if count < COLUMNS {
-        return Err(Reason::MissingField);
-    }
-    let start = number(fields[3])?;
-    let span = Region::new(start.saturating_sub(1), number(fields[4])?).ok_or(Reason::BadSpan)?;
-    let strand = strand(fields[6])?;
+    };
     let mut parents = Vec::new();
     let mut attributes = Vec::new();
-    for pair in fields[8].split(';') {
+    for pair in columns.attributes.split(';') {
         let Some((key, value)) = pair.trim().split_once('=') else {
             continue;
         };
@@ -72,10 +101,10 @@ pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
         attributes.push((decode(key), decode(value)));
     }
     Ok(Some(Record {
-        contig: fields[0].to_owned(),
-        kind: fields[2].to_owned(),
-        span,
-        strand,
+        contig: columns.contig.to_owned(),
+        kind: columns.kind.to_owned(),
+        span: columns.span,
+        strand: columns.strand,
         parents,
         attributes,
     }))

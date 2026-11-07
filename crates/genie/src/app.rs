@@ -2033,8 +2033,8 @@ async fn pick(tracks: bool) -> Option<PathBuf> {
             .add_filter(
                 "Tracks",
                 &[
-                    "gz", "bgz", "bed", "gff", "gff3", "vcf", "bam", "bw", "bigwig", "bedgraph",
-                    "bdg",
+                    "gz", "bgz", "bed", "gff", "gff3", "gtf", "vcf", "bam", "bw", "bigwig",
+                    "bedgraph", "bdg",
                 ],
             )
             .add_filter("Reference sequences", &references)

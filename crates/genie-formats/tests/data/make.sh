@@ -39,15 +39,20 @@ tabix -f -p bed genes.bed.gz
 
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
-function exons(contig, strand, id, position, count, exon, intron, only_ends,    e, left, low, high) {
+function exons(contig, strand, id, position, count, exon, intron, only_ends, gtf,    e, left, low, high) {
     for (e = 0; e < count; e++) {
         if (only_ends && e > 0 && e < count - 1) continue
         left = position + e * (exon + intron)
         print contig, "genie", "exon", left + 1, left + exon, ".", strand, ".", "Parent=" id
+        print contig, "genie", "exon", left + 1, left + exon, ".", strand, ".", gtf > "genes.gtf.tmp"
         low = e == 0 ? left + 30 : left
         high = e == count - 1 ? left + exon - 30 : left + exon
         print contig, "genie", "CDS", low + 1, high, ".", strand, "0", "Parent=" id
+        print contig, "genie", "CDS", low + 1, high, ".", strand, "0", gtf > "genes.gtf.tmp"
     }
+}
+function ids(gene, transcript, name) {
+    return "gene_id \"" gene "\"; transcript_id \"" transcript "\"; gene_name \"" name "\";"
 }
 BEGIN {
     seed = 7
@@ -64,11 +69,14 @@ BEGIN {
             gene = sprintf("%s.g%03d", contigs[c], g)
             name = sprintf("GENE%s%03d", substr(contigs[c], 4), g)
             print contigs[c], "genie", "gene", position + 1, position + span, ".", strand, ".", "ID=" gene ";Name=" name
+            print contigs[c], "genie", "gene", position + 1, position + span, ".", strand, ".", "gene_id \"" gene "\"; gene_name \"" name "\";" > "genes.gtf.tmp"
             print contigs[c], "genie", "mRNA", position + 1, position + span, ".", strand, ".", "ID=" gene ".t1;Parent=" gene ";Name=" name "-201"
-            exons(contigs[c], strand, gene ".t1", position, count, exon, intron, 0)
+            print contigs[c], "genie", "transcript", position + 1, position + span, ".", strand, ".", ids(gene, gene ".t1", name) " transcript_name \"" name "-201\";" > "genes.gtf.tmp"
+            exons(contigs[c], strand, gene ".t1", position, count, exon, intron, 0, ids(gene, gene ".t1", name) " exon_number 1;")
             if (g % 10 == 0) {
                 print contigs[c], "genie", "mRNA", position + 1, position + span, ".", strand, ".", "ID=" gene ".t2;Parent=" gene ";Name=" name "-202"
-                exons(contigs[c], strand, gene ".t2", position, count, exon, intron, 1)
+                print contigs[c], "genie", "transcript", position + 1, position + span, ".", strand, ".", ids(gene, gene ".t2", name) " transcript_name \"" name "-202\";" > "genes.gtf.tmp"
+                exons(contigs[c], strand, gene ".t2", position, count, exon, intron, 1, ids(gene, gene ".t2", name))
             }
             position += span
         }
@@ -77,6 +85,9 @@ BEGIN {
 { printf '##gff-version 3\n'; sort -s -k1,1 -k4,4n genes.gff3.tmp; } | bgzip > genes.gff3.gz
 rm genes.gff3.tmp
 tabix -f -p gff genes.gff3.gz
+sort -s -k1,1 -k4,4n genes.gtf.tmp | bgzip > genes.gtf.gz
+rm genes.gtf.tmp
+tabix -f -p gff genes.gtf.gz
 
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }

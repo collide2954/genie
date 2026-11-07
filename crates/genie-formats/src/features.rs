@@ -4,7 +4,7 @@ use std::io::{BufRead, Read, Seek};
 use genie_core::{Feature, Region};
 
 pub use crate::table::Table;
-use crate::{Error, bed, bgzf::Bgzf, gff, tabix::Index};
+use crate::{Error, Reason, bed, bgzf::Bgzf, gff, gtf, tabix::Index};
 
 const PASSES: usize = 4;
 
@@ -30,7 +30,7 @@ pub fn names(kind: Kind, mut reader: impl BufRead) -> Result<Vec<Entry>, Error> 
         }
         entries.extend(match kind {
             Kind::Bed => bed_name(line),
-            Kind::Gff => gff_name(line),
+            Kind::Gff | Kind::Gtf => gff_name(kind.records()(line).ok().flatten()),
         });
     }
     Ok(entries)
@@ -45,8 +45,8 @@ fn bed_name(line: &str) -> Option<Entry> {
     })
 }
 
-fn gff_name(line: &str) -> Option<Entry> {
-    let record = gff::parse(line).ok()??;
+fn gff_name(record: Option<gff::Record>) -> Option<Entry> {
+    let record = record?;
     if gff::is_part(&record.kind) {
         return None;
     }
@@ -62,7 +62,10 @@ fn gff_name(line: &str) -> Option<Entry> {
 pub enum Kind {
     Bed,
     Gff,
+    Gtf,
 }
+
+type Parse = fn(&str) -> Result<Option<gff::Record>, Reason>;
 
 impl Kind {
     pub fn of(name: &str) -> Option<Self> {
@@ -74,8 +77,24 @@ impl Kind {
         match stem.rsplit_once('.')?.1 {
             "bed" => Some(Self::Bed),
             "gff" | "gff3" => Some(Self::Gff),
+            "gtf" => Some(Self::Gtf),
             _ => None,
         }
+    }
+
+    fn records(self) -> Parse {
+        if self == Self::Gtf {
+            gtf::parse
+        } else {
+            gff::parse
+        }
+    }
+
+    fn assemble(self, mut records: Vec<gff::Record>) -> Vec<Feature> {
+        if self == Self::Gtf {
+            gtf::complete(&mut records);
+        }
+        gff::assemble(&records)
     }
 }
 
@@ -106,8 +125,8 @@ pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>
                     rows.push((contig.to_owned(), feature.span(), feature));
                 }
             }
-            Kind::Gff => {
-                if let Some(record) = gff::parse(line).map_err(failed)? {
+            Kind::Gff | Kind::Gtf => {
+                if let Some(record) = kind.records()(line).map_err(failed)? {
                     let slot = *slots.entry(record.contig.clone()).or_insert_with(|| {
                         groups.push((record.contig.clone(), Vec::new()));
                         groups.len() - 1
@@ -118,7 +137,7 @@ pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>
         }
     }
     for (contig, records) in groups {
-        for feature in gff::assemble(&records) {
+        for feature in kind.assemble(records) {
             rows.push((contig.clone(), feature.span(), feature));
         }
     }
@@ -143,12 +162,12 @@ pub fn query<R: Read + Seek>(
             })?;
             Ok((region, features))
         }
-        Kind::Gff => {
+        Kind::Gff | Kind::Gtf => {
             let mut wanted = region;
             for pass in 1.. {
                 let mut records = Vec::new();
                 index.query(reader, contig, wanted, |line| {
-                    if let Some(record) = gff::parse(line).map_err(Error::Invalid)? {
+                    if let Some(record) = kind.records()(line).map_err(Error::Invalid)? {
                         records.push(record);
                     }
                     Ok(())
@@ -157,7 +176,7 @@ pub fn query<R: Read + Seek>(
                     .iter()
                     .fold(wanted, |hull, record| hull.hull(record.span));
                 if hull == wanted || pass == PASSES {
-                    return Ok((wanted, gff::assemble(&records)));
+                    return Ok((wanted, kind.assemble(records)));
                 }
                 wanted = hull;
             }
@@ -192,7 +211,7 @@ mod tests {
         let bins: Bins = &[(0, &[(0, end)])];
         let preset = match kind {
             Kind::Bed => BED,
-            Kind::Gff => GFF,
+            Kind::Gff | Kind::Gtf => GFF,
         };
         let index = index(preset, &["chr1"], &[(bins, &[0])]);
         let mut reader = Bgzf::new(Cursor::new(file(&[text.as_bytes()])));

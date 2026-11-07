@@ -10,6 +10,7 @@ pub mod fai;
 pub mod fasta;
 pub mod features;
 pub mod gff;
+pub mod gtf;
 pub mod gzi;
 pub mod ini;
 pub mod png;

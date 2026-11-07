@@ -672,7 +672,7 @@ pub fn open(path: PathBuf) -> Result<Source, String> {
         return open_signal(path, name);
     }
     let kind = Kind::of(&name).ok_or_else(|| {
-        format!("The file {name} is not a BED, GFF3, VCF, BAM, bigWig or bedGraph file.")
+        format!("The file {name} is not a BED, GFF3, GTF, VCF, BAM, bigWig or bedGraph file.")
     })?;
     if !is_compressed(&path) {
         let table = features::read_table(kind, plain(&path, &name)?)
@@ -1263,6 +1263,7 @@ mod tests {
             assert!(is_track(&PathBuf::from(name)), "{name}");
         }
         assert!(!is_track(&PathBuf::from("g.wig")));
+        assert!(is_track(&PathBuf::from("genes.gtf.gz")));
     }
 
     #[test]
@@ -1627,7 +1628,7 @@ mod tests {
         let error = open(PathBuf::from("/data/calls.bcf")).unwrap_err();
         assert_eq!(
             error,
-            "The file calls.bcf is not a BED, GFF3, VCF, BAM, bigWig or bedGraph file."
+            "The file calls.bcf is not a BED, GFF3, GTF, VCF, BAM, bigWig or bedGraph file."
         );
     }
 

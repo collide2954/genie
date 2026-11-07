@@ -104,6 +104,33 @@ fn gff_transcripts_keep_exons_outside_the_query() {
     assert!(found.contains(transcript));
 }
 
+#[test]
+fn gtf_gives_the_same_transcripts_as_gff3() {
+    let (gff, gtf) = (index("genes.gff3.gz"), index("genes.gtf.gz"));
+    for wanted in [
+        "chr1:1-30000",
+        "chr1:200000-201000",
+        "chr2:500000-600000",
+        "chr2",
+    ] {
+        let (name, region) = locus(wanted);
+        let mut three = reader("genes.gff3.gz");
+        let (_, expected) = features::query(Kind::Gff, &gff, &mut three, name, region).unwrap();
+        let mut plain = reader("genes.gtf.gz");
+        let (_, found) = features::query(Kind::Gtf, &gtf, &mut plain, name, region).unwrap();
+        assert_ne!(expected.len(), 0, "{wanted}");
+        assert_eq!(found, expected, "{wanted}");
+    }
+    let table = features::read_table(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
+    let whole = Region::new(0, WHOLE).unwrap();
+    let (_, expected) =
+        features::query(Kind::Gff, &gff, &mut reader("genes.gff3.gz"), "chr1", whole).unwrap();
+    assert_eq!(table.query("chr1", whole).len(), expected.len());
+    let names = features::names(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
+    let found: Vec<&str> = names.iter().map(|entry| entry.name.as_str()).collect();
+    assert!(found.contains(&"GENE1003") && found.contains(&"GENE1010-202"));
+}
+
 fn letter(op: Op) -> char {
     match op {
         Op::Match => 'M',
