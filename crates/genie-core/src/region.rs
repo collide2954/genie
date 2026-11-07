@@ -46,6 +46,13 @@ impl Region {
         self.start < other.end && other.start < self.end
     }
 
+    pub fn expand(self, amount: u64, limit: u64) -> Self {
+        Self::between(
+            self.start.saturating_sub(amount).min(limit),
+            self.end.saturating_add(amount).min(limit),
+        )
+    }
+
     pub fn clamp_to(self, length: u64) -> Self {
         Self {
             start: self.start.min(length),
@@ -94,6 +101,12 @@ mod tests {
         assert_eq!(region(10, 90).clamp_to(50), region(10, 50));
         assert_eq!(region(60, 90).clamp_to(50), region(50, 50));
         assert_eq!(region(10, 20).clamp_to(50), region(10, 20));
+    }
+
+    #[test]
+    fn expand_grows_both_sides_up_to_the_limit() {
+        assert_eq!(region(100, 200).expand(50, 1_000), region(50, 250));
+        assert_eq!(region(10, 200).expand(50, 220), region(0, 220));
     }
 
     #[test]
