@@ -19,6 +19,18 @@ pub fn parse_bases(text: &str) -> Option<u64> {
     whole.checked_add(fraction / divisor)
 }
 
+pub fn grouped(value: u64) -> String {
+    let digits = value.to_string();
+    let mut text = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
+}
+
 fn digits(text: &str) -> Option<u64> {
     if text.is_empty() {
         return Some(0);
@@ -31,7 +43,21 @@ fn digits(text: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_bases;
+    use super::{grouped, parse_bases};
+
+    #[test]
+    fn groups_digits_in_thousands() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1_000), "1,000");
+        assert_eq!(grouped(1_234_567), "1,234,567");
+        assert_eq!(grouped(u64::MAX), "18,446,744,073,709,551,615");
+    }
+
+    #[test]
+    fn grouped_text_parses_back() {
+        assert_eq!(parse_bases(&grouped(248_956_422)), Some(248_956_422));
+    }
 
     #[test]
     fn parses_plain_and_grouped_digits() {
