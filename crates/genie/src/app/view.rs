@@ -23,6 +23,7 @@ use crate::icon::{self, Icon};
 use crate::menu::{self, Place};
 use crate::navigator::Navigator;
 use crate::reading;
+use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
@@ -367,7 +368,12 @@ impl Genie {
                 .as_deref()
                 .map(|locus| format!(" · {locus}"))
                 .unwrap_or_default();
-            let detail = format!("{}{locus}{tracks}", last.reference.name());
+            let name = last
+                .genome
+                .as_deref()
+                .and_then(genome::find)
+                .map_or_else(|| last.reference.name(), |genome| genome.label);
+            let detail = format!("{name}{locus}{tracks}");
             welcome = welcome.push(
                 button(
                     column![
@@ -384,19 +390,35 @@ impl Genie {
         }
         let mut lists = row![genomes()].spacing(48);
         if !self.recent.entries().is_empty() {
-            let files = self.recent.entries().iter().map(|location| {
-                button(
-                    row![
-                        text(location.name()).size(12),
-                        text(location.place()).size(11).style(style::muted)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
+            let files = self.recent.entries().iter().filter_map(|entry| {
+                let (name, place, message) = match entry {
+                    Entry::Location(location) => (
+                        location.name(),
+                        location.place(),
+                        Message::Reopen(location.clone()),
+                    ),
+                    Entry::Genome(id) => {
+                        let genome = genome::find(id)?;
+                        (
+                            genome.label,
+                            format!("{} {}", genome.species, genome.assembly),
+                            Message::Genome(genome.id),
+                        )
+                    }
+                };
+                let row = row![
+                    text(name).size(12),
+                    text(place).size(11).style(style::muted)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center);
+                Some(
+                    button(row)
+                        .padding([3, 8])
+                        .style(style::ghost)
+                        .on_press(message)
+                        .into(),
                 )
-                .padding([3, 8])
-                .style(style::ghost)
-                .on_press(Message::Reopen(location.clone()))
-                .into()
             });
             lists = lists.push(
                 column![text("Recent").size(11).style(style::muted)]

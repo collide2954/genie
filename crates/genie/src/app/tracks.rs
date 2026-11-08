@@ -318,7 +318,7 @@ impl Genie {
         {
             return match Saved::load(path) {
                 Ok(saved) => {
-                    self.recent.add(location.clone());
+                    self.recent.add(location.clone().into());
                     let remember = self.remember();
                     Task::batch([self.restore(saved), remember])
                 }

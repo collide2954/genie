@@ -11,20 +11,39 @@ pub const LIMIT: usize = 8;
 
 const SECTION: &str = "recent";
 const KEY: &str = "file";
+const GENOME: &str = "genome";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    Location(Location),
+    Genome(String),
+}
+
+impl From<Location> for Entry {
+    fn from(location: Location) -> Self {
+        Self::Location(location)
+    }
+}
+
+impl From<PathBuf> for Entry {
+    fn from(path: PathBuf) -> Self {
+        Self::Location(Location::File(path))
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Recent {
-    entries: Vec<Location>,
+    entries: Vec<Entry>,
 }
 
 impl Recent {
-    pub fn entries(&self) -> &[Location] {
+    pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
 
-    pub fn add(&mut self, location: Location) {
-        self.entries.retain(|known| *known != location);
-        self.entries.insert(0, location);
+    pub fn add(&mut self, entry: Entry) {
+        self.entries.retain(|known| *known != entry);
+        self.entries.insert(0, entry);
         self.entries.truncate(LIMIT);
     }
 
@@ -34,10 +53,15 @@ impl Recent {
             .and_then(|document| document.section(SECTION).cloned())
             .map(|section| {
                 section
-                    .values(KEY)
-                    .map(|text| {
-                        Location::parse(text)
-                            .unwrap_or_else(|_| Location::File(PathBuf::from(text)))
+                    .entries
+                    .iter()
+                    .filter_map(|(key, text)| match key.as_str() {
+                        KEY => Some(Entry::Location(
+                            Location::parse(text)
+                                .unwrap_or_else(|_| Location::File(PathBuf::from(text))),
+                        )),
+                        GENOME => Some(Entry::Genome(text.clone())),
+                        _ => None,
                     })
                     .collect()
             })
@@ -58,7 +82,10 @@ impl Recent {
             entries: self
                 .entries
                 .iter()
-                .map(|location| (KEY.to_owned(), location.to_string()))
+                .map(|entry| match entry {
+                    Entry::Location(location) => (KEY.to_owned(), location.to_string()),
+                    Entry::Genome(id) => (GENOME.to_owned(), id.clone()),
+                })
                 .collect(),
         }
     }
@@ -79,11 +106,31 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{LIMIT, Recent};
+    use super::{Entry, LIMIT, Recent};
     use crate::location::Location;
 
     fn names(recent: &Recent) -> Vec<String> {
-        recent.entries().iter().map(Location::to_string).collect()
+        recent
+            .entries()
+            .iter()
+            .map(|entry| match entry {
+                Entry::Location(location) => location.to_string(),
+                Entry::Genome(id) => format!("genome {id}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn genomes_join_the_list() {
+        let mut recent = Recent::default();
+        recent.add(PathBuf::from("/data/a.fa").into());
+        recent.add(Entry::Genome("hg38".to_owned()));
+        recent.add(Entry::Genome("mm10".to_owned()));
+        recent.add(Entry::Genome("hg38".to_owned()));
+        assert_eq!(names(&recent), ["genome hg38", "genome mm10", "/data/a.fa"]);
+        let text = recent.text();
+        assert!(text.contains("genome = hg38"), "{text}");
+        assert_eq!(Recent::parse(&text), recent);
     }
 
     #[test]
@@ -110,7 +157,11 @@ mod tests {
         let mut recent = Recent::default();
         recent.add(PathBuf::from("/data/b.2bit").into());
         recent.add(PathBuf::from("/data/a b.fa").into());
-        recent.add(Location::parse("https://example.org/hg38.2bit?k=1").unwrap());
+        recent.add(
+            Location::parse("https://example.org/hg38.2bit?k=1")
+                .unwrap()
+                .into(),
+        );
         assert!(recent.text().contains("https://example.org/hg38.2bit?k=1"));
         assert_eq!(Recent::parse(&recent.text()), recent);
     }

@@ -19,7 +19,7 @@ use crate::chrome::{self, Action};
 use crate::location::Location;
 use crate::motion::{self, Transition};
 use crate::reading::{self, Reading};
-use crate::recent::Recent;
+use crate::recent::{self, Recent};
 use crate::reference::Reference;
 use crate::saved::Saved;
 use crate::scene::Pointer;
@@ -490,7 +490,10 @@ impl Genie {
         self.status = Status::Idle;
         self.generation += 1;
         self.tiles.clear();
-        self.recent.add(reference.location.clone());
+        self.recent.add(match &reference.genome {
+            Some(id) => recent::Entry::Genome(id.clone()),
+            None => reference.location.clone().into(),
+        });
         (self.hover, self.pinned) = (None, None);
         (self.anchor, self.sweep) = (None, None);
         if let Some(sidebar) = &mut self.sidebar {
@@ -837,6 +840,7 @@ mod tests {
     use crate::location::Location;
     use crate::menu;
     use crate::reading::{self, Frames};
+    use crate::recent::Entry;
     use crate::reference::Reference;
     use crate::scene::Pointer;
     use crate::settings::{Density, Setting};
@@ -1871,7 +1875,7 @@ mod tests {
     fn with_recent(entries: &[&str]) -> Genie {
         let mut genie = Genie::default();
         for entry in entries.iter().rev() {
-            genie.recent.add(Location::parse(entry).unwrap());
+            genie.recent.add(Location::parse(entry).unwrap().into());
         }
         genie
     }
@@ -2073,6 +2077,14 @@ mod tests {
         let reads = Location::File(PathBuf::from("/data/reads.bam"));
         assert_eq!(genie.pending, [reads]);
         assert!(genie.restoring.is_some());
+        let mut genome = genie.restoring.clone().unwrap();
+        genome.genome = Some("hg38".to_owned());
+        genome.tracks.clear();
+        let genie = Genie {
+            last: Some(genome),
+            ..Genie::default()
+        };
+        assert!(shows(&genie, "hg38 · chr1:1,000-2,000"));
     }
 
     fn with_menu() -> Genie {
@@ -2192,7 +2204,7 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Picked(Some(file.clone())));
         assert_eq!(genie.pending, [Location::File(folder.join("genes.bed.gz"))]);
-        assert_eq!(genie.recent.entries()[0], Location::File(file));
+        assert_eq!(genie.recent.entries()[0], Location::File(file).into());
         let _ = genie.update(Message::Opened(Ok(reference_at(folder.join("ref.fa")))));
         assert!(shows(&genie, "chr1:101-200"));
         let source = Arc::new(Source {
@@ -2843,7 +2855,24 @@ mod tests {
     fn opening_a_reference_remembers_it() {
         assert_eq!(
             opened().recent.entries(),
-            [Location::File(PathBuf::from("ref.fa"))]
+            [Entry::Location(Location::File(PathBuf::from("ref.fa")))]
+        );
+        let mut genie = Genie::default();
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        assert_eq!(genie.recent.entries(), [Entry::Genome("hg38".to_owned())]);
+    }
+
+    #[test]
+    fn recent_genomes_open_from_the_start_view() {
+        let mut genie = Genie::default();
+        genie.recent.add(Entry::Genome("mm10".to_owned()));
+        let mut ui = simulator(genie.view());
+        ui.click("Mouse GRCm38").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Genome("mm10".to_owned())]
         );
     }
 
