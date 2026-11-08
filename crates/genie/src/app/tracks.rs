@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
@@ -24,6 +24,8 @@ use super::{Genie, Lane, Message, Opening, Status};
 const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
+pub(super) const REMOTE_SESSION: &str =
+    "genie cannot open session files from the web. Copy the file to this computer, then open it.";
 
 impl Genie {
     pub(super) fn track_opened(&mut self, result: Result<Arc<Source>, String>) -> Task<Message> {
@@ -302,6 +304,10 @@ impl Genie {
                     Task::none()
                 }
             };
+        }
+        if location.is_remote() && saved::is_session(Path::new(&location.name())) {
+            self.fail(REMOTE_SESSION.to_owned());
+            return Task::none();
         }
         if track::is_track(&location) {
             if self.session.is_none() {

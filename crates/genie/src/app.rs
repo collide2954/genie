@@ -747,7 +747,7 @@ mod tests {
 
     use iced::{Point, Size};
 
-    use super::tracks::NO_REFERENCE;
+    use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
     use super::{
         Address, Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event,
@@ -823,6 +823,14 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.launch(vec![PathBuf::from("/data/genes.bed.gz").into()]);
         assert!(shows(&genie, NO_REFERENCE));
+    }
+
+    #[test]
+    fn sessions_open_only_from_this_computer() {
+        let mut genie = Genie::default();
+        let location = Location::parse("http://127.0.0.1:9/view.genie").unwrap();
+        let _ = genie.update(Message::Reopen(location));
+        assert!(shows(&genie, REMOTE_SESSION));
     }
 
     #[test]
