@@ -462,13 +462,9 @@ fn remote(message: String) -> Error {
 }
 
 #[cfg(test)]
-#[path = "../tests/support/server.rs"]
-mod server;
-
-#[cfg(test)]
 mod tests {
-    use super::server::serve;
     use super::{Url, fetch};
+    use crate::server::serve;
 
     #[test]
     fn urls_keep_their_parts() {

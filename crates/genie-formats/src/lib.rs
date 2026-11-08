@@ -15,6 +15,7 @@ pub mod gzi;
 pub mod http;
 pub mod ini;
 pub mod png;
+pub mod remote;
 mod sidecar;
 pub mod tabix;
 pub mod table;
@@ -23,3 +24,7 @@ pub mod twobit;
 pub mod vcf;
 
 pub use error::{Error, Reason};
+
+#[cfg(test)]
+#[path = "../tests/support/server.rs"]
+mod server;
