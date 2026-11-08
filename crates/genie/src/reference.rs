@@ -24,6 +24,7 @@ pub struct Reference {
     pub location: Location,
     pub name: String,
     pub assembly: Assembly,
+    pub genome: Option<String>,
     source: Source,
     bands: Vec<Vec<Band>>,
 }
@@ -150,6 +151,7 @@ impl Reference {
             name: location.name(),
             location,
             assembly: Assembly::new(contigs),
+            genome: None,
             source,
             bands: Vec::new(),
         })

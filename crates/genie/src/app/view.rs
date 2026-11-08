@@ -17,6 +17,7 @@ use iced::{Alignment, Border, Element, Length, Padding, mouse};
 use crate::card;
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
+use crate::genome;
 use crate::grip::Grip;
 use crate::icon::{self, Icon};
 use crate::menu::{self, Place};
@@ -41,6 +42,31 @@ pub(super) const VARIANT_HINT: &str = "Zoom in to see the variants";
 pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
 pub(super) const DROP_HINT: &str = "Drop the file to open it";
 pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
+pub(super) const WELCOME: &str = "Pick a genome or open a reference.";
+const SPECIES_WIDTH: f32 = 72.0;
+const GENOME_WIDTH: f32 = 64.0;
+
+fn genomes<'a>() -> Element<'a, Message> {
+    let rows = genome::all().into_iter().map(|genome| {
+        button(
+            row![
+                text(genome.species).size(12).width(SPECIES_WIDTH),
+                text(genome.label).size(12).width(GENOME_WIDTH),
+                text(genome.assembly).size(11).style(style::muted)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([3, 8])
+        .style(style::ghost)
+        .on_press(Message::Genome(genome.id))
+        .into()
+    });
+    column![text("Genomes").size(11).style(style::muted)]
+        .extend(rows)
+        .spacing(2)
+        .into()
+}
 
 impl Genie {
     pub(super) fn figures(&self) -> Vec<(&'static str, String)> {
@@ -265,7 +291,7 @@ impl Genie {
             return row![self.browser(session), line, panel].into();
         }
         let message = match (&self.status, &self.indexing) {
-            (Status::Idle, _) => text("Open a reference sequence to start.").style(style::muted),
+            (Status::Idle, _) => text(WELCOME).style(style::muted),
             (Status::Opening(_), Some((name, percent))) => {
                 text(indexing(name, *percent)).style(style::muted)
             }
@@ -305,6 +331,7 @@ impl Genie {
                 .on_press(Message::RestoreLast),
             );
         }
+        let mut lists = row![genomes()].spacing(48);
         if !self.recent.entries().is_empty() {
             let files = self.recent.entries().iter().map(|location| {
                 button(
@@ -320,13 +347,13 @@ impl Genie {
                 .on_press(Message::Reopen(location.clone()))
                 .into()
             });
-            welcome = welcome.push(
+            lists = lists.push(
                 column![text("Recent").size(11).style(style::muted)]
                     .extend(files)
                     .spacing(2),
             );
         }
-        center(welcome).into()
+        center(welcome.push(lists)).into()
     }
 
     pub(super) fn tracks<'a>(&'a self, session: &'a Session, repack: bool) -> Element<'a, Message> {

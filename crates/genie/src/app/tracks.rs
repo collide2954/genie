@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::SystemTime;
 
 use genie_core::Region;
 use genie_render::{alignments, features, signal, variants};
@@ -9,6 +10,7 @@ use iced::time::Instant;
 use iced::{Point, Task};
 
 use crate::card::{Card, Detail};
+use crate::genome;
 use crate::location::Location;
 use crate::paths;
 use crate::reading;
@@ -24,6 +26,7 @@ use super::{Genie, Lane, Message, Opening, Status};
 const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
+const NO_CACHE: &str = "genie cannot find a cache folder for the genome files.";
 pub(super) const REMOTE_SESSION: &str =
     "genie cannot open session files from the web. Copy the file to this computer, then open it.";
 
@@ -286,6 +289,25 @@ impl Genie {
                         move |result| Message::TileLoaded(generation, key, result),
                     )
                 }),
+        )
+    }
+
+    pub(super) fn open_genome(&mut self, id: &str) -> Task<Message> {
+        let Some(genome) = genome::find(id) else {
+            return Task::none();
+        };
+        let Some(cache) = paths::cache_dir() else {
+            self.fail(NO_CACHE.to_owned());
+            return Task::none();
+        };
+        let folder = genome.folder(&cache);
+        if self.session.is_none() {
+            self.status = Status::Opening(genome.label.clone());
+        }
+        self.pending = vec![Location::File(genome.genes_in(&folder))];
+        Task::perform(
+            async move { genome::open(&genome, &folder, SystemTime::now()).map(Arc::new) },
+            Message::Opened,
         )
     }
 

@@ -341,6 +341,7 @@ pub enum Message {
     Lane(u64, Lane),
     RestoreLast,
     Strip(Option<f32>),
+    Genome(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -531,6 +532,7 @@ impl Genie {
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(x) => self.strip = x,
+            Message::Genome(id) => return self.open_genome(&id),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -777,7 +779,7 @@ mod tests {
     use iced::{Point, Size};
 
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
-    use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
+    use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
         Address, Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event,
     };
@@ -852,6 +854,24 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.launch(vec![PathBuf::from("/data/genes.bed.gz").into()]);
         assert!(shows(&genie, NO_REFERENCE));
+    }
+
+    #[test]
+    fn choosing_a_genome_opens_it_with_its_gene_track() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Genome("hg38".to_owned()));
+        assert!(shows(&genie, "Opening hg38…"));
+        let folder = crate::paths::cache_dir()
+            .unwrap()
+            .join("genomes")
+            .join("hg38");
+        assert_eq!(
+            genie.pending,
+            [Location::File(folder.join("RefSeq Select.bed"))]
+        );
+        let mut other = Genie::default();
+        let _ = other.update(Message::Genome("nope".to_owned()));
+        assert_eq!(other.pending, Vec::<Location>::new());
     }
 
     #[test]
@@ -1650,7 +1670,7 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Picked(None));
         let mut ui = simulator(genie.view());
-        assert!(ui.find("Open a reference sequence to start.").is_ok());
+        assert!(ui.find(WELCOME).is_ok());
     }
 
     #[test]
@@ -1733,6 +1753,33 @@ mod tests {
         assert!(ui.find("demo.fa").is_ok());
         assert!(ui.find("remote.2bit").is_ok());
         assert!(ui.find("example.org").is_ok());
+    }
+
+    #[test]
+    fn the_start_view_lists_genomes_to_open() {
+        let genie = with_recent(&["/data/demo.fa"]);
+        let mut ui = simulator(genie.view());
+        assert!(ui.find(WELCOME).is_ok());
+        for text in [
+            "Genomes",
+            "Human",
+            "GRCh38",
+            "T2T-CHM13v2.0",
+            "Zebrafish",
+            "sacCer3",
+        ] {
+            assert!(ui.find(text).is_ok(), "{text}");
+        }
+        assert!(ui.find("demo.fa").is_ok());
+        ui.click("hg38").unwrap();
+        ui.click("T2T").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [
+                Message::Genome("hg38".to_owned()),
+                Message::Genome("hs1".to_owned())
+            ]
+        );
     }
 
     #[test]
@@ -2727,7 +2774,7 @@ mod tests {
     fn welcome_view_asks_for_a_reference() {
         let genie = Genie::default();
         let mut ui = simulator(genie.view());
-        assert!(ui.find("Open a reference sequence to start.").is_ok());
+        assert!(ui.find(WELCOME).is_ok());
     }
 
     #[test]
