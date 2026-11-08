@@ -133,6 +133,12 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Import BED and Export BED read and write the list as a BED file. genie reads plain BED files up to 50 MB. It does not import regions on contigs that are not in the reference.
 - Regions show as bands under the ruler. Put the pointer on a band to see its name, and click the band to go to the region.
 
+## Copy
+
+- Push Ctrl+C (Cmd+C on macOS) to copy the locus of the view, for example `chr1:1,001-2,000`. If you clicked a card to keep it open, Ctrl+C copies the text of the card.
+- Right-click the ruler or a region in the region list, then click **Copy locus** or **Copy sequence**.
+- **Copy sequence** copies the bases in FASTA format, with 60 bases on each line. The header is the locus, for example `>chr1:1001-2000`. If the sequence track shows the reverse strand, genie copies the reverse complement and adds `(-)` to the header. genie copies up to 1 Mb.
+
 ## Tracks
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
@@ -160,6 +166,20 @@ If a file is in the folder of the session file, the session file has its path re
 ## Export
 
 To save the view as a PNG image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. The scale of the image is 2, and the image uses the current theme. The maximum height of the image is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
+
+## Images from the command line
+
+To save one image for each region in a BED file, without a window:
+
+```bash
+cargo run -p genie -- snapshot work.genie regions.bed pictures
+```
+
+- genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it.
+- The name of an image is the name of the region (BED column 4) or the locus, for example `chr1_1001-2000.png`. If two regions have the same name, genie adds `-2`, `-3` and so on.
+- `--width POINTS` sets the width of the view, from 200 to 4,096 (default 1,280). The image has two pixels for each point. `--theme dark` uses the dark theme. The default is light.
+- genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.
+- The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.
 
 ## Settings
 
