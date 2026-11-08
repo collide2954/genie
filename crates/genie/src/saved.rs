@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
@@ -72,7 +73,7 @@ impl Saved {
             .filter_map(|section| {
                 let on = |key| section.value(key) == Some("on");
                 Some(SavedTrack {
-                    location: Location::File(absolute(section.value("file")?, base)),
+                    location: read(section.value("file")?, base),
                     mode: section.value("mode").and_then(|name| find(&MODES, name)),
                     hue: section
                         .value("color")
@@ -111,7 +112,7 @@ impl Saved {
             })
             .collect();
         Ok(Self {
-            reference: Location::File(absolute(reference, base)),
+            reference: read(reference, base),
             locus: value("locus").map(str::to_owned),
             reading,
             tracks,
@@ -201,6 +202,15 @@ fn section(name: &str, entries: Vec<(&str, String)>) -> Section {
             .map(|(key, value)| (key.to_owned(), value))
             .collect(),
     }
+}
+
+fn read(text: &str, base: &Path) -> Location {
+    if Url::is_url(text)
+        && let Ok(url) = Url::parse(text)
+    {
+        return Location::Url(url);
+    }
+    Location::File(absolute(text, base))
 }
 
 fn written(location: &Location, base: &Path) -> String {
@@ -319,6 +329,23 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn sessions_keep_addresses_as_written() {
+        let mut saved = saved();
+        saved.reference = Location::parse("https://example.org/hg38.2bit").unwrap();
+        saved.tracks[0].location = Location::parse("https://example.org/a.bam?k=1").unwrap();
+        let text = saved.text(&base());
+        assert!(
+            text.contains("reference = https://example.org/hg38.2bit"),
+            "{text}"
+        );
+        assert!(
+            text.contains("file = https://example.org/a.bam?k=1"),
+            "{text}"
+        );
+        assert_eq!(Saved::parse(&text, &base()), Ok(saved));
     }
 
     #[test]
