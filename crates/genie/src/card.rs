@@ -17,6 +17,7 @@ const LINE_HEIGHT: f32 = 16.0;
 const OFFSET_X: f32 = 12.0;
 const OFFSET_Y: f32 = 16.0;
 const EDGE: f32 = 4.0;
+const TIP_WIDTH: f32 = 120.0;
 const ALLELE_LIMIT: usize = 12;
 const ALLELE_KEEP: usize = 8;
 const INFO_ENTRIES: usize = 3;
@@ -296,6 +297,21 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         card.at.y + OFFSET_Y
     };
     pin(body).x(x).y(y).into()
+}
+
+pub fn tip<'a>(name: String, at: Point, window: Size) -> Element<'a, Message> {
+    let body = container(text(name).size(11))
+        .padding([3, 6])
+        .style(style::menu);
+    let (x, align) = if at.x + OFFSET_X + TIP_WIDTH + EDGE > window.width {
+        (at.x - OFFSET_X - TIP_WIDTH, Align::End)
+    } else {
+        (at.x + OFFSET_X, Align::Start)
+    };
+    pin(container(body).width(TIP_WIDTH).align_x(align))
+        .x(x.max(0.0))
+        .y(at.y + OFFSET_Y)
+        .into()
 }
 
 #[cfg(test)]

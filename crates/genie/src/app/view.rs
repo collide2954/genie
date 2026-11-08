@@ -179,6 +179,9 @@ impl Genie {
         {
             layers = layers.push(card::view(hover, false, self.window));
         }
+        if let (Some(pointer), Some(name)) = (self.strip, self.band_tip()) {
+            layers = layers.push(card::tip(name, pointer.at, self.window));
+        }
         let progress = self
             .session
             .as_ref()
@@ -503,7 +506,7 @@ impl Genie {
         .into()
     }
 
-    fn overview<'a>(&self, session: &'a Session) -> Element<'a, Message> {
+    fn overview(session: &Session) -> Element<'_, Message> {
         let bands = session.reference.bands(session.contig);
         let strip = scene::view(
             overview::scene(session.viewport, OVERVIEW_HEIGHT, bands),
@@ -512,22 +515,13 @@ impl Genie {
         .on_press(|share| Message::Overview(Sweep::Pressed(share)))
         .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
         .on_release(Message::Overview(Sweep::Released))
-        .on_hover(|pointer| Message::Strip(pointer.map(|pointer| pointer.local.x)));
-        let card: Element<'a, Message> = match self.band_tip() {
-            Some(name) => container(text(name).size(11))
-                .padding([3, 6])
-                .style(style::menu)
-                .into(),
-            None => space().into(),
-        };
-        container(tooltip(strip, card, tooltip::Position::FollowCursor).gap(12))
-            .id("overview")
-            .into()
+        .on_hover(Message::Strip);
+        container(strip).id("overview").into()
     }
 
     fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let viewport = session.viewport;
-        let tracks = column![self.overview(session), self.ruler(viewport)]
+        let tracks = column![Self::overview(session), self.ruler(viewport)]
             .push(self.bands(session))
             .push(hairline())
             .push(

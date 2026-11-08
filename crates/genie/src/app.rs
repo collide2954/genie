@@ -86,7 +86,7 @@ pub struct Genie {
     now: Instant,
     modifiers: keyboard::Modifiers,
     address: Option<AddressField>,
-    strip: Option<f32>,
+    strip: Option<Pointer>,
     cache: Option<PathBuf>,
     download: Option<Download>,
 }
@@ -352,7 +352,7 @@ pub enum Message {
     SettingChanged(Setting),
     Lane(u64, Lane),
     RestoreLast,
-    Strip(Option<f32>),
+    Strip(Option<Pointer>),
     Genome(String),
     GenomeMenu,
     Offline(Offline),
@@ -571,7 +571,7 @@ impl Genie {
             Message::ToggleSettings => self.toggle(Popup::Settings),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
-            Message::Strip(x) => self.strip = x,
+            Message::Strip(pointer) => self.strip = pointer,
             Message::Genome(id) => return self.open_genome(&id),
             Message::GenomeMenu => {
                 let open = self.popup != Some(Popup::Genomes);
@@ -654,7 +654,7 @@ impl Genie {
     }
 
     fn band_tip(&self) -> Option<String> {
-        let (x, session) = (self.strip?, self.session.as_ref()?);
+        let (x, session) = (self.strip?.local.x, self.session.as_ref()?);
         let viewport = session.viewport;
         if viewport.width() <= 0.0 {
             return None;
@@ -1840,8 +1840,7 @@ mod tests {
         assert!(shows(&genie, "chr1:1-250"));
     }
 
-    #[test]
-    fn hovering_the_overview_names_the_band() {
+    fn banded() -> Genie {
         let band = |start, end, name: &str| {
             (
                 "chr1".to_owned(),
@@ -1860,16 +1859,57 @@ mod tests {
         let banded = Arc::try_unwrap(reference()).unwrap().with_bands(&rows);
         let mut genie = Genie::default();
         let _ = genie.update(Message::Opened(Ok(Arc::new(banded))));
+        genie
+    }
+
+    fn point_at_strip(genie: &mut Genie, local: f32, x: f32) -> Point {
+        let at = Point::new(x, crate::chrome::BAR_HEIGHT + 6.0);
+        let local = Point::new(local, 6.0);
+        let _ = genie.update(Message::Strip(Some(Pointer { local, at })));
+        at
+    }
+
+    #[test]
+    fn hovering_the_overview_names_the_band() {
+        let mut genie = banded();
         let width = genie.session.as_ref().unwrap().viewport.width() as f32;
-        let _ = genie.update(Message::Strip(Some(width * 0.75)));
+        point_at_strip(&mut genie, width * 0.75, width * 0.75);
         assert_eq!(genie.band_tip().as_deref(), Some("1q11"));
-        let _ = genie.update(Message::Strip(Some(width * 0.1)));
+        point_at_strip(&mut genie, width * 0.1, width * 0.1);
         assert_eq!(genie.band_tip().as_deref(), Some("1p11"));
         let _ = genie.update(Message::Strip(None));
         assert_eq!(genie.band_tip(), None);
         let _ = genie.update(Message::Opened(Ok(reference())));
-        let _ = genie.update(Message::Strip(Some(width * 0.75)));
+        point_at_strip(&mut genie, width * 0.75, width * 0.75);
         assert_eq!(genie.band_tip(), None);
+    }
+
+    #[test]
+    fn the_band_name_shows_under_the_strip_beside_the_pointer() {
+        let mut genie = banded();
+        let width = genie.session.as_ref().unwrap().viewport.width() as f32;
+        let at = point_at_strip(&mut genie, width * 0.75, width * 0.75);
+        {
+            let mut ui = simulator(genie.view());
+            let strip = ui.find(selector::id("overview")).unwrap().bounds();
+            let name = ui.find("1q11").unwrap().bounds();
+            assert!(name.y >= strip.y + strip.height, "{name:?} {strip:?}");
+            assert!(name.x > at.x, "{name:?} {at:?}");
+        }
+        let _ = genie.update(Message::Strip(None));
+        assert!(!shows(&genie, "1q11"));
+    }
+
+    #[test]
+    fn near_the_right_edge_the_band_name_turns_left() {
+        let mut genie = banded();
+        let width = genie.session.as_ref().unwrap().viewport.width() as f32;
+        let window = genie.window;
+        let at = point_at_strip(&mut genie, width - 2.0, window.width - 4.0);
+        let mut ui =
+            iced_test::Simulator::with_size(iced::Settings::default(), window, genie.view());
+        let name = ui.find("1q11").unwrap().bounds();
+        assert!(name.x + name.width < at.x, "{name:?} {at:?}");
     }
 
     fn with_recent(entries: &[&str]) -> Genie {
