@@ -1638,6 +1638,7 @@ mod tests {
             locus: None,
             reading: crate::reading::Reading::default(),
             tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
+            regions: Vec::new(),
         };
         let mut genie = Genie::default();
         let _ = genie.restore(saved);
@@ -1661,6 +1662,28 @@ mod tests {
     }
 
     #[test]
+    fn sessions_keep_the_regions() {
+        let mut genie = opened();
+        go(&mut genie, "chr2:51-150");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
+        let saved = genie.saved().unwrap();
+        let region = crate::saved::SavedRegion {
+            name: "Region 1".to_owned(),
+            locus: "chr2:51-150".to_owned(),
+        };
+        assert_eq!(saved.regions, [region]);
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        let back: Vec<(String, usize, Region)> = marks(&restored)
+            .into_iter()
+            .map(|mark| (mark.name, mark.contig, mark.span))
+            .collect();
+        assert_eq!(back, [("Region 1".to_owned(), 1, Region::between(50, 150))]);
+    }
+
+    #[test]
     fn welcome_offers_to_restore_the_last_session() {
         let last = crate::saved::Saved {
             reference: PathBuf::from("/data/hg38.fa"),
@@ -1674,6 +1697,7 @@ mod tests {
                 options: crate::track::Options::default(),
                 plot: crate::track::Plot::default(),
             }],
+            regions: Vec::new(),
         };
         let mut genie = Genie {
             last: Some(last),

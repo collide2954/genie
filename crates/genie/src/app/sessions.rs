@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
+use genie_core::{Locus, Region, Span};
 use iced::Task;
 
 use crate::paths::{self, file_name};
-use crate::saved::{self, Saved, SavedTrack};
+use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
 
 use super::{Genie, LAST, Message};
@@ -39,10 +40,25 @@ impl Genie {
             session.contig = target.contig;
             session.viewport = session.viewport.retarget(length).jump(target.span);
         }
+        for region in &saved.regions {
+            let Ok(target) = assembly.resolve(&region.locus) else {
+                continue;
+            };
+            let length = assembly.contigs()[target.contig].length;
+            let span = match target.span {
+                Span::Region(span) => span.clamp_to(length),
+                Span::Position(position) => Region::between(position, position + 1),
+                Span::Whole => Region::between(0, length),
+            };
+            session
+                .marks
+                .add(target.contig, span, Some(region.name.clone()));
+        }
     }
 
     pub(super) fn saved(&self) -> Option<Saved> {
         let session = self.session.as_ref()?;
+        let contigs = session.reference.assembly.contigs();
         Some(Saved {
             reference: session.reference.path.clone(),
             locus: Some(session.locus()),
@@ -57,6 +73,19 @@ impl Genie {
                     height: track.height,
                     options: track.options,
                     plot: track.plot,
+                })
+                .collect(),
+            regions: session
+                .marks
+                .all()
+                .iter()
+                .map(|mark| SavedRegion {
+                    name: mark.name.clone(),
+                    locus: Locus {
+                        name: contigs[mark.contig].name.clone(),
+                        span: Span::Region(mark.span),
+                    }
+                    .to_string(),
                 })
                 .collect(),
         })

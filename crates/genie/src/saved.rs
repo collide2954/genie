@@ -31,6 +31,13 @@ pub struct Saved {
     pub locus: Option<String>,
     pub reading: Reading,
     pub tracks: Vec<SavedTrack>,
+    pub regions: Vec<SavedRegion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedRegion {
+    pub name: String,
+    pub locus: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,11 +100,21 @@ impl Saved {
                 })
             })
             .collect();
+        let regions = document
+            .sections("region")
+            .filter_map(|section| {
+                Some(SavedRegion {
+                    locus: section.value("locus")?.to_owned(),
+                    name: section.value("name").unwrap_or_default().to_owned(),
+                })
+            })
+            .collect();
         Ok(Self {
             reference: absolute(reference, base),
             locus: value("locus").map(str::to_owned),
             reading,
             tracks,
+            regions,
         })
     }
 
@@ -149,6 +166,13 @@ impl Saved {
                 entries.push(("colors", "off".to_owned()));
             }
             sections.push(section("track", entries));
+        }
+        for region in &self.regions {
+            let entries = vec![
+                ("locus", region.locus.clone()),
+                ("name", region.name.clone()),
+            ];
+            sections.push(section("region", entries));
         }
         ini::write(&Document { sections })
     }
@@ -220,7 +244,7 @@ mod tests {
     use genie_render::scene::Hue;
     use genie_render::signal::Style;
 
-    use super::{Saved, SavedTrack, is_session};
+    use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::reading::{Frames, Reading};
     use crate::track::{Grouping, Options, Plot};
 
@@ -275,7 +299,25 @@ mod tests {
                     },
                 },
             ],
+            regions: vec![
+                SavedRegion {
+                    name: "promoter A".to_owned(),
+                    locus: "chr1:1,201-1,450".to_owned(),
+                },
+                SavedRegion {
+                    name: "Region 2".to_owned(),
+                    locus: "chr2:11-20".to_owned(),
+                },
+            ],
         }
+    }
+
+    #[test]
+    fn regions_are_sections_with_a_locus_and_a_name() {
+        let text = saved().text(&base());
+        assert_eq!(text.matches("[region]").count(), 2, "{text}");
+        assert!(text.contains("locus = chr1:1,201-1,450"), "{text}");
+        assert!(text.contains("name = promoter A"), "{text}");
     }
 
     #[test]
