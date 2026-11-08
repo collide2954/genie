@@ -983,6 +983,33 @@ mod tests {
     }
 
     #[test]
+    fn genome_sessions_open_the_genome_and_find_its_gene_track() {
+        let scratch = crate::scratch::Scratch::new("genome-session");
+        let text = "[session]\n\
+                    reference = https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit\n\
+                    genome = hg38\nlocus = chr1:101-200\n\
+                    [track]\nfile = /other/cache/genomes/hg38/RefSeq Select.bed\n\
+                    [track]\nfile = genes.bed.gz\n";
+        let file = scratch.file("work.genie", text);
+        let folder = file.parent().unwrap().to_owned();
+        let mut genie = Genie::default();
+        let cache = genie.cache.clone().unwrap();
+        let _ = genie.update(Message::Picked(Some(file)));
+        assert!(shows(&genie, "Opening hg38…"));
+        assert_eq!(
+            genie.pending,
+            [
+                Location::File(cache.join("genomes/hg38/RefSeq Select.bed")),
+                Location::File(folder.join("genes.bed.gz")),
+            ]
+        );
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
     fn sessions_open_only_from_this_computer() {
         let mut genie = Genie::default();
         let location = Location::parse("http://127.0.0.1:9/view.genie").unwrap();
@@ -1967,6 +1994,7 @@ mod tests {
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
+            genome: None,
             locus: None,
             reading: crate::reading::Reading::default(),
             tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
@@ -2019,6 +2047,7 @@ mod tests {
     fn welcome_offers_to_restore_the_last_session() {
         let last = crate::saved::Saved {
             reference: PathBuf::from("/data/hg38.fa").into(),
+            genome: None,
             locus: Some("chr1:1,000-2,000".to_owned()),
             reading: crate::reading::Reading::default(),
             tracks: vec![crate::saved::SavedTrack {

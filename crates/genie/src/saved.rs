@@ -30,6 +30,7 @@ const HUES: [(&str, Hue); 5] = [
 #[derive(Debug, Clone, PartialEq)]
 pub struct Saved {
     pub reference: Location,
+    pub genome: Option<String>,
     pub locus: Option<String>,
     pub reading: Reading,
     pub tracks: Vec<SavedTrack>,
@@ -113,6 +114,7 @@ impl Saved {
             .collect();
         Ok(Self {
             reference: read(reference, base),
+            genome: value("genome").map(str::to_owned),
             locus: value("locus").map(str::to_owned),
             reading,
             tracks,
@@ -122,6 +124,9 @@ impl Saved {
 
     pub fn text(&self, base: &Path) -> String {
         let mut session = vec![("reference", written(&self.reference, base))];
+        if let Some(genome) = &self.genome {
+            session.push(("genome", genome.clone()));
+        }
         if let Some(locus) = &self.locus {
             session.push(("locus", locus.clone()));
         }
@@ -274,6 +279,7 @@ mod tests {
     fn saved() -> Saved {
         Saved {
             reference: Location::File(base().join("data").join("ref.fa.gz")),
+            genome: None,
             locus: Some("chr1:51,971-52,030".to_owned()),
             reading: Reading {
                 reverse: true,
@@ -346,6 +352,16 @@ mod tests {
             "{text}"
         );
         assert_eq!(Saved::parse(&text, &base()), Ok(saved));
+    }
+
+    #[test]
+    fn sessions_keep_the_genome() {
+        let mut saved = saved();
+        saved.genome = Some("hg38".to_owned());
+        let text = saved.text(&base());
+        assert!(text.contains("genome = hg38"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(saved));
+        assert!(!self::saved().text(&base()).contains("genome ="));
     }
 
     #[test]

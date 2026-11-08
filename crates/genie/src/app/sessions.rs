@@ -1,31 +1,58 @@
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 use genie_core::{Locus, Region, Span};
 use iced::Task;
 
+use crate::genome::{self, Genome};
+use crate::location::Location;
 use crate::paths::{self, file_name};
 use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
 
 use super::{Genie, LAST, Message};
 
+fn local(location: &Location, genome: Option<&Genome>, folder: Option<&Path>) -> Location {
+    if let (Some(genome), Some(folder), Location::File(path)) = (genome, folder, location) {
+        let genes = genome.genes_in(folder);
+        let parent = path.parent().and_then(Path::file_name);
+        if path.file_name() == genes.file_name() && parent == Some(OsStr::new(&genome.id)) {
+            return Location::File(genes);
+        }
+    }
+    location.clone()
+}
+
 impl Genie {
     pub(super) fn restore(&mut self, saved: Saved) -> Task<Message> {
-        self.pending = saved
+        let genome = saved.genome.as_deref().and_then(genome::find);
+        let folder = genome
+            .as_ref()
+            .zip(self.cache.as_ref())
+            .map(|(genome, cache)| genome.folder(cache));
+        let tracks = saved
             .tracks
             .iter()
-            .map(|track| track.location.clone())
+            .map(|track| local(&track.location, genome.as_ref(), folder.as_deref()))
             .collect();
-        let reference = saved.reference.clone();
+        let task = match &genome {
+            Some(genome) => self.open_genome(&genome.id),
+            None => self.open(saved.reference.clone()),
+        };
+        self.pending = tracks;
         self.restoring = Some(saved);
-        self.open(reference)
+        task
     }
 
     pub(super) fn resume(&mut self) {
         let (Some(saved), Some(session)) = (&self.restoring, &mut self.session) else {
             return;
         };
-        if saved.reference != session.reference.location {
+        let same = match (&saved.genome, &session.reference.genome) {
+            (Some(wanted), Some(open)) => wanted == open,
+            _ => saved.reference == session.reference.location,
+        };
+        if !same {
             self.restoring = None;
             return;
         }
@@ -61,6 +88,7 @@ impl Genie {
         let contigs = session.reference.assembly.contigs();
         Some(Saved {
             reference: session.reference.location.clone(),
+            genome: session.reference.genome.clone(),
             locus: Some(session.locus()),
             reading: session.reading,
             tracks: session
