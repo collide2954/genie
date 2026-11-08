@@ -5,6 +5,7 @@ pub mod bed;
 pub mod bedgraph;
 pub mod bgzf;
 mod binning;
+pub mod contigs;
 pub mod cytoband;
 mod error;
 pub mod fai;
