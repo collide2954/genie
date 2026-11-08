@@ -57,9 +57,25 @@ impl TwoBit {
         Self::read_with(reader, &HashMap::new())
     }
 
-    pub fn read_with(
-        reader: &mut (impl Read + Seek),
+    pub fn read_with<R: Read + Seek>(
+        reader: &mut R,
         sizes: &HashMap<String, u64>,
+    ) -> Result<Self, Error> {
+        Self::read_using(reader, sizes, |reader, offsets| {
+            offsets
+                .iter()
+                .map(|&offset| {
+                    reader.seek(SeekFrom::Start(offset))?;
+                    bytes(reader)
+                })
+                .collect()
+        })
+    }
+
+    pub fn read_using<R: Read + Seek>(
+        reader: &mut R,
+        sizes: &HashMap<String, u64>,
+        words: impl FnOnce(&mut R, &[u64]) -> Result<Vec<[u8; 4]>, Error>,
     ) -> Result<Self, Error> {
         reader.seek(SeekFrom::Start(0))?;
         let signature = bytes(reader)?;
@@ -92,13 +108,20 @@ impl TwoBit {
                 offset,
             });
         }
-        for entry in &mut entries {
-            if let Some(length) = sizes.get(&entry.name) {
-                entry.length = *length;
-                continue;
+        let mut unknown = Vec::new();
+        for (index, entry) in entries.iter_mut().enumerate() {
+            match sizes.get(&entry.name) {
+                Some(length) => entry.length = *length,
+                None => unknown.push(index),
             }
-            reader.seek(SeekFrom::Start(entry.offset))?;
-            entry.length = u64::from(order.word(bytes(reader)?));
+        }
+        let offsets: Vec<u64> = unknown.iter().map(|&index| entries[index].offset).collect();
+        let found = words(reader, &offsets)?;
+        if found.len() != unknown.len() {
+            return Err(Error::Io(std::io::ErrorKind::UnexpectedEof.into()));
+        }
+        for (index, word) in unknown.into_iter().zip(found) {
+            entries[index].length = u64::from(order.word(word));
         }
         let layouts = entries.iter().map(|_| OnceLock::new()).collect();
         Ok(Self {
@@ -363,6 +386,27 @@ mod tests {
         assert!(reader.targets.contains(&second), "{:?}", reader.targets);
         let region = Region::new(0, 9).unwrap();
         assert_eq!(file.fetch(&mut reader, 0, region).unwrap(), b"ACGTACGTA");
+    }
+
+    #[test]
+    fn lengths_can_come_from_other_reads() {
+        let bytes = encode(&[("chr1", "ACGTACGTA"), ("chrM", "GG")], &PLAIN);
+        let sizes = HashMap::from([("chr1".to_owned(), 9)]);
+        let mut asked = Vec::new();
+        let file = TwoBit::read_using(&mut Cursor::new(&bytes), &sizes, |_, offsets| {
+            asked.extend_from_slice(offsets);
+            Ok(vec![7_u32.to_le_bytes()])
+        })
+        .unwrap();
+        assert_eq!(asked, [34 + 4 + 4 + 4 + 4 + 3]);
+        let entries: Vec<(&str, u64)> = file
+            .entries()
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.length))
+            .collect();
+        assert_eq!(entries, [("chr1", 9), ("chrM", 7)]);
+        let short = TwoBit::read_using(&mut Cursor::new(&bytes), &sizes, |_, _| Ok(Vec::new()));
+        assert!(short.is_err());
     }
 
     #[test]

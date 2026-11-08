@@ -6,6 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::time::Duration;
 
 pub struct Server {
     pub port: u16,
@@ -100,6 +101,7 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, requests: &Atomic
         let (chunked, path) = route(path, "/chunked");
         let (whole, path) = route(path, "/whole");
         let (close, path) = route(path, "/close");
+        let path = pause(path);
         let Some(data) = files.get(path) else {
             let head = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             if writer.write_all(head.as_bytes()).is_err() {
@@ -151,6 +153,14 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, requests: &Atomic
             return;
         }
     }
+}
+
+fn pause(path: &str) -> &str {
+    let (slow, path) = route(path, "/slow");
+    if slow {
+        thread::sleep(Duration::from_millis(50));
+    }
+    path
 }
 
 fn route<'a>(path: &'a str, prefix: &str) -> (bool, &'a str) {

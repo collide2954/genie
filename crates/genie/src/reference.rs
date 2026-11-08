@@ -8,7 +8,7 @@ use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
 use genie_formats::{fasta, gzi};
 
-use crate::location::Location;
+use crate::location::{Location, Reader};
 
 const FAI_SHARE: f32 = 0.95;
 
@@ -76,7 +76,15 @@ fn sized(
         .read_to_end(&mut head)
         .map_err(|error| error.to_string())?;
     if twobit::sniff(&head) {
-        let reader = TwoBit::read_with(&mut file, sizes).map_err(|error| error.to_string())?;
+        let reader = match &mut file {
+            Reader::Remote(remote) => {
+                TwoBit::read_using(remote.as_mut(), sizes, |remote, offsets| {
+                    remote.pieces(offsets)
+                })
+            }
+            Reader::File(file) => TwoBit::read_with(file, sizes),
+        }
+        .map_err(|error| error.to_string())?;
         let contigs = reader
             .entries()
             .iter()
@@ -449,6 +457,45 @@ mod tests {
             twobit.fetch(1, Region::new(0, 4).unwrap()).unwrap(),
             b"ACGT"
         );
+    }
+
+    fn far_2bit() -> Vec<u8> {
+        let contigs = [
+            ("chr1", 8_u32, 100_000_u32),
+            ("chr2", 4, 200_000),
+            ("chr3", 12, 300_000),
+        ];
+        let mut bytes = Vec::new();
+        for word in [0x1A41_2743_u32, 0, 3, 0] {
+            bytes.extend(word.to_le_bytes());
+        }
+        for (name, _, start) in contigs {
+            bytes.push(u8::try_from(name.len()).unwrap());
+            bytes.extend(name.bytes());
+            bytes.extend(start.to_le_bytes());
+        }
+        bytes.resize(300_100, 0);
+        for (_, length, start) in contigs {
+            let start = usize::try_from(start).unwrap();
+            bytes[start..start + 4].copy_from_slice(&length.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn remote_2bit_files_read_far_lengths_in_parallel() {
+        let server = crate::server::serve(vec![("/far.2bit".to_owned(), far_2bit())]);
+        let location = Location::parse(&server.url("/slow/far.2bit")).unwrap();
+        let reference = open(location, None, &mut |_| {}).unwrap();
+        let lengths: Vec<u64> = reference
+            .assembly
+            .contigs()
+            .iter()
+            .map(|contig| contig.length)
+            .collect();
+        assert_eq!(lengths, [8, 4, 12]);
+        assert!(server.connections() > 1, "{}", server.connections());
+        assert_eq!(reference.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::thread;
 
 use crate::Error;
 use crate::http::{self, Url};
@@ -8,6 +9,7 @@ use crate::http::{self, Url};
 const BLOCK: u64 = 64 << 10;
 const BUDGET: usize = 64 << 20;
 const RUN: u64 = 16;
+const PARALLEL: usize = 8;
 
 #[derive(Debug)]
 pub struct Remote {
@@ -44,6 +46,52 @@ impl Remote {
 
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    pub fn pieces<const N: usize>(&self, starts: &[u64]) -> Result<Vec<[u8; N]>, Error> {
+        let mut found: Vec<Option<[u8; N]>> =
+            starts.iter().map(|&start| self.cached(start)).collect();
+        let missing: Vec<usize> = (0..starts.len())
+            .filter(|&index| found[index].is_none())
+            .collect();
+        let share = missing.len().div_ceil(PARALLEL).max(1);
+        thread::scope(|scope| {
+            let workers: Vec<_> = missing
+                .chunks(share)
+                .map(|part| {
+                    scope.spawn(move || {
+                        part.iter()
+                            .map(|&index| Ok((index, self.piece(starts[index])?)))
+                            .collect::<Result<Vec<_>, Error>>()
+                    })
+                })
+                .collect();
+            for worker in workers {
+                let part = worker
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+                for (index, piece) in part {
+                    found[index] = Some(piece);
+                }
+            }
+            Ok::<_, Error>(())
+        })?;
+        Ok(found.into_iter().flatten().collect())
+    }
+
+    fn cached<const N: usize>(&self, start: u64) -> Option<[u8; N]> {
+        let index = start / BLOCK;
+        let offset = usize::try_from(start - index * BLOCK).ok()?;
+        let block = cache().get(&self.key, index)?;
+        block.get(offset..offset + N)?.try_into().ok()
+    }
+
+    fn piece<const N: usize>(&self, start: u64) -> Result<[u8; N], Error> {
+        let fetched = http::fetch(&self.url, start, start + N as u64)?;
+        fetched
+            .bytes
+            .try_into()
+            .map_err(|_| Error::Remote(format!("The server sent too few bytes for {}.", self.url)))
     }
 
     fn block(&mut self, index: u64) -> io::Result<Arc<[u8]>> {
@@ -224,6 +272,35 @@ mod tests {
         Remote::open(&url).unwrap().read_to_end(&mut all).unwrap();
         assert_eq!(all.len(), 2 << 20);
         assert!(server.requests() <= 8, "{}", server.requests());
+    }
+
+    #[test]
+    fn pieces_come_from_the_cache_or_from_parallel_requests() {
+        let server = serve(vec![("/a.bin".to_owned(), data(300_000))]);
+        let url = Url::parse(&server.url("/slow/a.bin")).unwrap();
+        let remote = Remote::open(&url).unwrap();
+        let asked = server.requests();
+        let starts = [10, 100_000, 150_000, 200_000, 250_000, 299_996];
+        let pieces: Vec<[u8; 4]> = remote.pieces(&starts).unwrap();
+        let expected: Vec<[u8; 4]> = starts
+            .iter()
+            .map(|&start| {
+                let start = usize::try_from(start).unwrap();
+                data(300_000)[start..start + 4].try_into().unwrap()
+            })
+            .collect();
+        assert_eq!(pieces, expected);
+        assert_eq!(server.requests(), asked + 5);
+        assert!(server.connections() > 1, "{}", server.connections());
+    }
+
+    #[test]
+    fn pieces_past_the_end_fail() {
+        let (_server, url) = served(1_000);
+        let remote = Remote::open(&url).unwrap();
+        let last: [u8; 4] = data(1_000)[996..].try_into().unwrap();
+        assert_eq!(remote.pieces::<4>(&[996]).unwrap(), [last]);
+        assert!(remote.pieces::<4>(&[998]).is_err());
     }
 
     #[test]
