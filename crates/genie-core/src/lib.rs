@@ -2,6 +2,7 @@ pub mod alignment;
 mod assembly;
 pub mod codon;
 mod feature;
+mod history;
 mod locus;
 mod names;
 mod number;
@@ -14,6 +15,7 @@ mod viewport;
 
 pub use assembly::{Assembly, Contig, Target};
 pub use feature::{Feature, Strand};
+pub use history::{History, Visit};
 pub use locus::{Locus, LocusError, Span};
 pub use names::{Named, Names};
 pub use number::{grouped, parse_bases};
