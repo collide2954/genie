@@ -14,6 +14,7 @@ pub enum Command {
     NextFeature,
     PreviousFeature,
     AddRegion,
+    OpenUrl,
     FocusLocus,
     NextSuggestion,
     PreviousSuggestion,
@@ -42,6 +43,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
+        Key::Character("u" | "U") if modifiers.command() => Some(Command::OpenUrl),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
         _ => None,
@@ -105,6 +107,14 @@ mod tests {
             Some(Command::AddRegion)
         );
         assert_eq!(command(&character("d"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_u_asks_for_an_address() {
+        assert_eq!(
+            command(&character("u"), Modifiers::COMMAND),
+            Some(Command::OpenUrl)
+        );
     }
 
     #[test]

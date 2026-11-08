@@ -116,6 +116,7 @@ impl Genie {
         self.menu = None;
         self.sequence_menu = None;
         self.settings_open = false;
+        self.address = None;
     }
 
     pub(super) fn open_menu(&mut self, id: u64, at: Point) {

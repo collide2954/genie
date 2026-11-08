@@ -27,6 +27,7 @@ impl Genie {
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
             Command::AddRegion => self.regions(Regions::Add),
+            Command::OpenUrl => self.ask_address(),
             Command::NextFeature | Command::PreviousFeature => {
                 let forward = command == Command::NextFeature;
                 self.pointed

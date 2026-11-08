@@ -29,6 +29,7 @@ use crate::tiles::{Key, Tiles};
 use crate::track::{self, Change, Loaded, Source, Track};
 use crate::{font, paths, timer};
 
+mod address;
 mod export;
 mod navigation;
 mod regions;
@@ -82,6 +83,7 @@ pub struct Genie {
     slide: Animation<bool>,
     now: Instant,
     modifiers: keyboard::Modifiers,
+    address: Option<AddressField>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -131,6 +133,7 @@ impl Default for Genie {
             slide: motion::slide(false),
             now: Instant::now(),
             modifiers: keyboard::Modifiers::default(),
+            address: None,
         }
     }
 }
@@ -318,6 +321,7 @@ pub enum Message {
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
+    Address(Address),
     Modifiers(keyboard::Modifiers),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
@@ -333,6 +337,18 @@ pub enum Message {
     SettingChanged(Setting),
     Lane(u64, Lane),
     RestoreLast,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Address {
+    Edit(String),
+    Submit,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct AddressField {
+    text: String,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -496,6 +512,7 @@ impl Genie {
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
+            Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
             Message::MenuDismissed => self.close_menus(),
@@ -732,7 +749,9 @@ mod tests {
 
     use super::tracks::NO_REFERENCE;
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
-    use super::{Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event};
+    use super::{
+        Address, Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event,
+    };
     use crate::export;
     use crate::location::Location;
     use crate::menu;
@@ -1271,6 +1290,34 @@ mod tests {
             &genie,
             &format!("No regions. Push {keys} to add the view.")
         ));
+    }
+
+    #[test]
+    fn the_address_field_opens_urls() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Command(Command::OpenUrl));
+        assert!(shows(&genie, "Open a file from the web"));
+        let text = "http://127.0.0.1:9/data/hg38.2bit".to_owned();
+        let _ = genie.update(Message::Address(Address::Edit(text)));
+        let _ = genie.update(Message::Address(Address::Submit));
+        assert_eq!(genie.address, None);
+        assert!(shows(&genie, "Opening hg38.2bit…"));
+    }
+
+    #[test]
+    fn bad_addresses_stay_with_an_error() {
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Command(Command::OpenUrl));
+        let text = "data/genes.bed".to_owned();
+        let _ = genie.update(Message::Address(Address::Edit(text)));
+        let _ = genie.update(Message::Address(Address::Submit));
+        let error = "The address data/genes.bed does not start with https:// or http://.";
+        assert!(shows(&genie, error));
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert_eq!(genie.address, None);
+        let _ = genie.update(Message::Command(Command::OpenUrl));
+        let _ = genie.update(Message::MenuDismissed);
+        assert_eq!(genie.address, None);
     }
 
     #[test]

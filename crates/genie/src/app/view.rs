@@ -157,6 +157,7 @@ impl Genie {
             .track_menu()
             .or_else(|| self.reading_menu())
             .or_else(panel)
+            .or_else(|| self.address_view())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)

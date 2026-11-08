@@ -24,6 +24,7 @@ pub enum Icon {
     Back,
     Forward,
     Bookmark,
+    Link,
 }
 
 enum Shape {
@@ -96,6 +97,10 @@ impl Icon {
             ],
             Self::Back => &[Shape::Polyline(&[[15.0, 5.0], [8.0, 12.0], [15.0, 19.0]])],
             Self::Forward => &[Shape::Polyline(&[[9.0, 5.0], [16.0, 12.0], [9.0, 19.0]])],
+            Self::Link => &[
+                Shape::Rect([2.0, 8.0], [13.0, 16.0], 4.0),
+                Shape::Rect([11.0, 8.0], [22.0, 16.0], 4.0),
+            ],
             Self::Bookmark => &[Shape::Polyline(&[
                 [6.0, 3.0],
                 [18.0, 3.0],
@@ -228,7 +233,8 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 13] = [
+    const ICONS: [Icon; 14] = [
+        Icon::Link,
         Icon::Bookmark,
         Icon::Back,
         Icon::Forward,

@@ -31,14 +31,8 @@ const fn inset(controls: Controls) -> f32 {
 }
 
 pub const fn locus_x(controls: Controls) -> f32 {
-    let history = 2.0 * TOOL_SIZE + TOOL_GAP;
-    inset(controls)
-        + BRAND_WIDTH
-        + BRAND_GAP
-        + TOOL_SIZE
-        + NAVIGATION_GAP
-        + history
-        + NAVIGATION_GAP
+    let pair = 2.0 * TOOL_SIZE + TOOL_GAP;
+    inset(controls) + BRAND_WIDTH + BRAND_GAP + pair + NAVIGATION_GAP + pair + NAVIGATION_GAP
 }
 
 pub const fn settings_inset(controls: Controls) -> f32 {
@@ -214,7 +208,7 @@ pub fn title_bar<'a>(
         Icon::Moon => "Theme: dark",
         _ => "Theme: system",
     };
-    let navigation = row![tool(Icon::Open, "open", "Open a file", Message::Open)]
+    let navigation = row![files()]
         .push(
             locus
                 .as_ref()
@@ -357,6 +351,20 @@ fn tool<'a>(
         .into()
 }
 
+fn files<'a>() -> Element<'a, Message> {
+    row![
+        tool(Icon::Open, "open", "Open a file", Message::Open),
+        tool(
+            Icon::Link,
+            "open-url",
+            format!("Open a URL ({})", keys('U')),
+            Message::Command(Command::OpenUrl)
+        ),
+    ]
+    .spacing(TOOL_GAP)
+    .into()
+}
+
 fn history<'a>(back: bool, forward: bool) -> Element<'a, Message> {
     let (back_keys, forward_keys) = if cfg!(target_os = "macos") {
         ("Cmd+[", "Cmd+]")
@@ -471,6 +479,16 @@ mod tests {
         let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
         ui.click(selector::id("open")).unwrap();
         assert_eq!(ui.into_messages().collect::<Vec<_>>(), [Message::Open]);
+    }
+
+    #[test]
+    fn link_button_asks_for_an_address() {
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        ui.click(selector::id("open-url")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Command(Command::OpenUrl)]
+        );
     }
 
     fn field(value: &str, error: Option<&str>) -> LocusField {
