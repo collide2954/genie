@@ -124,6 +124,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Drag on the ruler to zoom to that range. Push Escape to stop the drag.
 - To go back to an earlier view, push Alt+Left (Cmd+[ on macOS), push the back button of the mouse or click the back arrow left of the locus box. Alt+Right (Cmd+] on macOS) goes forward again. genie keeps the last 100 jumps: the locus box, name search, ruler drags, region and feature jumps and changes of contig. Moves and zooms do not add a step.
 - Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.
+- genie sorts the contigs. First are the numbered chromosomes in number order (1, 2 … 22, also arms such as 2L and 2R, and Roman numbers such as I to XVI). Then come X, Y, W and Z, and then M. The other contigs follow in the order of the file. The region list and the feature search use this order.
 
 ## Regions
 
