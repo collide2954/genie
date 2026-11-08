@@ -403,37 +403,43 @@ impl Genie {
         .into()
     }
 
+    fn overview<'a>(&self, session: &'a Session) -> Element<'a, Message> {
+        let bands = session.reference.bands(session.contig);
+        let strip = scene::view(
+            overview::scene(session.viewport, OVERVIEW_HEIGHT, bands),
+            OVERVIEW_HEIGHT,
+        )
+        .on_press(|share| Message::Overview(Sweep::Pressed(share)))
+        .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
+        .on_release(Message::Overview(Sweep::Released))
+        .on_hover(|pointer| Message::Strip(pointer.map(|pointer| pointer.local.x)));
+        let card: Element<'a, Message> = match self.band_tip() {
+            Some(name) => container(text(name).size(11))
+                .padding([3, 6])
+                .style(style::menu)
+                .into(),
+            None => space().into(),
+        };
+        container(tooltip(strip, card, tooltip::Position::FollowCursor).gap(12))
+            .id("overview")
+            .into()
+    }
+
     fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let viewport = session.viewport;
-        let tracks = column![
-            container(
-                scene::view(
-                    overview::scene(
-                        viewport,
-                        OVERVIEW_HEIGHT,
-                        session.reference.bands(session.contig)
-                    ),
-                    OVERVIEW_HEIGHT
-                )
-                .on_press(|share| Message::Overview(Sweep::Pressed(share)))
-                .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
-                .on_release(Message::Overview(Sweep::Released))
+        let tracks = column![self.overview(session), self.ruler(viewport)]
+            .push(self.bands(session))
+            .push(hairline())
+            .push(
+                scrollable(self.tracks(session, false))
+                    .direction(Direction::Vertical(
+                        Scrollbar::new().width(6).scroller_width(6).margin(0),
+                    ))
+                    .style(style::scrollbar)
+                    .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
+                    .height(Length::Fill),
             )
-            .id("overview"),
-            self.ruler(viewport),
-        ]
-        .push(self.bands(session))
-        .push(hairline())
-        .push(
-            scrollable(self.tracks(session, false))
-                .direction(Direction::Vertical(
-                    Scrollbar::new().width(6).scroller_width(6).margin(0),
-                ))
-                .style(style::scrollbar)
-                .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
-                .height(Length::Fill),
-        )
-        .height(Length::Fill);
+            .height(Length::Fill);
         Navigator::new(tracks, self.width)
             .on_pan(Message::Pan)
             .on_zoom(Message::Zoom)

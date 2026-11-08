@@ -84,6 +84,7 @@ pub struct Genie {
     now: Instant,
     modifiers: keyboard::Modifiers,
     address: Option<AddressField>,
+    strip: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -134,6 +135,7 @@ impl Default for Genie {
             now: Instant::now(),
             modifiers: keyboard::Modifiers::default(),
             address: None,
+            strip: None,
         }
     }
 }
@@ -338,6 +340,7 @@ pub enum Message {
     SettingChanged(Setting),
     Lane(u64, Lane),
     RestoreLast,
+    Strip(Option<f32>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -527,6 +530,7 @@ impl Genie {
             Message::ToggleSettings => self.settings_open = !self.settings_open,
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
+            Message::Strip(x) => self.strip = x,
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -593,6 +597,31 @@ impl Genie {
                 .session
                 .as_ref()
                 .is_some_and(|session| session.transition.is_some())
+    }
+
+    fn band_tip(&self) -> Option<String> {
+        let (x, session) = (self.strip?, self.session.as_ref()?);
+        let viewport = session.viewport;
+        if viewport.width() <= 0.0 {
+            return None;
+        }
+        let position = (f64::from(x) / viewport.width() * viewport.length() as f64) as u64;
+        let band = session
+            .reference
+            .bands(session.contig)
+            .iter()
+            .find(|band| band.span.start() <= position && position < band.span.end())
+            .filter(|band| !band.name.is_empty())?;
+        let contig = &session.reference.assembly.contigs()[session.contig].name;
+        Some(if band.name.starts_with(['p', 'q']) {
+            format!(
+                "{}{}",
+                contig.strip_prefix("chr").unwrap_or(contig),
+                band.name
+            )
+        } else {
+            format!("{contig} {}", band.name)
+        })
     }
 
     fn fail(&mut self, error: String) {
@@ -733,7 +762,7 @@ mod tests {
 
     use genie_core::signal::Summary;
     use genie_core::variant::{Call, Variant};
-    use genie_core::{Feature, Names, Region, Strand};
+    use genie_core::{Band, Feature, Names, Region, Stain, Strand};
     use genie_formats::fai::FaiRecord;
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
@@ -1650,6 +1679,38 @@ mod tests {
         let _ = genie.update(Message::Overview(Sweep::Released));
         let _ = genie.update(Message::Overview(Sweep::Dragged(0.9)));
         assert!(shows(&genie, "chr1:1-250"));
+    }
+
+    #[test]
+    fn hovering_the_overview_names_the_band() {
+        let band = |start, end, name: &str| {
+            (
+                "chr1".to_owned(),
+                Band {
+                    span: Region::between(start, end),
+                    name: name.to_owned(),
+                    stain: Stain::Gneg,
+                },
+            )
+        };
+        let rows = [
+            band(0, 500, "p11"),
+            band(500, 1_000, "q11"),
+            band(1_000, 1_000, ""),
+        ];
+        let banded = Arc::try_unwrap(reference()).unwrap().with_bands(&rows);
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(Arc::new(banded))));
+        let width = genie.session.as_ref().unwrap().viewport.width() as f32;
+        let _ = genie.update(Message::Strip(Some(width * 0.75)));
+        assert_eq!(genie.band_tip().as_deref(), Some("1q11"));
+        let _ = genie.update(Message::Strip(Some(width * 0.1)));
+        assert_eq!(genie.band_tip().as_deref(), Some("1p11"));
+        let _ = genie.update(Message::Strip(None));
+        assert_eq!(genie.band_tip(), None);
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        let _ = genie.update(Message::Strip(Some(width * 0.75)));
+        assert_eq!(genie.band_tip(), None);
     }
 
     fn with_recent(entries: &[&str]) -> Genie {
