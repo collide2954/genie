@@ -1031,7 +1031,10 @@ mod tests {
         );
         assert_eq!(chosen(&genie), Some(added[0].id));
         assert!(shows(&genie, "Region 1"));
-        assert!(shows(&genie, "chr1:101-200 · 100 bp"));
+        go(&mut genie, "chr2:1-100");
+        settle(&mut genie);
+        assert!(shows(&genie, "100 bp"));
+        assert!(shows(&genie, "chr1:101-200"));
         let _ = genie.update(Message::Regions(Regions::Toggle));
         settle(&mut genie);
         assert!(genie.sidebar.is_none());

@@ -1,5 +1,6 @@
 use genie_core::{Locus, Mark, Span, Target, grouped};
 use iced::time::Instant;
+use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Column, button, column, container, mouse_area, operation, row, scrollable, space, text,
     text_input,
@@ -121,6 +122,7 @@ impl Genie {
             let hint = format!("No regions. Push {} to add the view.", chrome::keys('D'));
             container(text(hint).size(11).style(style::muted))
                 .padding([4, 8])
+                .height(Length::Fill)
                 .into()
         } else {
             let rows = session
@@ -129,6 +131,10 @@ impl Genie {
                 .iter()
                 .map(|mark| self.region_row(session, mark));
             scrollable(Column::with_children(rows).spacing(1).padding([0, 4]))
+                .direction(Direction::Vertical(
+                    Scrollbar::new().width(6).scroller_width(6).margin(0),
+                ))
+                .style(style::scrollbar)
                 .height(Length::Fill)
                 .into()
         };
@@ -145,7 +151,7 @@ impl Genie {
         ]
         .spacing(4)
         .padding([6, 4]);
-        container(column![header, list, space::vertical(), footer])
+        container(column![header, list, footer])
             .width(SIDEBAR_WIDTH)
             .height(Length::Fill)
             .style(|theme| container::background(tokens(theme).bar))
@@ -159,7 +165,7 @@ impl Genie {
                 .clone(),
             span: Span::Region(mark.span),
         };
-        let detail = format!("{locus} · {} bp", grouped(mark.span.len()));
+        let size = format!("{} bp", grouped(mark.span.len()));
         let sidebar = self.sidebar.as_ref();
         let chosen = sidebar.and_then(|sidebar| sidebar.chosen) == Some(mark.id);
         let editing = sidebar
@@ -174,18 +180,19 @@ impl Genie {
                 .on_input(|text| Message::Regions(Regions::Draft(text)))
                 .on_submit(Message::Regions(Regions::Rename))
                 .into(),
-            None => text(mark.name.as_str()).size(12).into(),
+            None => text(mark.name.as_str()).size(12).width(Length::Fill).into(),
         };
-        let content = container(
-            column![
-                name,
-                text(detail).size(11).font(font::MONO).style(style::muted)
-            ]
-            .spacing(1),
-        )
-        .width(Length::Fill)
-        .padding([4, 8])
-        .style(move |theme| row_style(theme, chosen));
+        let first = row![name, text(size).size(11).style(style::muted)]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        let locus = text(locus.to_string())
+            .size(11)
+            .font(font::MONO)
+            .style(style::muted);
+        let content = container(column![first, locus].spacing(1))
+            .width(Length::Fill)
+            .padding([4, 8])
+            .style(move |theme| row_style(theme, chosen));
         mouse_area(content)
             .on_press(Message::Regions(Regions::Choose(mark.id)))
             .on_double_click(Message::Regions(Regions::Edit(mark.id)))
