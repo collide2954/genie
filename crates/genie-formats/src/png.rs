@@ -40,7 +40,7 @@ fn chunk(writer: &mut impl Write, kind: [u8; 4], data: &[u8]) -> io::Result<()> 
     writer.write_all(&crc(&[&kind, data]).to_be_bytes())
 }
 
-fn crc(parts: &[&[u8]]) -> u32 {
+pub(crate) fn crc(parts: &[&[u8]]) -> u32 {
     let mut crc = !0;
     for byte in parts.iter().flat_map(|part| part.iter()) {
         crc = TABLE[((crc ^ u32::from(*byte)) & 0xFF) as usize] ^ (crc >> 8);

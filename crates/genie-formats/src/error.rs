@@ -35,6 +35,7 @@ pub enum Reason {
     NotBam,
     BadRecord,
     NotBigWig,
+    NotGzip,
 }
 
 impl fmt::Display for Error {
@@ -83,6 +84,7 @@ impl fmt::Display for Reason {
             Self::NotBam => "the file is not a BAM file",
             Self::BadRecord => "a BAM record is not valid",
             Self::NotBigWig => "the file is not a bigWig or bigBed file",
+            Self::NotGzip => "the file is not compressed with gzip",
         })
     }
 }
