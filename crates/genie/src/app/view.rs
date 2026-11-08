@@ -9,10 +9,10 @@ use genie_render::{
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    button, center, column, container, mouse_area, pin, row, scrollable, space, stack, text,
-    tooltip,
+    Column, button, center, column, container, mouse_area, pin, row, scrollable, space, stack,
+    text, tooltip,
 };
-use iced::{Alignment, Border, Element, Length, Padding, mouse};
+use iced::{Alignment, Border, Element, Length, Padding, Point, mouse};
 
 use crate::card;
 use crate::chrome::{self, Controls, LocusField};
@@ -29,7 +29,7 @@ use crate::tiles;
 use crate::track::{Content, Track};
 use crate::{font, scene, style};
 
-use super::{Genie, Lane, Message, Session, Status, Suggestion, Sweep};
+use super::{Genie, Lane, Message, Popup, Session, Status, Suggestion, Sweep};
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
@@ -44,6 +44,7 @@ pub(super) const DROP_HINT: &str = "Drop the file to open it";
 pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
 pub(super) const WELCOME: &str = "Pick a genome or open a reference.";
 const SPECIES_WIDTH: f32 = 72.0;
+const MENU_ROW: f32 = 24.0;
 const GENOME_WIDTH: f32 = 64.0;
 
 fn genomes<'a>() -> Element<'a, Message> {
@@ -141,11 +142,23 @@ impl Genie {
             Appearance::Light => Icon::Sun,
             Appearance::Dark => Icon::Moon,
         };
-        let locus = self.session.as_ref().map(|session| LocusField {
-            value: self.draft.clone().unwrap_or_else(|| session.locus()),
-            error: self.locus_error.clone(),
-            back: session.history.can_go_back(),
-            forward: session.history.can_go_forward(),
+        let locus = self.session.as_ref().map(|session| {
+            let reference = &session.reference;
+            let (genome, about) = match reference.genome.as_deref().and_then(genome::find) {
+                Some(genome) => (
+                    genome.label,
+                    format!("{} {}", genome.species, genome.assembly),
+                ),
+                None => (reference.name.clone(), reference.location.to_string()),
+            };
+            LocusField {
+                value: self.draft.clone().unwrap_or_else(|| session.locus()),
+                error: self.locus_error.clone(),
+                back: session.history.can_go_back(),
+                forward: session.history.can_go_forward(),
+                genome,
+                about,
+            }
         });
         let mut layers = stack![column![
             chrome::title_bar(Controls::CURRENT, appearance, locus),
@@ -175,7 +188,7 @@ impl Genie {
             layers = layers.push(toasts(progress, notice));
         }
         let panel = || {
-            self.settings_open
+            (self.popup == Some(Popup::Settings))
                 .then(|| settings::panel(self.settings, chrome::settings_inset(Controls::CURRENT)))
         };
         if let Some(menu) = self
@@ -183,6 +196,7 @@ impl Genie {
             .or_else(|| self.reading_menu())
             .or_else(panel)
             .or_else(|| self.address_view())
+            .or_else(|| self.genome_menu())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)
@@ -199,6 +213,37 @@ impl Genie {
             layers = layers.push(chrome::resize_handles());
         }
         layers.into()
+    }
+
+    fn genome_menu(&self) -> Option<Element<'_, Message>> {
+        if self.popup != Some(Popup::Genomes) {
+            return None;
+        }
+        let current = self
+            .session
+            .as_ref()
+            .and_then(|session| session.reference.genome.clone());
+        let genomes = genome::all();
+        let count = genomes.len();
+        let items = genomes.into_iter().map(|genome| {
+            let chosen = current.as_deref() == Some(genome.id.as_str());
+            menu::item(
+                format!("{} · {}", genome.label, genome.species),
+                Message::Genome(genome.id),
+                chosen,
+                true,
+            )
+        });
+        let content = Column::new()
+            .extend(items)
+            .push(menu::separator())
+            .push(menu::item("Open reference…", Message::Open, false, true));
+        let at = Point::new(
+            chrome::genome_x(Controls::CURRENT),
+            chrome::BAR_HEIGHT + 1.0,
+        );
+        let height = (count + 1) as f32 * MENU_ROW + MENU_ROW;
+        Some(menu::card(content, at, self.window, height))
     }
 
     fn reading_menu(&self) -> Option<Element<'_, Message>> {

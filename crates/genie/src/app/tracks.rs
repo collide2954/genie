@@ -120,7 +120,7 @@ impl Genie {
     pub(super) fn close_menus(&mut self) {
         self.menu = None;
         self.sequence_menu = None;
-        self.settings_open = false;
+        self.popup = None;
         self.address = None;
     }
 
@@ -293,6 +293,7 @@ impl Genie {
     }
 
     pub(super) fn open_genome(&mut self, id: &str) -> Task<Message> {
+        self.close_menus();
         let Some(genome) = genome::find(id) else {
             return Task::none();
         };

@@ -46,7 +46,7 @@ const LAST: &str = "last.genie";
 #[derive(Debug)]
 pub struct Genie {
     settings: Settings,
-    settings_open: bool,
+    popup: Option<Popup>,
     system: Mode,
     status: Status,
     session: Option<Session>,
@@ -87,6 +87,12 @@ pub struct Genie {
     strip: Option<f32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Popup {
+    Settings,
+    Genomes,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Sidebar {
     chosen: Option<u64>,
@@ -97,7 +103,7 @@ impl Default for Genie {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            settings_open: false,
+            popup: None,
             system: Mode::default(),
             status: Status::default(),
             session: None,
@@ -342,6 +348,7 @@ pub enum Message {
     RestoreLast,
     Strip(Option<f32>),
     Genome(String),
+    GenomeMenu,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -528,11 +535,18 @@ impl Genie {
                 self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
             }
             Message::SequenceChanged(change) => self.change_reading(change),
-            Message::ToggleSettings => self.settings_open = !self.settings_open,
+            Message::ToggleSettings => self.toggle(Popup::Settings),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(x) => self.strip = x,
             Message::Genome(id) => return self.open_genome(&id),
+            Message::GenomeMenu => {
+                let open = self.popup != Some(Popup::Genomes);
+                self.close_menus();
+                if open {
+                    self.popup = Some(Popup::Genomes);
+                }
+            }
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -599,6 +613,10 @@ impl Genie {
                 .session
                 .as_ref()
                 .is_some_and(|session| session.transition.is_some())
+    }
+
+    fn toggle(&mut self, popup: Popup) {
+        self.popup = (self.popup != Some(popup)).then_some(popup);
     }
 
     fn band_tip(&self) -> Option<String> {
@@ -872,6 +890,30 @@ mod tests {
         let mut other = Genie::default();
         let _ = other.update(Message::Genome("nope".to_owned()));
         assert_eq!(other.pending, Vec::<Location>::new());
+    }
+
+    #[test]
+    fn the_genome_menu_switches_genomes() {
+        let mut genie = opened();
+        assert!(shows(&genie, "ref.fa"));
+        let _ = genie.update(Message::GenomeMenu);
+        let mut ui = simulator(genie.view());
+        ui.click("mm10 · Mouse").unwrap();
+        ui.click("Open reference…").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Genome("mm10".to_owned()), Message::Open]
+        );
+        let _ = genie.update(Message::MenuDismissed);
+        assert!(!shows(&genie, "mm10 · Mouse"));
+        let _ = genie.update(Message::GenomeMenu);
+        let _ = genie.update(Message::GenomeMenu);
+        assert!(!shows(&genie, "mm10 · Mouse"));
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        assert!(shows(&genie, "hg38"));
+        assert!(!shows(&genie, "ref.fa"));
     }
 
     #[test]

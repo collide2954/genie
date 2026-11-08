@@ -31,6 +31,10 @@ const fn inset(controls: Controls) -> f32 {
 }
 
 pub const fn locus_x(controls: Controls) -> f32 {
+    genome_x(controls) + GENOME_WIDTH + NAVIGATION_GAP
+}
+
+pub const fn genome_x(controls: Controls) -> f32 {
     let pair = 2.0 * TOOL_SIZE + TOOL_GAP;
     inset(controls) + BRAND_WIDTH + BRAND_GAP + pair + NAVIGATION_GAP + pair + NAVIGATION_GAP
 }
@@ -156,6 +160,23 @@ pub struct LocusField {
     pub error: Option<String>,
     pub back: bool,
     pub forward: bool,
+    pub genome: String,
+    pub about: String,
+}
+
+pub const GENOME: &str = "genome";
+pub const GENOME_WIDTH: f32 = 80.0;
+
+fn genome_label<'a>(name: String, about: String) -> Element<'a, Message> {
+    let label = button(text(name).size(12).wrapping(text::Wrapping::None))
+        .width(GENOME_WIDTH)
+        .padding([2, 8])
+        .style(style::ghost)
+        .on_press(Message::GenomeMenu);
+    container(tip(label, about, tooltip::Position::Bottom))
+        .id(GENOME)
+        .clip(true)
+        .into()
 }
 
 pub fn title_bar<'a>(
@@ -213,6 +234,11 @@ pub fn title_bar<'a>(
             locus
                 .as_ref()
                 .map(|field| history(field.back, field.forward)),
+        )
+        .push(
+            locus
+                .as_ref()
+                .map(|field| genome_label(field.genome.clone(), field.about.clone())),
         )
         .push(locus.map(locus_box))
         .spacing(NAVIGATION_GAP)
@@ -438,7 +464,10 @@ mod tests {
     use iced_test::selector;
     use iced_test::simulator::{self, simulator};
 
-    use super::{Action, Controls, Edge, LOCUS, LocusField, locus_x, resize_handles, title_bar};
+    use super::{
+        Action, Controls, Edge, GENOME, LOCUS, LocusField, genome_x, locus_x, resize_handles,
+        title_bar,
+    };
     use crate::app::{Message, Regions};
     use crate::icon::Icon;
     use crate::shortcuts::Command;
@@ -497,7 +526,27 @@ mod tests {
             error: error.map(str::to_owned),
             back: false,
             forward: false,
+            genome: "hg38".to_owned(),
+            about: "Human GRCh38".to_owned(),
         }
+    }
+
+    #[test]
+    fn the_genome_label_opens_the_genome_menu() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        let label = ui.find(selector::id(GENOME)).unwrap().bounds();
+        let locus = ui.find(selector::id(LOCUS)).unwrap().bounds();
+        assert!(label.x + label.width <= locus.x, "{label:?} {locus:?}");
+        assert!((label.x - genome_x(Controls::Custom)).abs() < 0.5);
+        ui.click("hg38").unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::GenomeMenu]
+        );
     }
 
     #[test]
