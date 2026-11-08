@@ -1,5 +1,6 @@
 pub mod alignment;
 mod assembly;
+mod band;
 pub mod codon;
 mod feature;
 mod history;
@@ -15,6 +16,7 @@ pub mod variant;
 mod viewport;
 
 pub use assembly::{Assembly, Contig, Target};
+pub use band::{Band, Stain};
 pub use feature::{Feature, Strand};
 pub use history::{History, Visit};
 pub use locus::{Locus, LocusError, Span};
