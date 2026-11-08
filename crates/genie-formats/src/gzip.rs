@@ -1,3 +1,4 @@
+use miniz_oxide::deflate::compress_to_vec;
 use miniz_oxide::inflate::TINFLStatus;
 use miniz_oxide::inflate::core::inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
 use miniz_oxide::inflate::core::{DecompressorOxide, decompress};
@@ -12,6 +13,16 @@ const FHCRC: u8 = 2;
 const FEXTRA: u8 = 4;
 const FNAME: u8 = 8;
 const FCOMMENT: u8 = 16;
+const LEVEL: u8 = 6;
+
+pub fn compress(data: &[u8]) -> Vec<u8> {
+    let mut bytes = MAGIC.to_vec();
+    bytes.extend([0, 0, 0, 0, 0, 0, 255]);
+    bytes.extend(compress_to_vec(data, LEVEL));
+    bytes.extend(crc(&[data]).to_le_bytes());
+    bytes.extend((data.len() as u32).to_le_bytes());
+    bytes
+}
 
 pub fn inflate(mut bytes: &[u8]) -> Result<Vec<u8>, Error> {
     if !bytes.starts_with(&MAGIC) {
@@ -91,7 +102,7 @@ fn damaged() -> Error {
 mod tests {
     use miniz_oxide::deflate::compress_to_vec;
 
-    use super::inflate;
+    use super::{compress, inflate};
     use crate::png::crc;
     use crate::{Error, Reason};
 
@@ -122,6 +133,15 @@ mod tests {
             inflate(&bytes).unwrap(),
             b"chr1\t0\t2300000\tp36.33\tgneg\n"
         );
+    }
+
+    #[test]
+    fn compressed_text_inflates_back() {
+        let text = b"chr1\t0\t10\tp1\tgneg\nchr1\t10\t20\tq1\tgpos50\n".repeat(50);
+        let packed = compress(&text);
+        assert!(packed.len() < text.len());
+        assert_eq!(inflate(&packed).unwrap(), text);
+        assert_eq!(inflate(&compress(b"")).unwrap(), b"");
     }
 
     #[test]
