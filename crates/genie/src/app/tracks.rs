@@ -117,6 +117,18 @@ impl Genie {
         self.settings_open = false;
     }
 
+    pub(super) fn open_menu(&mut self, id: u64, at: Point) {
+        self.pointed = Some(id);
+        self.menu = Some((id, Point::new(at.x, at.y - self.scroll)));
+    }
+
+    pub(super) fn hovered(&mut self, id: u64, pointer: Option<Pointer>) {
+        if pointer.is_some() {
+            self.pointed = Some(id);
+        }
+        self.hover = pointer.and_then(|pointer| self.card(id, pointer));
+    }
+
     pub(super) fn change_reading(&mut self, change: reading::Change) {
         self.sequence_menu = None;
         self.on_session(|session| session.reading.change(change));

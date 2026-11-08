@@ -69,6 +69,8 @@ pub struct Genie {
     pinned: Option<Card>,
     pending: Vec<PathBuf>,
     sweep: Option<(f64, f64)>,
+    pointed: Option<u64>,
+    anchor: Option<(Visit, u64)>,
 }
 
 impl Default for Genie {
@@ -106,6 +108,8 @@ impl Default for Genie {
             pinned: None,
             pending: Vec::new(),
             sweep: None,
+            pointed: None,
+            anchor: None,
         }
     }
 }
@@ -282,6 +286,8 @@ pub enum Message {
     WindowResized(Size),
     TrackHovered(u64, Option<Pointer>),
     TrackClicked(u64, Pointer),
+    Jump(u64, bool),
+    Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
@@ -419,14 +425,12 @@ impl Genie {
                 self.on_session(|session| session.accept(id, contig, region, result));
             }
             Message::NoticeDismissed => self.notice = None,
-            Message::TrackMenu(id, at) => {
-                self.menu = Some((id, Point::new(at.x, at.y - self.scroll)));
-            }
+            Message::TrackMenu(id, at) => self.open_menu(id, at),
             Message::TrackChanged(id, change) => return self.change_track(id, change),
-            Message::TrackHovered(id, pointer) => {
-                self.hover = pointer.and_then(|pointer| self.card(id, pointer));
-            }
+            Message::TrackHovered(id, pointer) => self.hovered(id, pointer),
             Message::TrackClicked(id, pointer) => self.pinned = self.card(id, pointer),
+            Message::Jump(id, forward) => return self.jump(id, forward),
+            Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::CardClosed => self.pinned = None,
             Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
@@ -896,6 +900,77 @@ mod tests {
         let _ = genie.update(Message::Ruler(Sweep::Released));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:1-1,000"));
+    }
+
+    #[test]
+    fn feature_jumps_center_short_features_and_fit_wide_ones() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200");
+        settle(&mut genie);
+        let near = Ok(Some((0, Region::between(500, 520))));
+        let _ = genie.update(Message::Jumped(0, true, near));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:461-561"));
+        let wide = Ok(Some((1, Region::between(100, 400))));
+        let _ = genie.update(Message::Jumped(0, true, wide));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr2:101-400"));
+        let _ = genie.update(Message::Command(Command::Back));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:461-561"));
+    }
+
+    #[test]
+    fn missing_neighbors_say_so() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Jumped(0, true, Ok(None)));
+        assert!(shows(&genie, "There is no next feature in genes.bed.gz."));
+        let mut genie = with_variants();
+        let _ = genie.update(Message::Jumped(0, false, Ok(None)));
+        assert!(shows(&genie, "There is no previous variant in calls.vcf."));
+    }
+
+    #[test]
+    fn feature_jumps_go_on_from_the_last_feature_until_the_view_moves() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200");
+        settle(&mut genie);
+        assert_eq!(genie.jump_from(), Some(150));
+        let near = Ok(Some((0, Region::between(500, 520))));
+        let _ = genie.update(Message::Jumped(0, true, near));
+        settle(&mut genie);
+        assert_eq!(genie.jump_from(), Some(500));
+        let _ = genie.update(Message::Pan(-100.0));
+        assert_eq!(genie.jump_from(), Some(520));
+    }
+
+    #[test]
+    fn hovering_or_a_menu_points_at_a_track() {
+        let mut genie = with_track();
+        assert_eq!(genie.pointed, None);
+        let _ = genie.update(Message::TrackHovered(0, Some(over(10.0, 10.0))));
+        assert_eq!(genie.pointed, Some(0));
+        genie.pointed = None;
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert_eq!(genie.pointed, Some(0));
+    }
+
+    #[test]
+    fn feature_and_variant_menus_offer_jumps() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Next feature").unwrap();
+        assert!(
+            ui.into_messages()
+                .any(|message| message == Message::Jump(0, true))
+        );
+        let mut genie = with_variants();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Previous variant"));
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(!shows(&genie, "Next feature"));
     }
 
     #[test]
@@ -1809,9 +1884,30 @@ mod tests {
         assert!(track.wanted.is_some());
     }
 
+    fn with_gff() -> Genie {
+        let mut genie = opened();
+        let source = Arc::new(Source {
+            path: PathBuf::from("/data/genes.gff3.gz"),
+            name: "genes.gff3.gz".to_owned(),
+            format: Format::Features(FeatureFile::Indexed {
+                kind: Kind::Gff,
+                index: Index::default(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        genie
+    }
+
     #[test]
     fn menus_know_their_height() {
-        for mut genie in [with_track(), with_reads(), with_variants(), with_signal()] {
+        let tracks = [
+            with_track(),
+            with_gff(),
+            with_reads(),
+            with_variants(),
+            with_signal(),
+        ];
+        for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
             let expected = menu::height(&genie.session.as_ref().unwrap().tracks[0]);
             let mut ui = simulator(genie.view());

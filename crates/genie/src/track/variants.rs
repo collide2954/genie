@@ -58,19 +58,23 @@ impl VariantFile {
     }
 
     pub fn load(&self, path: &Path, contig: &str, region: Region) -> Result<Loaded, String> {
+        let variants = self.variants(path, contig, region)?;
+        Ok(Loaded::variants(region, variants, self.samples().len()))
+    }
+
+    pub fn spans(&self, path: &Path, contig: &str, region: Region) -> Result<Vec<Region>, String> {
+        let variants = self.variants(path, contig, region)?;
+        Ok(variants.iter().map(|variant| variant.span).collect())
+    }
+
+    fn variants(&self, path: &Path, contig: &str, region: Region) -> Result<Vec<Variant>, String> {
         match self {
-            Self::Table { table, samples } => Ok(Loaded::variants(
-                region,
-                table.query(contig, region),
-                samples.len(),
-            )),
-            Self::Indexed { index, samples } => {
+            Self::Table { table, .. } => Ok(table.query(contig, region)),
+            Self::Indexed { index, .. } => {
                 let mut reader = File::open(path)
                     .map(Bgzf::new)
                     .map_err(|error| error.to_string())?;
-                let variants = vcf::query(index, &mut reader, contig, region)
-                    .map_err(|error| error.to_string())?;
-                Ok(Loaded::variants(region, variants, samples.len()))
+                vcf::query(index, &mut reader, contig, region).map_err(|error| error.to_string())
             }
         }
     }

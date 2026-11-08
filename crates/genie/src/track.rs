@@ -32,6 +32,7 @@ const WINDOW: u64 = 50;
 const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
 const PLAIN_LIMIT: u64 = 50 << 20;
+const SEARCH: u64 = 1 << 20;
 
 #[derive(Debug)]
 pub enum Format {
@@ -86,6 +87,10 @@ impl Source {
 
     pub fn has_variants(&self) -> bool {
         matches!(self.format, Format::Variants(_))
+    }
+
+    pub fn can_jump(&self) -> bool {
+        matches!(self.format, Format::Features(_) | Format::Variants(_))
     }
 
     pub fn samples(&self) -> &[String] {
@@ -753,6 +758,83 @@ pub fn load(
     }
 }
 
+pub fn neighbor(
+    source: &Source,
+    names: &[Option<String>],
+    assembly: &Assembly,
+    contig: usize,
+    position: u64,
+    forward: bool,
+) -> Result<Option<(usize, Region)>, String> {
+    let count = assembly.contigs().len().min(names.len());
+    if !source.can_jump() || contig >= count {
+        return Ok(None);
+    }
+    let order: Vec<usize> = if forward {
+        (contig..count).collect()
+    } else {
+        (0..=contig).rev().collect()
+    };
+    for index in order {
+        let Some(name) = names[index].as_deref() else {
+            continue;
+        };
+        let length = assembly.contigs()[index].length;
+        let threshold = (index == contig).then_some(position);
+        if let Some(span) = nearest(source, name, length, threshold, forward)? {
+            return Ok(Some((index, span)));
+        }
+    }
+    Ok(None)
+}
+
+fn nearest(
+    source: &Source,
+    name: &str,
+    length: u64,
+    threshold: Option<u64>,
+    forward: bool,
+) -> Result<Option<Region>, String> {
+    let key = |span: &Region| (span.start(), span.end());
+    let mut size = SEARCH;
+    if forward {
+        let mut low = threshold.map_or(0, |position| position + 1);
+        while low < length {
+            let high = low.saturating_add(size).min(length);
+            let found = spans(source, name, Region::between(low, high))?
+                .into_iter()
+                .filter(|span| span.start() >= low && span.start() < high)
+                .min_by_key(key);
+            if found.is_some() {
+                return Ok(found);
+            }
+            (low, size) = (high, size.saturating_mul(2));
+        }
+    } else {
+        let mut high = threshold.unwrap_or(length).min(length);
+        while high > 0 {
+            let low = high.saturating_sub(size);
+            let found = spans(source, name, Region::between(low, high))?
+                .into_iter()
+                .filter(|span| span.start() >= low && span.start() < high)
+                .max_by_key(key);
+            if found.is_some() {
+                return Ok(found);
+            }
+            (high, size) = (low, size.saturating_mul(2));
+        }
+    }
+    Ok(None)
+}
+
+fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, String> {
+    match &source.format {
+        Format::Features(file) => file.spans(&source.path, contig, region),
+        Format::Variants(file) => file.spans(&source.path, contig, region),
+        Format::Reads(_) | Format::Signal(_) => Ok(Vec::new()),
+    }
+}
+
 pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
     let name = name.trim();
     sources.iter().find_map(|source| {
@@ -805,7 +887,7 @@ mod tests {
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, SignalFile,
         Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load, lookup,
-        names, open, step,
+        names, neighbor, open, spans, step,
     };
     use crate::scratch::Scratch;
 
@@ -1278,6 +1360,96 @@ mod tests {
         assert_ne!(signal(&far.unwrap()), []);
         assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
         assert!(is_track(&PathBuf::from("peaks.bb")) && is_track(&PathBuf::from("a.bigBed")));
+    }
+
+    fn three_contigs() -> Assembly {
+        let contigs = ["chr1", "chr2", "chrX"].map(|name| Contig {
+            name: name.to_owned(),
+            length: 3_000_000,
+        });
+        Assembly::new(contigs.into())
+    }
+
+    fn scanned(
+        source: &Source,
+        names: &[Option<String>],
+        contig: usize,
+        position: u64,
+        forward: bool,
+    ) -> Option<(usize, Region)> {
+        let order: Vec<usize> = if forward {
+            (contig..3).collect()
+        } else {
+            (0..=contig).rev().collect()
+        };
+        order.into_iter().find_map(|index| {
+            let name = names[index].as_deref()?;
+            let all = spans(source, name, region(0, 3_000_000)).unwrap();
+            let after = all.into_iter().filter(|span| {
+                index != contig || (span.start() > position) == forward && span.start() != position
+            });
+            let key = |span: &Region| (span.start(), span.end());
+            let best = if forward {
+                after.min_by_key(key)
+            } else {
+                after.max_by_key(key)
+            };
+            best.map(|span| (index, span))
+        })
+    }
+
+    #[test]
+    fn neighbors_match_a_scan_of_each_contig() {
+        let assembly = three_contigs();
+        for file in [
+            "genes.bed.gz",
+            "genes.gff3.gz",
+            "genes.bb",
+            "variants.vcf.gz",
+        ] {
+            let source = open(fixture(file)).unwrap();
+            let names = contig_names(source.contigs(), &assembly);
+            for contig in 0..3 {
+                for position in [0, 1_000, 123_456, 1_500_000, 2_999_999] {
+                    for forward in [true, false] {
+                        let found = neighbor(&source, &names, &assembly, contig, position, forward)
+                            .unwrap();
+                        let expected = scanned(&source, &names, contig, position, forward);
+                        assert_eq!(found, expected, "{file} {contig} {position} {forward}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn neighbors_start_after_the_position_and_cross_contigs() {
+        let assembly = three_contigs();
+        let genes = open(fixture("genes.bed.gz")).unwrap();
+        let names = contig_names(genes.contigs(), &assembly);
+        let next = |position, forward| neighbor(&genes, &names, &assembly, 0, position, forward);
+        assert_eq!(next(0, true).unwrap(), Some((0, region(1_050, 3_208))));
+        let after = next(1_050, true).unwrap().unwrap();
+        assert_eq!((after.0, after.1.start()), (0, 1_415));
+        assert_eq!(next(1_050, false).unwrap(), None);
+        let calls = open(fixture("variants.vcf.gz")).unwrap();
+        let names = contig_names(calls.contigs(), &assembly);
+        let first = neighbor(&calls, &names, &assembly, 0, 0, true).unwrap();
+        assert_eq!(first, Some((0, region(1_000, 1_001))));
+        assert_eq!(
+            neighbor(&calls, &names, &assembly, 2, 0, true).unwrap(),
+            None
+        );
+        let last = neighbor(&calls, &names, &assembly, 2, 0, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(last.0, 1);
+        let reads = open(fixture("reads.bam")).unwrap();
+        let names = contig_names(reads.contigs(), &assembly);
+        assert_eq!(
+            neighbor(&reads, &names, &assembly, 0, 0, true).unwrap(),
+            None
+        );
     }
 
     #[test]

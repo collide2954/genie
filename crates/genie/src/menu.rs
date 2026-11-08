@@ -11,10 +11,10 @@ use crate::theme::tokens;
 use crate::track::{Change, Grouping, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
-const FEATURES_HEIGHT: f32 = 192.0;
-const COLORED_HEIGHT: f32 = 215.0;
+const FEATURES_HEIGHT: f32 = 245.0;
+const COLORED_HEIGHT: f32 = 268.0;
 const READS_HEIGHT: f32 = 341.0;
-const VARIANTS_HEIGHT: f32 = 159.0;
+const VARIANTS_HEIGHT: f32 = 212.0;
 const SIGNAL_HEIGHT: f32 = 200.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
@@ -162,7 +162,7 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());
     }
-    let content = content.extend([
+    let content = content.extend(jumps(track)).extend([
         item("Move up", Change::Up, false, place.position > 0),
         item(
             "Move down",
@@ -174,6 +174,32 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
         item("Remove", Change::Remove, false, true),
     ]);
     card(content, place.at, place.window, height(track))
+}
+
+fn jumps<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    if !track.source.can_jump() {
+        return Vec::new();
+    }
+    let noun = if track.source.has_variants() {
+        "variant"
+    } else {
+        "feature"
+    };
+    vec![
+        item(
+            format!("Next {noun}"),
+            Message::Jump(track.id, true),
+            false,
+            true,
+        ),
+        item(
+            format!("Previous {noun}"),
+            Message::Jump(track.id, false),
+            false,
+            true,
+        ),
+        separator(),
+    ]
 }
 
 pub fn separator<'a>() -> Element<'a, Message> {

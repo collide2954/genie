@@ -26,6 +26,11 @@ impl Genie {
             }
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
+            Command::NextFeature | Command::PreviousFeature => {
+                let forward = command == Command::NextFeature;
+                self.pointed
+                    .map_or_else(Task::none, |id| self.jump(id, forward))
+            }
             Command::FocusLocus => Task::batch([
                 operation::focus(chrome::LOCUS),
                 operation::select_all(chrome::LOCUS),
@@ -247,6 +252,93 @@ impl Genie {
             }
         }
         Task::none()
+    }
+
+    pub(super) fn jump_from(&self) -> Option<u64> {
+        let session = self.session.as_ref()?;
+        Some(match self.anchor {
+            Some((visit, start)) if visit == session.visit() => start,
+            _ => session.destination().center().max(0.0) as u64,
+        })
+    }
+
+    pub(super) fn jump(&mut self, id: u64, forward: bool) -> Task<Message> {
+        self.close_menus();
+        let Some(position) = self.jump_from() else {
+            return Task::none();
+        };
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let Some(track) = session.tracks.iter().find(|track| track.id == id) else {
+            return Task::none();
+        };
+        if !track.source.can_jump() {
+            return Task::none();
+        }
+        let source = Arc::clone(&track.source);
+        let names = track.contigs.clone();
+        let (reference, contig) = (Arc::clone(&session.reference), session.contig);
+        Task::perform(
+            async move {
+                track::neighbor(
+                    &source,
+                    &names,
+                    &reference.assembly,
+                    contig,
+                    position,
+                    forward,
+                )
+            },
+            move |result| Message::Jumped(id, forward, result),
+        )
+    }
+
+    pub(super) fn jumped(
+        &mut self,
+        id: u64,
+        forward: bool,
+        result: Result<Option<(usize, Region)>, String>,
+    ) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        match result {
+            Ok(Some((contig, span))) => {
+                let span_bp = span.len() as f64;
+                let target = if span_bp <= session.destination().span() {
+                    Span::Position(span.start() + span.len() / 2)
+                } else {
+                    Span::Region(span)
+                };
+                let task = self.go_to(Target {
+                    contig,
+                    span: target,
+                });
+                self.anchor = self
+                    .session
+                    .as_ref()
+                    .map(|session| (session.visit(), span.start()));
+                task
+            }
+            Ok(None) => {
+                let Some(track) = session.tracks.iter().find(|track| track.id == id) else {
+                    return Task::none();
+                };
+                let noun = if track.source.has_variants() {
+                    "variant"
+                } else {
+                    "feature"
+                };
+                let side = if forward { "next" } else { "previous" };
+                let text = format!("There is no {side} {noun} in {}.", track.source.name);
+                self.inform(text)
+            }
+            Err(error) => {
+                self.warn(error);
+                Task::none()
+            }
+        }
     }
 
     pub(super) fn looked(&mut self, found: Option<Named>, error: String) -> Task<Message> {

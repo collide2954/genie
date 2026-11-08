@@ -11,6 +11,8 @@ pub enum Command {
     Zoom(f32),
     Back,
     Forward,
+    NextFeature,
+    PreviousFeature,
     FocusLocus,
     NextSuggestion,
     PreviousSuggestion,
@@ -36,6 +38,8 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
+        Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
+        Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
         _ => None,
@@ -79,6 +83,17 @@ mod tests {
             (Some(Command::Back), Some(Command::Forward))
         );
         assert_eq!(command(&character("["), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_f_and_b_jump_between_features() {
+        let next = command(&character("f"), Modifiers::COMMAND);
+        let previous = command(&character("b"), Modifiers::COMMAND);
+        assert_eq!(
+            (next, previous),
+            (Some(Command::NextFeature), Some(Command::PreviousFeature))
+        );
+        assert_eq!(command(&character("f"), Modifiers::empty()), None);
     }
 
     #[test]

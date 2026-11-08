@@ -69,29 +69,45 @@ impl FeatureFile {
         step: u64,
         detail: bool,
     ) -> Result<Loaded, String> {
+        if let Self::BigBed { index } = self
+            && !detail
+        {
+            let file = File::open(path).map_err(|error| error.to_string())?;
+            let summaries = index
+                .summaries(&mut BufReader::new(file), contig, region, step)
+                .map_err(|error| error.to_string())?;
+            return Ok(Loaded::signal(region, summaries, step));
+        }
+        let (region, features) = self.features(path, contig, region)?;
+        Ok(Loaded::features(region, features))
+    }
+
+    pub fn spans(&self, path: &Path, contig: &str, region: Region) -> Result<Vec<Region>, String> {
+        let (_, features) = self.features(path, contig, region)?;
+        Ok(features.iter().map(Feature::span).collect())
+    }
+
+    fn features(
+        &self,
+        path: &Path,
+        contig: &str,
+        region: Region,
+    ) -> Result<(Region, Vec<Feature>), String> {
         match self {
-            Self::BigBed { index } => {
-                let file = File::open(path).map_err(|error| error.to_string())?;
-                let mut file = BufReader::new(file);
-                if detail {
-                    let features = index
-                        .features(&mut file, contig, region)
-                        .map_err(|error| error.to_string())?;
-                    return Ok(Loaded::features(region, features));
-                }
-                let summaries = index
-                    .summaries(&mut file, contig, region, step)
-                    .map_err(|error| error.to_string())?;
-                Ok(Loaded::signal(region, summaries, step))
-            }
-            Self::Table { table, .. } => Ok(Loaded::features(region, table.query(contig, region))),
+            Self::Table { table, .. } => Ok((region, table.query(contig, region))),
             Self::Indexed { kind, index } => {
                 let mut reader = File::open(path)
                     .map(Bgzf::new)
                     .map_err(|error| error.to_string())?;
-                let (region, features) = features::query(*kind, index, &mut reader, contig, region)
+                features::query(*kind, index, &mut reader, contig, region)
+                    .map_err(|error| error.to_string())
+            }
+            Self::BigBed { index } => {
+                let file = File::open(path).map_err(|error| error.to_string())?;
+                let features = index
+                    .features(&mut BufReader::new(file), contig, region)
                     .map_err(|error| error.to_string())?;
-                Ok(Loaded::features(region, features))
+                Ok((region, features))
             }
         }
     }
