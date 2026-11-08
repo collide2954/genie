@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
+use genie_formats::features::Entry;
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::{
@@ -332,6 +333,11 @@ pub enum Regions {
     Draft(String),
     Rename,
     Remove,
+    Import,
+    ImportPicked(Option<PathBuf>),
+    Imported(Result<Vec<Entry>, String>),
+    Export,
+    ExportPicked(Option<PathBuf>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1089,6 +1095,74 @@ mod tests {
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(messages.contains(&Message::Regions(Regions::Choose(id))));
         assert!(messages.contains(&Message::Regions(Regions::Edit(id))));
+    }
+
+    fn bed_entry(name: &str, contig: &str, start: u64, end: u64) -> genie_formats::features::Entry {
+        genie_formats::features::Entry {
+            name: name.to_owned(),
+            contig: contig.to_owned(),
+            span: Region::between(start, end),
+        }
+    }
+
+    #[test]
+    fn imported_regions_join_the_list() {
+        let mut genie = opened();
+        let entries = vec![
+            bed_entry("promoter", "chr1", 10, 20),
+            bed_entry("", "2", 5, 9),
+            bed_entry("lost", "chr9", 0, 5),
+            bed_entry("past the end", "chr1", 2_000, 3_000),
+        ];
+        let _ = genie.update(Message::Regions(Regions::Imported(Ok(entries))));
+        settle(&mut genie);
+        let found: Vec<(String, usize, Region)> = marks(&genie)
+            .into_iter()
+            .map(|mark| (mark.name, mark.contig, mark.span))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("promoter".to_owned(), 0, Region::between(10, 20)),
+                ("Region 1".to_owned(), 1, Region::between(5, 9)),
+            ]
+        );
+        assert!(genie.sidebar.is_some());
+        let notice = "Imported 2 regions. 2 regions are not on a contig of the reference.";
+        assert!(shows(&genie, notice));
+        let _ = genie.update(Message::Regions(Regions::Imported(Err("bad".to_owned()))));
+        assert!(shows(&genie, "bad"));
+    }
+
+    #[test]
+    fn exported_regions_are_bed() {
+        let scratch = crate::scratch::Scratch::new("regions");
+        let marker = scratch.file("marker", "");
+        let mut genie = opened();
+        go(&mut genie, "chr2:51-150");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        go(&mut genie, "chr1:101-200");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
+        let path = marker.with_file_name("mine");
+        let _ = genie.update(Message::Regions(Regions::ExportPicked(Some(path.clone()))));
+        let saved = std::fs::read_to_string(path.with_file_name("mine.bed")).unwrap();
+        assert_eq!(saved, "chr1\t100\t200\tRegion 2\nchr2\t50\t150\tRegion 1\n");
+        assert!(shows(&genie, "Saved mine.bed."));
+    }
+
+    #[test]
+    fn region_files_are_read_as_bed() {
+        let scratch = crate::scratch::Scratch::new("region-files");
+        let good = scratch.file("good.bed", "chr1\t10\t20\tA\n");
+        let entries = super::regions::read(&good).unwrap();
+        assert_eq!(entries, [bed_entry("A", "chr1", 10, 20)]);
+        let bad = scratch.file("bad.bed", "chr1\tx\t20\n");
+        let error = super::regions::read(&bad).unwrap_err();
+        assert!(
+            error.starts_with("The file bad.bed is not valid."),
+            "{error}"
+        );
     }
 
     #[test]

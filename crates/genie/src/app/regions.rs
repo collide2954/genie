@@ -1,4 +1,10 @@
+use std::fs::{self, File};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+
 use genie_core::{Locus, Mark, Span, Target, grouped};
+use genie_formats::bed;
+use genie_formats::features::Entry;
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
@@ -10,6 +16,7 @@ use iced::{Alignment, Border, Element, Length, Task, Theme, mouse};
 use crate::chrome;
 use crate::icon::{self, Icon};
 use crate::motion;
+use crate::paths::{self, file_name};
 use crate::theme::tokens;
 use crate::{font, style};
 
@@ -19,6 +26,7 @@ pub(super) const SIDEBAR_WIDTH: f32 = 220.0;
 const NAME: &str = "region-name";
 const CLOSE_SIZE: f32 = 20.0;
 const CLOSE_ICON: f32 = 12.0;
+const LIMIT: u64 = 50 << 20;
 
 impl Genie {
     pub(super) fn regions(&mut self, action: Regions) -> Task<Message> {
@@ -75,8 +83,85 @@ impl Genie {
                     sidebar.editing = None;
                 }
             }
+            Regions::Import => {
+                return Task::perform(pick_bed(), |path| {
+                    Message::Regions(Regions::ImportPicked(path))
+                });
+            }
+            Regions::ImportPicked(Some(path)) => {
+                return Task::perform(async move { read(&path) }, |result| {
+                    Message::Regions(Regions::Imported(result))
+                });
+            }
+            Regions::ImportPicked(None) | Regions::ExportPicked(None) => {}
+            Regions::Imported(Ok(entries)) => return self.import(entries),
+            Regions::Imported(Err(error)) => self.warn(error),
+            Regions::Export => {
+                return Task::perform(save_bed(), |path| {
+                    Message::Regions(Regions::ExportPicked(path))
+                });
+            }
+            Regions::ExportPicked(Some(path)) => return self.export_regions(&with_bed(path)),
         }
         Task::none()
+    }
+
+    fn import(&mut self, entries: Vec<Entry>) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let assembly = &session.reference.assembly;
+        let (mut added, mut missing) = (0, 0);
+        for entry in entries {
+            let found = assembly.find(&entry.contig).map(|contig| {
+                let length = assembly.contigs()[contig].length;
+                (contig, entry.span.clamp_to(length))
+            });
+            match found {
+                Some((contig, span)) if !span.is_empty() => {
+                    session.marks.add(contig, span, Some(entry.name));
+                    added += 1;
+                }
+                _ => missing += 1,
+            }
+        }
+        self.show_sidebar(true);
+        let imported = format!("Imported {}.", count(added));
+        let text = if missing == 0 {
+            imported
+        } else {
+            let verb = if missing == 1 { "is" } else { "are" };
+            let missing = count(missing);
+            format!("{imported} {missing} {verb} not on a contig of the reference.")
+        };
+        self.inform(text)
+    }
+
+    fn export_regions(&mut self, path: &Path) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let contigs = session.reference.assembly.contigs();
+        let entries: Vec<Entry> = session
+            .marks
+            .all()
+            .iter()
+            .map(|mark| Entry {
+                name: mark.name.clone(),
+                contig: contigs[mark.contig].name.clone(),
+                span: mark.span,
+            })
+            .collect();
+        let mut bytes = Vec::new();
+        let saved = bed::write(&mut bytes, &entries)
+            .and_then(|()| paths::replace(path, &String::from_utf8_lossy(&bytes)));
+        match saved {
+            Ok(()) => self.inform(format!("Saved {}.", file_name(path))),
+            Err(error) => {
+                self.warn(format!("The regions could not be saved. {error}"));
+                Task::none()
+            }
+        }
     }
 
     fn show_sidebar(&mut self, open: bool) {
@@ -145,11 +230,20 @@ impl Genie {
                 .style(style::ghost)
                 .on_press_maybe(action.map(Message::Regions))
         };
-        let footer = row![
-            action("Add view", Some(Regions::Add)),
-            action("Remove", chosen.map(|_| Regions::Remove)),
+        let filled = !session.marks.is_empty();
+        let footer = column![
+            row![
+                action("Add view", Some(Regions::Add)),
+                action("Remove", chosen.map(|_| Regions::Remove)),
+            ]
+            .spacing(4),
+            row![
+                action("Import BED", Some(Regions::Import)),
+                action("Export BED", filled.then_some(Regions::Export)),
+            ]
+            .spacing(4),
         ]
-        .spacing(4)
+        .spacing(2)
         .padding([6, 4]);
         container(column![header, list, footer])
             .width(SIDEBAR_WIDTH)
@@ -199,6 +293,56 @@ impl Genie {
             .interaction(mouse::Interaction::Pointer)
             .into()
     }
+}
+
+pub(super) fn read(path: &Path) -> Result<Vec<Entry>, String> {
+    let name = file_name(path);
+    let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
+    if size > LIMIT {
+        return Err(format!("The file {name} is larger than 50 MB."));
+    }
+    let file = File::open(path).map_err(|error| error.to_string())?;
+    bed::regions(BufReader::new(file))
+        .map_err(|error| format!("The file {name} is not valid. {error}"))
+}
+
+fn with_bed(path: PathBuf) -> PathBuf {
+    let is_bed = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("bed"));
+    if is_bed {
+        return path;
+    }
+    let mut text = path.into_os_string();
+    text.push(".bed");
+    PathBuf::from(text)
+}
+
+fn count(regions: usize) -> String {
+    if regions == 1 {
+        "1 region".to_owned()
+    } else {
+        format!("{regions} regions")
+    }
+}
+
+async fn pick_bed() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Import regions")
+        .add_filter("BED", &["bed", "txt"])
+        .pick_file()
+        .await
+        .map(|file| file.path().to_owned())
+}
+
+async fn save_bed() -> Option<PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Export regions")
+        .set_file_name("regions.bed")
+        .add_filter("BED", &["bed"])
+        .save_file()
+        .await
+        .map(|file| file.path().to_owned())
 }
 
 fn row_style(theme: &Theme, chosen: bool) -> container::Style {
