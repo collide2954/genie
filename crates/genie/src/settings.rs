@@ -37,6 +37,7 @@ pub enum Setting {
     Scale(i8),
     Density(Density),
     Motion(bool),
+    Port(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +46,7 @@ pub struct Settings {
     pub density: Density,
     pub motion: bool,
     pub appearance: Appearance,
+    pub port: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +56,7 @@ impl Default for Settings {
             density: Density::Compact,
             motion: true,
             appearance: Appearance::System,
+            port: true,
         }
     }
 }
@@ -83,6 +86,7 @@ impl Settings {
                 Some("dark") => Appearance::Dark,
                 _ => Appearance::System,
             },
+            port: section.value("port") != Some("off"),
         }
     }
 
@@ -96,14 +100,15 @@ impl Settings {
             Appearance::Light => "light",
             Appearance::Dark => "dark",
         };
-        let motion = if self.motion { "on" } else { "off" };
+        let switch = |on: bool| if on { "on" } else { "off" }.to_owned();
         Section {
             name: SECTION.to_owned(),
             entries: [
                 ("scale", self.scale.to_string()),
                 ("density", density.to_owned()),
-                ("motion", motion.to_owned()),
+                ("motion", switch(self.motion)),
                 ("theme", theme.to_owned()),
+                ("port", switch(self.port)),
             ]
             .map(|(key, value)| (key.to_owned(), value))
             .to_vec(),
@@ -129,6 +134,7 @@ impl Settings {
             Setting::Scale(steps) => self.scale_by(steps),
             Setting::Density(density) => Self { density, ..self },
             Setting::Motion(motion) => Self { motion, ..self },
+            Setting::Port(port) => Self { port, ..self },
         }
     }
 
@@ -185,16 +191,19 @@ pub fn panel<'a>(settings: Settings, inset: f32) -> Element<'a, Message> {
         ),
     ]
     .spacing(2);
-    let motion = row![
-        choice("On", Setting::Motion(true), settings.motion),
-        choice("Off", Setting::Motion(false), !settings.motion),
-    ]
-    .spacing(2);
+    let switch = |make: fn(bool) -> Setting, on: bool| {
+        row![
+            choice("On", make(true), on),
+            choice("Off", make(false), !on)
+        ]
+        .spacing(2)
+    };
     let content = column![
         text("Settings").font(font::UI_STRONG).size(12),
         line("UI scale", scale.into()),
         line("Density", density.into()),
-        line("Motion", motion.into()),
+        line("Motion", switch(Setting::Motion, settings.motion).into()),
+        line("Commands", switch(Setting::Port, settings.port).into()),
     ]
     .spacing(8);
     let card = container(content)
@@ -250,8 +259,10 @@ mod tests {
             density: Density::Comfortable,
             motion: false,
             appearance: Appearance::Dark,
+            port: false,
         };
         assert_eq!(Settings::parse(&text(settings)), settings);
+        assert!(Settings::default().port);
     }
 
     #[test]

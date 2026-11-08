@@ -60,6 +60,10 @@ impl Tiles {
     pub fn count(&self) -> usize {
         self.loaded.len()
     }
+
+    pub fn waiting(&self) -> Vec<Key> {
+        self.pending.iter().copied().collect()
+    }
 }
 
 #[cfg(test)]

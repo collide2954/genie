@@ -13,6 +13,7 @@ mod menu;
 mod motion;
 mod navigator;
 mod paths;
+mod port;
 mod reading;
 mod recent;
 mod reference;

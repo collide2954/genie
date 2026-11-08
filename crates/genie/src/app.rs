@@ -18,6 +18,7 @@ use crate::card::Card;
 use crate::chrome::{self, Action};
 use crate::location::Location;
 use crate::motion::{self, Transition};
+use crate::port::{Order, Reply};
 use crate::reading::{self, Reading};
 use crate::recent::{self, Recent};
 use crate::reference::Reference;
@@ -35,12 +36,14 @@ mod copy;
 mod export;
 mod navigation;
 mod offline;
+mod orders;
 mod regions;
 mod sessions;
 pub mod snapshot;
 mod tracks;
 mod view;
 
+use orders::Answer;
 use tracks::pick;
 
 const INITIAL_WIDTH: f32 = 1_000.0;
@@ -92,6 +95,10 @@ pub struct Genie {
     strip: Option<Pointer>,
     cache: Option<PathBuf>,
     download: Option<Download>,
+    busy: usize,
+    answers: Vec<(Answer, Reply)>,
+    looking: Option<Reply>,
+    folder: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +159,10 @@ impl Default for Genie {
             strip: None,
             cache: paths::cache_dir(),
             download: None,
+            busy: 0,
+            answers: Vec::new(),
+            looking: None,
+            folder: None,
         }
     }
 }
@@ -362,6 +373,14 @@ pub enum Message {
     Offline(Offline),
     CopyMenu(Option<u64>, Point),
     Copy(Copying),
+    Port(Port),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Port {
+    Order(Order, Reply),
+    Loaded(Result<Arc<Source>, String>, Option<String>, Reply),
+    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,6 +511,7 @@ impl Genie {
     }
 
     fn opened(&mut self, result: Result<Arc<Reference>, String>) -> Task<Message> {
+        self.busy = self.busy.saturating_sub(1);
         self.indexing = None;
         let reference = match result {
             Ok(reference) => reference,
@@ -530,6 +550,7 @@ impl Genie {
     fn update(&mut self, message: Message) -> Task<Message> {
         let started = Instant::now();
         let task = self.handle(message);
+        self.answer();
         self.stats.update = started.elapsed();
         task
     }
@@ -545,8 +566,9 @@ impl Genie {
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
             Message::Picked(Some(path)) => return self.open(Location::File(path)),
             Message::Reopen(location) => return self.open(location),
-            Message::Picked(None) | Message::NamesLoaded(_, Err(_)) => {}
-            Message::NamesLoaded(id, Ok(names)) => {
+            Message::Picked(None) => {}
+            Message::NamesLoaded(id, names) => {
+                let names = names.unwrap_or_default();
                 self.on_session(|session| session.name(id, names));
             }
             Message::Looked(found, error) => return self.looked(found, error),
@@ -591,6 +613,7 @@ impl Genie {
             Message::Offline(offline) => return self.offline(offline),
             Message::CopyMenu(region, at) => self.open_copy_menu(region, at),
             Message::Copy(copying) => return self.copying(copying),
+            Message::Port(event) => return self.port(event),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -766,6 +789,7 @@ impl Genie {
             event::listen().filter_map(|event| mouse_button(&event)),
             window::events().filter_map(window_event),
             frames,
+            self.port_events(),
         ])
     }
 }
@@ -845,8 +869,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Genie, Lane, Message, Offline, Regions, Sweep, mouse_button, shortcut,
-        window_event,
+        Address, Copying, Genie, Lane, Message, Offline, Port, Regions, Sweep, mouse_button,
+        shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -1351,6 +1375,152 @@ mod tests {
                 Message::CopyMenu(Some(id), row)
             ]
         );
+    }
+
+    fn ask(genie: &mut Genie, line: &str) -> std::sync::mpsc::Receiver<String> {
+        let order = crate::port::parse(line).unwrap();
+        let (reply, answer) = crate::port::Reply::new();
+        let _ = genie.update(Message::Port(Port::Order(order, reply)));
+        answer
+    }
+
+    fn told(answer: &std::sync::mpsc::Receiver<String>) -> Option<String> {
+        answer.try_recv().ok()
+    }
+
+    fn load_tiles(genie: &mut Genie) {
+        for key in genie.tiles.waiting() {
+            let bases: Arc<[u8]> = vec![b'A'; 4_096].into();
+            let _ = genie.update(Message::TileLoaded(genie.generation, key, Ok(bases)));
+        }
+    }
+
+    #[test]
+    fn orders_wait_until_genie_is_idle() {
+        let mut genie = opened();
+        let answer = ask(&mut genie, "goto chr1:101-200");
+        assert_eq!(told(&answer), None);
+        settle(&mut genie);
+        load_tiles(&mut genie);
+        assert_eq!(told(&answer).as_deref(), Some("OK"));
+        assert!(shows(&genie, "chr1:101-200"));
+        let wrong = ask(&mut genie, "goto chr9:1-10");
+        assert!(told(&wrong).is_some_and(|text| text != "OK"));
+        assert_eq!(genie.draft, None);
+        let alone = ask(&mut Genie::default(), "goto chr1");
+        assert_eq!(
+            told(&alone).as_deref(),
+            Some("Open a genome or a reference first.")
+        );
+    }
+
+    #[test]
+    fn orders_add_regions_set_rows_and_start_again() {
+        let mut genie = with_track();
+        let answer = ask(&mut genie, "region chr1 101 200 promoter");
+        assert_eq!(told(&answer).as_deref(), Some("OK"));
+        assert_eq!(
+            (marks(&genie)[0].span, marks(&genie)[0].name.as_str()),
+            (Region::between(100, 200), "promoter")
+        );
+        let lost = ask(&mut genie, "region chrQ 1 10");
+        assert_eq!(
+            told(&lost).as_deref(),
+            Some("The reference has no contig chrQ.")
+        );
+        assert_eq!(
+            told(&ask(&mut genie, "squish genes.bed.gz")).as_deref(),
+            Some("OK")
+        );
+        assert_eq!(
+            genie.session.as_ref().unwrap().tracks[0].mode,
+            Some(Rows::Squished)
+        );
+        let other = ask(&mut genie, "collapse other.bed");
+        assert_eq!(
+            told(&other).as_deref(),
+            Some("There is no track other.bed.")
+        );
+        assert_eq!(told(&ask(&mut genie, "new")).as_deref(), Some("OK"));
+        assert!(genie.session.as_ref().unwrap().tracks.is_empty());
+        assert_eq!(marks(&genie), [] as [genie_core::Mark; 0]);
+    }
+
+    #[test]
+    fn snapshot_orders_save_the_view_in_the_folder() {
+        let scratch = crate::scratch::Scratch::new("port-snapshot");
+        let folder = scratch.file("marker", "").parent().unwrap().to_owned();
+        let mut genie = opened();
+        load_tiles(&mut genie);
+        assert_eq!(
+            told(&ask(&mut genie, "snapshot")).as_deref(),
+            Some("Give a folder with snapshotDirectory first.")
+        );
+        let line = format!("snapshotDirectory \"{}\"", folder.display());
+        assert_eq!(told(&ask(&mut genie, &line)).as_deref(), Some("OK"));
+        assert_eq!(
+            told(&ask(&mut genie, "snapshot first.png")).as_deref(),
+            Some("OK")
+        );
+        assert!(folder.join("first.png").is_file());
+        assert_eq!(told(&ask(&mut genie, "snapshot")).as_deref(), Some("OK"));
+        assert!(folder.join("chr1_1-1000.png").is_file());
+    }
+
+    #[test]
+    fn load_orders_add_a_named_track_and_wait_for_its_names() {
+        let mut genie = opened();
+        load_tiles(&mut genie);
+        let (reply, answer) = crate::port::Reply::new();
+        let name = Some("Tumor".to_owned());
+        let loaded = Port::Loaded(Ok(source("genes.bed.gz")), name, reply);
+        let _ = genie.update(Message::Port(loaded));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.name, "Tumor");
+        assert_eq!(told(&answer), None);
+        let id = track.id;
+        let _ = genie.update(Message::NamesLoaded(id, Err("no names".to_owned())));
+        assert_eq!(told(&answer).as_deref(), Some("OK"));
+        let (reply, answer) = crate::port::Reply::new();
+        let failed = Port::Loaded(Err("The file is gone.".to_owned()), None, reply);
+        let _ = genie.update(Message::Port(failed));
+        assert_eq!(told(&answer).as_deref(), Some("The file is gone."));
+        assert_eq!(
+            told(&ask(&mut genie, "load /data/ref.fa")).as_deref(),
+            Some("ref.fa is not a track. To open a reference, use genome.")
+        );
+    }
+
+    #[test]
+    fn genome_orders_answer_once_the_genome_is_open() {
+        let mut genie = Genie::default();
+        let answer = ask(&mut genie, "genome hg38");
+        assert_eq!(told(&answer), None);
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        assert_eq!(told(&answer), None);
+        let _ = genie.update(Message::TrackOpened(Err("No genes.".to_owned())));
+        load_tiles(&mut genie);
+        assert_eq!(told(&answer).as_deref(), Some("OK"));
+        let missing = ask(&mut genie, "genome /data/missing.fa");
+        let _ = genie.update(Message::Opened(Err("The file is gone.".to_owned())));
+        load_tiles(&mut genie);
+        assert_eq!(
+            told(&missing).as_deref(),
+            Some("genie cannot open /data/missing.fa. The file is gone.")
+        );
+    }
+
+    #[test]
+    fn a_port_in_use_shows_a_notice() {
+        let mut genie = Genie::default();
+        let failed = Port::Failed("The address is in use.".to_owned());
+        let _ = genie.update(Message::Port(failed));
+        assert!(shows(
+            &genie,
+            "genie cannot take commands on port 60151. The address is in use."
+        ));
     }
 
     #[test]

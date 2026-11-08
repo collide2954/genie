@@ -32,6 +32,7 @@ pub(super) const REMOTE_SESSION: &str =
 
 impl Genie {
     pub(super) fn track_opened(&mut self, result: Result<Arc<Source>, String>) -> Task<Message> {
+        self.busy = self.busy.saturating_sub(1);
         let task = match result {
             Ok(source) => self.add_track(source),
             Err(error) => {
@@ -307,6 +308,7 @@ impl Genie {
             self.status = Status::Opening(genome.label.clone());
         }
         self.pending = vec![Location::File(genome.genes_in(&folder))];
+        self.busy += 1;
         Task::perform(
             async move { genome::open(&genome, &folder, SystemTime::now()).map(Arc::new) },
             Message::Opened,
@@ -338,6 +340,7 @@ impl Genie {
                 self.status = Status::Failed(NO_REFERENCE.to_owned());
                 return Task::none();
             }
+            self.busy += 1;
             return Task::perform(
                 async move { track::open(location).map(Arc::new) },
                 Message::TrackOpened,
@@ -347,6 +350,7 @@ impl Genie {
         if self.session.is_none() {
             self.status = Status::Opening(name.clone());
         }
+        self.busy += 1;
         let (sender, receiver) = mpsc::unbounded();
         thread::spawn(move || {
             let started = Instant::now();
@@ -380,7 +384,7 @@ impl Genie {
         genes.map_or_else(|| source.name.clone(), |(genome, _)| genome.track)
     }
 
-    fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
+    pub(super) fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
         let name = self.track_name(&source);
         let Some(session) = &mut self.session else {
             self.status = Status::Failed(NO_REFERENCE.to_owned());

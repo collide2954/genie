@@ -351,10 +351,20 @@ impl Genie {
     }
 
     pub(super) fn looked(&mut self, found: Option<Named>, error: String) -> Task<Message> {
+        let order = self.looking.take();
         let Some(named) = found else {
-            self.locus_error = Some(error);
+            match order {
+                Some(reply) => {
+                    self.draft = None;
+                    reply.send(error);
+                }
+                None => self.locus_error = Some(error),
+            }
             return Task::none();
         };
+        if let Some(reply) = order {
+            self.answers.push((super::Answer::Done, reply));
+        }
         self.draft = None;
         self.go_to(Target {
             contig: named.contig,
