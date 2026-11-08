@@ -69,6 +69,28 @@ sort -k1,1 -k2,2n signal.bedGraph | bgzip > signal.bedGraph.gz && tabix -p bed s
 
 genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows a bedGraph track that has a tabix index when the view is 10 Mb or less. For the best speed, convert bedGraph to bigWig with bedGraphToBigWig.
 
+## Files on the web
+
+genie can open reference sequences and tracks from a web server. To open a file from the web:
+
+1. Push Ctrl+U (Cmd+U on macOS) or click the link button.
+2. Type the address of the file. The address must start with `https://` or `http://`.
+3. Push Enter.
+
+You can also give addresses as arguments:
+
+```bash
+cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/data/reads.bam
+```
+
+- genie reads only the parts of a file that the view needs. The server must send parts of files (HTTP range requests). If the server sends only full files, genie opens only files of 4 MB or less.
+- The indexes must be on the same server. The address of an index is the address of the file with the index extension, for example `reads.bam.bai`. genie does not make indexes for FASTA files from the web.
+- genie reads plain BED, GFF3, GTF, VCF and bedGraph files completely. The limit is 50 MB.
+- For files from the web, the locus box finds names only in bigBed files that have a name index.
+- genie keeps up to 64 MB of data from the web in memory. It does not write this data to disk.
+- genie uses the certificates of the operating system for HTTPS. A connection to an `http://` address is not secure. genie does not send user names, passwords or cookies.
+- Sessions and the recent list keep the addresses of files from the web. genie cannot open a session file from the web.
+
 ## Navigation
 
 - Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom.
@@ -136,7 +158,7 @@ cargo test --workspace
 | Crate | Contents |
 | --- | --- |
 | `genie-core` | Genomic coordinates, loci, alignments and the viewport |
-| `genie-formats` | Parsers and writers for genomic and image file formats |
+| `genie-formats` | Parsers and writers for genomic and image file formats, and an HTTP client for files on the web |
 | `genie-render` | Track layout and draw primitives |
 | `genie` | The iced application |
 
