@@ -1,8 +1,43 @@
+use std::io::{self, BufRead, Write};
+
 use genie_core::{Feature, Region, Strand};
 
-use crate::Reason;
+use crate::features::Entry;
+use crate::text::lines;
+use crate::{Error, Reason};
 
 const COLUMNS: usize = 12;
+
+pub fn regions(reader: impl BufRead) -> Result<Vec<Entry>, Error> {
+    let mut entries = Vec::new();
+    lines(reader, |number, line| {
+        let parsed = parse(line).map_err(|reason| Error::Format {
+            line: number,
+            reason,
+        })?;
+        if let Some((contig, feature)) = parsed {
+            entries.push(Entry {
+                name: feature.name().to_owned(),
+                contig: contig.to_owned(),
+                span: feature.span(),
+            });
+        }
+        Ok(())
+    })?;
+    Ok(entries)
+}
+
+pub fn write(mut writer: impl Write, entries: &[Entry]) -> io::Result<()> {
+    for entry in entries {
+        let (start, end) = (entry.span.start(), entry.span.end());
+        write!(writer, "{}\t{start}\t{end}", entry.contig)?;
+        if !entry.name.is_empty() {
+            write!(writer, "\t{}", entry.name.replace(['\t', '\r', '\n'], " "))?;
+        }
+        writeln!(writer)?;
+    }
+    writer.flush()
+}
 
 pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
     if line.is_empty()
@@ -93,8 +128,42 @@ fn blocks(start: u64, count: &str, sizes: &str, starts: &str) -> Result<Vec<Regi
 mod tests {
     use genie_core::{Feature, Region, Strand};
 
-    use super::parse;
-    use crate::Reason;
+    use super::{parse, regions, write};
+    use crate::features::Entry;
+    use crate::{Error, Reason};
+
+    fn entry(name: &str, contig: &str, span: Region) -> Entry {
+        Entry {
+            name: name.to_owned(),
+            contig: contig.to_owned(),
+            span,
+        }
+    }
+
+    #[test]
+    fn regions_read_and_write_as_bed() {
+        let text = "track name=regions\nchr1\t10\t20\tpromoter A\t0\t+\nchr2\t5\t9\n";
+        let entries = regions(text.as_bytes()).unwrap();
+        assert_eq!(
+            entries,
+            [
+                entry("promoter A", "chr1", region(10, 20)),
+                entry("", "chr2", region(5, 9))
+            ]
+        );
+        let mut written = Vec::new();
+        write(&mut written, &entries).unwrap();
+        let written = String::from_utf8(written).unwrap();
+        assert_eq!(written, "chr1\t10\t20\tpromoter A\nchr2\t5\t9\n");
+        assert_eq!(regions(written.as_bytes()).unwrap(), entries);
+        let mut tabbed = Vec::new();
+        write(&mut tabbed, &[entry("a\tb", "chr1", region(0, 1))]).unwrap();
+        assert_eq!(tabbed, b"chr1\t0\t1\ta b\n");
+        assert!(matches!(
+            regions("chr1\t0\t5\nchr1\tx\t2\n".as_bytes()),
+            Err(Error::Format { line: 2, .. })
+        ));
+    }
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
