@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
 use genie_core::{Viewport, grouped};
+use genie_render::scene::{Paint, Primitive};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
 };
@@ -28,7 +29,7 @@ use crate::tiles;
 use crate::track::{Content, Track};
 use crate::{font, scene, style};
 
-use super::{Genie, Lane, Message, Session, Status, Suggestion};
+use super::{Genie, Lane, Message, Session, Status, Suggestion, Sweep};
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
 const RULER_HEIGHT: f32 = 20.0;
@@ -369,6 +370,31 @@ impl Genie {
         data.into()
     }
 
+    fn ruler<'a>(&self, viewport: Viewport) -> Element<'a, Message> {
+        let mut primitives = Vec::new();
+        if let Some((start, end)) = self.sweep {
+            let from = viewport.to_px(start.min(end)) as f32;
+            let to = viewport.to_px(start.max(end)) as f32;
+            primitives.push(Primitive::Rect {
+                x: from,
+                y: 0.0,
+                width: to - from,
+                height: RULER_HEIGHT,
+                paint: Paint::Selection,
+            });
+        }
+        primitives.extend(ruler::scene(viewport, RULER_HEIGHT));
+        container(
+            scene::view(primitives, RULER_HEIGHT)
+                .on_press(|share| Message::Ruler(Sweep::Pressed(share)))
+                .on_drag(|share| Message::Ruler(Sweep::Dragged(share)))
+                .on_release(Message::Ruler(Sweep::Released))
+                .crosshair(),
+        )
+        .id("ruler")
+        .into()
+    }
+
     fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let viewport = session.viewport;
         let tracks = column![
@@ -379,7 +405,7 @@ impl Genie {
                     .on_release(Message::OverviewReleased)
             )
             .id("overview"),
-            ruler_view(viewport),
+            self.ruler(viewport),
             hairline(),
             scrollable(self.tracks(session, false))
                 .direction(Direction::Vertical(

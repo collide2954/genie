@@ -40,6 +40,7 @@ pub struct Scene<'a, Message> {
     on_release: Option<Message>,
     on_hover: Option<Box<dyn Fn(Option<Pointer>) -> Message + 'a>>,
     on_click: Option<Box<dyn Fn(Pointer) -> Message + 'a>>,
+    crosshair: bool,
 }
 
 #[derive(Default)]
@@ -58,6 +59,7 @@ pub fn view<'a, Message>(primitives: Vec<Primitive>, height: f32) -> Scene<'a, M
         on_release: None,
         on_hover: None,
         on_click: None,
+        crosshair: false,
     }
 }
 
@@ -122,6 +124,11 @@ impl<'a, Message> Scene<'a, Message> {
 
     pub fn on_release(mut self, on_release: Message) -> Self {
         self.on_release = Some(on_release);
+        self
+    }
+
+    pub fn crosshair(mut self) -> Self {
+        self.crosshair = true;
         self
     }
 }
@@ -240,9 +247,12 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
+        let dragging = tree.state.downcast_ref::<State>().dragging;
         if self.on_press.is_none() {
             mouse::Interaction::None
-        } else if tree.state.downcast_ref::<State>().dragging {
+        } else if self.crosshair && (dragging || cursor.is_over(layout.bounds())) {
+            mouse::Interaction::Crosshair
+        } else if dragging {
             mouse::Interaction::Grabbing
         } else if cursor.is_over(layout.bounds()) {
             mouse::Interaction::Pointer

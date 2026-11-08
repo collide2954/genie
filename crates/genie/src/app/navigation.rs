@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use genie_core::{Named, Span, Target, Viewport};
+use genie_core::{Named, Region, Span, Target, Viewport};
 use iced::Task;
 use iced::widget::operation;
 
@@ -8,9 +8,10 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, Message, Suggestion};
+use super::{Genie, Message, Suggestion, Sweep};
 
 const SUGGESTIONS: usize = 8;
+const MIN_SWEEP: f64 = 3.0;
 
 impl Genie {
     pub(super) fn command(&mut self, command: Command) -> Task<Message> {
@@ -41,6 +42,7 @@ impl Genie {
                 self.close_menus();
                 self.notice = None;
                 self.pinned = None;
+                self.sweep = None;
                 Task::none()
             }
             Command::Export => self.export(),
@@ -194,6 +196,42 @@ impl Genie {
         self.drop_draft();
         self.hover = None;
         self.fetch()
+    }
+
+    pub(super) fn sweep_ruler(&mut self, sweep: Sweep) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let viewport = session.viewport;
+        let at = |share: f32| viewport.to_bp(f64::from(share) * viewport.width());
+        match sweep {
+            Sweep::Pressed(share) => {
+                self.drop_draft();
+                self.sweep = Some((at(share), at(share)));
+            }
+            Sweep::Dragged(share) => {
+                if let Some((start, _)) = self.sweep {
+                    self.sweep = Some((start, at(share)));
+                }
+            }
+            Sweep::Released => {
+                let Some((start, end)) = self.sweep.take() else {
+                    return Task::none();
+                };
+                if (viewport.to_px(end) - viewport.to_px(start)).abs() < MIN_SWEEP {
+                    return Task::none();
+                }
+                let length = viewport.length() as f64;
+                let low = start.min(end).clamp(0.0, length).round() as u64;
+                let high = start.max(end).clamp(0.0, length).round() as u64;
+                let contig = session.contig;
+                return self.go_to(Target {
+                    contig,
+                    span: Span::Region(Region::between(low, high.max(low + 1))),
+                });
+            }
+        }
+        Task::none()
     }
 
     pub(super) fn looked(&mut self, found: Option<Named>, error: String) -> Task<Message> {

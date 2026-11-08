@@ -68,6 +68,7 @@ pub struct Genie {
     hover: Option<Card>,
     pinned: Option<Card>,
     pending: Vec<PathBuf>,
+    sweep: Option<(f64, f64)>,
 }
 
 impl Default for Genie {
@@ -104,6 +105,7 @@ impl Default for Genie {
             hover: None,
             pinned: None,
             pending: Vec::new(),
+            sweep: None,
         }
     }
 }
@@ -267,6 +269,7 @@ pub enum Message {
     OverviewPressed(f32),
     OverviewDragged(f32),
     OverviewReleased,
+    Ruler(Sweep),
     FileHovered,
     FileHoverEnded,
     FileDropped(PathBuf),
@@ -295,6 +298,13 @@ pub enum Message {
     SettingChanged(Setting),
     Lane(u64, Lane),
     RestoreLast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Sweep {
+    Pressed(f32),
+    Dragged(f32),
+    Released,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -474,6 +484,7 @@ impl Genie {
                 return self.fetch();
             }
             Message::OverviewReleased => self.on_session(|session| session.grip = None),
+            Message::Ruler(sweep) => return self.sweep_ruler(sweep),
             Message::ExportPicked(path) => return self.export_to(path),
             Message::SessionPicked(path) => return self.session_picked(path),
             Message::Exported(result, cut) => return self.exported(result, cut),
@@ -658,7 +669,7 @@ mod tests {
 
     use super::tracks::NO_REFERENCE;
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
-    use super::{Genie, Lane, Message, mouse_button, shortcut, window_event};
+    use super::{Genie, Lane, Message, Sweep, mouse_button, shortcut, window_event};
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};
@@ -864,6 +875,38 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn dragging_on_the_ruler_zooms_to_the_range() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.3)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.2)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.1)));
+        let (start, end) = genie.sweep.unwrap();
+        assert!((start - 300.0).abs() < 0.01 && (end - 100.0).abs() < 0.01);
+        let _ = genie.update(Message::Ruler(Sweep::Released));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:101-300"));
+        assert_eq!(genie.sweep, None);
+        let _ = genie.update(Message::Command(Command::Back));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:1-1,000"));
+    }
+
+    #[test]
+    fn short_ruler_drags_and_escape_keep_the_view() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.101)));
+        let _ = genie.update(Message::Ruler(Sweep::Released));
+        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.5)));
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert_eq!(genie.sweep, None);
+        let _ = genie.update(Message::Ruler(Sweep::Released));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:1-1,000"));
     }
 
     #[test]
