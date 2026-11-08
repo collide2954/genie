@@ -5,6 +5,12 @@ use iced::time::{Duration, Instant};
 
 pub const DURATION: Duration = Duration::from_millis(150);
 
+pub fn slide(open: bool) -> Animation<bool> {
+    Animation::new(open)
+        .duration(DURATION)
+        .easing(Easing::EaseOutCubic)
+}
+
 #[derive(Debug, Clone)]
 pub struct Transition {
     from: Viewport,

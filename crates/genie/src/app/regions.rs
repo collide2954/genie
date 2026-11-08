@@ -1,4 +1,5 @@
 use genie_core::{Locus, Mark, Span, Target, grouped};
+use iced::time::Instant;
 use iced::widget::{
     Column, button, column, container, mouse_area, operation, row, scrollable, space, text,
     text_input,
@@ -7,6 +8,7 @@ use iced::{Alignment, Border, Element, Length, Task, Theme, mouse};
 
 use crate::chrome;
 use crate::icon::{self, Icon};
+use crate::motion;
 use crate::theme::tokens;
 use crate::{font, style};
 
@@ -20,16 +22,12 @@ const CLOSE_ICON: f32 = 12.0;
 impl Genie {
     pub(super) fn regions(&mut self, action: Regions) -> Task<Message> {
         match action {
-            Regions::Toggle => {
-                self.sidebar = match self.sidebar.take() {
-                    Some(_) => None,
-                    None => Some(Sidebar::default()),
-                };
-            }
+            Regions::Toggle => self.show_sidebar(self.sidebar.is_none()),
             Regions::Add => {
                 if let Some(session) = &mut self.session {
                     let visit = session.visit();
                     let id = session.marks.add(visit.contig, visit.region, None);
+                    self.show_sidebar(true);
                     self.sidebar.get_or_insert_default().chosen = Some(id);
                 }
             }
@@ -78,6 +76,23 @@ impl Genie {
             }
         }
         Task::none()
+    }
+
+    fn show_sidebar(&mut self, open: bool) {
+        if open == self.sidebar.is_some() {
+            return;
+        }
+        self.sidebar = open.then(Sidebar::default);
+        self.now = Instant::now().max(self.now);
+        if self.settings.motion {
+            self.slide.go_mut(open, self.now);
+        } else {
+            self.slide = motion::slide(open);
+        }
+    }
+
+    pub(super) fn sidebar_width(&self) -> f32 {
+        self.slide.interpolate(0.0, SIDEBAR_WIDTH, self.now)
     }
 
     fn mark(&self, id: u64) -> Option<Mark> {

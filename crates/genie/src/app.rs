@@ -6,11 +6,14 @@ use std::time::Duration;
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
 use iced::theme::Mode;
 use iced::time::Instant;
-use iced::{Event, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, system, window};
+use iced::{
+    Animation, Event, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, system,
+    window,
+};
 
 use crate::card::Card;
 use crate::chrome::{self, Action};
-use crate::motion::Transition;
+use crate::motion::{self, Transition};
 use crate::reading::{self, Reading};
 use crate::recent::Recent;
 use crate::reference::Reference;
@@ -73,6 +76,8 @@ pub struct Genie {
     pointed: Option<u64>,
     anchor: Option<(Visit, u64)>,
     sidebar: Option<Sidebar>,
+    slide: Animation<bool>,
+    now: Instant,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -119,6 +124,8 @@ impl Default for Genie {
             pointed: None,
             anchor: None,
             sidebar: None,
+            slide: motion::slide(false),
+            now: Instant::now(),
         }
     }
 }
@@ -524,13 +531,16 @@ impl Genie {
             }
         }
         self.stats.last_frame = Some(now);
+        self.now = now;
         self.on_session(|session| session.advance(now));
     }
 
     fn is_animating(&self) -> bool {
-        self.session
-            .as_ref()
-            .is_some_and(|session| session.transition.is_some())
+        self.slide.is_animating(self.now)
+            || self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.transition.is_some())
     }
 
     fn fail(&mut self, error: String) {
@@ -1011,6 +1021,7 @@ mod tests {
         go(&mut genie, "chr1:101-200");
         settle(&mut genie);
         let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
         assert!(genie.sidebar.is_some());
         let added = marks(&genie);
         assert_eq!(added.len(), 1);
@@ -1022,6 +1033,7 @@ mod tests {
         assert!(shows(&genie, "Region 1"));
         assert!(shows(&genie, "chr1:101-200 · 100 bp"));
         let _ = genie.update(Message::Regions(Regions::Toggle));
+        settle(&mut genie);
         assert!(genie.sidebar.is_none());
         assert!(!shows(&genie, "Region 1"));
     }
@@ -1048,6 +1060,7 @@ mod tests {
     fn regions_can_be_renamed_and_removed() {
         let mut genie = opened();
         let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
         let id = marks(&genie)[0].id;
         let _ = genie.update(Message::Regions(Regions::Edit(id)));
         let draft = Regions::Draft("promoter A".to_owned());
@@ -1065,6 +1078,7 @@ mod tests {
     fn double_clicking_a_region_starts_a_rename() {
         let mut genie = opened();
         let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
         let id = marks(&genie)[0].id;
         let mut ui = simulator(genie.view());
         ui.click("Region 1").unwrap();
@@ -1075,9 +1089,31 @@ mod tests {
     }
 
     #[test]
+    fn the_sidebar_slides_in_and_out() {
+        let later = |genie: &Genie| Message::Frame(genie.now + Duration::from_secs(1));
+        let mut genie = opened();
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        assert!(genie.is_animating());
+        assert!(genie.sidebar_width() < 1.0);
+        let _ = genie.update(later(&genie));
+        assert!(!genie.is_animating());
+        assert!((genie.sidebar_width() - 220.0).abs() < 0.01);
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        assert!(genie.sidebar.is_none());
+        assert!(genie.sidebar_width() > 219.0);
+        let _ = genie.update(later(&genie));
+        assert!(genie.sidebar_width() < 0.01);
+        genie.settings.motion = false;
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        assert!(!genie.is_animating());
+        assert!((genie.sidebar_width() - 220.0).abs() < 0.01);
+    }
+
+    #[test]
     fn an_empty_region_list_says_how_to_add_regions() {
         let mut genie = opened();
         let _ = genie.update(Message::Regions(Regions::Toggle));
+        settle(&mut genie);
         let keys = crate::chrome::keys('D');
         assert!(shows(
             &genie,
@@ -1192,7 +1228,8 @@ mod tests {
     }
 
     fn settle(genie: &mut Genie) {
-        let _ = genie.update(Message::Frame(Instant::now() + Duration::from_secs(1)));
+        let later = genie.now.max(Instant::now()) + Duration::from_secs(1);
+        let _ = genie.update(Message::Frame(later));
     }
 
     #[test]
