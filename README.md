@@ -36,7 +36,7 @@ The start view lists ten genomes. Click a genome to open it with its gene track 
 - genie uses the contig names of the genome. A track that uses `1`, `NC_000001.11` or `CM000663.2` shows on `chr1` of hg38.
 - The label left of the locus box shows the open genome. Click the label to open a different genome or a reference file.
 - genie keeps the small genome files (contig names, bands and genes) in its cache folder. It gets them again after 30 days.
-- To use a genome without a network connection, click the genome label, then click **Use offline**. genie downloads the full sequence into its cache folder (human: about 835 MB). If the download stops, genie continues it the next time. Click **Remove offline copy** to delete the sequence.
+- To use a genome without a network connection, click the genome label, then click **Use offline**. genie downloads the full sequence into its cache folder (human: about 835 MB). If the download stops, genie continues it the next time. Click **Remove offline copy** to delete the sequence. If the open genome reads from the offline copy, genie first changes it to the sequence on UCSC.
 - Sessions and the recent list keep the genome.
 
 ## Files
