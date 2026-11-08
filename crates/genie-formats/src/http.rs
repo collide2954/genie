@@ -15,6 +15,7 @@ const CONNECT: Duration = Duration::from_secs(10);
 const WAIT: Duration = Duration::from_secs(30);
 const REDIRECTS: usize = 5;
 const WHOLE: u64 = 4 << 20;
+const PART: u64 = 4 << 20;
 const IDLE: usize = 4;
 const AGENT: &str = concat!("genie/", env!("CARGO_PKG_VERSION"));
 
@@ -166,6 +167,54 @@ fn scheme(text: &str) -> Option<(bool, &str)> {
 pub struct Fetched {
     pub bytes: Vec<u8>,
     pub size: u64,
+}
+
+pub fn get(url: &Url) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::new();
+    download(
+        url,
+        0,
+        |part| {
+            bytes.extend_from_slice(part);
+            Ok(())
+        },
+        |_, _| {},
+    )?;
+    Ok(bytes)
+}
+
+pub fn download(
+    url: &Url,
+    from: u64,
+    write: impl FnMut(&[u8]) -> io::Result<()>,
+    progress: impl FnMut(u64, u64),
+) -> Result<u64, Error> {
+    download_in(url, from, PART, write, progress)
+}
+
+fn download_in(
+    url: &Url,
+    from: u64,
+    part: u64,
+    mut write: impl FnMut(&[u8]) -> io::Result<()>,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<u64, Error> {
+    let mut at = from;
+    loop {
+        let fetched = fetch(url, at, at + part)?;
+        if at >= fetched.size {
+            return Ok(fetched.size);
+        }
+        if fetched.bytes.is_empty() {
+            return Err(remote(format!("The server sent no data for {url}.")));
+        }
+        write(&fetched.bytes)?;
+        at += fetched.bytes.len() as u64;
+        progress(at, fetched.size);
+        if at >= fetched.size {
+            return Ok(fetched.size);
+        }
+    }
 }
 
 pub fn fetch(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
@@ -488,7 +537,7 @@ fn remote(message: String) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{Url, fetch};
+    use super::{Url, download_in, fetch, get};
     use crate::server::serve;
 
     #[test]
@@ -536,6 +585,47 @@ mod tests {
         let past = fetch(&url, 5_000, 6_000).unwrap();
         assert_eq!(past.bytes.len(), 0);
         assert_eq!(past.size, 5_000);
+    }
+
+    #[test]
+    fn downloads_come_in_parts_and_can_resume() {
+        let server = serve(vec![
+            ("/a.bin".to_owned(), data()),
+            ("/empty.bin".to_owned(), Vec::new()),
+        ]);
+        let url = Url::parse(&server.url("/a.bin")).unwrap();
+        let mut bytes = Vec::new();
+        let mut steps = Vec::new();
+        let size = download_in(
+            &url,
+            0,
+            2_000,
+            |part| {
+                bytes.extend_from_slice(part);
+                Ok(())
+            },
+            |done, size| steps.push((done, size)),
+        )
+        .unwrap();
+        assert_eq!(size, 5_000);
+        assert_eq!(bytes, data());
+        assert_eq!(steps, [(2_000, 5_000), (4_000, 5_000), (5_000, 5_000)]);
+        let mut tail = Vec::new();
+        download_in(
+            &url,
+            4_500,
+            2_000,
+            |part| {
+                tail.extend_from_slice(part);
+                Ok(())
+            },
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(tail, data()[4_500..]);
+        assert_eq!(get(&url).unwrap(), data());
+        let empty = Url::parse(&server.url("/empty.bin")).unwrap();
+        assert_eq!(get(&empty).unwrap(), Vec::<u8>::new());
     }
 
     #[test]
