@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use genie_core::{Locus, Named, Names, Region, Span, Viewport};
+use genie_core::{History, Locus, Named, Names, Region, Span, Target, Viewport, Visit};
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::{Point, Size, Subscription, Task, Theme, keyboard, system, window};
@@ -140,6 +140,7 @@ struct Session {
     grip: Option<f64>,
     tracks: Vec<Track>,
     reading: Reading,
+    history: History,
 }
 
 impl Session {
@@ -153,6 +154,25 @@ impl Session {
             grip: None,
             tracks: Vec::new(),
             reading: Reading::default(),
+            history: History::default(),
+        }
+    }
+
+    fn visit(&self) -> Visit {
+        Visit {
+            contig: self.contig,
+            region: self.destination().visible(),
+        }
+    }
+
+    fn show(&mut self, target: Target) {
+        if target.contig == self.contig {
+            self.glide(self.destination().jump(target.span));
+        } else {
+            let length = self.reference.assembly.contigs()[target.contig].length;
+            self.transition = None;
+            self.contig = target.contig;
+            self.viewport = self.viewport.retarget(length).jump(target.span);
         }
     }
 
@@ -813,6 +833,24 @@ mod tests {
         go(&mut genie, "chr1:101-200");
         settle(&mut genie);
         assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn back_and_forward_step_through_jumps_but_not_pans() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        go(&mut genie, "chr2:51-150");
+        settle(&mut genie);
+        let _ = genie.update(Message::Pan(-100.0));
+        let _ = genie.update(Message::Command(Command::Back));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:101-200"));
+        let _ = genie.update(Message::Command(Command::Forward));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr2:61-160"));
+        let _ = genie.update(Message::Command(Command::Forward));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr2:61-160"));
     }
 
     #[test]

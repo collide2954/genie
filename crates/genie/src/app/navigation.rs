@@ -23,6 +23,8 @@ impl Genie {
                 self.drop_draft();
                 self.glide(|viewport| viewport.zoom(f64::from(factor), viewport.width() / 2.0))
             }
+            Command::Back => self.step_history(false),
+            Command::Forward => self.step_history(true),
             Command::FocusLocus => Task::batch([
                 operation::focus(chrome::LOCUS),
                 operation::select_all(chrome::LOCUS),
@@ -163,15 +165,34 @@ impl Genie {
         let Some(session) = &mut self.session else {
             return Task::none();
         };
-        if target.contig == session.contig {
-            session.glide(session.destination().jump(target.span));
-        } else {
-            let length = session.reference.assembly.contigs()[target.contig].length;
-            session.transition = None;
-            session.contig = target.contig;
-            session.viewport = session.viewport.retarget(length).jump(target.span);
+        let before = session.visit();
+        session.show(target);
+        if session.visit() != before {
+            session.history.record(before);
         }
         self.locus_error = None;
+        self.fetch()
+    }
+
+    fn step_history(&mut self, forward: bool) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let current = session.visit();
+        let visit = if forward {
+            session.history.forward(current)
+        } else {
+            session.history.back(current)
+        };
+        let Some(visit) = visit else {
+            return Task::none();
+        };
+        session.show(Target {
+            contig: visit.contig,
+            span: Span::Region(visit.region),
+        });
+        self.drop_draft();
+        self.hover = None;
         self.fetch()
     }
 

@@ -9,6 +9,8 @@ const ZOOM: f32 = 2.0;
 pub enum Command {
     Pan(f32),
     Zoom(f32),
+    Back,
+    Forward,
     FocusLocus,
     NextSuggestion,
     PreviousSuggestion,
@@ -21,6 +23,10 @@ pub enum Command {
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
     let step = if modifiers.shift() { PAGE } else { STEP };
     match key.as_ref() {
+        Key::Named(Named::ArrowLeft) if modifiers.alt() => Some(Command::Back),
+        Key::Named(Named::ArrowRight) if modifiers.alt() => Some(Command::Forward),
+        Key::Character("[") if modifiers.command() => Some(Command::Back),
+        Key::Character("]") if modifiers.command() => Some(Command::Forward),
         Key::Named(Named::ArrowLeft) => Some(Command::Pan(step)),
         Key::Named(Named::ArrowRight) => Some(Command::Pan(-step)),
         Key::Named(Named::ArrowDown) => Some(Command::NextSuggestion),
@@ -58,6 +64,21 @@ mod tests {
         );
         assert_eq!(command(&left, Modifiers::SHIFT), Some(Command::Pan(1.0)));
         assert_eq!(command(&right, Modifiers::SHIFT), Some(Command::Pan(-1.0)));
+    }
+
+    #[test]
+    fn alt_arrows_and_brackets_step_through_history() {
+        let left = Key::Named(Named::ArrowLeft);
+        let right = Key::Named(Named::ArrowRight);
+        assert_eq!(command(&left, Modifiers::ALT), Some(Command::Back));
+        assert_eq!(command(&right, Modifiers::ALT), Some(Command::Forward));
+        let back = command(&character("["), Modifiers::COMMAND);
+        let forward = command(&character("]"), Modifiers::COMMAND);
+        assert_eq!(
+            (back, forward),
+            (Some(Command::Back), Some(Command::Forward))
+        );
+        assert_eq!(command(&character("["), Modifiers::empty()), None);
     }
 
     #[test]
