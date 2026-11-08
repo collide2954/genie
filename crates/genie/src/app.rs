@@ -293,6 +293,7 @@ pub enum Message {
     Window(chrome::Action),
     Open,
     Picked(Option<PathBuf>),
+    Reopen(Location),
     Opened(Result<Arc<Reference>, String>),
     Pan(f32),
     Zoom(f32, f32),
@@ -448,9 +449,7 @@ impl Genie {
         self.status = Status::Idle;
         self.generation += 1;
         self.tiles.clear();
-        if let Some(path) = reference.location.path() {
-            self.recent.add(path.to_owned());
-        }
+        self.recent.add(reference.location.clone());
         (self.hover, self.pinned) = (None, None);
         (self.anchor, self.sweep) = (None, None);
         if let Some(sidebar) = &mut self.sidebar {
@@ -487,6 +486,7 @@ impl Genie {
             Message::Window(action) => return self.window(action),
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
             Message::Picked(Some(path)) => return self.open(Location::File(path)),
+            Message::Reopen(location) => return self.open(location),
             Message::Picked(None) | Message::NamesLoaded(_, Err(_)) => {}
             Message::NamesLoaded(id, Ok(names)) => {
                 self.on_session(|session| session.name(id, names));
@@ -1644,30 +1644,41 @@ mod tests {
         assert!(shows(&genie, "chr1:1-250"));
     }
 
-    fn with_recent(paths: &[&str]) -> Genie {
+    fn with_recent(entries: &[&str]) -> Genie {
         let mut genie = Genie::default();
-        for path in paths.iter().rev() {
-            genie.recent.add(PathBuf::from(path));
+        for entry in entries.iter().rev() {
+            genie.recent.add(Location::parse(entry).unwrap());
         }
         genie
     }
 
     #[test]
-    fn welcome_lists_recent_files() {
-        let genie = with_recent(&["/data/hg38.2bit", "/data/demo.fa"]);
+    fn welcome_lists_recent_files_and_addresses() {
+        let genie = with_recent(&[
+            "/data/hg38.2bit",
+            "/data/demo.fa",
+            "https://example.org/data/remote.2bit",
+        ]);
         let mut ui = simulator(genie.view());
         assert!(ui.find("hg38.2bit").is_ok());
         assert!(ui.find("demo.fa").is_ok());
+        assert!(ui.find("remote.2bit").is_ok());
+        assert!(ui.find("example.org").is_ok());
     }
 
     #[test]
-    fn clicking_a_recent_file_opens_it() {
-        let genie = with_recent(&["/data/hg38.2bit"]);
+    fn clicking_a_recent_entry_opens_it() {
+        let address = "https://example.org/data/remote.2bit";
+        let genie = with_recent(&["/data/hg38.2bit", address]);
         let mut ui = simulator(genie.view());
         ui.click("hg38.2bit").unwrap();
+        ui.click("remote.2bit").unwrap();
         assert_eq!(
             ui.into_messages().collect::<Vec<_>>(),
-            [Message::Picked(Some(PathBuf::from("/data/hg38.2bit")))]
+            [
+                Message::Reopen(Location::File(PathBuf::from("/data/hg38.2bit"))),
+                Message::Reopen(Location::parse(address).unwrap()),
+            ]
         );
     }
 
@@ -1928,7 +1939,7 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Picked(Some(file.clone())));
         assert_eq!(genie.pending, [Location::File(folder.join("genes.bed.gz"))]);
-        assert_eq!(genie.recent.paths()[0], file);
+        assert_eq!(genie.recent.entries()[0], Location::File(file));
         let _ = genie.update(Message::Opened(Ok(reference_at(folder.join("ref.fa")))));
         assert!(shows(&genie, "chr1:101-200"));
         let source = Arc::new(Source {
@@ -2577,7 +2588,10 @@ mod tests {
 
     #[test]
     fn opening_a_reference_remembers_it() {
-        assert_eq!(opened().recent.paths(), [PathBuf::from("ref.fa")]);
+        assert_eq!(
+            opened().recent.entries(),
+            [Location::File(PathBuf::from("ref.fa"))]
+        );
     }
 
     #[test]

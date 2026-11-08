@@ -275,14 +275,14 @@ mod tests {
         let scratch = Scratch::new("settings");
         let folder = scratch.file("unused", "").with_file_name("config");
         let mut recent = Recent::default();
-        recent.add(PathBuf::from("/data/a.fa"));
+        recent.add(PathBuf::from("/data/a.fa").into());
         recent.save(&folder).unwrap();
         let settings = Settings {
             motion: false,
             ..Settings::default()
         };
         settings.save(&folder).unwrap();
-        recent.add(PathBuf::from("/data/b.fa"));
+        recent.add(PathBuf::from("/data/b.fa").into());
         recent.save(&folder).unwrap();
         assert_eq!(Settings::load(&folder), settings);
         assert_eq!(Recent::load(&folder), recent);

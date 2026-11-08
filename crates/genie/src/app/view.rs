@@ -21,7 +21,6 @@ use crate::grip::Grip;
 use crate::icon::{self, Icon};
 use crate::menu::{self, Place};
 use crate::navigator::Navigator;
-use crate::paths::file_name;
 use crate::reading;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
@@ -306,23 +305,19 @@ impl Genie {
                 .on_press(Message::RestoreLast),
             );
         }
-        if !self.recent.paths().is_empty() {
-            let files = self.recent.paths().iter().map(|path| {
-                let folder = path
-                    .parent()
-                    .map(|parent| parent.display().to_string())
-                    .unwrap_or_default();
+        if !self.recent.entries().is_empty() {
+            let files = self.recent.entries().iter().map(|location| {
                 button(
                     row![
-                        text(file_name(path)).size(12),
-                        text(folder).size(11).style(style::muted)
+                        text(location.name()).size(12),
+                        text(location.place()).size(11).style(style::muted)
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
                 )
                 .padding([3, 8])
                 .style(style::ghost)
-                .on_press(Message::Picked(Some(path.clone())))
+                .on_press(Message::Reopen(location.clone()))
                 .into()
             });
             welcome = welcome.push(

@@ -121,7 +121,7 @@ impl Genie {
         };
         match saved.save(&path) {
             Ok(()) => {
-                self.recent.add(path.clone());
+                self.recent.add(path.clone().into());
                 let remember = self.remember();
                 Task::batch([
                     self.inform(format!("Saved {}.", file_name(&path))),

@@ -68,6 +68,10 @@ impl Url {
         })
     }
 
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     pub fn name(&self) -> String {
         let path = self.target.split('?').next().unwrap_or_default();
         match path.rsplit('/').next() {

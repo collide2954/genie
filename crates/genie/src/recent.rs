@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use genie_formats::ini::{self, Section};
 
+use crate::location::Location;
 use crate::settings::{self, FILE};
 
 pub const LIMIT: usize = 8;
@@ -13,27 +14,35 @@ const KEY: &str = "file";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Recent {
-    paths: Vec<PathBuf>,
+    entries: Vec<Location>,
 }
 
 impl Recent {
-    pub fn paths(&self) -> &[PathBuf] {
-        &self.paths
+    pub fn entries(&self) -> &[Location] {
+        &self.entries
     }
 
-    pub fn add(&mut self, path: PathBuf) {
-        self.paths.retain(|known| *known != path);
-        self.paths.insert(0, path);
-        self.paths.truncate(LIMIT);
+    pub fn add(&mut self, location: Location) {
+        self.entries.retain(|known| *known != location);
+        self.entries.insert(0, location);
+        self.entries.truncate(LIMIT);
     }
 
     pub fn parse(text: &str) -> Self {
-        let paths = ini::parse(text)
+        let entries = ini::parse(text)
             .ok()
             .and_then(|document| document.section(SECTION).cloned())
-            .map(|section| section.values(KEY).map(PathBuf::from).collect())
+            .map(|section| {
+                section
+                    .values(KEY)
+                    .map(|text| {
+                        Location::parse(text)
+                            .unwrap_or_else(|_| Location::File(PathBuf::from(text)))
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
-        Self { paths }
+        Self { entries }
     }
 
     #[cfg(test)]
@@ -47,9 +56,9 @@ impl Recent {
         Section {
             name: SECTION.to_owned(),
             entries: self
-                .paths
+                .entries
                 .iter()
-                .map(|path| (KEY.to_owned(), path.display().to_string()))
+                .map(|location| (KEY.to_owned(), location.to_string()))
                 .collect(),
         }
     }
@@ -71,42 +80,38 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{LIMIT, Recent};
+    use crate::location::Location;
 
-    fn paths(recent: &Recent) -> Vec<&str> {
-        recent
-            .paths()
-            .iter()
-            .map(|path| path.to_str().unwrap())
-            .collect()
+    fn names(recent: &Recent) -> Vec<String> {
+        recent.entries().iter().map(Location::to_string).collect()
     }
 
     #[test]
     fn newest_comes_first_without_duplicates() {
         let mut recent = Recent::default();
         for path in ["a.fa", "b.2bit", "a.fa"] {
-            recent.add(PathBuf::from(path));
+            recent.add(PathBuf::from(path).into());
         }
-        assert_eq!(paths(&recent), ["a.fa", "b.2bit"]);
+        assert_eq!(names(&recent), ["a.fa", "b.2bit"]);
     }
 
     #[test]
     fn keeps_a_limited_number() {
         let mut recent = Recent::default();
         for index in 0..LIMIT + 2 {
-            recent.add(PathBuf::from(format!("{index}.fa")));
+            recent.add(PathBuf::from(format!("{index}.fa")).into());
         }
-        assert_eq!(recent.paths().len(), LIMIT);
-        assert_eq!(
-            recent.paths()[0],
-            PathBuf::from(format!("{}.fa", LIMIT + 1))
-        );
+        assert_eq!(recent.entries().len(), LIMIT);
+        assert_eq!(names(&recent)[0], format!("{}.fa", LIMIT + 1));
     }
 
     #[test]
     fn reads_back_what_it_writes() {
         let mut recent = Recent::default();
-        recent.add(PathBuf::from("/data/b.2bit"));
-        recent.add(PathBuf::from("/data/a b.fa"));
+        recent.add(PathBuf::from("/data/b.2bit").into());
+        recent.add(PathBuf::from("/data/a b.fa").into());
+        recent.add(Location::parse("https://example.org/hg38.2bit?k=1").unwrap());
+        assert!(recent.text().contains("https://example.org/hg38.2bit?k=1"));
         assert_eq!(Recent::parse(&recent.text()), recent);
     }
 
@@ -120,7 +125,7 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("genie-recent-{}", std::process::id()));
         let _ = fs::remove_dir_all(&folder);
         let mut recent = Recent::default();
-        recent.add(PathBuf::from("/data/a.fa"));
+        recent.add(PathBuf::from("/data/a.fa").into());
         recent.save(&folder).unwrap();
         assert_eq!(Recent::load(&folder), recent);
         let _ = fs::remove_dir_all(&folder);

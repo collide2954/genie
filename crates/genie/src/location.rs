@@ -33,6 +33,16 @@ impl Location {
         }
     }
 
+    pub fn place(&self) -> String {
+        match self {
+            Self::File(path) => path
+                .parent()
+                .map(|folder| folder.display().to_string())
+                .unwrap_or_default(),
+            Self::Url(url) => url.host().to_owned(),
+        }
+    }
+
     pub fn is_remote(&self) -> bool {
         matches!(self, Self::Url(_))
     }
