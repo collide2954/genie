@@ -9,7 +9,8 @@ use iced::time::Instant;
 use iced::{Point, Task};
 
 use crate::card::{Card, Detail};
-use crate::paths::{self, file_name};
+use crate::location::Location;
+use crate::paths;
 use crate::reading;
 use crate::reference;
 use crate::saved::{self, Saved};
@@ -285,11 +286,13 @@ impl Genie {
         )
     }
 
-    pub(super) fn open(&mut self, path: PathBuf) -> Task<Message> {
-        if saved::is_session(&path) {
-            return match Saved::load(&path) {
+    pub(super) fn open(&mut self, location: Location) -> Task<Message> {
+        if let Some(path) = location.path()
+            && saved::is_session(path)
+        {
+            return match Saved::load(path) {
                 Ok(saved) => {
-                    self.recent.add(path);
+                    self.recent.add(path.to_owned());
                     let remember = self.remember();
                     Task::batch([self.restore(saved), remember])
                 }
@@ -299,17 +302,17 @@ impl Genie {
                 }
             };
         }
-        if track::is_track(&path) {
+        if track::is_track(&location) {
             if self.session.is_none() {
                 self.status = Status::Failed(NO_REFERENCE.to_owned());
                 return Task::none();
             }
             return Task::perform(
-                async move { track::open(path).map(Arc::new) },
+                async move { track::open(location).map(Arc::new) },
                 Message::TrackOpened,
             );
         }
-        let name = file_name(&path);
+        let name = location.name();
         if self.session.is_none() {
             self.status = Status::Opening(name.clone());
         }
@@ -319,7 +322,7 @@ impl Genie {
             let mut report = |share| {
                 let _ = sender.unbounded_send(Opening::Progress(share));
             };
-            let result = reference::open(path, paths::cache_dir().as_deref(), &mut report);
+            let result = reference::open(location, paths::cache_dir().as_deref(), &mut report);
             if let Ok(reference) = &result {
                 let contigs = reference.assembly.contigs().len();
                 log::info!(
@@ -349,7 +352,13 @@ impl Genie {
         self.next_track += 1;
         let mut track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
         if let Some(saved) = &self.restoring {
-            if let Some(found) = saved.tracks.iter().find(|known| known.path == source.path) {
+            let saved_at = |location: &Location| {
+                saved
+                    .tracks
+                    .iter()
+                    .position(|known| known.location == *location)
+            };
+            if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
                 track.mode = found.mode;
                 track.hue = found.hue;
                 track.height = found.height;
@@ -357,13 +366,9 @@ impl Genie {
                 track.plot = found.plot;
             }
             session.tracks.push(track);
-            session.tracks.sort_by_key(|track| {
-                saved
-                    .tracks
-                    .iter()
-                    .position(|known| known.path == track.source.path)
-                    .unwrap_or(usize::MAX)
-            });
+            session
+                .tracks
+                .sort_by_key(|track| saved_at(&track.source.location).unwrap_or(usize::MAX));
         } else {
             session.tracks.push(track);
         }

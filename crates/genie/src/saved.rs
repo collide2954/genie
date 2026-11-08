@@ -7,6 +7,7 @@ use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
 
+use crate::location::Location;
 use crate::reading::{Frames, Reading};
 use crate::track::{Grouping, Options, Plot};
 
@@ -27,7 +28,7 @@ const HUES: [(&str, Hue); 5] = [
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Saved {
-    pub reference: PathBuf,
+    pub reference: Location,
     pub locus: Option<String>,
     pub reading: Reading,
     pub tracks: Vec<SavedTrack>,
@@ -42,7 +43,7 @@ pub struct SavedRegion {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedTrack {
-    pub path: PathBuf,
+    pub location: Location,
     pub mode: Option<Mode>,
     pub hue: Hue,
     pub height: Option<f32>,
@@ -71,7 +72,7 @@ impl Saved {
             .filter_map(|section| {
                 let on = |key| section.value(key) == Some("on");
                 Some(SavedTrack {
-                    path: absolute(section.value("file")?, base),
+                    location: Location::File(absolute(section.value("file")?, base)),
                     mode: section.value("mode").and_then(|name| find(&MODES, name)),
                     hue: section
                         .value("color")
@@ -110,7 +111,7 @@ impl Saved {
             })
             .collect();
         Ok(Self {
-            reference: absolute(reference, base),
+            reference: Location::File(absolute(reference, base)),
             locus: value("locus").map(str::to_owned),
             reading,
             tracks,
@@ -119,7 +120,7 @@ impl Saved {
     }
 
     pub fn text(&self, base: &Path) -> String {
-        let mut session = vec![("reference", relative(&self.reference, base))];
+        let mut session = vec![("reference", written(&self.reference, base))];
         if let Some(locus) = &self.locus {
             session.push(("locus", locus.clone()));
         }
@@ -133,7 +134,7 @@ impl Saved {
         }
         let mut sections = vec![section("session", session)];
         for track in &self.tracks {
-            let mut entries = vec![("file", relative(&track.path, base))];
+            let mut entries = vec![("file", written(&track.location, base))];
             if let Some(mode) = track.mode {
                 entries.push(("mode", name(&MODES, mode).to_owned()));
             }
@@ -202,6 +203,13 @@ fn section(name: &str, entries: Vec<(&str, String)>) -> Section {
     }
 }
 
+fn written(location: &Location, base: &Path) -> String {
+    match location {
+        Location::File(path) => relative(path, base),
+        Location::Url(url) => url.to_string(),
+    }
+}
+
 fn relative(path: &Path, base: &Path) -> String {
     match path.strip_prefix(base) {
         Ok(inside) => inside
@@ -245,6 +253,7 @@ mod tests {
     use genie_render::signal::Style;
 
     use super::{Saved, SavedRegion, SavedTrack, is_session};
+    use crate::location::Location;
     use crate::reading::{Frames, Reading};
     use crate::track::{Grouping, Options, Plot};
 
@@ -254,7 +263,7 @@ mod tests {
 
     fn saved() -> Saved {
         Saved {
-            reference: base().join("data").join("ref.fa.gz"),
+            reference: Location::File(base().join("data").join("ref.fa.gz")),
             locus: Some("chr1:51,971-52,030".to_owned()),
             reading: Reading {
                 reverse: true,
@@ -262,7 +271,7 @@ mod tests {
             },
             tracks: vec![
                 SavedTrack {
-                    path: base().join("reads.bam"),
+                    location: Location::File(base().join("reads.bam")),
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
@@ -278,7 +287,7 @@ mod tests {
                     },
                 },
                 SavedTrack {
-                    path: PathBuf::from("/elsewhere/genes.bed.gz"),
+                    location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
                     mode: None,
                     hue: Hue::Vermillion,
                     height: None,
@@ -286,7 +295,7 @@ mod tests {
                     plot: Plot::default(),
                 },
                 SavedTrack {
-                    path: base().join("coverage.bw"),
+                    location: Location::File(base().join("coverage.bw")),
                     mode: None,
                     hue: Hue::Green,
                     height: Some(64.0),
@@ -344,7 +353,8 @@ mod tests {
         assert!(text.contains("file = reads.bam"), "{text}");
         assert!(text.contains("file = /elsewhere/genes.bed.gz"), "{text}");
         let moved = Saved::parse(&text, Path::new("/moved")).unwrap();
-        assert_eq!(moved.reference, Path::new("/moved").join("data/ref.fa.gz"));
+        let moved_reference = Location::File(Path::new("/moved").join("data/ref.fa.gz"));
+        assert_eq!(moved.reference, moved_reference);
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
 use genie_formats::features::Entry;
+use genie_formats::http::Url;
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::{
@@ -14,6 +15,7 @@ use iced::{
 
 use crate::card::Card;
 use crate::chrome::{self, Action};
+use crate::location::Location;
 use crate::motion::{self, Transition};
 use crate::reading::{self, Reading};
 use crate::recent::Recent;
@@ -72,7 +74,7 @@ pub struct Genie {
     window: Size,
     hover: Option<Card>,
     pinned: Option<Card>,
-    pending: Vec<PathBuf>,
+    pending: Vec<Location>,
     sweep: Option<(f64, f64)>,
     pointed: Option<u64>,
     anchor: Option<(Visit, u64)>,
@@ -387,7 +389,15 @@ impl Genie {
                 .and_then(|folder| Saved::load(&folder.join(LAST)).ok()),
             ..Self::default()
         };
-        let files = std::env::args_os().skip(1).map(PathBuf::from).collect();
+        let files = std::env::args_os()
+            .skip(1)
+            .map(|argument| match argument.to_str() {
+                Some(text) if Url::is_url(text) => {
+                    Location::parse(text).unwrap_or_else(|_| Location::File(PathBuf::from(text)))
+                }
+                _ => Location::File(PathBuf::from(argument)),
+            })
+            .collect();
         let open = genie.launch(files);
         (
             genie,
@@ -395,14 +405,17 @@ impl Genie {
         )
     }
 
-    fn launch(&mut self, files: Vec<PathBuf>) -> Task<Message> {
-        let (tracks, references): (Vec<PathBuf>, Vec<PathBuf>) =
-            files.into_iter().partition(|path| track::is_track(path));
+    fn launch(&mut self, files: Vec<Location>) -> Task<Message> {
+        let (tracks, references): (Vec<Location>, Vec<Location>) =
+            files.into_iter().partition(track::is_track);
         if let Some(reference) = references.into_iter().next() {
             self.pending = tracks;
             return self.open(reference);
         }
-        let tasks: Vec<Task<Message>> = tracks.into_iter().map(|path| self.open(path)).collect();
+        let tasks: Vec<Task<Message>> = tracks
+            .into_iter()
+            .map(|location| self.open(location))
+            .collect();
         Task::batch(tasks)
     }
 
@@ -419,7 +432,9 @@ impl Genie {
         self.status = Status::Idle;
         self.generation += 1;
         self.tiles.clear();
-        self.recent.add(reference.path.clone());
+        if let Some(path) = reference.location.path() {
+            self.recent.add(path.to_owned());
+        }
         (self.hover, self.pinned) = (None, None);
         (self.anchor, self.sweep) = (None, None);
         if let Some(sidebar) = &mut self.sidebar {
@@ -433,8 +448,8 @@ impl Genie {
         if self.waiting == 0 {
             self.restoring = None;
         }
-        for path in pending {
-            tasks.push(self.open(path));
+        for location in pending {
+            tasks.push(self.open(location));
         }
         Task::batch(tasks)
     }
@@ -455,7 +470,7 @@ impl Genie {
             Message::SystemModeChanged(mode) => self.system = mode,
             Message::Window(action) => return self.window(action),
             Message::Open => return Task::perform(pick(self.session.is_some()), Message::Picked),
-            Message::Picked(Some(path)) => return self.open(path),
+            Message::Picked(Some(path)) => return self.open(Location::File(path)),
             Message::Picked(None) | Message::NamesLoaded(_, Err(_)) => {}
             Message::NamesLoaded(id, Ok(names)) => {
                 self.on_session(|session| session.name(id, names));
@@ -465,7 +480,7 @@ impl Genie {
             Message::FileHoverEnded => self.hovering = false,
             Message::FileDropped(path) => {
                 self.hovering = false;
-                return self.open(path);
+                return self.open(Location::File(path));
             }
             Message::Opened(result) => return self.opened(result),
             Message::Indexing(name, percent) => self.indexing = Some((name, percent)),
@@ -719,6 +734,7 @@ mod tests {
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
     use super::{Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event};
     use crate::export;
+    use crate::location::Location;
     use crate::menu;
     use crate::reading::{self, Frames};
     use crate::reference::Reference;
@@ -734,7 +750,7 @@ mod tests {
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
-            path: PathBuf::from(format!("/data/{name}")),
+            location: PathBuf::from(format!("/data/{name}")).into(),
             name: name.to_owned(),
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
@@ -753,18 +769,18 @@ mod tests {
     #[test]
     fn command_line_files_open_the_reference_then_the_tracks() {
         let mut genie = Genie::default();
-        let track = PathBuf::from("/data/genes.bed.gz");
-        let _ = genie.launch(vec![track.clone(), PathBuf::from("/data/ref.fa")]);
+        let track = Location::File(PathBuf::from("/data/genes.bed.gz"));
+        let _ = genie.launch(vec![track.clone(), PathBuf::from("/data/ref.fa").into()]);
         assert!(shows(&genie, "Opening ref.fa…"));
         assert_eq!(genie.pending, [track]);
         let _ = genie.update(Message::Opened(Ok(reference())));
-        assert_eq!(genie.pending, [] as [PathBuf; 0]);
+        assert_eq!(genie.pending, [] as [Location; 0]);
     }
 
     #[test]
     fn indexing_progress_shows_while_opening() {
         let mut genie = Genie::default();
-        let _ = genie.launch(vec![PathBuf::from("/data/genome.fa.gz")]);
+        let _ = genie.launch(vec![PathBuf::from("/data/genome.fa.gz").into()]);
         let _ = genie.update(Message::Indexing("genome.fa.gz".to_owned(), 45));
         assert!(shows(&genie, "Indexing genome.fa.gz… 45 %"));
         let _ = genie.update(Message::Opened(Ok(reference())));
@@ -786,7 +802,7 @@ mod tests {
     #[test]
     fn command_line_tracks_need_a_reference() {
         let mut genie = Genie::default();
-        let _ = genie.launch(vec![PathBuf::from("/data/genes.bed.gz")]);
+        let _ = genie.launch(vec![PathBuf::from("/data/genes.bed.gz").into()]);
         assert!(shows(&genie, NO_REFERENCE));
     }
 
@@ -1660,7 +1676,7 @@ mod tests {
     #[test]
     fn tracks_opened_after_a_restore_keep_their_moves() {
         let saved_track = |name: &str| crate::saved::SavedTrack {
-            path: PathBuf::from(format!("/data/{name}")),
+            location: PathBuf::from(format!("/data/{name}")).into(),
             mode: None,
             hue: Hue::Blue,
             height: None,
@@ -1668,7 +1684,7 @@ mod tests {
             plot: crate::track::Plot::default(),
         };
         let saved = crate::saved::Saved {
-            reference: PathBuf::from("ref.fa"),
+            reference: PathBuf::from("ref.fa").into(),
             locus: None,
             reading: crate::reading::Reading::default(),
             tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
@@ -1720,11 +1736,11 @@ mod tests {
     #[test]
     fn welcome_offers_to_restore_the_last_session() {
         let last = crate::saved::Saved {
-            reference: PathBuf::from("/data/hg38.fa"),
+            reference: PathBuf::from("/data/hg38.fa").into(),
             locus: Some("chr1:1,000-2,000".to_owned()),
             reading: crate::reading::Reading::default(),
             tracks: vec![crate::saved::SavedTrack {
-                path: PathBuf::from("/data/reads.bam"),
+                location: PathBuf::from("/data/reads.bam").into(),
                 mode: None,
                 hue: Hue::Blue,
                 height: None,
@@ -1743,7 +1759,8 @@ mod tests {
         for message in ui.into_messages() {
             let _ = genie.update(message);
         }
-        assert_eq!(genie.pending, [PathBuf::from("/data/reads.bam")]);
+        let reads = Location::File(PathBuf::from("/data/reads.bam"));
+        assert_eq!(genie.pending, [reads]);
         assert!(genie.restoring.is_some());
     }
 
@@ -1863,12 +1880,12 @@ mod tests {
         let folder = file.parent().unwrap().to_owned();
         let mut genie = Genie::default();
         let _ = genie.update(Message::Picked(Some(file.clone())));
-        assert_eq!(genie.pending, [folder.join("genes.bed.gz")]);
+        assert_eq!(genie.pending, [Location::File(folder.join("genes.bed.gz"))]);
         assert_eq!(genie.recent.paths()[0], file);
         let _ = genie.update(Message::Opened(Ok(reference_at(folder.join("ref.fa")))));
         assert!(shows(&genie, "chr1:101-200"));
         let source = Arc::new(Source {
-            path: folder.join("genes.bed.gz"),
+            location: folder.join("genes.bed.gz").into(),
             name: "genes.bed.gz".to_owned(),
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
@@ -1886,14 +1903,17 @@ mod tests {
     fn the_saved_view_lists_the_reference_and_tracks() {
         let genie = with_track();
         let saved = genie.saved().unwrap();
-        assert_eq!(saved.reference, PathBuf::from("ref.fa"));
+        assert_eq!(saved.reference, Location::File(PathBuf::from("ref.fa")));
         assert_eq!(saved.locus.as_deref(), Some("chr1:1-1,000"));
-        let paths: Vec<PathBuf> = saved
+        let locations: Vec<Location> = saved
             .tracks
             .iter()
-            .map(|track| track.path.clone())
+            .map(|track| track.location.clone())
             .collect();
-        assert_eq!(paths, [PathBuf::from("/data/genes.bed.gz")]);
+        assert_eq!(
+            locations,
+            [Location::File(PathBuf::from("/data/genes.bed.gz"))]
+        );
     }
 
     #[test]
@@ -2041,7 +2061,7 @@ mod tests {
 
     fn add_reads(genie: &mut Genie, reads: Vec<genie_core::alignment::Alignment>) {
         let source = Arc::new(Source {
-            path: PathBuf::from("/data/reads.bam"),
+            location: PathBuf::from("/data/reads.bam").into(),
             name: "reads.bam".to_owned(),
             format: Format::Reads(ReadFile {
                 index: genie_formats::bai::Index::default(),
@@ -2220,7 +2240,7 @@ mod tests {
     fn with_gff() -> Genie {
         let mut genie = opened();
         let source = Arc::new(Source {
-            path: PathBuf::from("/data/genes.gff3.gz"),
+            location: PathBuf::from("/data/genes.gff3.gz").into(),
             name: "genes.gff3.gz".to_owned(),
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Gff,
@@ -2273,7 +2293,7 @@ mod tests {
 
     fn variant_source() -> Arc<Source> {
         Arc::new(Source {
-            path: PathBuf::from("/data/calls.vcf"),
+            location: PathBuf::from("/data/calls.vcf").into(),
             name: "calls.vcf".to_owned(),
             format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
@@ -2296,7 +2316,7 @@ mod tests {
 
     fn signal_source(format: Format) -> Arc<Source> {
         Arc::new(Source {
-            path: PathBuf::from("/data/coverage.bedGraph"),
+            location: PathBuf::from("/data/coverage.bedGraph").into(),
             name: "coverage.bedGraph".to_owned(),
             format,
         })
@@ -2379,7 +2399,7 @@ mod tests {
     fn linked_signal_tracks_share_one_scale() {
         let mut genie = with_signal();
         let other = Arc::new(Source {
-            path: PathBuf::from("/data/other.bedGraph"),
+            location: PathBuf::from("/data/other.bedGraph").into(),
             name: "other.bedGraph".to_owned(),
             format: signal_table(),
         });

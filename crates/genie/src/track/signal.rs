@@ -1,6 +1,4 @@
-use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
 
 use genie_core::Region;
 use genie_core::signal::{self, Summary};
@@ -9,6 +7,7 @@ use genie_formats::table::Table;
 use genie_formats::{bbi, bedgraph, tabix};
 
 use super::{FEATURE_SPAN, Loaded, is_compressed, plain, tabix_index};
+use crate::location::Location;
 
 #[derive(Debug)]
 pub enum SignalFile {
@@ -18,13 +17,13 @@ pub enum SignalFile {
 }
 
 impl SignalFile {
-    pub fn open(path: &Path, name: &str) -> Result<Self, String> {
-        if is_compressed(path) {
+    pub fn open(location: &Location, name: &str) -> Result<Self, String> {
+        if is_compressed(name) {
             return Ok(Self::BedGraph {
-                index: tabix_index(path, name)?,
+                index: tabix_index(location, name)?,
             });
         }
-        let table = bedgraph::read_table(plain(path, name)?)
+        let table = bedgraph::read_table(plain(location, name)?)
             .map_err(|error| format!("The file {name} is not valid. {error}"))?;
         Ok(Self::BedGraphTable { table })
     }
@@ -46,16 +45,15 @@ impl SignalFile {
 
     pub fn load(
         &self,
-        path: &Path,
+        location: &Location,
         contig: &str,
         region: Region,
         step: u64,
     ) -> Result<Loaded, String> {
         match self {
             Self::BigWig { index } => {
-                let file = File::open(path).map_err(|error| error.to_string())?;
                 let summaries = index
-                    .summaries(&mut BufReader::new(file), contig, region, step)
+                    .summaries(&mut BufReader::new(location.open()?), contig, region, step)
                     .map_err(|error| error.to_string())?;
                 Ok(Loaded::signal(region, summaries, step))
             }
@@ -64,9 +62,7 @@ impl SignalFile {
                 Ok(Loaded::signal(region, signal::reduce(&records, step), step))
             }
             Self::BedGraph { index } => {
-                let mut reader = File::open(path)
-                    .map(Bgzf::new)
-                    .map_err(|error| error.to_string())?;
+                let mut reader = Bgzf::new(location.open()?);
                 let records = bedgraph::query(index, &mut reader, contig, region)
                     .map_err(|error| error.to_string())?;
                 Ok(Loaded::signal(region, signal::reduce(&records, step), step))

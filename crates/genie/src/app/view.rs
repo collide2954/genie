@@ -290,7 +290,7 @@ impl Genie {
                 .as_deref()
                 .map(|locus| format!(" · {locus}"))
                 .unwrap_or_default();
-            let detail = format!("{}{locus}{tracks}", file_name(&last.reference));
+            let detail = format!("{}{locus}{tracks}", last.reference.name());
             welcome = welcome.push(
                 button(
                     column![

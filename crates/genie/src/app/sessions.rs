@@ -14,7 +14,7 @@ impl Genie {
         self.pending = saved
             .tracks
             .iter()
-            .map(|track| track.path.clone())
+            .map(|track| track.location.clone())
             .collect();
         let reference = saved.reference.clone();
         self.restoring = Some(saved);
@@ -25,7 +25,7 @@ impl Genie {
         let (Some(saved), Some(session)) = (&self.restoring, &mut self.session) else {
             return;
         };
-        if saved.reference != session.reference.path {
+        if saved.reference != session.reference.location {
             self.restoring = None;
             return;
         }
@@ -60,14 +60,14 @@ impl Genie {
         let session = self.session.as_ref()?;
         let contigs = session.reference.assembly.contigs();
         Some(Saved {
-            reference: session.reference.path.clone(),
+            reference: session.reference.location.clone(),
             locus: Some(session.locus()),
             reading: session.reading,
             tracks: session
                 .tracks
                 .iter()
                 .map(|track| SavedTrack {
-                    path: track.source.path.clone(),
+                    location: track.source.location.clone(),
                     mode: track.mode,
                     hue: track.hue,
                     height: track.height,

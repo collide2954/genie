@@ -6,6 +6,7 @@ mod export;
 mod font;
 mod grip;
 mod icon;
+mod location;
 mod logger;
 mod menu;
 mod motion;

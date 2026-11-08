@@ -1,5 +1,4 @@
-use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use genie_core::{Assembly, Contig, Region};
@@ -8,7 +7,7 @@ use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
 use genie_formats::{fasta, gzi};
 
-use crate::paths;
+use crate::location::Location;
 
 const FAI_SHARE: f32 = 0.95;
 
@@ -21,7 +20,7 @@ enum Source {
 
 #[derive(Debug)]
 pub struct Reference {
-    pub path: PathBuf,
+    pub location: Location,
     pub name: String,
     pub assembly: Assembly,
     source: Source,
@@ -29,16 +28,17 @@ pub struct Reference {
 
 impl PartialEq for Reference {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path && self.assembly == other.assembly
+        self.location == other.location && self.assembly == other.assembly
     }
 }
 
 pub fn open(
-    path: PathBuf,
+    location: impl Into<Location>,
     cache: Option<&Path>,
     progress: &mut dyn FnMut(f32),
 ) -> Result<Reference, String> {
-    let mut file = File::open(&path).map_err(|error| error.to_string())?;
+    let location = location.into();
+    let mut file = location.open()?;
     let mut head = Vec::new();
     (&mut file)
         .take(4)
@@ -54,19 +54,44 @@ pub fn open(
                 length: entry.length,
             })
             .collect();
-        return Reference::new(path, contigs, Source::TwoBit(reader));
+        return Reference::new(location, contigs, Source::TwoBit(reader));
     }
-    if !bgzf::sniff(&head) {
-        let records = fai::load(&path, cache, progress).map_err(|error| error.to_string())?;
-        return Reference::fasta(path, records);
+    let compressed = bgzf::sniff(&head);
+    let Location::File(path) = &location else {
+        return remote_fasta(location, compressed);
+    };
+    if !compressed {
+        let records = fai::load(path, cache, progress).map_err(|error| error.to_string())?;
+        return Reference::fasta(path.clone(), records);
     }
-    let records = fai::load(&path, cache, &mut |share| progress(share * FAI_SHARE))
+    let records = fai::load(path, cache, &mut |share| progress(share * FAI_SHARE))
         .map_err(|error| error.to_string())?;
-    let index = gzi::load(&path, cache, &mut |share| {
+    let index = gzi::load(path, cache, &mut |share| {
         progress(FAI_SHARE + share * (1.0 - FAI_SHARE));
     })
     .map_err(|error| error.to_string())?;
-    Reference::new(path, contigs(&records), Source::Bgzf(records, index))
+    Reference::new(
+        location.clone(),
+        contigs(&records),
+        Source::Bgzf(records, index),
+    )
+}
+
+fn remote_fasta(location: Location, compressed: bool) -> Result<Reference, String> {
+    let name = location.name();
+    let sidecar = |suffix: &str| {
+        location.with_suffix(suffix).open().map_err(|error| {
+            format!("genie needs the index {name}{suffix} next to the file. {error}")
+        })
+    };
+    let records = fai::parse(BufReader::new(sidecar(".fai")?))
+        .map_err(|error| format!("The index {name}.fai is not valid. {error}"))?;
+    if !compressed {
+        return Reference::new(location, contigs(&records), Source::Fasta(records));
+    }
+    let index = gzi::Index::read(sidecar(".gzi")?)
+        .map_err(|error| format!("The index {name}.gzi is not valid. {error}"))?;
+    Reference::new(location, contigs(&records), Source::Bgzf(records, index))
 }
 
 fn contigs(records: &[FaiRecord]) -> Vec<Contig> {
@@ -81,23 +106,27 @@ fn contigs(records: &[FaiRecord]) -> Vec<Contig> {
 
 impl Reference {
     pub fn fasta(path: PathBuf, records: Vec<FaiRecord>) -> Result<Self, String> {
-        Self::new(path, contigs(&records), Source::Fasta(records))
+        Self::new(
+            Location::File(path),
+            contigs(&records),
+            Source::Fasta(records),
+        )
     }
 
-    fn new(path: PathBuf, contigs: Vec<Contig>, source: Source) -> Result<Self, String> {
+    fn new(location: Location, contigs: Vec<Contig>, source: Source) -> Result<Self, String> {
         if contigs.is_empty() {
             return Err("The file has no sequences.".to_owned());
         }
         Ok(Self {
-            name: paths::file_name(&path),
-            path,
+            name: location.name(),
+            location,
             assembly: Assembly::new(contigs),
             source,
         })
     }
 
     pub fn fetch(&self, contig: usize, region: Region) -> Result<Vec<u8>, String> {
-        let mut file = File::open(&self.path).map_err(|error| error.to_string())?;
+        let mut file = self.location.open()?;
         match &self.source {
             Source::Fasta(records) => fasta::fetch(&mut file, &records[contig], region),
             Source::Bgzf(records, index) => {

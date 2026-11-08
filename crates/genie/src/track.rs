@@ -1,6 +1,5 @@
-use std::fs::{self, File};
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
@@ -15,7 +14,7 @@ use genie_render::scene::Hue;
 use genie_render::signal::Style;
 use genie_render::{alignments, rows};
 
-use crate::paths::file_name;
+use crate::location::{Location, Reader};
 
 mod features;
 mod reads;
@@ -44,14 +43,14 @@ pub enum Format {
 
 #[derive(Debug)]
 pub struct Source {
-    pub path: PathBuf,
+    pub location: Location,
     pub name: String,
     pub format: Format,
 }
 
 impl PartialEq for Source {
     fn eq(&self, other: &Self) -> bool {
-        self.path == other.path
+        self.location == other.location
     }
 }
 
@@ -623,23 +622,24 @@ pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>
     found
 }
 
-pub fn is_track(path: &Path) -> bool {
-    let name = file_name(path);
-    is_bam(path)
+pub fn is_track(location: &Location) -> bool {
+    let name = location.name();
+    is_bam(&name)
         || is_vcf(&name)
         || is_signal(&name)
         || is_bigbed(&name)
         || Kind::of(&name).is_some()
 }
 
-fn is_bam(path: &Path) -> bool {
-    path.extension()
+fn is_bam(name: &str) -> bool {
+    Path::new(name)
+        .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
 }
 
 fn inner_extension(name: &str, wanted: &[&str]) -> bool {
     let path = Path::new(name);
-    let stem = if is_compressed(path) {
+    let stem = if is_compressed(name) {
         path.file_stem().map(Path::new)
     } else {
         Some(path)
@@ -675,47 +675,49 @@ fn is_signal(name: &str) -> bool {
     is_bigwig(name) || is_bedgraph(name)
 }
 
-fn is_compressed(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| {
+fn is_compressed(name: &str) -> bool {
+    Path::new(name).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
     })
 }
 
-fn plain(path: &Path, name: &str) -> Result<BufReader<File>, String> {
-    let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
-    fits(name, size)?;
-    File::open(path)
-        .map(BufReader::new)
-        .map_err(|error| error.to_string())
+fn plain(location: &Location, name: &str) -> Result<BufReader<Reader>, String> {
+    fits(name, location.size()?)?;
+    location.open().map(BufReader::new)
 }
 
-fn tabix_index(path: &Path, name: &str) -> Result<tabix::Index, String> {
+fn tabix_index(location: &Location, name: &str) -> Result<tabix::Index, String> {
     let (file, suffix) = [".tbi", ".csi"]
         .into_iter()
-        .find_map(|suffix| Some((File::open(with_suffix(path, suffix)).ok()?, suffix)))
+        .find_map(|suffix| Some((location.with_suffix(suffix).open().ok()?, suffix)))
         .ok_or_else(|| format!("There is no index {name}.tbi. Index the file with tabix."))?;
     tabix::Index::read(file)
         .map_err(|error| format!("The index {name}{suffix} is not valid. {error}"))
 }
 
-pub fn open(path: PathBuf) -> Result<Source, String> {
-    let name = file_name(&path);
-    let format = if is_bam(&path) {
-        Format::Reads(ReadFile::open(&path, &name)?)
+pub fn open(location: impl Into<Location>) -> Result<Source, String> {
+    let location = location.into();
+    let name = location.name();
+    let format = if is_bam(&name) {
+        Format::Reads(ReadFile::open(&location, &name)?)
     } else if is_vcf(&name) {
-        Format::Variants(VariantFile::open(&path, &name)?)
+        Format::Variants(VariantFile::open(&location, &name)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
-        open_bbi(&path, &name)?
+        open_bbi(&location, &name)?
     } else if is_signal(&name) {
-        Format::Signal(SignalFile::open(&path, &name)?)
+        Format::Signal(SignalFile::open(&location, &name)?)
     } else {
-        Format::Features(FeatureFile::open(&path, &name)?)
+        Format::Features(FeatureFile::open(&location, &name)?)
     };
-    Ok(Source { path, name, format })
+    Ok(Source {
+        location,
+        name,
+        format,
+    })
 }
 
-fn open_bbi(path: &Path, name: &str) -> Result<Format, String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
+fn open_bbi(location: &Location, name: &str) -> Result<Format, String> {
+    let mut file = location.open()?;
     let index = bbi::Index::read(&mut file)
         .map_err(|error| format!("The file {name} is not valid. {error}"))?;
     Ok(if index.is_bed() {
@@ -734,12 +736,6 @@ fn fits(name: &str, size: u64) -> Result<(), String> {
     Ok(())
 }
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut text = path.as_os_str().to_owned();
-    text.push(suffix);
-    PathBuf::from(text)
-}
-
 pub fn load(
     source: &Source,
     contig: &str,
@@ -749,12 +745,12 @@ pub fn load(
     detail: bool,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
-    let path = &source.path;
+    let location = &source.location;
     match &source.format {
-        Format::Features(file) => file.load(path, contig, region, step, detail),
-        Format::Variants(file) => file.load(path, contig, region),
-        Format::Reads(file) => file.load(path, contig, region, options, reference),
-        Format::Signal(file) => file.load(path, contig, region, step),
+        Format::Features(file) => file.load(location, contig, region, step, detail),
+        Format::Variants(file) => file.load(location, contig, region),
+        Format::Reads(file) => file.load(location, contig, region, options, reference),
+        Format::Signal(file) => file.load(location, contig, region, step),
     }
 }
 
@@ -829,8 +825,8 @@ fn nearest(
 
 fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, String> {
     match &source.format {
-        Format::Features(file) => file.spans(&source.path, contig, region),
-        Format::Variants(file) => file.spans(&source.path, contig, region),
+        Format::Features(file) => file.spans(&source.location, contig, region),
+        Format::Variants(file) => file.spans(&source.location, contig, region),
         Format::Reads(_) | Format::Signal(_) => Ok(Vec::new()),
     }
 }
@@ -841,7 +837,7 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
         let Format::Features(file) = &source.format else {
             return None;
         };
-        file.find(&source.path, name)
+        file.find(&source.location, name)
             .into_iter()
             .find_map(|(contig, feature)| {
                 Some(Named {
@@ -855,8 +851,8 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
 
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
     let entries = match &source.format {
-        Format::Features(file) => file.names(&source.path)?,
-        Format::Variants(file) => file.names(&source.path)?,
+        Format::Features(file) => file.names(&source.location)?,
+        Format::Variants(file) => file.names(&source.location)?,
         Format::Reads(_) | Format::Signal(_) => return Ok(Names::default()),
     };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
@@ -909,7 +905,7 @@ mod tests {
 
     fn track() -> Track {
         let source = Source {
-            path: PathBuf::from("/data/genes.bed.gz"),
+            location: PathBuf::from("/data/genes.bed.gz").into(),
             name: "genes.bed.gz".to_owned(),
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
@@ -1276,10 +1272,10 @@ mod tests {
             "e.bedgraph.gz",
             "f.bdg.bgz",
         ] {
-            assert!(is_track(&PathBuf::from(name)), "{name}");
+            assert!(is_track(&PathBuf::from(name).into()), "{name}");
         }
-        assert!(!is_track(&PathBuf::from("g.wig")));
-        assert!(is_track(&PathBuf::from("genes.gtf.gz")));
+        assert!(!is_track(&PathBuf::from("g.wig").into()));
+        assert!(is_track(&PathBuf::from("genes.gtf.gz").into()));
     }
 
     #[test]
@@ -1359,7 +1355,10 @@ mod tests {
         );
         assert_ne!(signal(&far.unwrap()), []);
         assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
-        assert!(is_track(&PathBuf::from("peaks.bb")) && is_track(&PathBuf::from("a.bigBed")));
+        assert!(
+            is_track(&PathBuf::from("peaks.bb").into())
+                && is_track(&PathBuf::from("a.bigBed").into())
+        );
     }
 
     fn three_contigs() -> Assembly {
@@ -1550,7 +1549,7 @@ mod tests {
     #[test]
     fn signal_tracks_reload_when_the_step_gets_finer() {
         let source = Source {
-            path: PathBuf::from("/data/coverage.bedGraph"),
+            location: PathBuf::from("/data/coverage.bedGraph").into(),
             name: "coverage.bedGraph".to_owned(),
             format: Format::Signal(SignalFile::BedGraphTable {
                 table: genie_formats::table::Table::new(Vec::new()),

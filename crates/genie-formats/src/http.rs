@@ -88,6 +88,27 @@ impl Url {
         }
     }
 
+    #[must_use]
+    pub fn with_extension(&self, extension: &str) -> Self {
+        let (path, query) = match self.target.split_once('?') {
+            Some((path, query)) => (path, Some(query)),
+            None => (self.target.as_str(), None),
+        };
+        let folder = path.rfind('/').map_or(0, |at| at + 1);
+        let stem = path[folder..]
+            .rfind('.')
+            .map_or(path.len(), |dot| folder + dot);
+        let path = format!("{}.{extension}", &path[..stem]);
+        let target = match query {
+            Some(query) => format!("{path}?{query}"),
+            None => path,
+        };
+        Self {
+            target,
+            ..self.clone()
+        }
+    }
+
     fn resolve(&self, location: &str) -> Result<Self, Error> {
         if Self::is_url(location) {
             return Self::parse(location);
@@ -484,6 +505,15 @@ mod tests {
         assert!(Url::parse("https:///x").is_err());
         assert!(Url::is_url("HTTPS://a/b"));
         assert!(!Url::is_url("/data/a.bam"));
+        assert_eq!(
+            url.with_extension("bai").to_string(),
+            "https://example.org/data/a.bai?token=x"
+        );
+        let bare = Url::parse("https://example.org/data/reads").unwrap();
+        assert_eq!(
+            bare.with_extension("bai").to_string(),
+            "https://example.org/data/reads.bai"
+        );
     }
 
     fn data() -> Vec<u8> {
