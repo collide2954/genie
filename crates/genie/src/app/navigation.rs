@@ -54,6 +54,7 @@ impl Genie {
             }
             Command::Export => self.export(),
             Command::SaveSession => self.save_session(),
+            Command::Copy => self.copy(),
             Command::Diagnostics => {
                 if cfg!(debug_assertions) {
                     self.diagnostics = !self.diagnostics;

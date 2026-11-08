@@ -247,13 +247,26 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     }
 }
 
+fn locus(card: &Card, span: Region) -> Locus {
+    Locus {
+        name: card.contig.clone(),
+        span: Span::Region(span),
+    }
+}
+
+pub fn plain(card: &Card) -> String {
+    let (title, span, lines) = content(&card.detail);
+    [title, locus(card, span).to_string()]
+        .into_iter()
+        .chain(lines)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
     let (title, span, lines) = content(&card.detail);
     let height = BASE_HEIGHT + LINE_HEIGHT * lines.len() as f32;
-    let locus = Locus {
-        name: card.contig.clone(),
-        span: Span::Region(span),
-    };
+    let locus = locus(card, span);
     let mut heading = row![
         text(title)
             .font(font::UI_STRONG)
@@ -322,10 +335,11 @@ mod tests {
     use genie_core::signal::Bin;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Region, Strand};
+    use iced::Point;
 
     use super::{
-        change, cigar, coding, facts, genotype, info, pair_lines, read_facts, signal_facts,
-        variant_facts,
+        Card, Detail, change, cigar, coding, facts, genotype, info, pair_lines, plain, read_facts,
+        signal_facts, variant_facts,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -461,6 +475,22 @@ mod tests {
             ..read
         };
         assert_eq!(pair_lines(&single, None, false), [] as [String; 0]);
+    }
+
+    #[test]
+    fn card_text_has_one_line_per_field() {
+        let feature =
+            Feature::new("geneA", region(9, 20), Strand::Forward).with_coding(Some(region(11, 15)));
+        let card = Card {
+            track: 1,
+            contig: "chr1".to_owned(),
+            detail: Detail::Feature(feature),
+            at: Point::ORIGIN,
+        };
+        assert_eq!(
+            plain(&card),
+            "geneA\nchr1:10-20\n11 bp · forward strand\nCoding 12-15"
+        );
     }
 
     #[test]

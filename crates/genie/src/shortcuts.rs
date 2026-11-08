@@ -22,6 +22,7 @@ pub enum Command {
     Export,
     Diagnostics,
     SaveSession,
+    Copy,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -46,6 +47,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("u" | "U") if modifiers.command() => Some(Command::OpenUrl),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
+        Key::Character("c" | "C") if modifiers.command() => Some(Command::Copy),
         _ => None,
     }
 }
@@ -149,6 +151,15 @@ mod tests {
             Some(Command::Export)
         );
         assert_eq!(command(&character("e"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_c_copies() {
+        assert_eq!(
+            command(&character("c"), Modifiers::COMMAND),
+            Some(Command::Copy)
+        );
+        assert_eq!(command(&character("c"), Modifiers::empty()), None);
     }
 
     #[test]

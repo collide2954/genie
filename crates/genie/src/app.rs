@@ -31,6 +31,7 @@ use crate::track::{self, Change, Loaded, Source, Track};
 use crate::{font, paths, timer};
 
 mod address;
+mod copy;
 mod export;
 mod navigation;
 mod offline;
@@ -1220,6 +1221,28 @@ mod tests {
     fn go(genie: &mut Genie, locus: &str) {
         let _ = genie.update(Message::LocusEdited(locus.to_owned()));
         let _ = genie.update(Message::LocusSubmitted);
+    }
+
+    #[test]
+    fn command_c_copies_the_pinned_card_or_else_the_locus() {
+        let mut genie = opened();
+        assert_eq!(genie.copy_text().as_deref(), Some("chr1:1-1,000"));
+        let _ = genie.update(Message::Command(Command::Copy));
+        assert!(shows(&genie, "Copied chr1:1-1,000."));
+        let feature = Feature::new("geneA", Region::between(9, 20), Strand::Forward);
+        genie.pinned = Some(crate::card::Card {
+            track: 1,
+            contig: "chr1".to_owned(),
+            detail: crate::card::Detail::Feature(feature),
+            at: Point::ORIGIN,
+        });
+        assert_eq!(
+            genie.copy_text().as_deref(),
+            Some("geneA\nchr1:10-20\n11 bp · forward strand")
+        );
+        let _ = genie.update(Message::Command(Command::Copy));
+        assert!(shows(&genie, "Copied the card text."));
+        assert_eq!(Genie::default().copy_text(), None);
     }
 
     #[test]
