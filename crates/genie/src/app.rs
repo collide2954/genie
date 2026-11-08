@@ -37,6 +37,7 @@ mod navigation;
 mod offline;
 mod regions;
 mod sessions;
+pub mod snapshot;
 mod tracks;
 mod view;
 

@@ -12,7 +12,11 @@ use crate::settings::Setting;
 
 use super::{Genie, LAST, Message};
 
-fn local(location: &Location, genome: Option<&Genome>, folder: Option<&Path>) -> Location {
+pub(super) fn local(
+    location: &Location,
+    genome: Option<&Genome>,
+    folder: Option<&Path>,
+) -> Location {
     if let (Some(genome), Some(folder), Location::File(path)) = (genome, folder, location) {
         let genes = genome.genes_in(folder);
         let parent = path.parent().and_then(Path::file_name);

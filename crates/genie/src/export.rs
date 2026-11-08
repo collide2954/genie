@@ -70,9 +70,8 @@ pub fn render<Message>(
     })
 }
 
-pub fn file_name(contig: &str, region: Region) -> String {
-    let contig: String = contig
-        .chars()
+pub fn safe(text: &str) -> String {
+    text.chars()
         .map(|letter| {
             if letter.is_ascii_alphanumeric() || "._-".contains(letter) {
                 letter
@@ -80,8 +79,15 @@ pub fn file_name(contig: &str, region: Region) -> String {
                 '_'
             }
         })
-        .collect();
-    format!("{contig}_{}-{}.png", region.start() + 1, region.end())
+        .collect()
+}
+
+pub fn stem(contig: &str, region: Region) -> String {
+    format!("{}_{}-{}", safe(contig), region.start() + 1, region.end())
+}
+
+pub fn file_name(contig: &str, region: Region) -> String {
+    format!("{}.png", stem(contig, region))
 }
 
 pub fn save(path: PathBuf, image: &Image) -> Result<PathBuf, String> {

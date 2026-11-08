@@ -31,7 +31,19 @@ mod tiles;
 mod timer;
 mod track;
 
-fn main() -> iced::Result {
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
     logger::install();
-    app::run()
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    if arguments.first().is_some_and(|first| first == "snapshot") {
+        return app::snapshot::command(&arguments[1..]);
+    }
+    match app::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
 }

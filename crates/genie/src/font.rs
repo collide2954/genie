@@ -1,4 +1,8 @@
+use std::borrow::Cow;
+use std::sync::PoisonError;
+
 use iced::Font;
+use iced::advanced::graphics::text::font_system;
 use iced::font::Weight;
 
 pub const UI: Font = Font::with_name("Inter");
@@ -27,6 +31,15 @@ pub const FILES: [(&[u8], Font); 4] = [
         MONO_STRONG,
     ),
 ];
+
+pub fn load() {
+    let mut system = font_system()
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    for (bytes, _) in FILES {
+        system.load_font(Cow::Borrowed(bytes));
+    }
+}
 
 #[cfg(test)]
 mod tests {
