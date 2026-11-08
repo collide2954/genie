@@ -339,7 +339,7 @@ impl Genie {
                     "feature"
                 };
                 let side = if forward { "next" } else { "previous" };
-                let text = format!("There is no {side} {noun} in {}.", track.source.name);
+                let text = format!("There is no {side} {noun} in {}.", track.name);
                 self.inform(text)
             }
             Err(error) => {

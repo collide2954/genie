@@ -652,7 +652,7 @@ fn track_view<'a>(
     .interaction(mouse::Interaction::ResizingVertically);
     let handle = Grip::new(
         chrome::tip(
-            label(&track.source.name),
+            label(&track.name),
             "Drag to move · Right-click for options",
             tooltip::Position::Right,
         ),

@@ -447,6 +447,7 @@ fn count(rows: &[usize]) -> usize {
 pub struct Track {
     pub id: u64,
     pub source: Arc<Source>,
+    pub name: String,
     pub contigs: Vec<Option<String>>,
     pub names: Option<Arc<Names>>,
     pub hue: Hue,
@@ -465,6 +466,7 @@ impl Track {
         let contigs = contig_names(source.contigs(), assembly);
         Self {
             id,
+            name: source.name.clone(),
             source,
             contigs,
             names: None,

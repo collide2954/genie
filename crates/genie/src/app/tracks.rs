@@ -369,18 +369,30 @@ impl Genie {
         })
     }
 
+    fn track_name(&self, source: &Source) -> String {
+        let genes = self
+            .current_genome()
+            .zip(self.cache.as_deref())
+            .filter(|(genome, cache)| {
+                source.location == Location::File(genome.genes_in(&genome.folder(cache)))
+            });
+        genes.map_or_else(|| source.name.clone(), |(genome, _)| genome.track)
+    }
+
     fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
+        let name = self.track_name(&source);
         let Some(session) = &mut self.session else {
             self.status = Status::Failed(NO_REFERENCE.to_owned());
             return Task::none();
         };
         if session.tracks.iter().any(|track| track.source == source) {
-            return self.inform(format!("The track {} is already open.", source.name));
+            return self.inform(format!("The track {name} is already open."));
         }
         self.notice = None;
         let id = self.next_track;
         self.next_track += 1;
         let mut track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
+        track.name = name;
         if let Some(saved) = &self.restoring {
             let saved_at = |location: &Location| {
                 saved

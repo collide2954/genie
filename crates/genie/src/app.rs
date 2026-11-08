@@ -926,6 +926,28 @@ mod tests {
     }
 
     #[test]
+    fn the_gene_track_of_a_genome_shows_the_track_name() {
+        let mut genie = Genie::default();
+        let folder = genie.cache.clone().unwrap().join("genomes").join("hg38");
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        let genes = Source {
+            location: Location::File(folder.join("RefSeq Select.bed")),
+            name: "RefSeq Select.bed".to_owned(),
+            format: Format::Features(FeatureFile::Indexed {
+                kind: Kind::Bed,
+                index: Index::default(),
+            }),
+        };
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(genes))));
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        assert!(shows(&genie, "RefSeq Select"));
+        assert!(!shows(&genie, "RefSeq Select.bed"));
+        assert!(shows(&genie, "genes.bed.gz"));
+    }
+
+    #[test]
     fn the_genome_menu_switches_genomes() {
         let mut genie = opened();
         assert!(shows(&genie, "ref.fa"));

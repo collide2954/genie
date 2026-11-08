@@ -13,7 +13,7 @@ use crate::menu;
 use super::{Download, Genie, Message, Offline};
 
 impl Genie {
-    fn current_genome(&self) -> Option<Genome> {
+    pub(super) fn current_genome(&self) -> Option<Genome> {
         let session = self.session.as_ref()?;
         genome::find(session.reference.genome.as_deref()?)
     }
