@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use genie_core::{Assembly, Band, Contig, Region};
+use genie_core::{Assembly, Band, Contig, Region, contig_order};
 use genie_formats::bgzf::{self, Bgzf};
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
@@ -26,6 +26,7 @@ pub struct Reference {
     pub assembly: Assembly,
     pub genome: Option<String>,
     source: Source,
+    order: Vec<usize>,
     bands: Vec<Vec<Band>>,
 }
 
@@ -147,12 +148,20 @@ impl Reference {
         if contigs.is_empty() {
             return Err("The file has no sequences.".to_owned());
         }
+        let names: Vec<&str> = contigs.iter().map(|contig| contig.name.as_str()).collect();
+        let order = contig_order(&names);
+        let mut slots: Vec<Option<Contig>> = contigs.into_iter().map(Some).collect();
+        let sorted = order
+            .iter()
+            .filter_map(|&index| slots[index].take())
+            .collect();
         Ok(Self {
             name: location.name(),
             location,
-            assembly: Assembly::new(contigs),
+            assembly: Assembly::new(sorted),
             genome: None,
             source,
+            order,
             bands: Vec::new(),
         })
     }
@@ -184,12 +193,13 @@ impl Reference {
 
     pub fn fetch(&self, contig: usize, region: Region) -> Result<Vec<u8>, String> {
         let mut file = self.location.open()?;
+        let entry = self.order[contig];
         match &self.source {
-            Source::Fasta(records) => fasta::fetch(&mut file, &records[contig], region),
+            Source::Fasta(records) => fasta::fetch(&mut file, &records[entry], region),
             Source::Bgzf(records, index) => {
-                fasta::fetch_bgzf(&mut Bgzf::new(file), index, &records[contig], region)
+                fasta::fetch_bgzf(&mut Bgzf::new(file), index, &records[entry], region)
             }
-            Source::TwoBit(reader) => reader.fetch(&mut file, contig, region),
+            Source::TwoBit(reader) => reader.fetch(&mut file, entry, region),
         }
         .map_err(|error| error.to_string())
     }
@@ -393,6 +403,52 @@ mod tests {
         let expected =
             "genie needs the index bare.fa.fai next to the file. The server answered 404";
         assert!(error.starts_with(expected), "{error}");
+    }
+
+    const TWO_CONTIGS_2BIT: [u8; 68] = [
+        0x43, 0x27, 0x41, 0x1A, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 4, b'c', b'h', b'r', b'2', 34,
+        0, 0, 0, 4, b'c', b'h', b'r', b'1', 51, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0x9C, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF,
+    ];
+
+    #[test]
+    fn contigs_come_in_chromosome_order() {
+        let scratch = Scratch::new("order");
+        let names = |reference: &super::Reference| {
+            reference
+                .assembly
+                .contigs()
+                .iter()
+                .map(|contig| contig.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let fasta = scratch.file(
+            "ref.fa",
+            ">chr10\nAAAA\n>chr2\nCC\n>chr1\nGGG\n>chrUn_x\nT\n",
+        );
+        let fasta = open(fasta, None, &mut |_| {}).unwrap();
+        assert_eq!(names(&fasta), ["chr1", "chr2", "chr10", "chrUn_x"]);
+        assert_eq!(fasta.fetch(0, Region::new(0, 3).unwrap()).unwrap(), b"GGG");
+        assert_eq!(fasta.fetch(2, Region::new(0, 4).unwrap()).unwrap(), b"AAAA");
+        let packed = scratch.file("ref.fa.gz", bgzip(&[b">chr2\nAC", b"GT\n>chr1\nGG\n"]));
+        let packed = open(packed, None, &mut |_| {}).unwrap();
+        assert_eq!(names(&packed), ["chr1", "chr2"]);
+        assert_eq!(packed.fetch(1, Region::new(1, 4).unwrap()).unwrap(), b"CGT");
+        let twobit = open(
+            scratch.file("ref.2bit", TWO_CONTIGS_2BIT),
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(names(&twobit), ["chr1", "chr2"]);
+        assert_eq!(
+            twobit.fetch(0, Region::new(0, 4).unwrap()).unwrap(),
+            b"GGGG"
+        );
+        assert_eq!(
+            twobit.fetch(1, Region::new(0, 4).unwrap()).unwrap(),
+            b"ACGT"
+        );
     }
 
     #[test]
