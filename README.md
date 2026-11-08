@@ -181,9 +181,40 @@ cargo run -p genie -- snapshot work.genie regions.bed pictures
 - genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.
 - The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.
 
+## Commands from other programs
+
+While genie runs, programs on the same computer (for example R, Python or Jupyter) can control it through port 60151, as with the batch port of IGV. Send one command on each line. genie answers each line with `OK` or with the reason for a problem. It answers when the work is complete, for example when a new track is open and its data is loaded.
+
+| Command | Result |
+| --- | --- |
+| `genome hg38`, `genome /data/genome.fa` | Opens a genome from the list or a reference file |
+| `load /data/reads.bam name=Tumor` | Adds a track. `name=` sets the track name. |
+| `goto chr1:1,000-2,000`, `goto BRCA1` | Goes to a locus or a feature name |
+| `region chr1 1001 2000 promoter` | Adds a region to the region list. The start and the end are 1-based and are in the region. |
+| `snapshotDirectory /data/pictures` | Sets the folder for snapshots |
+| `snapshot BRCA1.png` | Saves the view as a PNG image in that folder. Without a name, the name is the locus. |
+| `expand`, `squish`, `collapse` | Sets the rows of all tracks, or of one track, for example `squish Tumor` |
+| `new` | Removes all tracks and regions |
+| `echo` | Answers `echo` |
+
+```python
+import socket
+
+with socket.create_connection(("127.0.0.1", 60151)) as connection:
+    answers = connection.makefile("r")
+    for line in ["goto BRCA1", "snapshotDirectory /tmp", "snapshot brca1.png"]:
+        connection.sendall((line + "\n").encode())
+        print(answers.readline().strip())
+```
+
+- Put a path that has spaces between double quotes: `load "/data/my reads.bam"`.
+- genie accepts `maxPanelHeight` and `setSleepInterval`, but they have no effect.
+- Only programs on this computer can connect. genie does not answer web (HTTP) requests, so web pages cannot send commands.
+- To close the port, open the settings and set **Commands** to Off. If a different program (for example IGV) uses port 60151, genie shows a message and does not take commands.
+
 ## Settings
 
-The gear button opens the settings: UI scale (90 % to 150 %), density and motion. genie keeps the settings and the theme in its configuration folder.
+The gear button opens the settings: UI scale (90 % to 150 %), density, motion and the port for [commands from other programs](#commands-from-other-programs). genie keeps the settings and the theme in its configuration folder.
 
 ## Diagnostics
 
