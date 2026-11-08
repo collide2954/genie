@@ -78,6 +78,7 @@ pub struct Genie {
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Sidebar {
     chosen: Option<u64>,
+    editing: Option<(u64, String)>,
 }
 
 impl Default for Genie {
@@ -315,11 +316,15 @@ pub enum Message {
     RestoreLast,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Regions {
     Toggle,
     Add,
     Choose(u64),
+    Edit(u64),
+    Draft(String),
+    Rename,
+    Remove,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1037,6 +1042,36 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Back));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn regions_can_be_renamed_and_removed() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        let id = marks(&genie)[0].id;
+        let _ = genie.update(Message::Regions(Regions::Edit(id)));
+        let draft = Regions::Draft("promoter A".to_owned());
+        let _ = genie.update(Message::Regions(draft));
+        assert!(shows(&genie, "promoter A"));
+        let _ = genie.update(Message::Regions(Regions::Rename));
+        assert_eq!(marks(&genie)[0].name, "promoter A");
+        assert!(shows(&genie, "promoter A"));
+        let _ = genie.update(Message::Regions(Regions::Remove));
+        assert_eq!(marks(&genie).len(), 0);
+        assert_eq!(chosen(&genie), None);
+    }
+
+    #[test]
+    fn double_clicking_a_region_starts_a_rename() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        let id = marks(&genie)[0].id;
+        let mut ui = simulator(genie.view());
+        ui.click("Region 1").unwrap();
+        ui.click("Region 1").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Regions(Regions::Choose(id))));
+        assert!(messages.contains(&Message::Regions(Regions::Edit(id))));
     }
 
     #[test]
