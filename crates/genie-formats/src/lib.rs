@@ -9,6 +9,7 @@ mod error;
 pub mod fai;
 pub mod fasta;
 pub mod features;
+pub mod genepred;
 pub mod gff;
 pub mod gtf;
 pub mod gzi;

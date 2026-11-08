@@ -32,6 +32,12 @@ impl Feature {
     }
 
     #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    #[must_use]
     pub fn with_color(mut self, color: Option<[u8; 3]>) -> Self {
         self.color = color;
         self
@@ -108,6 +114,13 @@ mod tests {
             region(0, 15),
         ]);
         assert_eq!(feature.blocks(), [region(10, 15), region(40, 50)]);
+    }
+
+    #[test]
+    fn names_can_change() {
+        let feature = Feature::new("NM_1", region(10, 20), Strand::Forward).with_name("ABC1");
+        assert_eq!(feature.name(), "ABC1");
+        assert_eq!(feature.span(), region(10, 20));
     }
 
     #[test]
