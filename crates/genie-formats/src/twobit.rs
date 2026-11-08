@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, OnceLock};
 
@@ -53,6 +54,13 @@ pub struct TwoBit {
 
 impl TwoBit {
     pub fn read(reader: &mut (impl Read + Seek)) -> Result<Self, Error> {
+        Self::read_with(reader, &HashMap::new())
+    }
+
+    pub fn read_with(
+        reader: &mut (impl Read + Seek),
+        sizes: &HashMap<String, u64>,
+    ) -> Result<Self, Error> {
         reader.seek(SeekFrom::Start(0))?;
         let signature = bytes(reader)?;
         let order = if u32::from_le_bytes(signature) == SIGNATURE {
@@ -85,6 +93,10 @@ impl TwoBit {
             });
         }
         for entry in &mut entries {
+            if let Some(length) = sizes.get(&entry.name) {
+                entry.length = *length;
+                continue;
+            }
             reader.seek(SeekFrom::Start(entry.offset))?;
             entry.length = u64::from(order.word(bytes(reader)?));
         }
@@ -194,6 +206,7 @@ fn apply(blocks: &[(u64, u64)], region: Region, bases: &mut [u8], change: impl F
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::io::Cursor;
 
     use genie_core::Region;
@@ -309,6 +322,47 @@ mod tests {
             .map(|entry| (entry.name.as_str(), entry.length))
             .collect();
         assert_eq!(entries, [("chr1", 9), ("chrM", 2)]);
+    }
+
+    struct Seeks<R> {
+        inner: R,
+        targets: Vec<u64>,
+    }
+
+    impl<R: std::io::Read> std::io::Read for Seeks<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buffer)
+        }
+    }
+
+    impl<R: std::io::Seek> std::io::Seek for Seeks<R> {
+        fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+            let at = self.inner.seek(to)?;
+            self.targets.push(at);
+            Ok(at)
+        }
+    }
+
+    #[test]
+    fn known_sizes_skip_the_sequence_records() {
+        let bytes = encode(&[("chr1", "ACGTACGTA"), ("chrM", "GG")], &PLAIN);
+        let (first, second) = (34, 34 + 4 + 4 + 4 + 4 + 3);
+        let sizes = HashMap::from([("chr1".to_owned(), 9)]);
+        let mut reader = Seeks {
+            inner: Cursor::new(&bytes),
+            targets: Vec::new(),
+        };
+        let file = TwoBit::read_with(&mut reader, &sizes).unwrap();
+        let entries: Vec<(&str, u64)> = file
+            .entries()
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.length))
+            .collect();
+        assert_eq!(entries, [("chr1", 9), ("chrM", 2)]);
+        assert!(!reader.targets.contains(&first), "{:?}", reader.targets);
+        assert!(reader.targets.contains(&second), "{:?}", reader.targets);
+        let region = Region::new(0, 9).unwrap();
+        assert_eq!(file.fetch(&mut reader, 0, region).unwrap(), b"ACGTACGTA");
     }
 
     #[test]
