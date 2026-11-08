@@ -69,6 +69,20 @@ sort -k1,1 -k2,2n signal.bedGraph | bgzip > signal.bedGraph.gz && tabix -p bed s
 
 genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows a bedGraph track that has a tabix index when the view is 10 Mb or less. For the best speed, convert bedGraph to bigWig with bedGraphToBigWig.
 
+## Navigation
+
+- Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom.
+- Drag on the ruler to zoom to that range. Push Escape to stop the drag.
+- To go back to an earlier view, push Alt+Left (Cmd+[ on macOS), push the back button of the mouse or click the back arrow left of the locus box. Alt+Right (Cmd+] on macOS) goes forward again. genie keeps the last 100 jumps: the locus box, name search, ruler drags, region and feature jumps and changes of contig. Moves and zooms do not add a step.
+- Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.
+
+## Regions
+
+- Click the bookmark button to show the region list. Push Ctrl+D (Cmd+D on macOS) to add the view to the list, or hold Shift and drag on the ruler to add a range.
+- Click a region to go to it. Double-click a region to change its name, then push Enter.
+- Import BED and Export BED read and write the list as a BED file. genie reads plain BED files up to 50 MB. It does not import regions on contigs that are not in the reference.
+- Regions show as bands under the ruler. Put the pointer on a band to see its name, and click the band to go to the region.
+
 ## Tracks
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
@@ -89,7 +103,7 @@ genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows
 
 ## Sessions
 
-To save the reference, the tracks and the view as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
+To save the reference, the tracks, the view and the regions as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
 
 If a file is in the folder of the session file, the session file has its path relative to that folder.
 
