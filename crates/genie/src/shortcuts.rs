@@ -13,6 +13,7 @@ pub enum Command {
     Forward,
     NextFeature,
     PreviousFeature,
+    AddRegion,
     FocusLocus,
     NextSuggestion,
     PreviousSuggestion,
@@ -40,6 +41,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
+        Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
         _ => None,
@@ -94,6 +96,15 @@ mod tests {
             (Some(Command::NextFeature), Some(Command::PreviousFeature))
         );
         assert_eq!(command(&character("f"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_d_adds_the_view_as_a_region() {
+        assert_eq!(
+            command(&character("d"), Modifiers::COMMAND),
+            Some(Command::AddRegion)
+        );
+        assert_eq!(command(&character("d"), Modifiers::empty()), None);
     }
 
     #[test]

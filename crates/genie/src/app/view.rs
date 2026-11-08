@@ -250,7 +250,14 @@ impl Genie {
 
     fn body(&self) -> Element<'_, Message> {
         if let Some(session) = &self.session {
-            return self.browser(session);
+            if self.sidebar.is_none() {
+                return self.browser(session);
+            }
+            let line = container(space())
+                .width(1)
+                .height(Length::Fill)
+                .style(|theme| container::background(tokens(theme).line));
+            return row![self.browser(session), line, self.sidebar_view(session)].into();
         }
         let message = match (&self.status, &self.indexing) {
             (Status::Idle, _) => text("Open a reference sequence to start.").style(style::muted),

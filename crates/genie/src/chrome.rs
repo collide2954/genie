@@ -3,7 +3,7 @@ use std::time::Duration;
 use iced::widget::{button, column, container, mouse_area, row, space, text, text_input, tooltip};
 use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
 
-use crate::app::Message;
+use crate::app::{Message, Regions};
 use crate::icon::{self, Icon};
 use crate::shortcuts::Command;
 use crate::theme::tokens;
@@ -183,6 +183,14 @@ pub fn title_bar<'a>(
             .align_y(Alignment::Center),
     )
     .width(BRAND_WIDTH);
+    let regions = locus.is_some().then(|| {
+        tool(
+            Icon::Bookmark,
+            "regions",
+            "Regions",
+            Message::Regions(Regions::Toggle),
+        )
+    });
     let save = locus.is_some().then(|| {
         let words = format!("Save session ({})", keys('S'));
         tool(
@@ -216,6 +224,7 @@ pub fn title_bar<'a>(
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
     let tools = row![
+        regions,
         save,
         export,
         tool(Icon::Gear, "settings", "Settings", Message::ToggleSettings),
@@ -422,7 +431,7 @@ mod tests {
     use iced_test::simulator::{self, simulator};
 
     use super::{Action, Controls, Edge, LOCUS, LocusField, locus_x, resize_handles, title_bar};
-    use crate::app::Message;
+    use crate::app::{Message, Regions};
     use crate::icon::Icon;
     use crate::shortcuts::Command;
 
@@ -582,6 +591,22 @@ mod tests {
         );
         let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
         assert!(ui.find(selector::id("save")).is_err());
+    }
+
+    #[test]
+    fn regions_button_shows_with_a_locus() {
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        ui.click(selector::id("regions")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::Regions(Regions::Toggle)]
+        );
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        assert!(ui.find(selector::id("regions")).is_err());
     }
 
     #[test]

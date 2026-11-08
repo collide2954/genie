@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use genie_core::{History, Locus, Named, Names, Region, Span, Target, Viewport, Visit};
+use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
 use iced::theme::Mode;
 use iced::time::Instant;
 use iced::{Event, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, system, window};
@@ -25,6 +25,7 @@ use crate::{font, paths, timer};
 
 mod export;
 mod navigation;
+mod regions;
 mod sessions;
 mod tracks;
 mod view;
@@ -71,6 +72,12 @@ pub struct Genie {
     sweep: Option<(f64, f64)>,
     pointed: Option<u64>,
     anchor: Option<(Visit, u64)>,
+    sidebar: Option<Sidebar>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Sidebar {
+    chosen: Option<u64>,
 }
 
 impl Default for Genie {
@@ -110,6 +117,7 @@ impl Default for Genie {
             sweep: None,
             pointed: None,
             anchor: None,
+            sidebar: None,
         }
     }
 }
@@ -147,6 +155,7 @@ struct Session {
     tracks: Vec<Track>,
     reading: Reading,
     history: History,
+    marks: Marks,
 }
 
 impl Session {
@@ -161,6 +170,7 @@ impl Session {
             tracks: Vec::new(),
             reading: Reading::default(),
             history: History::default(),
+            marks: Marks::default(),
         }
     }
 
@@ -288,6 +298,7 @@ pub enum Message {
     TrackClicked(u64, Pointer),
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
+    Regions(Regions),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
@@ -302,6 +313,13 @@ pub enum Message {
     SettingChanged(Setting),
     Lane(u64, Lane),
     RestoreLast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Regions {
+    Toggle,
+    Add,
+    Choose(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -431,6 +449,7 @@ impl Genie {
             Message::TrackClicked(id, pointer) => self.pinned = self.card(id, pointer),
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
+            Message::Regions(action) => return self.regions(action),
             Message::CardClosed => self.pinned = None,
             Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
@@ -662,7 +681,7 @@ mod tests {
 
     use super::tracks::NO_REFERENCE;
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
-    use super::{Genie, Lane, Message, Sweep, mouse_button, shortcut, window_event};
+    use super::{Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event};
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};
@@ -971,6 +990,64 @@ mod tests {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(!shows(&genie, "Next feature"));
+    }
+
+    fn chosen(genie: &Genie) -> Option<u64> {
+        genie.sidebar.as_ref().and_then(|sidebar| sidebar.chosen)
+    }
+
+    fn marks(genie: &Genie) -> Vec<genie_core::Mark> {
+        genie.session.as_ref().unwrap().marks.all().to_vec()
+    }
+
+    #[test]
+    fn adding_the_view_opens_the_region_list() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        settle(&mut genie);
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        assert!(genie.sidebar.is_some());
+        let added = marks(&genie);
+        assert_eq!(added.len(), 1);
+        assert_eq!(
+            (added[0].contig, added[0].span),
+            (0, Region::between(100, 200))
+        );
+        assert_eq!(chosen(&genie), Some(added[0].id));
+        assert!(shows(&genie, "Region 1"));
+        assert!(shows(&genie, "chr1:101-200 · 100 bp"));
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        assert!(genie.sidebar.is_none());
+        assert!(!shows(&genie, "Region 1"));
+    }
+
+    #[test]
+    fn choosing_a_region_jumps_to_it() {
+        let mut genie = opened();
+        go(&mut genie, "chr2:51-150");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        go(&mut genie, "chr1:101-200");
+        settle(&mut genie);
+        let id = marks(&genie)[0].id;
+        genie.sidebar.as_mut().unwrap().chosen = None;
+        let _ = genie.update(Message::Regions(Regions::Choose(id)));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr2:51-150"));
+        assert_eq!(chosen(&genie), Some(id));
+        let _ = genie.update(Message::Command(Command::Back));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:101-200"));
+    }
+
+    #[test]
+    fn an_empty_region_list_says_how_to_add_regions() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        let keys = crate::chrome::keys('D');
+        assert!(shows(
+            &genie,
+            &format!("No regions. Push {keys} to add the view.")
+        ));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, Message, Suggestion, Sweep};
+use super::{Genie, Message, Regions, Suggestion, Sweep};
 
 const SUGGESTIONS: usize = 8;
 const MIN_SWEEP: f64 = 3.0;
@@ -26,6 +26,7 @@ impl Genie {
             }
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
+            Command::AddRegion => self.regions(Regions::Add),
             Command::NextFeature | Command::PreviousFeature => {
                 let forward = command == Command::NextFeature;
                 self.pointed
@@ -168,7 +169,7 @@ impl Genie {
         }
     }
 
-    fn go_to(&mut self, target: Target) -> Task<Message> {
+    pub(super) fn go_to(&mut self, target: Target) -> Task<Message> {
         let Some(session) = &mut self.session else {
             return Task::none();
         };
