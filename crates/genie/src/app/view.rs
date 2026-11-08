@@ -118,6 +118,8 @@ impl Genie {
         let locus = self.session.as_ref().map(|session| LocusField {
             value: self.draft.clone().unwrap_or_else(|| session.locus()),
             error: self.locus_error.clone(),
+            back: session.history.can_go_back(),
+            forward: session.history.can_go_forward(),
         });
         let mut layers = stack![column![
             chrome::title_bar(Controls::CURRENT, appearance, locus),

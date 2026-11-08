@@ -1,12 +1,13 @@
 use std::f32::consts::TAU;
 
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, LineJoin, Path, Stroke, path::Arc};
-use iced::{Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Element, Length, Point, Radians, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::theme::tokens;
 
 const GRID: f32 = 24.0;
 const STROKE: f32 = 1.75;
+const DIM: f32 = 0.4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -20,6 +21,8 @@ pub enum Icon {
     Camera,
     Gear,
     Save,
+    Back,
+    Forward,
 }
 
 enum Shape {
@@ -90,6 +93,8 @@ impl Icon {
                 Shape::Polyline(&[[8.0, 4.0], [8.0, 9.0], [15.0, 9.0], [15.0, 4.0]]),
                 Shape::Polyline(&[[7.5, 20.0], [7.5, 14.0], [16.5, 14.0], [16.5, 20.0]]),
             ],
+            Self::Back => &[Shape::Polyline(&[[15.0, 5.0], [8.0, 12.0], [15.0, 19.0]])],
+            Self::Forward => &[Shape::Polyline(&[[9.0, 5.0], [16.0, 12.0], [9.0, 19.0]])],
         }
     }
 }
@@ -150,7 +155,15 @@ impl Shape {
 }
 
 pub fn view<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
-    canvas::Canvas::new(Program { icon, size })
+    draw(icon, size, false)
+}
+
+pub fn dim<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
+    draw(icon, size, true)
+}
+
+fn draw<'a, Message: 'a>(icon: Icon, size: f32, dim: bool) -> Element<'a, Message> {
+    canvas::Canvas::new(Program { icon, size, dim })
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -159,6 +172,7 @@ pub fn view<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
 struct Program {
     icon: Icon,
     size: f32,
+    dim: bool,
 }
 
 impl<Message> canvas::Program<Message> for Program {
@@ -173,7 +187,12 @@ impl<Message> canvas::Program<Message> for Program {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let tokens = tokens(theme);
-        let color = if cursor.is_over(bounds) {
+        let color = if self.dim {
+            Color {
+                a: DIM,
+                ..tokens.muted
+            }
+        } else if cursor.is_over(bounds) {
             tokens.text
         } else {
             tokens.muted
@@ -200,7 +219,9 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 10] = [
+    const ICONS: [Icon; 12] = [
+        Icon::Back,
+        Icon::Forward,
         Icon::Save,
         Icon::Sun,
         Icon::Moon,

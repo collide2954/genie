@@ -31,7 +31,14 @@ const fn inset(controls: Controls) -> f32 {
 }
 
 pub const fn locus_x(controls: Controls) -> f32 {
-    inset(controls) + BRAND_WIDTH + BRAND_GAP + TOOL_SIZE + NAVIGATION_GAP
+    let history = 2.0 * TOOL_SIZE + TOOL_GAP;
+    inset(controls)
+        + BRAND_WIDTH
+        + BRAND_GAP
+        + TOOL_SIZE
+        + NAVIGATION_GAP
+        + history
+        + NAVIGATION_GAP
 }
 
 pub const fn settings_inset(controls: Controls) -> f32 {
@@ -153,6 +160,8 @@ pub const LOCUS: &str = "locus";
 pub struct LocusField {
     pub value: String,
     pub error: Option<String>,
+    pub back: bool,
+    pub forward: bool,
 }
 
 pub fn title_bar<'a>(
@@ -198,6 +207,11 @@ pub fn title_bar<'a>(
         _ => "Theme: system",
     };
     let navigation = row![tool(Icon::Open, "open", "Open a file", Message::Open)]
+        .push(
+            locus
+                .as_ref()
+                .map(|field| history(field.back, field.forward)),
+        )
         .push(locus.map(locus_box))
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
@@ -334,6 +348,55 @@ fn tool<'a>(
         .into()
 }
 
+fn history<'a>(back: bool, forward: bool) -> Element<'a, Message> {
+    let (back_keys, forward_keys) = if cfg!(target_os = "macos") {
+        ("Cmd+[", "Cmd+]")
+    } else {
+        ("Alt+Left", "Alt+Right")
+    };
+    row![
+        step(
+            Icon::Back,
+            "back",
+            format!("Back ({back_keys})"),
+            Command::Back,
+            back
+        ),
+        step(
+            Icon::Forward,
+            "forward",
+            format!("Forward ({forward_keys})"),
+            Command::Forward,
+            forward
+        ),
+    ]
+    .spacing(TOOL_GAP)
+    .into()
+}
+
+fn step<'a>(
+    icon: Icon,
+    id: &'static str,
+    words: String,
+    command: Command,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let glyph = if enabled {
+        icon::view(icon, TOOL_ICON)
+    } else {
+        icon::dim(icon, TOOL_ICON)
+    };
+    let button = button(glyph)
+        .width(TOOL_SIZE)
+        .height(TOOL_SIZE)
+        .padding(0)
+        .style(style::ghost)
+        .on_press_maybe(enabled.then_some(Message::Command(command)));
+    container(tip(button, words, tooltip::Position::Bottom))
+        .id(id)
+        .into()
+}
+
 fn window_button<'a>(icon: Icon, id: &'static str, action: Action) -> Element<'a, Message> {
     let words = match action {
         Action::Minimize => "Minimize",
@@ -405,6 +468,40 @@ mod tests {
         LocusField {
             value: value.to_owned(),
             error: error.map(str::to_owned),
+            back: false,
+            forward: false,
+        }
+    }
+
+    #[test]
+    fn back_and_forward_buttons_work_when_there_are_steps() {
+        let steps = LocusField {
+            back: true,
+            forward: true,
+            ..field("chr1:1-4", None)
+        };
+        for (id, command) in [("back", Command::Back), ("forward", Command::Forward)] {
+            let mut ui = simulator(title_bar(
+                Controls::Custom,
+                Icon::Monitor,
+                Some(steps.clone()),
+            ));
+            ui.click(selector::id(id)).unwrap();
+            assert_eq!(
+                ui.into_messages().collect::<Vec<_>>(),
+                [Message::Command(command)]
+            );
+            let mut ui = simulator(title_bar(
+                Controls::Custom,
+                Icon::Monitor,
+                Some(field("chr1:1-4", None)),
+            ));
+            ui.click(selector::id(id)).unwrap();
+            let messages: Vec<Message> = ui.into_messages().collect();
+            assert!(
+                !messages.contains(&Message::Command(command)),
+                "{messages:?}"
+            );
         }
     }
 

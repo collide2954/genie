@@ -6,7 +6,7 @@ use std::time::Duration;
 use genie_core::{History, Locus, Named, Names, Region, Span, Target, Viewport, Visit};
 use iced::theme::Mode;
 use iced::time::Instant;
-use iced::{Point, Size, Subscription, Task, Theme, keyboard, system, window};
+use iced::{Event, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, system, window};
 
 use crate::card::Card;
 use crate::chrome::{self, Action};
@@ -578,6 +578,7 @@ impl Genie {
         Subscription::batch([
             system::theme_changes().map(Message::SystemModeChanged),
             keyboard::listen().filter_map(shortcut),
+            event::listen().filter_map(|event| mouse_button(&event)),
             window::events().filter_map(window_event),
             frames,
         ])
@@ -592,6 +593,18 @@ fn window_event((_, event): (window::Id, window::Event)) -> Option<Message> {
         window::Event::FileDropped(path) => Some(Message::FileDropped(path)),
         window::Event::Opened { size, .. } | window::Event::Resized(size) => {
             Some(Message::WindowResized(size))
+        }
+        _ => None,
+    }
+}
+
+fn mouse_button(event: &Event) -> Option<Message> {
+    match event {
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Back)) => {
+            Some(Message::Command(Command::Back))
+        }
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => {
+            Some(Message::Command(Command::Forward))
         }
         _ => None,
     }
@@ -645,7 +658,7 @@ mod tests {
 
     use super::tracks::NO_REFERENCE;
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, ZOOM_HINT};
-    use super::{Genie, Lane, Message, shortcut, window_event};
+    use super::{Genie, Lane, Message, mouse_button, shortcut, window_event};
     use crate::export;
     use crate::menu;
     use crate::reading::{self, Frames};
@@ -851,6 +864,20 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn mouse_side_buttons_step_through_history() {
+        let press = |button| iced::Event::Mouse(iced::mouse::Event::ButtonPressed(button));
+        assert_eq!(
+            mouse_button(&press(iced::mouse::Button::Back)),
+            Some(Message::Command(Command::Back))
+        );
+        assert_eq!(
+            mouse_button(&press(iced::mouse::Button::Forward)),
+            Some(Message::Command(Command::Forward))
+        );
+        assert_eq!(mouse_button(&press(iced::mouse::Button::Left)), None);
     }
 
     #[test]
