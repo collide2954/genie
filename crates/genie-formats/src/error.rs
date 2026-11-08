@@ -5,6 +5,7 @@ pub enum Error {
     Io(io::Error),
     Format { line: u64, reason: Reason },
     Invalid(Reason),
+    Remote(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,7 @@ impl fmt::Display for Error {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::Format { line, reason } => write!(f, "Line {line}: {reason}."),
+            Self::Remote(message) => f.write_str(message),
             Self::Invalid(reason) => {
                 let reason = reason.to_string();
                 let mut letters = reason.chars();
@@ -89,7 +91,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            Self::Format { .. } | Self::Invalid(_) => None,
+            Self::Format { .. } | Self::Invalid(_) | Self::Remote(_) => None,
         }
     }
 }

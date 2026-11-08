@@ -12,6 +12,7 @@ pub mod features;
 pub mod gff;
 pub mod gtf;
 pub mod gzi;
+pub mod http;
 pub mod ini;
 pub mod png;
 mod sidecar;
