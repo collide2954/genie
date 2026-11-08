@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 genie-core.workspace = true
 miniz_oxide.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
 
 [lints]
 workspace = true
