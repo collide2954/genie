@@ -407,10 +407,13 @@ impl Genie {
         let viewport = session.viewport;
         let tracks = column![
             container(
-                scene::view(overview::scene(viewport, OVERVIEW_HEIGHT), OVERVIEW_HEIGHT)
-                    .on_press(|share| Message::Overview(Sweep::Pressed(share)))
-                    .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
-                    .on_release(Message::Overview(Sweep::Released))
+                scene::view(
+                    overview::scene(viewport, OVERVIEW_HEIGHT, &[]),
+                    OVERVIEW_HEIGHT
+                )
+                .on_press(|share| Message::Overview(Sweep::Pressed(share)))
+                .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
+                .on_release(Message::Overview(Sweep::Released))
             )
             .id("overview"),
             self.ruler(viewport),

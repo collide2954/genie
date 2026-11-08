@@ -78,6 +78,7 @@ pub enum Paint {
     Line,
     Accent,
     Selection,
+    Stain(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

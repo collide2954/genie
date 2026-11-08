@@ -172,6 +172,17 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Line => tokens.line,
         Paint::Accent => tokens.accent,
         Paint::Selection => tokens.accent_soft,
+        Paint::Stain(ink) => blend(tokens.line, tokens.text, f32::from(ink.min(100)) / 100.0),
+    }
+}
+
+fn blend(from: Color, to: Color, share: f32) -> Color {
+    let step = |a: f32, b: f32| a * (1.0 - share) + b * share;
+    Color {
+        r: step(from.r, to.r),
+        g: step(from.g, to.g),
+        b: step(from.b, to.b),
+        a: step(from.a, to.a),
     }
 }
 
@@ -454,6 +465,17 @@ mod tests {
             color(Paint::Pair(Hue::Vermillion), &DARK, &DARK_DATA),
             DARK_DATA.hues[3].scale_alpha(0.85)
         );
+    }
+
+    #[test]
+    fn stains_blend_from_the_line_grey_to_the_text_grey() {
+        for (tokens, data) in [(&LIGHT, &LIGHT_DATA), (&DARK, &DARK_DATA)] {
+            assert_eq!(color(Paint::Stain(0), tokens, data), tokens.line);
+            assert_eq!(color(Paint::Stain(100), tokens, data), tokens.text);
+            let half = color(Paint::Stain(50), tokens, data);
+            assert!((half.r - f32::midpoint(tokens.line.r, tokens.text.r)).abs() < 1e-6);
+            assert!((half.r - half.g).abs() < 0.02 && (half.g - half.b).abs() < 0.02);
+        }
     }
 
     #[test]
