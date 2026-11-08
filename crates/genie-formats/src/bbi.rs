@@ -73,13 +73,17 @@ fn touches(start: u64, end: u64, region: Region) -> bool {
         || (start == end && (start == region.end() || end == region.start()))
 }
 
-fn feature(contig: &str, item: &Item<'_>) -> Result<Feature, Error> {
+fn line(contig: &str, item: &Item<'_>) -> String {
     let mut line = format!("{contig}\t{}\t{}", item.start, item.end);
     if !item.rest.is_empty() {
         line.push('\t');
         line.push_str(item.rest);
     }
-    bed::parse(&line)
+    line
+}
+
+fn feature(contig: &str, item: &Item<'_>) -> Result<Feature, Error> {
+    bed::parse(&line(contig, item))
         .map_err(Error::Invalid)?
         .map(|(_, feature)| feature)
         .ok_or(Error::Invalid(Reason::BadRecord))
@@ -612,6 +616,27 @@ impl Index {
 
     pub fn names(&self) -> &[String] {
         &self.names
+    }
+
+    pub fn lines(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+    ) -> Result<Vec<String>, Error> {
+        let Some(id) = self.id(contig) else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for (offset, size) in blocks(reader, self.full, self.big, id, Region::between(0, 1 << 32))?
+        {
+            let block = self.block(reader, offset, size)?;
+            for item in items(&block, self.big)? {
+                if item.chromosome == id {
+                    found.push(line(contig, &item));
+                }
+            }
+        }
+        Ok(found)
     }
 
     fn id(&self, contig: &str) -> Option<u32> {

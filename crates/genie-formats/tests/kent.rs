@@ -250,6 +250,22 @@ fn bigbed_matches_ucsc_tools() {
 }
 
 #[test]
+fn whole_bigbed_contigs_read_as_ucsc_lines() {
+    let mut reader = File::open(data("genes.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let (_, expected) = sections("genes.bb")
+        .into_iter()
+        .find(|(header, _)| header == "records chrX")
+        .unwrap();
+    assert_ne!(expected.len(), 0);
+    assert_eq!(index.lines(&mut reader, "chrX").unwrap(), expected);
+    assert_eq!(
+        index.lines(&mut reader, "chr9").unwrap(),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn contigs_come_from_the_chromosome_tree() {
     let index = Index::read(&mut File::open(data("signal.bw")).unwrap()).unwrap();
     let mut names = index.names().to_vec();
