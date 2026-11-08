@@ -1,6 +1,7 @@
-use std::fs::{self, File};
-use std::io::{BufReader, Cursor};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufReader, Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use genie_core::{Band, Feature};
@@ -17,6 +18,8 @@ const T2T: &str = "https://hgdownload.soe.ucsc.edu/hubs/GCA/009/914/755/GCA_0099
 const FRESH: Duration = Duration::from_hours(30 * 24);
 const GENOMES: &str = "genomes";
 pub const SEQUENCE: &str = "sequence.2bit";
+const PART: &str = "sequence.2bit.part";
+pub const STOPPED: &str = "The download stopped.";
 const SIZES: &str = "sizes.txt";
 const ALIASES: &str = "aliases.txt";
 const BANDS: &str = "bands.txt";
@@ -39,6 +42,7 @@ pub struct Genome {
     pub bands: Option<Annotation>,
     pub genes: Annotation,
     pub track: String,
+    pub megabytes: u64,
 }
 
 #[derive(Debug)]
@@ -59,16 +63,16 @@ impl Genome {
 
 pub fn all() -> Vec<Genome> {
     vec![
-        ucsc("hg38", "Human", "GRCh38", true, true),
-        ucsc("hg19", "Human", "GRCh37", true, true),
+        ucsc("hg38", "Human", "GRCh38", (true, true), 835),
+        ucsc("hg19", "Human", "GRCh37", (true, true), 816),
         t2t(),
-        ucsc("mm39", "Mouse", "GRCm39", true, true),
-        ucsc("mm10", "Mouse", "GRCm38", true, true),
-        ucsc("rn7", "Rat", "mRatBN7.2", false, true),
-        ucsc("danRer11", "Zebrafish", "GRCz11", false, true),
-        ucsc("dm6", "Fly", "BDGP6", false, true),
-        ucsc("ce11", "Worm", "WBcel235", false, true),
-        ucsc("sacCer3", "Yeast", "R64", false, false),
+        ucsc("mm39", "Mouse", "GRCm39", (true, true), 714),
+        ucsc("mm10", "Mouse", "GRCm38", (true, true), 715),
+        ucsc("rn7", "Rat", "mRatBN7.2", (false, true), 692),
+        ucsc("danRer11", "Zebrafish", "GRCz11", (false, true), 442),
+        ucsc("dm6", "Fly", "BDGP6", (false, true), 37),
+        ucsc("ce11", "Worm", "WBcel235", (false, true), 26),
+        ucsc("sacCer3", "Yeast", "R64", (false, false), 3),
     ]
 }
 
@@ -76,7 +80,13 @@ pub fn find(id: &str) -> Option<Genome> {
     all().into_iter().find(|genome| genome.id == id)
 }
 
-fn ucsc(id: &str, species: &str, assembly: &str, select: bool, bands: bool) -> Genome {
+fn ucsc(
+    id: &str,
+    species: &str,
+    assembly: &str,
+    (select, bands): (bool, bool),
+    megabytes: u64,
+) -> Genome {
     let path = |file: &str| format!("{GOLDEN}/{id}/{file}");
     let table = if select {
         "ncbiRefSeqSelect"
@@ -105,11 +115,12 @@ fn ucsc(id: &str, species: &str, assembly: &str, select: bool, bands: bool) -> G
             "NCBI RefSeq"
         }
         .to_owned(),
+        megabytes,
     }
 }
 
 fn t2t() -> Genome {
-    let mut genome = ucsc("hs1", "Human", "T2T-CHM13v2.0", false, false);
+    let mut genome = ucsc("hs1", "Human", "T2T-CHM13v2.0", (false, false), 812);
     "T2T".clone_into(&mut genome.label);
     genome.bands = Some(Annotation {
         url: format!("{T2T}.cytoBandMapped/cytoBandMapped.bb"),
@@ -128,6 +139,57 @@ pub fn open(genome: &Genome, folder: &Path, now: SystemTime) -> Result<Reference
         reference::open_with(prepared.sequence, &prepared.extras, None, &mut |_| {})?;
     reference.genome = Some(genome.id.clone());
     Ok(reference)
+}
+
+pub fn offline(folder: &Path) -> bool {
+    folder.join(SEQUENCE).exists()
+}
+
+pub fn download(
+    genome: &Genome,
+    folder: &Path,
+    stop: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+) -> Result<(), String> {
+    let failed = |error: io::Error| error.to_string();
+    fs::create_dir_all(folder).map_err(failed)?;
+    let part = folder.join(PART);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&part)
+        .map_err(failed)?;
+    let from = file.metadata().map_err(failed)?.len();
+    let url = Url::parse(&genome.sequence).map_err(|error| error.to_string())?;
+    let result = http::download(
+        &url,
+        from,
+        |bytes| {
+            if stop.load(Ordering::Relaxed) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, STOPPED));
+            }
+            file.write_all(bytes)
+        },
+        progress,
+    );
+    match result {
+        Ok(_) => {}
+        Err(_) if stop.load(Ordering::Relaxed) => return Err(STOPPED.to_owned()),
+        Err(error) => return Err(error.to_string()),
+    }
+    file.sync_all().map_err(failed)?;
+    drop(file);
+    fs::rename(&part, folder.join(SEQUENCE)).map_err(failed)
+}
+
+pub fn remove(folder: &Path) -> io::Result<()> {
+    for name in [SEQUENCE, PART] {
+        match fs::remove_file(folder.join(name)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn prepare(genome: &Genome, folder: &Path, now: SystemTime) -> Result<Prepared, String> {
@@ -295,7 +357,11 @@ mod tests {
 
     use genie_formats::gzip;
 
-    use super::{Annotation, Genome, all, find, open, prepare};
+    use std::sync::atomic::AtomicBool;
+
+    use super::{
+        Annotation, Genome, SEQUENCE, STOPPED, all, download, find, offline, open, prepare, remove,
+    };
     use crate::location::Location;
     use crate::scratch::Scratch;
     use crate::server::{Server, serve};
@@ -359,6 +425,7 @@ mod tests {
                 big: false,
             },
             track: "Genes".to_owned(),
+            megabytes: 1,
         }
     }
 
@@ -430,6 +497,36 @@ mod tests {
                 .unwrap(),
             b"ACGT"
         );
+    }
+
+    #[test]
+    fn offline_copies_download_resume_stop_and_go_away() {
+        let sequence: Vec<u8> = (0..=255).cycle().take(20 << 20).collect();
+        let mut list = files();
+        list.push(("/t.2bit".to_owned(), sequence.clone()));
+        let server = serve(list);
+        let genome = served(&server);
+        let scratch = Scratch::new("genome-offline");
+        let folder = scratch.file("marker", "").with_file_name("test");
+        let stop = AtomicBool::new(true);
+        let error = download(&genome, &folder, &stop, |_, _| {}).unwrap_err();
+        assert_eq!(error, STOPPED);
+        assert!(!offline(&folder));
+        fs::write(folder.join("sequence.2bit.part"), &sequence[..1_000]).unwrap();
+        let stop = AtomicBool::new(false);
+        let mut steps = Vec::new();
+        download(&genome, &folder, &stop, |done, size| {
+            steps.push((done, size));
+        })
+        .unwrap();
+        assert!(offline(&folder));
+        assert_eq!(fs::read(folder.join(SEQUENCE)).unwrap(), sequence);
+        assert_eq!(steps.first(), Some(&(1_000 + (4 << 20), 20 << 20)));
+        assert_eq!(steps.last(), Some(&(20 << 20, 20 << 20)));
+        assert!(!folder.join("sequence.2bit.part").exists());
+        remove(&folder).unwrap();
+        assert!(!offline(&folder));
+        remove(&folder).unwrap();
     }
 
     #[test]

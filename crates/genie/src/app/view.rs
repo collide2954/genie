@@ -182,7 +182,8 @@ impl Genie {
             .session
             .as_ref()
             .and(self.indexing.as_ref())
-            .map(|(name, percent)| indexing(name, *percent));
+            .map(|(name, percent)| indexing(name, *percent))
+            .or_else(|| self.download_text());
         let notice = self.notice.as_ref().map(|notice| notice.text.as_str());
         if progress.is_some() || notice.is_some() {
             layers = layers.push(toasts(progress, notice));
@@ -234,15 +235,20 @@ impl Genie {
                 true,
             )
         });
-        let content = Column::new()
+        let offline = self.offline_items();
+        let extra = offline.len();
+        let mut content = Column::new()
             .extend(items)
             .push(menu::separator())
             .push(menu::item("Open reference…", Message::Open, false, true));
+        if extra > 0 {
+            content = content.push(menu::separator()).extend(offline);
+        }
         let at = Point::new(
             chrome::genome_x(Controls::CURRENT),
             chrome::BAR_HEIGHT + 1.0,
         );
-        let height = (count + 1) as f32 * MENU_ROW + MENU_ROW;
+        let height = (count + extra + 1) as f32 * MENU_ROW + 2.0 * MENU_ROW;
         Some(menu::card(content, at, self.window, height))
     }
 

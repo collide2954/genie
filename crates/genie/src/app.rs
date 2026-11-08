@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
@@ -32,6 +33,7 @@ use crate::{font, paths, timer};
 mod address;
 mod export;
 mod navigation;
+mod offline;
 mod regions;
 mod sessions;
 mod tracks;
@@ -85,6 +87,8 @@ pub struct Genie {
     modifiers: keyboard::Modifiers,
     address: Option<AddressField>,
     strip: Option<f32>,
+    cache: Option<PathBuf>,
+    download: Option<Download>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +146,8 @@ impl Default for Genie {
             modifiers: keyboard::Modifiers::default(),
             address: None,
             strip: None,
+            cache: paths::cache_dir(),
+            download: None,
         }
     }
 }
@@ -349,6 +355,30 @@ pub enum Message {
     Strip(Option<f32>),
     Genome(String),
     GenomeMenu,
+    Offline(Offline),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Offline {
+    Start,
+    Progress(u64, u64),
+    Done(Result<(), String>),
+    Stop,
+    Remove,
+}
+
+#[derive(Debug)]
+struct Download {
+    genome: String,
+    done: u64,
+    size: u64,
+    stop: Arc<AtomicBool>,
+}
+
+impl Download {
+    fn percent(&self) -> u64 {
+        (self.done * 100).checked_div(self.size).unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -547,6 +577,7 @@ impl Genie {
                     self.popup = Some(Popup::Genomes);
                 }
             }
+            Message::Offline(offline) => return self.offline(offline),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -799,7 +830,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Genie, Lane, Message, Regions, Sweep, mouse_button, shortcut, window_event,
+        Address, Genie, Lane, Message, Offline, Regions, Sweep, mouse_button, shortcut,
+        window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -879,10 +911,7 @@ mod tests {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Genome("hg38".to_owned()));
         assert!(shows(&genie, "Opening hg38…"));
-        let folder = crate::paths::cache_dir()
-            .unwrap()
-            .join("genomes")
-            .join("hg38");
+        let folder = genie.cache.clone().unwrap().join("genomes").join("hg38");
         assert_eq!(
             genie.pending,
             [Location::File(folder.join("RefSeq Select.bed"))]
@@ -914,6 +943,43 @@ mod tests {
         let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
         assert!(shows(&genie, "hg38"));
         assert!(!shows(&genie, "ref.fa"));
+    }
+
+    #[test]
+    fn offline_copies_download_with_progress_and_can_go_away() {
+        let scratch = crate::scratch::Scratch::new("offline");
+        let cache = scratch.file("marker", "").parent().unwrap().to_owned();
+        let folder = cache.join("genomes").join("hg38");
+        let mut genie = Genie {
+            cache: Some(cache),
+            ..Genie::default()
+        };
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        let _ = genie.update(Message::GenomeMenu);
+        assert!(shows(&genie, "Use offline (835 MB)"));
+        let _ = genie.update(Message::Offline(Offline::Start));
+        let _ = genie.update(Message::Offline(Offline::Progress(400, 1_000)));
+        assert!(shows(&genie, "Downloading hg38… 40 %"));
+        let _ = genie.update(Message::GenomeMenu);
+        assert!(shows(&genie, "Stop download"));
+        let _ = genie.update(Message::Offline(Offline::Stop));
+        let stop = &genie.download.as_ref().unwrap().stop;
+        assert!(stop.load(std::sync::atomic::Ordering::Relaxed));
+        let stopped = Err(crate::genome::STOPPED.to_owned());
+        let _ = genie.update(Message::Offline(Offline::Done(stopped)));
+        assert!(shows(&genie, crate::genome::STOPPED));
+        let _ = genie.update(Message::Offline(Offline::Start));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("sequence.2bit"), b"2bit").unwrap();
+        let _ = genie.update(Message::Offline(Offline::Done(Ok(()))));
+        assert!(shows(&genie, "hg38 is now available offline."));
+        let _ = genie.update(Message::GenomeMenu);
+        assert!(shows(&genie, "Remove offline copy"));
+        let _ = genie.update(Message::Offline(Offline::Remove));
+        assert!(!folder.join("sequence.2bit").exists());
+        assert!(shows(&genie, "Removed the offline copy of hg38."));
     }
 
     #[test]

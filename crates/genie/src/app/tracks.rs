@@ -297,7 +297,7 @@ impl Genie {
         let Some(genome) = genome::find(id) else {
             return Task::none();
         };
-        let Some(cache) = paths::cache_dir() else {
+        let Some(cache) = self.cache.clone() else {
             self.fail(NO_CACHE.to_owned());
             return Task::none();
         };
