@@ -14,6 +14,7 @@ use iced::widget::{
 use iced::{Alignment, Border, Element, Length, Task, Theme, mouse};
 
 use crate::chrome;
+use crate::context::Context;
 use crate::icon::{self, Icon};
 use crate::motion;
 use crate::paths::{self, file_name};
@@ -329,11 +330,12 @@ impl Genie {
             .width(Length::Fill)
             .padding([4, 8])
             .style(move |theme| row_style(theme, chosen));
-        mouse_area(content)
-            .on_press(Message::Regions(Regions::Choose(mark.id)))
-            .on_double_click(Message::Regions(Regions::Edit(mark.id)))
-            .interaction(mouse::Interaction::Pointer)
-            .into()
+        let id = mark.id;
+        let row = mouse_area(content)
+            .on_press(Message::Regions(Regions::Choose(id)))
+            .on_double_click(Message::Regions(Regions::Edit(id)))
+            .interaction(mouse::Interaction::Pointer);
+        Context::new(row, move |at| Message::CopyMenu(Some(id), at)).into()
     }
 }
 

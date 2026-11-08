@@ -120,6 +120,7 @@ impl Genie {
     pub(super) fn close_menus(&mut self) {
         self.menu = None;
         self.sequence_menu = None;
+        self.copy_menu = None;
         self.popup = None;
         self.address = None;
     }

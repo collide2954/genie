@@ -72,6 +72,7 @@ pub struct Genie {
     stats: Stats,
     menu: Option<(u64, Point)>,
     sequence_menu: Option<Point>,
+    copy_menu: Option<(Option<u64>, Point)>,
     resize: Option<(u64, f32)>,
     moving: Option<(u64, f32)>,
     scroll: f32,
@@ -131,6 +132,7 @@ impl Default for Genie {
             stats: Stats::default(),
             menu: None,
             sequence_menu: None,
+            copy_menu: None,
             resize: None,
             moving: None,
             scroll: 0.0,
@@ -357,6 +359,15 @@ pub enum Message {
     Genome(String),
     GenomeMenu,
     Offline(Offline),
+    CopyMenu(Option<u64>, Point),
+    Copy(Copying),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Copying {
+    Locus(Option<u64>),
+    Sequence(Option<u64>),
+    Fetched(Result<(String, u64), String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -575,14 +586,10 @@ impl Genie {
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,
             Message::Genome(id) => return self.open_genome(&id),
-            Message::GenomeMenu => {
-                let open = self.popup != Some(Popup::Genomes);
-                self.close_menus();
-                if open {
-                    self.popup = Some(Popup::Genomes);
-                }
-            }
+            Message::GenomeMenu => self.toggle(Popup::Genomes),
             Message::Offline(offline) => return self.offline(offline),
+            Message::CopyMenu(region, at) => self.open_copy_menu(region, at),
+            Message::Copy(copying) => return self.copying(copying),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -652,7 +659,9 @@ impl Genie {
     }
 
     fn toggle(&mut self, popup: Popup) {
-        self.popup = (self.popup != Some(popup)).then_some(popup);
+        let open = self.popup != Some(popup);
+        self.close_menus();
+        self.popup = open.then_some(popup);
     }
 
     fn band_tip(&self) -> Option<String> {
@@ -835,7 +844,7 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Genie, Lane, Message, Offline, Regions, Sweep, mouse_button, shortcut,
+        Address, Copying, Genie, Lane, Message, Offline, Regions, Sweep, mouse_button, shortcut,
         window_event,
     };
     use crate::export;
@@ -1243,6 +1252,104 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Copy));
         assert!(shows(&genie, "Copied the card text."));
         assert_eq!(Genie::default().copy_text(), None);
+    }
+
+    #[test]
+    fn the_copy_menu_copies_the_locus_or_the_bases() {
+        let mut genie = opened();
+        let _ = genie.update(Message::CopyMenu(None, Point::new(300.0, 60.0)));
+        assert!(shows(&genie, "Copy sequence"));
+        let _ = genie.update(Message::Copy(Copying::Locus(None)));
+        assert!(!shows(&genie, "Copy sequence"));
+        assert!(shows(&genie, "Copied chr1:1-1,000."));
+        let fasta = Ok((">chr1:1-4\nACGT\n".to_owned(), 4));
+        let _ = genie.update(Message::Copy(Copying::Fetched(fasta)));
+        assert!(shows(&genie, "Copied 4 bp as FASTA."));
+        let failed = Err("The file is gone.".to_owned());
+        let _ = genie.update(Message::Copy(Copying::Fetched(failed)));
+        assert!(shows(
+            &genie,
+            "genie cannot read the sequence. The file is gone."
+        ));
+    }
+
+    #[test]
+    fn the_copy_menu_knows_its_height() {
+        let mut genie = opened();
+        let _ = genie.update(Message::CopyMenu(None, Point::new(300.0, 60.0)));
+        let mut ui = simulator(genie.view());
+        let height = ui.find(selector::id("menu")).unwrap().bounds().height;
+        let expected = super::copy::MENU_HEIGHT;
+        assert!(height <= expected && expected - height < 1.0, "{height}");
+    }
+
+    #[test]
+    fn regions_copy_their_own_locus() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        settle(&mut genie);
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
+        let id = marks(&genie)[0].id;
+        go(&mut genie, "chr2:1-50");
+        settle(&mut genie);
+        let _ = genie.update(Message::Copy(Copying::Locus(Some(id))));
+        assert!(shows(&genie, "Copied chr1:101-200."));
+    }
+
+    #[test]
+    fn long_views_are_too_long_to_copy() {
+        let records = vec![FaiRecord {
+            name: "chr1".to_owned(),
+            length: 2_000_000,
+            offset: 6,
+            line_bases: 60,
+            line_width: 61,
+        }];
+        let big = Reference::fasta(PathBuf::from("big.fa"), records).unwrap();
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(Arc::new(big))));
+        let _ = genie.update(Message::Copy(Copying::Sequence(None)));
+        assert!(shows(
+            &genie,
+            "genie copies up to 1 Mb of sequence. Zoom in, or choose a smaller region."
+        ));
+    }
+
+    fn right_click(ui: &mut iced_test::Simulator<'_, Message>, at: Point) {
+        ui.point_at(at);
+        let _ = ui.simulate(vec![
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+                iced::mouse::Button::Right,
+            )),
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                iced::mouse::Button::Right,
+            )),
+        ]);
+    }
+
+    #[test]
+    fn right_clicks_on_the_ruler_and_on_regions_open_the_copy_menu() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        settle(&mut genie);
+        let id = marks(&genie)[0].id;
+        let mut ui = simulator(genie.view());
+        let ruler = ui.find(selector::id("ruler")).unwrap().bounds().center();
+        right_click(&mut ui, ruler);
+        let row = ui.find("Region 1").unwrap().bounds().center();
+        right_click(&mut ui, row);
+        let menus: Vec<Message> = ui
+            .into_messages()
+            .filter(|message| matches!(message, Message::CopyMenu(..)))
+            .collect();
+        assert_eq!(
+            menus,
+            [
+                Message::CopyMenu(None, ruler),
+                Message::CopyMenu(Some(id), row)
+            ]
+        );
     }
 
     #[test]

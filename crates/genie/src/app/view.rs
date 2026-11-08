@@ -199,6 +199,7 @@ impl Genie {
         if let Some(menu) = self
             .track_menu()
             .or_else(|| self.reading_menu())
+            .or_else(|| self.copy_menu())
             .or_else(panel)
             .or_else(|| self.address_view())
             .or_else(|| self.genome_menu())
@@ -495,15 +496,14 @@ impl Genie {
             });
         }
         primitives.extend(ruler::scene(viewport, RULER_HEIGHT));
-        container(
-            scene::view(primitives, RULER_HEIGHT)
-                .on_press(|share| Message::Ruler(Sweep::Pressed(share)))
-                .on_drag(|share| Message::Ruler(Sweep::Dragged(share)))
-                .on_release(Message::Ruler(Sweep::Released))
-                .crosshair(),
-        )
-        .id("ruler")
-        .into()
+        let ruler = scene::view(primitives, RULER_HEIGHT)
+            .on_press(|share| Message::Ruler(Sweep::Pressed(share)))
+            .on_drag(|share| Message::Ruler(Sweep::Dragged(share)))
+            .on_release(Message::Ruler(Sweep::Released))
+            .crosshair();
+        container(Context::new(ruler, |at| Message::CopyMenu(None, at)))
+            .id("ruler")
+            .into()
     }
 
     fn overview(session: &Session) -> Element<'_, Message> {

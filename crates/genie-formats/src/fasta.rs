@@ -7,6 +7,8 @@ use crate::bgzf::Bgzf;
 use crate::fai::FaiRecord;
 use crate::gzi;
 
+const LINE: usize = 60;
+
 pub fn fetch(
     reader: &mut (impl Read + Seek),
     record: &FaiRecord,
@@ -30,6 +32,15 @@ pub fn fetch_bgzf(
     };
     reader.seek(index.virtual_offset(start)?)?;
     bases(reader, length)
+}
+
+pub fn record(header: &str, bases: &[u8]) -> String {
+    let mut text = format!(">{header}\n");
+    for line in bases.chunks(LINE) {
+        text.push_str(&String::from_utf8_lossy(line));
+        text.push('\n');
+    }
+    text
 }
 
 fn span(record: &FaiRecord, region: Region) -> Option<(u64, usize)> {
@@ -59,7 +70,7 @@ mod tests {
 
     use genie_core::Region;
 
-    use super::{fetch, fetch_bgzf};
+    use super::{fetch, fetch_bgzf, record};
     use crate::bgzf::{self, Bgzf};
     use crate::{fai, gzi};
 
@@ -99,6 +110,15 @@ mod tests {
         assert_eq!(bases(TEXT, 0, 10, 20), "GT");
         assert_eq!(bases(TEXT, 0, 5, 5), "");
         assert_eq!(bases(TEXT, 0, 30, 40), "");
+    }
+
+    #[test]
+    fn records_have_a_header_and_lines_of_sixty() {
+        assert_eq!(record("chr1:1-4", b"ACGT"), ">chr1:1-4\nACGT\n");
+        let long = [b'A'; 130];
+        let lines: Vec<usize> = record("x", &long).lines().map(str::len).collect();
+        assert_eq!(lines, [2, 60, 60, 10]);
+        assert_eq!(record("x", b""), ">x\n");
     }
 
     #[test]
