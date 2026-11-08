@@ -850,6 +850,9 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
 }
 
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
+    if source.location.is_remote() {
+        return Ok(Names::default());
+    }
     let entries = match &source.format {
         Format::Features(file) => file.names(&source.location)?,
         Format::Variants(file) => file.names(&source.location)?,
@@ -885,6 +888,7 @@ mod tests {
         Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load, lookup,
         names, neighbor, open, spans, step,
     };
+    use crate::location::Location;
     use crate::scratch::Scratch;
 
     fn region(start: u64, end: u64) -> Region {
@@ -1449,6 +1453,32 @@ mod tests {
             neighbor(&reads, &names, &assembly, 0, 0, true).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn remote_tracks_load_but_skip_name_scans() {
+        let files = ["genes.bed.gz", "genes.bed.gz.tbi"]
+            .map(|name| (format!("/{name}"), std::fs::read(fixture(name)).unwrap()))
+            .to_vec();
+        let server = crate::server::serve(files);
+        let remote = open(Location::parse(&server.url("/genes.bed.gz")).unwrap()).unwrap();
+        let local = open(fixture("genes.bed.gz")).unwrap();
+        let assembly = three_contigs();
+        assert_eq!(names(&remote, &assembly).unwrap(), Names::default());
+        assert_ne!(names(&local, &assembly).unwrap(), Names::default());
+        let window = region(0, 200_000);
+        let load = |source: &Source| {
+            let loaded = load(source, "chr1", window, Options::default(), 1, true, |_| {
+                Err("There is no reference.".to_owned())
+            })
+            .unwrap();
+            let Content::Features(annotation) = loaded.content else {
+                panic!("expected features");
+            };
+            annotation.features
+        };
+        assert_ne!(load(&local).len(), 0);
+        assert_eq!(load(&remote), load(&local));
     }
 
     #[test]

@@ -141,6 +141,7 @@ impl Reference {
 #[cfg(test)]
 mod tests {
     use super::open;
+    use crate::location::Location;
     use crate::scratch::Scratch;
 
     const ACGT_2BIT: [u8; 39] = [
@@ -243,6 +244,47 @@ mod tests {
         assert_eq!(reference.assembly.contigs()[0].length, 4);
         let region = genie_core::Region::new(0, 4).unwrap();
         assert_eq!(reference.fetch(0, region).unwrap(), b"ACGT");
+    }
+
+    #[test]
+    fn remote_references_read_their_indexes_from_the_server() {
+        let fixture = |name: &str| {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../genie-formats/tests/data")
+                .join(name);
+            (format!("/{name}"), std::fs::read(path).unwrap())
+        };
+        let server = crate::server::serve(vec![
+            ("/ref.fa".to_owned(), b">a\nACGT\n>b\nGG\n".to_vec()),
+            (
+                "/ref.fa.fai".to_owned(),
+                b"a\t4\t3\t4\t5\nb\t2\t11\t2\t3\n".to_vec(),
+            ),
+            ("/ref.2bit".to_owned(), ACGT_2BIT.to_vec()),
+            ("/bare.fa".to_owned(), b">a\nACGT\n".to_vec()),
+            fixture("reference.fa.gz"),
+            fixture("reference.fa.gz.fai"),
+            fixture("reference.fa.gz.gzi"),
+        ]);
+        let at = |path: &str| Location::parse(&server.url(path)).unwrap();
+        let fasta = open(at("/ref.fa"), None, &mut |_| {}).unwrap();
+        assert_eq!(fasta.name, "ref.fa");
+        let region = genie_core::Region::new(0, 2).unwrap();
+        assert_eq!(fasta.fetch(1, region).unwrap(), b"GG");
+        let twobit = open(at("/ref.2bit"), None, &mut |_| {}).unwrap();
+        let region = genie_core::Region::new(0, 4).unwrap();
+        assert_eq!(twobit.fetch(0, region).unwrap(), b"ACGT");
+        let remote = open(at("/reference.fa.gz"), None, &mut |_| {}).unwrap();
+        let local_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../genie-formats/tests/data/reference.fa.gz");
+        let local = open(local_path, None, &mut |_| {}).unwrap();
+        assert_eq!(remote.assembly, local.assembly);
+        let region = genie_core::Region::new(1_000, 1_100).unwrap();
+        assert_eq!(remote.fetch(0, region), local.fetch(0, region));
+        let error = open(at("/bare.fa"), None, &mut |_| {}).unwrap_err();
+        let expected =
+            "genie needs the index bare.fa.fai next to the file. The server answered 404";
+        assert!(error.starts_with(expected), "{error}");
     }
 
     #[test]

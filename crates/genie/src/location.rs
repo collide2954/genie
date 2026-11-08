@@ -33,6 +33,10 @@ impl Location {
         }
     }
 
+    pub fn is_remote(&self) -> bool {
+        matches!(self, Self::Url(_))
+    }
+
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
@@ -135,6 +139,7 @@ mod tests {
         let file = Location::parse(" /data/reads.bam ").unwrap();
         assert_eq!(file, Location::File(PathBuf::from("/data/reads.bam")));
         assert_eq!(file.name(), "reads.bam");
+        assert!(!file.is_remote());
         assert_eq!(
             file.with_suffix(".bai"),
             Location::File(PathBuf::from("/data/reads.bam.bai"))
@@ -144,6 +149,7 @@ mod tests {
             Location::File(PathBuf::from("/data/reads.bai"))
         );
         let url = Location::parse("https://example.org/x/reads.bam?k=1").unwrap();
+        assert!(url.is_remote());
         assert_eq!(url.name(), "reads.bam");
         assert_eq!(
             url.with_suffix(".bai").to_string(),

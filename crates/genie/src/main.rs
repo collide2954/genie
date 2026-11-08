@@ -19,6 +19,9 @@ mod saved;
 mod scene;
 #[cfg(test)]
 mod scratch;
+#[cfg(test)]
+#[path = "../../genie-formats/tests/support/server.rs"]
+mod server;
 mod settings;
 mod shortcuts;
 mod style;
