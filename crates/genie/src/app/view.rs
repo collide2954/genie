@@ -400,9 +400,9 @@ impl Genie {
         let tracks = column![
             container(
                 scene::view(overview::scene(viewport, OVERVIEW_HEIGHT), OVERVIEW_HEIGHT)
-                    .on_press(Message::OverviewPressed)
-                    .on_drag(Message::OverviewDragged)
-                    .on_release(Message::OverviewReleased)
+                    .on_press(|share| Message::Overview(Sweep::Pressed(share)))
+                    .on_drag(|share| Message::Overview(Sweep::Dragged(share)))
+                    .on_release(Message::Overview(Sweep::Released))
             )
             .id("overview"),
             self.ruler(viewport),

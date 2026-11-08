@@ -266,9 +266,7 @@ pub enum Message {
     LocusSubmitted,
     Command(Command),
     Frame(Instant),
-    OverviewPressed(f32),
-    OverviewDragged(f32),
-    OverviewReleased,
+    Overview(Sweep),
     Ruler(Sweep),
     FileHovered,
     FileHoverEnded,
@@ -474,16 +472,7 @@ impl Genie {
             Message::SuggestionChosen(position) => return self.choose(position),
             Message::Command(command) => return self.command(command),
             Message::Frame(now) => self.frame(now),
-            Message::OverviewPressed(share) => {
-                self.drop_draft();
-                self.on_session(|session| session.grab(share));
-                return self.fetch();
-            }
-            Message::OverviewDragged(share) => {
-                self.on_session(|session| session.slide(share));
-                return self.fetch();
-            }
-            Message::OverviewReleased => self.on_session(|session| session.grip = None),
+            Message::Overview(sweep) => return self.sweep_overview(sweep),
             Message::Ruler(sweep) => return self.sweep_ruler(sweep),
             Message::ExportPicked(path) => return self.export_to(path),
             Message::SessionPicked(path) => return self.session_picked(path),
@@ -1184,9 +1173,9 @@ mod tests {
     fn dragging_the_overview_window_moves_the_view() {
         let mut genie = opened();
         let _ = genie.update(Message::Zoom(4.0, 0.0));
-        let _ = genie.update(Message::OverviewPressed(0.0625));
-        let _ = genie.update(Message::OverviewDragged(0.5));
-        let _ = genie.update(Message::OverviewReleased);
+        let _ = genie.update(Message::Overview(Sweep::Pressed(0.0625)));
+        let _ = genie.update(Message::Overview(Sweep::Dragged(0.5)));
+        let _ = genie.update(Message::Overview(Sweep::Released));
         assert!(shows(&genie, "chr1:438-688"));
     }
 
@@ -1194,7 +1183,7 @@ mod tests {
     fn pressing_the_overview_outside_the_window_centers_there() {
         let mut genie = opened();
         let _ = genie.update(Message::Zoom(4.0, 0.0));
-        let _ = genie.update(Message::OverviewPressed(0.75));
+        let _ = genie.update(Message::Overview(Sweep::Pressed(0.75)));
         assert!(shows(&genie, "chr1:626-875"));
     }
 
@@ -1202,9 +1191,9 @@ mod tests {
     fn overview_drags_stop_at_release() {
         let mut genie = opened();
         let _ = genie.update(Message::Zoom(4.0, 0.0));
-        let _ = genie.update(Message::OverviewPressed(0.1));
-        let _ = genie.update(Message::OverviewReleased);
-        let _ = genie.update(Message::OverviewDragged(0.9));
+        let _ = genie.update(Message::Overview(Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Overview(Sweep::Released));
+        let _ = genie.update(Message::Overview(Sweep::Dragged(0.9)));
         assert!(shows(&genie, "chr1:1-250"));
     }
 

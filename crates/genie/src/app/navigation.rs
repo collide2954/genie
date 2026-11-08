@@ -198,6 +198,21 @@ impl Genie {
         self.fetch()
     }
 
+    pub(super) fn sweep_overview(&mut self, sweep: Sweep) -> Task<Message> {
+        match sweep {
+            Sweep::Pressed(share) => {
+                self.drop_draft();
+                self.on_session(|session| session.grab(share));
+            }
+            Sweep::Dragged(share) => self.on_session(|session| session.slide(share)),
+            Sweep::Released => {
+                self.on_session(|session| session.grip = None);
+                return Task::none();
+            }
+        }
+        self.fetch()
+    }
+
     pub(super) fn sweep_ruler(&mut self, sweep: Sweep) -> Task<Message> {
         let Some(session) = &self.session else {
             return Task::none();
