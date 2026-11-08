@@ -11,9 +11,18 @@ use crate::location::{Location, Reader};
 
 #[derive(Debug)]
 pub enum FeatureFile {
-    Indexed { kind: Kind, index: tabix::Index },
-    Table { kind: Kind, table: Table<Feature> },
-    BigBed { index: bbi::Index },
+    Indexed {
+        kind: Kind,
+        index: tabix::Index,
+    },
+    Table {
+        kind: Kind,
+        table: Table<Feature>,
+        names: Vec<Entry>,
+    },
+    BigBed {
+        index: bbi::Index,
+    },
 }
 
 impl FeatureFile {
@@ -24,9 +33,9 @@ impl FeatureFile {
             )
         })?;
         if !is_compressed(name) {
-            let table = features::read_table(kind, plain(location, name)?)
+            let (table, names) = features::read_table(kind, plain(location, name)?)
                 .map_err(|error| format!("The file {name} is not valid. {error}"))?;
-            return Ok(Self::Table { kind, table });
+            return Ok(Self::Table { kind, table, names });
         }
         let index = tabix_index(location, name)?;
         Ok(Self::Indexed { kind, index })
@@ -115,7 +124,7 @@ impl FeatureFile {
     pub fn names(&self, location: &Location) -> Result<Vec<Entry>, String> {
         match self {
             Self::Indexed { kind, .. } => features::names(*kind, Bgzf::new(location.open()?)),
-            Self::Table { kind, .. } => features::names(*kind, BufReader::new(location.open()?)),
+            Self::Table { names, .. } => Ok(names.clone()),
             Self::BigBed { index } => {
                 let size = location.size().unwrap_or(u64::MAX);
                 if index.has_lookup() || size > PLAIN_LIMIT {

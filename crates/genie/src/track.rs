@@ -1638,6 +1638,19 @@ mod tests {
     }
 
     #[test]
+    fn plain_feature_files_need_no_second_read_for_names() {
+        let scratch = Scratch::new("plain-names");
+        let gff = "chr1\t.\tgene\t11\t20\t.\t+\t.\tID=g1;Name=geneA\n";
+        for (name, text) in [("genes.bed", "chr1\t10\t20\tgeneA\n"), ("genes.gff3", gff)] {
+            let path = scratch.file(name, text);
+            let source = open(path.clone()).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            let names = names(&source, &assembly()).unwrap();
+            assert_eq!(names.find("genea").unwrap().contig, 0, "{name}");
+        }
+    }
+
+    #[test]
     fn large_plain_files_need_tabix() {
         assert_eq!(fits("genes.bed", 50 << 20), Ok(()));
         assert_eq!(

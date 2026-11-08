@@ -29,15 +29,21 @@ pub fn names(kind: Kind, mut reader: impl BufRead) -> Result<Vec<Entry>, Error> 
             break;
         }
         entries.extend(match kind {
-            Kind::Bed => bed_name(line),
-            Kind::Gff | Kind::Gtf => gff_name(kind.records()(line).ok().flatten()),
+            Kind::Bed => bed::parse(line)
+                .ok()
+                .flatten()
+                .and_then(|(contig, feature)| bed_name(contig, &feature)),
+            Kind::Gff | Kind::Gtf => kind.records()(line)
+                .ok()
+                .flatten()
+                .as_ref()
+                .and_then(gff_name),
         });
     }
     Ok(entries)
 }
 
-fn bed_name(line: &str) -> Option<Entry> {
-    let (contig, feature) = bed::parse(line).ok()??;
+fn bed_name(contig: &str, feature: &Feature) -> Option<Entry> {
     (!feature.name().is_empty()).then(|| Entry {
         name: feature.name().to_owned(),
         contig: contig.to_owned(),
@@ -45,8 +51,7 @@ fn bed_name(line: &str) -> Option<Entry> {
     })
 }
 
-fn gff_name(record: Option<gff::Record>) -> Option<Entry> {
-    let record = record?;
+fn gff_name(record: &gff::Record) -> Option<Entry> {
     if gff::is_part(&record.kind) {
         return None;
     }
@@ -54,7 +59,7 @@ fn gff_name(record: Option<gff::Record>) -> Option<Entry> {
     Some(Entry {
         name: name.to_owned(),
         span: record.span,
-        contig: record.contig,
+        contig: record.contig.clone(),
     })
 }
 
@@ -98,8 +103,12 @@ impl Kind {
     }
 }
 
-pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>, Error> {
+pub fn read_table(
+    kind: Kind,
+    mut reader: impl BufRead,
+) -> Result<(Table<Feature>, Vec<Entry>), Error> {
     let mut rows = Vec::new();
+    let mut entries = Vec::new();
     let mut groups: Vec<(String, Vec<gff::Record>)> = Vec::new();
     let mut slots = HashMap::new();
     let mut bytes = Vec::new();
@@ -122,11 +131,13 @@ pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>
         match kind {
             Kind::Bed => {
                 if let Some((contig, feature)) = bed::parse(line).map_err(failed)? {
+                    entries.extend(bed_name(contig, &feature));
                     rows.push((contig.to_owned(), feature.span(), feature));
                 }
             }
             Kind::Gff | Kind::Gtf => {
                 if let Some(record) = kind.records()(line).map_err(failed)? {
+                    entries.extend(gff_name(&record));
                     let slot = *slots.entry(record.contig.clone()).or_insert_with(|| {
                         groups.push((record.contig.clone(), Vec::new()));
                         groups.len() - 1
@@ -141,7 +152,7 @@ pub fn read_table(kind: Kind, mut reader: impl BufRead) -> Result<Table<Feature>
             rows.push((contig.clone(), feature.span(), feature));
         }
     }
-    Ok(Table::new(rows))
+    Ok((Table::new(rows), entries))
 }
 
 pub fn query<R: Read + Seek>(
@@ -281,7 +292,26 @@ mod tests {
 
     fn table(kind: Kind, lines: &[&str]) -> Result<Table<Feature>, Error> {
         let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
-        read_table(kind, text.as_bytes())
+        read_table(kind, text.as_bytes()).map(|(table, _)| table)
+    }
+
+    #[test]
+    fn tables_give_the_names_of_the_same_read() {
+        let bed = "#chrom\nchr1\t10\t20\tgeneA\nchr1\t30\t40\nchr2\t5\t9\tgeneB\n";
+        let gff = [
+            "##gff-version 3",
+            "chr1\t.\tgene\t1001\t2000\t.\t+\t.\tID=g1;Name=ABC",
+            "chr1\t.\tmRNA\t1001\t2000\t.\t+\t.\tID=t1;Parent=g1;Name=ABC-201",
+            "chr1\t.\texon\t1001\t1200\t.\t+\t.\tParent=t1;Name=exon1",
+            "chr1\t.\tlnc_RNA\t3001\t4000\t.\t-\t.\tID=t2;gene_name=XYZ",
+            "",
+        ]
+        .join("\n");
+        for (kind, text) in [(Kind::Bed, bed), (Kind::Gff, gff.as_str())] {
+            let (_, found) = read_table(kind, text.as_bytes()).unwrap();
+            assert_eq!(found, names(kind, text.as_bytes()).unwrap());
+            assert!(found.len() >= 2);
+        }
     }
 
     fn named(features: &[Feature]) -> Vec<&str> {

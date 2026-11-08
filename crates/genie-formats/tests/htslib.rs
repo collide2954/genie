@@ -121,7 +121,8 @@ fn gtf_gives_the_same_transcripts_as_gff3() {
         assert_ne!(expected.len(), 0, "{wanted}");
         assert_eq!(found, expected, "{wanted}");
     }
-    let table = features::read_table(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
+    let (table, kept) =
+        features::read_table(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
     let whole = Region::new(0, WHOLE).unwrap();
     let (_, expected) =
         features::query(Kind::Gff, &gff, &mut reader("genes.gff3.gz"), "chr1", whole).unwrap();
@@ -129,6 +130,7 @@ fn gtf_gives_the_same_transcripts_as_gff3() {
     let names = features::names(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
     let found: Vec<&str> = names.iter().map(|entry| entry.name.as_str()).collect();
     assert!(found.contains(&"GENE1003") && found.contains(&"GENE1010-202"));
+    assert_eq!(kept, names);
 }
 
 fn letter(op: Op) -> char {
