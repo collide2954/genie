@@ -20,6 +20,7 @@ pub struct Assembly {
     contigs: Vec<Contig>,
     names: HashMap<String, usize>,
     aliases: HashMap<String, Option<usize>>,
+    extra: HashMap<String, usize>,
 }
 
 impl Assembly {
@@ -41,7 +42,23 @@ impl Assembly {
             contigs,
             names,
             aliases,
+            extra: HashMap::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_aliases(mut self, rows: &[Vec<String>]) -> Self {
+        for row in rows {
+            let Some(index) = row.iter().find_map(|name| self.names.get(name).copied()) else {
+                continue;
+            };
+            for name in row {
+                if !self.names.contains_key(name) {
+                    self.extra.entry(name.clone()).or_insert(index);
+                }
+            }
+        }
+        self
     }
 
     pub fn contigs(&self) -> &[Contig] {
@@ -51,6 +68,7 @@ impl Assembly {
     pub fn find(&self, name: &str) -> Option<usize> {
         self.names
             .get(name)
+            .or_else(|| self.extra.get(name))
             .copied()
             .or_else(|| self.aliases.get(&alias(name)).copied().flatten())
     }
@@ -241,6 +259,23 @@ mod tests {
     fn assemblies_with_the_same_contigs_are_equal() {
         assert_eq!(assembly(&["chr1", "chr2"]), assembly(&["chr1", "chr2"]));
         assert_ne!(assembly(&["chr1"]), assembly(&["chr2"]));
+    }
+
+    #[test]
+    fn alias_tables_find_contigs_by_other_names() {
+        let row = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+        let rows: Vec<Vec<String>> = vec![
+            row(&["chr1", "1", "CM000663.2", "NC_000001.11"]),
+            row(&["chrUn_x", "GL000001.1"]),
+            row(&["NC_000002.12", "chr2", "CM000664.2"]),
+        ];
+        let assembly = assembly(&["chr1", "chr2", "CM000664.2"]).with_aliases(&rows);
+        assert_eq!(assembly.find("NC_000001.11"), Some(0));
+        assert_eq!(assembly.find("CM000663.2"), Some(0));
+        assert_eq!(assembly.find("NC_000002.12"), Some(1));
+        assert_eq!(assembly.find("CM000664.2"), Some(2));
+        assert_eq!(assembly.find("GL000001.1"), None);
+        assert_eq!(assembly.find("1"), Some(0));
     }
 
     #[test]
