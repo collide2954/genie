@@ -39,6 +39,46 @@ pub fn write(mut writer: impl Write, entries: &[Entry]) -> io::Result<()> {
     writer.flush()
 }
 
+pub fn write_features<'a>(
+    mut writer: impl Write,
+    rows: impl IntoIterator<Item = (&'a str, &'a Feature)>,
+) -> io::Result<()> {
+    for (contig, feature) in rows {
+        let span = feature.span();
+        let thick = feature
+            .coding()
+            .unwrap_or_else(|| Region::between(span.start(), span.start()));
+        let strand = match feature.strand() {
+            Strand::Forward => '+',
+            Strand::Reverse => '-',
+            Strand::Unknown => '.',
+        };
+        let color = feature
+            .color()
+            .map_or_else(|| "0".to_owned(), |[r, g, b]| format!("{r},{g},{b}"));
+        let blocks = feature.blocks();
+        write!(
+            writer,
+            "{contig}\t{}\t{}\t{}\t0\t{strand}\t{}\t{}\t{color}\t{}\t",
+            span.start(),
+            span.end(),
+            feature.name().replace(['\t', '\r', '\n'], " "),
+            thick.start(),
+            thick.end(),
+            blocks.len()
+        )?;
+        for block in blocks {
+            write!(writer, "{},", block.len())?;
+        }
+        writer.write_all(b"\t")?;
+        for block in blocks {
+            write!(writer, "{},", block.start() - span.start())?;
+        }
+        writeln!(writer)?;
+    }
+    writer.flush()
+}
+
 pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
     if line.is_empty()
         || line.starts_with('#')
@@ -128,7 +168,7 @@ fn blocks(start: u64, count: &str, sizes: &str, starts: &str) -> Result<Vec<Regi
 mod tests {
     use genie_core::{Feature, Region, Strand};
 
-    use super::{parse, regions, write};
+    use super::{parse, regions, write, write_features};
     use crate::features::Entry;
     use crate::{Error, Reason};
 
@@ -167,6 +207,31 @@ mod tests {
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
+    }
+
+    #[test]
+    fn features_write_as_bed12_and_read_back() {
+        let gene = Feature::new("ABC1", region(100, 200), Strand::Reverse)
+            .with_blocks(vec![region(100, 120), region(170, 200)])
+            .with_coding(Some(region(110, 190)))
+            .with_color(Some([10, 20, 30]));
+        let noncoding = Feature::new("lnc\tRNA", region(5, 9), Strand::Unknown)
+            .with_blocks(vec![region(5, 9)])
+            .with_coding(None);
+        let mut written = Vec::new();
+        write_features(&mut written, [("chr1", &gene), ("chr2", &noncoding)]).unwrap();
+        let text = String::from_utf8(written).unwrap();
+        assert_eq!(
+            text,
+            "chr1\t100\t200\tABC1\t0\t-\t110\t190\t10,20,30\t2\t20,30,\t0,70,\n\
+             chr2\t5\t9\tlnc RNA\t0\t.\t5\t5\t0\t1\t4,\t0,\n"
+        );
+        let mut lines = text.lines();
+        assert_eq!(parse(lines.next().unwrap()), Ok(Some(("chr1", gene))));
+        assert_eq!(
+            parse(lines.next().unwrap()),
+            Ok(Some(("chr2", noncoding.with_name("lnc RNA"))))
+        );
     }
 
     #[test]
