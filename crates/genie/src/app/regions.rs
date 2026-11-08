@@ -2,14 +2,14 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use genie_core::{Locus, Mark, Span, Target, grouped};
+use genie_core::{Locus, Mark, Region, Span, Target, Viewport, grouped};
 use genie_formats::bed;
 use genie_formats::features::Entry;
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    Column, button, column, container, mouse_area, operation, row, scrollable, space, text,
-    text_input,
+    Column, Stack, button, column, container, mouse_area, operation, pin, row, scrollable, space,
+    text, text_input, tooltip,
 };
 use iced::{Alignment, Border, Element, Length, Task, Theme, mouse};
 
@@ -27,17 +27,16 @@ const NAME: &str = "region-name";
 const CLOSE_SIZE: f32 = 20.0;
 const CLOSE_ICON: f32 = 12.0;
 const LIMIT: u64 = 50 << 20;
+const BAND_HEIGHT: f32 = 6.0;
+const BAND_MIN: f32 = 2.0;
 
 impl Genie {
     pub(super) fn regions(&mut self, action: Regions) -> Task<Message> {
         match action {
             Regions::Toggle => self.show_sidebar(self.sidebar.is_none()),
             Regions::Add => {
-                if let Some(session) = &mut self.session {
-                    let visit = session.visit();
-                    let id = session.marks.add(visit.contig, visit.region, None);
-                    self.show_sidebar(true);
-                    self.sidebar.get_or_insert_default().chosen = Some(id);
+                if let Some(visit) = self.session.as_ref().map(Session::visit) {
+                    return self.mark_region(visit.contig, visit.region);
                 }
             }
             Regions::Choose(id) => {
@@ -102,6 +101,15 @@ impl Genie {
                 });
             }
             Regions::ExportPicked(Some(path)) => return self.export_regions(&with_bed(path)),
+        }
+        Task::none()
+    }
+
+    pub(super) fn mark_region(&mut self, contig: usize, region: Region) -> Task<Message> {
+        if let Some(session) = &mut self.session {
+            let id = session.marks.add(contig, region, None);
+            self.show_sidebar(true);
+            self.sidebar.get_or_insert_default().chosen = Some(id);
         }
         Task::none()
     }
@@ -175,6 +183,40 @@ impl Genie {
         } else {
             self.slide = motion::slide(open);
         }
+    }
+
+    pub(super) fn bands<'a>(&self, session: &'a Session) -> Option<Element<'a, Message>> {
+        let viewport = session.viewport;
+        let chosen = self.sidebar.as_ref().and_then(|sidebar| sidebar.chosen);
+        let bars: Vec<Element<'a, Message>> = session
+            .marks
+            .on(session.contig)
+            .filter_map(|mark| {
+                let (x, width) = place(viewport, mark.span)?;
+                let picked = chosen == Some(mark.id);
+                let bar = container(space())
+                    .width(width)
+                    .height(BAND_HEIGHT)
+                    .style(move |theme| band_style(theme, picked));
+                let bar = mouse_area(bar)
+                    .on_press(Message::Regions(Regions::Choose(mark.id)))
+                    .interaction(mouse::Interaction::Pointer);
+                let bar = container(chrome::tip(
+                    bar,
+                    mark.name.clone(),
+                    tooltip::Position::Bottom,
+                ))
+                .id(format!("band-{}", mark.id));
+                Some(pin(bar).x(x).into())
+            })
+            .collect();
+        let any = session.marks.on(session.contig).next().is_some();
+        any.then(|| {
+            Stack::with_children(bars)
+                .width(Length::Fill)
+                .height(BAND_HEIGHT)
+                .into()
+        })
     }
 
     pub(super) fn sidebar_width(&self) -> f32 {
@@ -293,6 +335,23 @@ impl Genie {
             .interaction(mouse::Interaction::Pointer)
             .into()
     }
+}
+
+fn place(viewport: Viewport, span: Region) -> Option<(f32, f32)> {
+    let (left, right) = (
+        viewport.to_px(span.start() as f64),
+        viewport.to_px(span.end() as f64),
+    );
+    if right < 0.0 || left > viewport.width() {
+        return None;
+    }
+    let (left, right) = (left.max(0.0), right.min(viewport.width()));
+    Some((left as f32, ((right - left) as f32).max(BAND_MIN)))
+}
+
+fn band_style(theme: &Theme, chosen: bool) -> container::Style {
+    let tokens = tokens(theme);
+    container::background(if chosen { tokens.text } else { tokens.muted })
 }
 
 pub(super) fn read(path: &Path) -> Result<Vec<Entry>, String> {

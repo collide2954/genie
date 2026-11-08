@@ -245,10 +245,13 @@ impl Genie {
                 let length = viewport.length() as f64;
                 let low = start.min(end).clamp(0.0, length).round() as u64;
                 let high = start.max(end).clamp(0.0, length).round() as u64;
-                let contig = session.contig;
+                let (contig, region) = (session.contig, Region::between(low, high.max(low + 1)));
+                if self.modifiers.shift() {
+                    return self.mark_region(contig, region);
+                }
                 return self.go_to(Target {
                     contig,
-                    span: Span::Region(Region::between(low, high.max(low + 1))),
+                    span: Span::Region(region),
                 });
             }
         }

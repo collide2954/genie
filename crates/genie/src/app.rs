@@ -79,6 +79,7 @@ pub struct Genie {
     sidebar: Option<Sidebar>,
     slide: Animation<bool>,
     now: Instant,
+    modifiers: keyboard::Modifiers,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -127,6 +128,7 @@ impl Default for Genie {
             sidebar: None,
             slide: motion::slide(false),
             now: Instant::now(),
+            modifiers: keyboard::Modifiers::default(),
         }
     }
 }
@@ -308,6 +310,7 @@ pub enum Message {
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
+    Modifiers(keyboard::Modifiers),
     CardClosed,
     NamesLoaded(u64, Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
@@ -468,6 +471,7 @@ impl Genie {
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
+            Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
             Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
@@ -659,7 +663,8 @@ fn shortcut(event: keyboard::Event) -> Option<Message> {
         keyboard::Event::KeyPressed { key, modifiers, .. } => {
             shortcuts::command(&key, modifiers).map(Message::Command)
         }
-        _ => None,
+        keyboard::Event::ModifiersChanged(modifiers) => Some(Message::Modifiers(modifiers)),
+        keyboard::Event::KeyReleased { .. } => None,
     }
 }
 
@@ -1166,6 +1171,50 @@ mod tests {
     }
 
     #[test]
+    fn shift_drags_on_the_ruler_add_a_region() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Modifiers(iced::keyboard::Modifiers::SHIFT));
+        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.3)));
+        let _ = genie.update(Message::Ruler(Sweep::Released));
+        settle(&mut genie);
+        let added = marks(&genie);
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].span, Region::between(100, 300));
+        assert_eq!(chosen(&genie), Some(added[0].id));
+        assert!(shows(&genie, "chr1:1-1,000"));
+        let _ = genie.update(Message::Modifiers(iced::keyboard::Modifiers::empty()));
+        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.3)));
+        let _ = genie.update(Message::Ruler(Sweep::Released));
+        settle(&mut genie);
+        assert_eq!(marks(&genie).len(), 1);
+        assert!(shows(&genie, "chr1:101-300"));
+    }
+
+    #[test]
+    fn region_bands_sit_under_the_ruler_and_fit_on_a_click() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        let _ = genie.update(Message::Regions(Regions::Toggle));
+        go(&mut genie, "chr1:1-1000");
+        settle(&mut genie);
+        let id = marks(&genie)[0].id;
+        let band = || iced_test::selector::id(format!("band-{id}"));
+        let mut ui = simulator(genie.view());
+        let bounds = ui.find(band()).unwrap().bounds();
+        assert!((bounds.x - 100.0).abs() < 0.5 && (bounds.width - 100.0).abs() < 0.5);
+        assert!((bounds.height - 6.0).abs() < 0.5);
+        ui.click(band()).unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Regions(Regions::Choose(id))));
+        go(&mut genie, "chr2");
+        settle(&mut genie);
+        assert!(simulator(genie.view()).find(band()).is_err());
+    }
+
+    #[test]
     fn the_sidebar_slides_in_and_out() {
         let later = |genie: &Genie| Message::Frame(genie.now + Duration::from_secs(1));
         let mut genie = opened();
@@ -1354,7 +1403,7 @@ mod tests {
             shortcut(keyboard::Event::ModifiersChanged(
                 keyboard::Modifiers::SHIFT
             )),
-            None
+            Some(Message::Modifiers(keyboard::Modifiers::SHIFT))
         );
     }
 

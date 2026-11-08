@@ -418,15 +418,18 @@ impl Genie {
             )
             .id("overview"),
             self.ruler(viewport),
-            hairline(),
+        ]
+        .push(self.bands(session))
+        .push(hairline())
+        .push(
             scrollable(self.tracks(session, false))
                 .direction(Direction::Vertical(
-                    Scrollbar::new().width(6).scroller_width(6).margin(0)
+                    Scrollbar::new().width(6).scroller_width(6).margin(0),
                 ))
                 .style(style::scrollbar)
                 .on_scroll(|viewport| Message::Scrolled(viewport.absolute_offset().y))
                 .height(Length::Fill),
-        ]
+        )
         .height(Length::Fill);
         Navigator::new(tracks, self.width)
             .on_pan(Message::Pan)
