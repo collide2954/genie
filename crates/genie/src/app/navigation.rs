@@ -174,7 +174,7 @@ impl Genie {
             return Task::none();
         };
         let before = session.visit();
-        session.show(target);
+        session.show(target, self.settings.motion);
         if session.visit() != before {
             session.history.record(before);
         }
@@ -195,10 +195,13 @@ impl Genie {
         let Some(visit) = visit else {
             return Task::none();
         };
-        session.show(Target {
-            contig: visit.contig,
-            span: Span::Region(visit.region),
-        });
+        session.show(
+            Target {
+                contig: visit.contig,
+                span: Span::Region(visit.region),
+            },
+            self.settings.motion,
+        );
         self.drop_draft();
         self.hover = None;
         self.fetch()

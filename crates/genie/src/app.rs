@@ -192,9 +192,15 @@ impl Session {
         }
     }
 
-    fn show(&mut self, target: Target) {
+    fn show(&mut self, target: Target, motion: bool) {
         if target.contig == self.contig {
-            self.glide(self.destination().jump(target.span));
+            let to = self.destination().jump(target.span);
+            if motion {
+                self.glide(to);
+            } else {
+                self.transition = None;
+                self.viewport = to;
+            }
         } else {
             let length = self.reference.assembly.contigs()[target.contig].length;
             self.transition = None;
@@ -415,6 +421,10 @@ impl Genie {
         self.tiles.clear();
         self.recent.add(reference.path.clone());
         (self.hover, self.pinned) = (None, None);
+        (self.anchor, self.sweep) = (None, None);
+        if let Some(sidebar) = &mut self.sidebar {
+            *sidebar = Sidebar::default();
+        }
         self.session = Some(Session::new(reference, self.width));
         self.resume();
         let mut tasks = vec![self.fetch(), self.remember()];
@@ -1334,6 +1344,30 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
         assert!(genie.session.as_ref().unwrap().transition.is_none());
         assert!(shows(&genie, "chr1:251-750"));
+    }
+
+    #[test]
+    fn without_motion_jumps_land_at_once() {
+        let mut genie = opened();
+        genie.settings.motion = false;
+        go(&mut genie, "chr1:101-200");
+        assert!(!genie.is_animating());
+        assert!(shows(&genie, "chr1:101-200"));
+        let _ = genie.update(Message::Command(Command::Back));
+        assert!(!genie.is_animating());
+        assert!(shows(&genie, "chr1:1-1,000"));
+    }
+
+    #[test]
+    fn a_new_reference_forgets_the_region_choice_and_jump_anchor() {
+        let mut genie = opened();
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        genie.anchor = genie.session.as_ref().map(|session| (session.visit(), 10));
+        let _ = genie.update(Message::Opened(Ok(reference())));
+        assert_eq!(chosen(&genie), None);
+        assert_eq!(genie.anchor, None);
+        assert_eq!(marks(&genie).len(), 0);
+        assert!(genie.sidebar.is_some());
     }
 
     #[test]
