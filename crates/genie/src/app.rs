@@ -365,6 +365,7 @@ pub enum Offline {
     Done(Result<(), String>),
     Stop,
     Remove,
+    Online(String, Result<Arc<Reference>, String>),
 }
 
 #[derive(Debug)]
@@ -1006,6 +1007,75 @@ mod tests {
         let _ = genie.update(Message::Offline(Offline::Remove));
         assert!(!folder.join("sequence.2bit").exists());
         assert!(shows(&genie, "Removed the offline copy of hg38."));
+    }
+
+    fn reading_offline(name: &str) -> (Genie, PathBuf, crate::scratch::Scratch) {
+        let scratch = crate::scratch::Scratch::new(name);
+        let cache = scratch.file("marker", "").parent().unwrap().to_owned();
+        let folder = cache.join("genomes").join("hg38");
+        std::fs::create_dir_all(&folder).unwrap();
+        let copy = folder.join("sequence.2bit");
+        std::fs::write(&copy, b"2bit").unwrap();
+        let mut genie = Genie {
+            cache: Some(cache),
+            ..Genie::default()
+        };
+        let reference = human(Location::File(copy.clone()), reference());
+        let _ = genie.update(Message::Opened(Ok(reference)));
+        (genie, copy, scratch)
+    }
+
+    fn human(location: Location, reference: Arc<Reference>) -> Arc<Reference> {
+        let mut human = Arc::try_unwrap(reference).unwrap();
+        human.genome = Some("hg38".to_owned());
+        human.location = location;
+        Arc::new(human)
+    }
+
+    fn ucsc() -> Location {
+        Location::parse("https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit")
+            .unwrap()
+    }
+
+    #[test]
+    fn offline_copies_in_use_go_away_once_the_genome_reads_from_ucsc() {
+        let (mut genie, copy, _scratch) = reading_offline("offline-in-use");
+        let _ = genie.update(Message::GenomeMenu);
+        assert!(shows(&genie, "Remove offline copy"));
+        let _ = genie.update(Message::Offline(Offline::Remove));
+        assert!(copy.exists());
+        let away = Err("The server answered 503 Service Unavailable.".to_owned());
+        let _ = genie.update(Message::Offline(Offline::Online("hg38".to_owned(), away)));
+        assert!(copy.exists());
+        assert!(shows(
+            &genie,
+            "genie cannot read hg38 from UCSC, so it keeps the offline copy. \
+             The server answered 503 Service Unavailable."
+        ));
+        let remote = Ok(human(ucsc(), reference()));
+        let _ = genie.update(Message::Offline(Offline::Online("hg38".to_owned(), remote)));
+        assert!(!copy.exists());
+        assert!(shows(&genie, "Removed the offline copy of hg38."));
+        assert_eq!(genie.session.as_ref().unwrap().reference.location, ucsc());
+        assert_eq!(genie.restoring, None);
+    }
+
+    #[test]
+    fn a_changed_genome_on_ucsc_opens_again_after_the_removal() {
+        let (mut genie, copy, _scratch) = reading_offline("offline-changed");
+        let _ = genie.update(Message::Offline(Offline::Remove));
+        let records = vec![FaiRecord {
+            name: "chr1".to_owned(),
+            length: 900,
+            offset: 6,
+            line_bases: 60,
+            line_width: 61,
+        }];
+        let changed = Arc::new(Reference::fasta(PathBuf::from("ref.fa"), records).unwrap());
+        let remote = Ok(human(ucsc(), changed));
+        let _ = genie.update(Message::Offline(Offline::Online("hg38".to_owned(), remote)));
+        assert!(!copy.exists());
+        assert!(genie.restoring.is_some());
     }
 
     #[test]

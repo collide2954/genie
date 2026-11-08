@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -9,6 +10,7 @@ use iced::{Element, Task};
 use crate::genome::{self, Genome};
 use crate::location::Location;
 use crate::menu;
+use crate::reference::Reference;
 
 use super::{Download, Genie, Message, Offline};
 
@@ -54,16 +56,68 @@ impl Genie {
                 else {
                     return Task::none();
                 };
-                return match genome::remove(&genome.folder(&cache)) {
-                    Ok(()) => self.inform(format!("Removed the offline copy of {}.", genome.label)),
-                    Err(error) => {
-                        self.warn(format!("The offline copy could not be removed. {error}"));
-                        Task::none()
-                    }
-                };
+                let folder = genome.folder(&cache);
+                if !self.reads(&folder) {
+                    return self.remove_copy(&genome, &folder);
+                }
+                let id = genome.id.clone();
+                return Task::perform(
+                    async move { genome::online(&genome, &folder).map(Arc::new) },
+                    move |result| Message::Offline(Offline::Online(id.clone(), result)),
+                );
             }
+            Offline::Online(id, result) => return self.online(&id, result),
         }
         Task::none()
+    }
+
+    fn reads(&self, folder: &Path) -> bool {
+        let copy = Location::File(folder.join(genome::SEQUENCE));
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.reference.location == copy)
+    }
+
+    fn online(&mut self, id: &str, result: Result<Arc<Reference>, String>) -> Task<Message> {
+        let (Some(genome), Some(cache)) = (genome::find(id), self.cache.clone()) else {
+            return Task::none();
+        };
+        let reference = match result {
+            Ok(reference) => reference,
+            Err(error) => {
+                self.warn(format!(
+                    "genie cannot read {} from UCSC, so it keeps the offline copy. {error}",
+                    genome.label
+                ));
+                return Task::none();
+            }
+        };
+        let folder = genome.folder(&cache);
+        let mut again = None;
+        if self.reads(&folder)
+            && let Some(session) = &mut self.session
+        {
+            if session.reference.assembly == reference.assembly {
+                session.reference = reference;
+            } else {
+                again = self.saved();
+            }
+        }
+        let removed = self.remove_copy(&genome, &folder);
+        match again {
+            Some(saved) => Task::batch([removed, self.restore(saved)]),
+            None => removed,
+        }
+    }
+
+    fn remove_copy(&mut self, genome: &Genome, folder: &Path) -> Task<Message> {
+        match genome::remove(folder) {
+            Ok(()) => self.inform(format!("Removed the offline copy of {}.", genome.label)),
+            Err(error) => {
+                self.warn(format!("The offline copy could not be removed. {error}"));
+                Task::none()
+            }
+        }
     }
 
     fn start_download(&mut self) -> Task<Message> {
@@ -126,26 +180,11 @@ impl Genie {
                 Offline::Start,
                 false,
             )],
-            None if genome::offline(&folder) => {
-                let local = Location::File(folder.join(genome::SEQUENCE));
-                let used = self
-                    .session
-                    .as_ref()
-                    .is_some_and(|session| session.reference.location == local);
-                if used {
-                    vec![item(
-                        "Offline copy in use".to_owned(),
-                        Offline::Remove,
-                        false,
-                    )]
-                } else {
-                    vec![item(
-                        "Remove offline copy".to_owned(),
-                        Offline::Remove,
-                        true,
-                    )]
-                }
-            }
+            None if genome::offline(&folder) => vec![item(
+                "Remove offline copy".to_owned(),
+                Offline::Remove,
+                true,
+            )],
             None => vec![item(
                 format!("Use offline ({} MB)", genome.megabytes),
                 Offline::Start,

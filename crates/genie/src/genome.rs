@@ -135,10 +135,23 @@ fn t2t() -> Genome {
 
 pub fn open(genome: &Genome, folder: &Path, now: SystemTime) -> Result<Reference, String> {
     let prepared = prepare(genome, folder, now)?;
-    let mut reference =
-        reference::open_with(prepared.sequence, &prepared.extras, None, &mut |_| {})?;
+    with_genome(genome, prepared.sequence, &prepared.extras)
+}
+
+pub fn online(genome: &Genome, folder: &Path) -> Result<Reference, String> {
+    with_genome(genome, remote(genome)?, &extras(folder)?)
+}
+
+fn with_genome(genome: &Genome, sequence: Location, extras: &Extras) -> Result<Reference, String> {
+    let mut reference = reference::open_with(sequence, extras, None, &mut |_| {})?;
     reference.genome = Some(genome.id.clone());
     Ok(reference)
+}
+
+fn remote(genome: &Genome) -> Result<Location, String> {
+    Url::parse(&genome.sequence)
+        .map(Location::Url)
+        .map_err(|error| error.to_string())
 }
 
 pub fn offline(folder: &Path) -> bool {
@@ -228,7 +241,7 @@ pub fn prepare(genome: &Genome, folder: &Path, now: SystemTime) -> Result<Prepar
     let sequence = if offline.exists() {
         Location::File(offline)
     } else {
-        Location::Url(Url::parse(&genome.sequence).map_err(|error| error.to_string())?)
+        remote(genome)?
     };
     Ok(Prepared {
         sequence,
@@ -360,7 +373,8 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::{
-        Annotation, Genome, SEQUENCE, STOPPED, all, download, find, offline, open, prepare, remove,
+        Annotation, Genome, SEQUENCE, STOPPED, all, download, find, offline, online, open, prepare,
+        remove,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -491,6 +505,33 @@ mod tests {
         assert_eq!(reference.genome.as_deref(), Some("test"));
         assert_eq!(reference.assembly.find("NC_1"), Some(0));
         assert_eq!(reference.bands(0).len(), 2);
+        assert_eq!(
+            reference
+                .fetch(0, genie_core::Region::between(0, 4))
+                .unwrap(),
+            b"ACGT"
+        );
+    }
+
+    #[test]
+    fn genomes_read_from_the_server_again_beside_an_offline_copy() {
+        let mut list = files();
+        list.push(("/t.2bit".to_owned(), ACGT_2BIT.to_vec()));
+        let server = serve(list);
+        let genome = served(&server);
+        let scratch = Scratch::new("genome-online");
+        let folder = scratch.file("marker", "").with_file_name("test");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join(SEQUENCE), ACGT_2BIT).unwrap();
+        let offline = open(&genome, &folder, SystemTime::now()).unwrap();
+        assert_eq!(offline.location, Location::File(folder.join(SEQUENCE)));
+        let reference = online(&genome, &folder).unwrap();
+        assert_eq!(
+            reference.location,
+            Location::parse(&server.url("/t.2bit")).unwrap()
+        );
+        assert_eq!(reference.genome.as_deref(), Some("test"));
+        assert_eq!(reference.assembly, offline.assembly);
         assert_eq!(
             reference
                 .fetch(0, genie_core::Region::between(0, 4))
