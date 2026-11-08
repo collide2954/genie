@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use genie_core::{Assembly, Contig, Region};
+use genie_core::{Assembly, Band, Contig, Region};
 use genie_formats::bgzf::{self, Bgzf};
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
@@ -24,6 +25,7 @@ pub struct Reference {
     pub name: String,
     pub assembly: Assembly,
     source: Source,
+    bands: Vec<Vec<Band>>,
 }
 
 impl PartialEq for Reference {
@@ -32,12 +34,39 @@ impl PartialEq for Reference {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Extras {
+    pub sizes: HashMap<String, u64>,
+    pub aliases: Vec<Vec<String>>,
+    pub bands: Vec<(String, Band)>,
+}
+
+pub fn open_with(
+    location: impl Into<Location>,
+    extras: &Extras,
+    cache: Option<&Path>,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Reference, String> {
+    let reference = sized(location.into(), &extras.sizes, cache, progress)?;
+    Ok(reference
+        .with_aliases(&extras.aliases)
+        .with_bands(&extras.bands))
+}
+
 pub fn open(
     location: impl Into<Location>,
     cache: Option<&Path>,
     progress: &mut dyn FnMut(f32),
 ) -> Result<Reference, String> {
-    let location = location.into();
+    open_with(location, &Extras::default(), cache, progress)
+}
+
+fn sized(
+    location: Location,
+    sizes: &HashMap<String, u64>,
+    cache: Option<&Path>,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Reference, String> {
     let mut file = location.open()?;
     let mut head = Vec::new();
     (&mut file)
@@ -45,7 +74,7 @@ pub fn open(
         .read_to_end(&mut head)
         .map_err(|error| error.to_string())?;
     if twobit::sniff(&head) {
-        let reader = TwoBit::read(&mut file).map_err(|error| error.to_string())?;
+        let reader = TwoBit::read_with(&mut file, sizes).map_err(|error| error.to_string())?;
         let contigs = reader
             .entries()
             .iter()
@@ -122,7 +151,33 @@ impl Reference {
             location,
             assembly: Assembly::new(contigs),
             source,
+            bands: Vec::new(),
         })
+    }
+
+    #[must_use]
+    pub fn with_aliases(mut self, rows: &[Vec<String>]) -> Self {
+        self.assembly = self.assembly.with_aliases(rows);
+        self
+    }
+
+    #[must_use]
+    pub fn with_bands(mut self, rows: &[(String, Band)]) -> Self {
+        let mut bands = vec![Vec::new(); self.assembly.contigs().len()];
+        for (contig, band) in rows {
+            if let Some(index) = self.assembly.find(contig) {
+                bands[index].push(band.clone());
+            }
+        }
+        for list in &mut bands {
+            list.sort_by_key(|band| band.span.start());
+        }
+        self.bands = bands;
+        self
+    }
+
+    pub fn bands(&self, contig: usize) -> &[Band] {
+        self.bands.get(contig).map_or(&[], Vec::as_slice)
     }
 
     pub fn fetch(&self, contig: usize, region: Region) -> Result<Vec<u8>, String> {
@@ -140,7 +195,11 @@ impl Reference {
 
 #[cfg(test)]
 mod tests {
-    use super::open;
+    use std::collections::HashMap;
+
+    use genie_core::{Band, Region, Stain};
+
+    use super::{Extras, open, open_with};
     use crate::location::Location;
     use crate::scratch::Scratch;
 
@@ -161,6 +220,53 @@ mod tests {
         assert_eq!(reference.name, "ref.fa");
         assert_eq!(reference.assembly.contigs()[1].name, "b");
         assert_eq!(reference.assembly.contigs()[1].length, 2);
+    }
+
+    #[test]
+    fn bands_and_aliases_join_the_reference() {
+        let scratch = Scratch::new("bands");
+        let file = scratch.file("ref.fa", ">chr1\nACGTACGTAC\n>chr2\nGG\n");
+        let band = |start, end, name: &str| Band {
+            span: Region::new(start, end).unwrap(),
+            name: name.to_owned(),
+            stain: Stain::Gneg,
+        };
+        let rows = vec![
+            ("chr1".to_owned(), band(5, 10, "p1")),
+            ("NC_1".to_owned(), band(0, 5, "p2")),
+            ("chr9".to_owned(), band(0, 5, "p9")),
+        ];
+        let aliases = vec![vec!["chr1".to_owned(), "NC_1".to_owned()]];
+        let reference = open(file, None, &mut |_| {})
+            .unwrap()
+            .with_aliases(&aliases)
+            .with_bands(&rows);
+        assert_eq!(reference.assembly.find("NC_1"), Some(0));
+        assert_eq!(reference.bands(0), [band(0, 5, "p2"), band(5, 10, "p1")]);
+        assert_eq!(reference.bands(1), []);
+        assert_eq!(reference.bands(7), []);
+    }
+
+    #[test]
+    fn known_sizes_aliases_and_bands_open_with_a_2bit() {
+        let scratch = Scratch::new("extras");
+        let file = scratch.file("ref.2bit", ACGT_2BIT);
+        let extras = Extras {
+            sizes: HashMap::from([("c".to_owned(), 3)]),
+            aliases: vec![vec!["c".to_owned(), "NC_9".to_owned()]],
+            bands: vec![(
+                "NC_9".to_owned(),
+                Band {
+                    span: Region::new(0, 3).unwrap(),
+                    name: "p1".to_owned(),
+                    stain: Stain::Gpos(50),
+                },
+            )],
+        };
+        let reference = open_with(file, &extras, None, &mut |_| {}).unwrap();
+        assert_eq!(reference.assembly.contigs()[0].length, 3);
+        assert_eq!(reference.assembly.find("NC_9"), Some(0));
+        assert_eq!(reference.bands(0).len(), 1);
     }
 
     #[test]

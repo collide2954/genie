@@ -408,7 +408,11 @@ impl Genie {
         let tracks = column![
             container(
                 scene::view(
-                    overview::scene(viewport, OVERVIEW_HEIGHT, &[]),
+                    overview::scene(
+                        viewport,
+                        OVERVIEW_HEIGHT,
+                        session.reference.bands(session.contig)
+                    ),
                     OVERVIEW_HEIGHT
                 )
                 .on_press(|share| Message::Overview(Sweep::Pressed(share)))
