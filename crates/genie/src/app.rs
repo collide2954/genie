@@ -2969,6 +2969,20 @@ mod tests {
     }
 
     #[test]
+    fn sessions_keep_every_panel() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200 chr2:51-150");
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.locus.as_deref(), Some("chr1:101-200 chr2:51-150"));
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        let session = restored.session.as_ref().unwrap();
+        assert_eq!(session.locus(), "chr1:101-200 chr2:51-150");
+        assert!((session.viewport.width() - 499.5).abs() < 0.01);
+    }
+
+    #[test]
     fn welcome_offers_to_restore_the_last_session() {
         let last = crate::saved::Saved {
             reference: PathBuf::from("/data/hg38.fa").into(),

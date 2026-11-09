@@ -61,16 +61,24 @@ impl Genie {
             return;
         }
         session.reading = saved.reading;
-        let assembly = &session.reference.assembly;
-        if let Some(target) = saved
-            .locus
-            .as_deref()
-            .and_then(|locus| assembly.resolve(locus).ok())
-        {
-            let length = assembly.contigs()[target.contig].length;
-            session.contig = target.contig;
-            session.viewport = session.viewport.retarget(length).jump(target.span);
+        let targets: Option<Vec<_>> = saved.locus.as_deref().and_then(|locus| {
+            locus
+                .split_whitespace()
+                .map(|part| session.reference.assembly.resolve(part).ok())
+                .collect()
+        });
+        match targets.as_deref() {
+            Some([target]) => {
+                let length = session.reference.assembly.contigs()[target.contig].length;
+                session.contig = target.contig;
+                session.viewport = session.viewport.retarget(length).jump(target.span);
+            }
+            Some(targets) if (2..=super::MAX_PANELS).contains(&targets.len()) => {
+                session.split(targets, self.width);
+            }
+            _ => {}
         }
+        let assembly = &session.reference.assembly;
         for region in &saved.regions {
             let Ok(target) = assembly.resolve(&region.locus) else {
                 continue;
