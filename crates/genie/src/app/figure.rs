@@ -95,11 +95,11 @@ impl Genie {
         page.hairline(y);
         y += 1.0;
         for track in session.tracks.iter().filter(|track| track.over.is_none()) {
-            let shape = shape(session, track, true);
+            let shape = shape(session, track, 0, true);
             let height = track.height.unwrap_or(shape.height);
             let top = y + padding;
             page.svg.clip((0.0, y, self.width, height + 2.0 * padding));
-            match body(session, track, shape, true) {
+            match body(session, track, 0, shape, true) {
                 Body::Hint(words) => page.svg.text(
                     (self.width / 2.0, top + EMPTY_HEIGHT / 2.0),
                     &words,

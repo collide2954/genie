@@ -254,6 +254,64 @@ impl Session {
         }
     }
 
+    fn view(&self, panel: usize) -> (usize, Viewport) {
+        match panel
+            .checked_sub(1)
+            .and_then(|index| self.panels.get(index))
+        {
+            Some(extra) => (extra.contig, extra.viewport),
+            None => (self.contig, self.viewport),
+        }
+    }
+
+    fn only(&mut self, panel: usize, width: f32) {
+        if let Some(extra) = panel
+            .checked_sub(1)
+            .and_then(|index| self.panels.get(index))
+            .copied()
+        {
+            let length = self.reference.assembly.contigs()[extra.contig].length;
+            self.transition = None;
+            self.contig = extra.contig;
+            self.viewport = self
+                .viewport
+                .retarget(length)
+                .jump(Span::Region(extra.viewport.visible()));
+            for track in &mut self.tracks {
+                if panel <= track.extra.len() {
+                    track.slot = track.extra.remove(panel - 1);
+                }
+            }
+        }
+        self.join(width);
+    }
+
+    fn close(&mut self, panel: usize, width: f32) {
+        if panel == 0 {
+            if let Some(next) = self.panels.first().copied() {
+                self.transition = None;
+                self.contig = next.contig;
+                self.viewport = next.viewport;
+                self.panels.remove(0);
+                for track in &mut self.tracks {
+                    track.slot = if track.extra.is_empty() {
+                        crate::track::Slot::default()
+                    } else {
+                        track.extra.remove(0)
+                    };
+                }
+            }
+        } else if panel <= self.panels.len() {
+            self.panels.remove(panel - 1);
+            for track in &mut self.tracks {
+                if panel <= track.extra.len() {
+                    track.extra.remove(panel - 1);
+                }
+            }
+        }
+        self.refit(width);
+    }
+
     fn split(&mut self, targets: &[Target], width: f32) {
         let width = f64::from(panel_width(width, targets.len()));
         let lengths: Vec<u64> = targets
@@ -285,7 +343,21 @@ impl Session {
             return;
         }
         self.panels.clear();
-        self.resize(width);
+        for track in &mut self.tracks {
+            track.extra.clear();
+        }
+        self.refit(width);
+    }
+
+    fn refit(&mut self, width: f32) {
+        let width = f64::from(panel_width(width, self.count()));
+        self.transition = None;
+        let visible = self.viewport.visible();
+        self.viewport = self.viewport.resize(width).show(visible);
+        for panel in &mut self.panels {
+            let visible = panel.viewport.visible();
+            panel.viewport = panel.viewport.resize(width).show(visible);
+        }
     }
 
     fn resize(&mut self, width: f32) {
@@ -465,6 +537,13 @@ pub enum Message {
     Port(Port),
     Rename(Renaming),
     Range(u64, Ranging),
+    Panel(usize, Paneling),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paneling {
+    Only,
+    Close,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -723,6 +802,7 @@ impl Genie {
             Message::Port(event) => return self.port(event),
             Message::Rename(renaming) => return self.rename(renaming),
             Message::Range(id, ranging) => self.range(id, ranging),
+            Message::Panel(panel, paneling) => return self.panel(panel, paneling),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -966,8 +1046,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Genie, Lane, Message, Offline, Port, Ranging, Regions, Renaming, Sweep,
-        mouse_button, shortcut, window_event,
+        Address, Copying, Genie, Lane, Message, Offline, Paneling, Port, Ranging, Regions,
+        Renaming, Sweep, mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -1744,6 +1824,28 @@ mod tests {
             Some("genie cannot find chrZ.")
         );
         assert_eq!(genie.session.as_ref().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn panel_headers_show_one_locus_or_close_a_panel() {
+        let mut genie = opened();
+        let locus = |genie: &Genie| genie.session.as_ref().unwrap().locus();
+        go(&mut genie, "chr1:101-200 chr2:1-50 chr1:501-600");
+        let _ = genie.update(Message::Panel(2, Paneling::Close));
+        assert_eq!(locus(&genie), "chr1:101-200 chr2:1-50");
+        let _ = genie.update(Message::Panel(1, Paneling::Only));
+        assert_eq!(locus(&genie), "chr2:1-50");
+        go(&mut genie, "chr1:101-200 chr2:1-50");
+        let _ = genie.update(Message::Panel(0, Paneling::Close));
+        assert_eq!(locus(&genie), "chr2:1-50");
+        assert!((genie.session.as_ref().unwrap().viewport.width() - 1_000.0).abs() < 0.01);
+        go(&mut genie, "chr1:101-200 chr2:1-50");
+        let mut ui = simulator(genie.view());
+        assert!(ui.find(selector::id("overview")).is_err());
+        assert!(ui.find(selector::id("ruler-1")).is_ok());
+        ui.click("chr2:1-50").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Panel(1, Paneling::Only)));
     }
 
     #[test]
@@ -3405,7 +3507,7 @@ mod tests {
             return None;
         };
         let columns = genie_render::signal::columns(session.viewport, &data.summaries);
-        super::view::signal_scale(session, track, &columns)
+        super::view::signal_scale(session, track, 0, &columns)
     }
 
     fn other_signal() -> Arc<Source> {

@@ -8,7 +8,7 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, MAX_PANELS, Message, Regions, Session, Suggestion, Sweep};
+use super::{Genie, MAX_PANELS, Message, Paneling, Regions, Session, Suggestion, Sweep};
 
 const SUGGESTIONS: usize = 8;
 const MIN_SWEEP: f64 = 3.0;
@@ -156,6 +156,16 @@ impl Genie {
             Some(position) => self.choose(position),
             None => self.submit(),
         }
+    }
+
+    pub(super) fn panel(&mut self, panel: usize, paneling: Paneling) -> Task<Message> {
+        let width = self.width;
+        (self.hover, self.pinned) = (None, None);
+        self.on_session(|session| match paneling {
+            Paneling::Only => session.only(panel, width),
+            Paneling::Close => session.close(panel, width),
+        });
+        self.fetch()
     }
 
     pub(super) fn resize(&mut self, width: f32) -> Task<Message> {

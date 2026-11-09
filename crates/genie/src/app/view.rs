@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
-use genie_core::{Viewport, grouped};
+use genie_core::{Locus, Span, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
@@ -32,9 +32,12 @@ use crate::track::{Change, Content, Track};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
-use super::{Genie, Lane, Message, Popup, Renaming, Session, Status, Suggestion, Sweep};
+use super::{
+    Genie, Lane, Message, PANEL_GAP, Paneling, Popup, Renaming, Session, Status, Suggestion, Sweep,
+};
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
+const HEADER_HEIGHT: f32 = 20.0;
 const NAME_WIDTH: f32 = 160.0;
 pub(super) const RULER_HEIGHT: f32 = 20.0;
 pub(super) const BASE_HEIGHT: f32 = 16.0;
@@ -445,23 +448,27 @@ impl Genie {
     }
 
     pub(super) fn tracks<'a>(&'a self, session: &'a Session, repack: bool) -> Element<'a, Message> {
-        let viewport = session.viewport;
-        let (contig, visible) = (session.contig, viewport.visible());
         let reading = session.reading;
         let padding = self.settings.density.padding();
-        let bases = sequence::scene(
-            viewport,
-            self.tiles.chunks(contig, visible),
-            BASE_HEIGHT,
-            reading.reverse,
-        );
         let frames = reading.frames();
-        let mut strands = column![scene::view(bases, BASE_HEIGHT)];
-        if !frames.is_empty() {
-            let codons = translation::scene(viewport, self.tiles.chunks(contig, visible), &frames);
-            let height = frames.len() as f32 * translation::ROW_HEIGHT;
-            strands = strands.push(scene::view(codons, height));
-        }
+        let codon_height = frames.len() as f32 * translation::ROW_HEIGHT;
+        let strands = across(session.count(), BASE_HEIGHT + codon_height, |panel| {
+            let (contig, viewport) = session.view(panel);
+            let visible = viewport.visible();
+            let bases = sequence::scene(
+                viewport,
+                self.tiles.chunks(contig, visible),
+                BASE_HEIGHT,
+                reading.reverse,
+            );
+            let mut strands = column![scene::view(bases, BASE_HEIGHT)];
+            if !frames.is_empty() {
+                let chunks = self.tiles.chunks(contig, visible);
+                let codons = translation::scene(viewport, chunks, &frames);
+                strands = strands.push(scene::view(codons, codon_height));
+            }
+            strands.into()
+        });
         let sequence = Context::new(
             stack![
                 container(strands).padding([padding, 0.0]),
@@ -499,6 +506,19 @@ impl Genie {
                 .push(line(index + 1));
         }
         data.into()
+    }
+
+    fn ruler_at<'a>(&self, session: &Session, panel: usize) -> Element<'a, Message> {
+        let (_, viewport) = session.view(panel);
+        if panel == 0 {
+            return self.ruler(viewport);
+        }
+        container(scene::view(
+            ruler::scene(viewport, RULER_HEIGHT),
+            RULER_HEIGHT,
+        ))
+        .id(format!("ruler-{panel}"))
+        .into()
     }
 
     fn ruler<'a>(&self, viewport: Viewport) -> Element<'a, Message> {
@@ -539,9 +559,22 @@ impl Genie {
     }
 
     fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
-        let viewport = session.viewport;
-        let tracks = column![Self::overview(session), self.ruler(viewport)]
-            .push(self.bands(session))
+        let count = session.count();
+        let mut top = column![];
+        if count == 1 {
+            top = top.push(Self::overview(session));
+        } else {
+            top = top
+                .push(across(count, HEADER_HEIGHT, |panel| header(session, panel)))
+                .push(hairline());
+        }
+        top = top.push(across(count, RULER_HEIGHT, |panel| {
+            self.ruler_at(session, panel)
+        }));
+        if count == 1 {
+            top = top.push(self.bands(session));
+        }
+        let tracks = top
             .push(hairline())
             .push(
                 scrollable(self.tracks(session, false))
@@ -561,6 +594,55 @@ impl Genie {
     }
 }
 
+pub(super) fn across<'a>(
+    count: usize,
+    height: f32,
+    each: impl Fn(usize) -> Element<'a, Message>,
+) -> Element<'a, Message> {
+    if count == 1 {
+        return each(0);
+    }
+    let mut columns = row![];
+    for panel in 0..count {
+        if panel > 0 {
+            columns = columns.push(
+                container(space())
+                    .width(PANEL_GAP)
+                    .height(height)
+                    .style(|theme| container::background(tokens(theme).line)),
+            );
+        }
+        columns = columns.push(container(each(panel)).width(Length::FillPortion(1)));
+    }
+    columns.into()
+}
+
+fn header(session: &Session, panel: usize) -> Element<'_, Message> {
+    let (contig, viewport) = session.view(panel);
+    let locus = Locus {
+        name: session.reference.assembly.contigs()[contig].name.clone(),
+        span: Span::Region(viewport.visible()),
+    }
+    .to_string();
+    row![
+        button(text(locus).size(11).font(font::MONO))
+            .padding([2, 6])
+            .width(Length::Fill)
+            .style(style::ghost)
+            .on_press(Message::Panel(panel, Paneling::Only)),
+        button(icon::view(Icon::Close, 10.0))
+            .width(16)
+            .height(16)
+            .padding(0)
+            .style(style::ghost)
+            .on_press(Message::Panel(panel, Paneling::Close)),
+    ]
+    .height(HEADER_HEIGHT)
+    .padding([0, 4])
+    .align_y(Alignment::Center)
+    .into()
+}
+
 pub(super) enum Body {
     Hint(String),
     Space(f32),
@@ -574,16 +656,20 @@ pub(super) enum Body {
 fn track_body<'a>(
     session: &Session,
     track: &'a Track,
+    panel: usize,
     shape: Shape,
     repack: bool,
 ) -> Element<'a, Message> {
     let id = track.id;
     let interactive = |primitives, height| {
-        scene::view(primitives, height)
-            .on_hover(move |pointer| Message::TrackHovered(id, pointer))
+        let view = scene::view(primitives, height);
+        if panel > 0 {
+            return view;
+        }
+        view.on_hover(move |pointer| Message::TrackHovered(id, pointer))
             .on_click(move |pointer| Message::TrackClicked(id, pointer))
     };
-    match body(session, track, shape, repack) {
+    match body(session, track, panel, shape, repack) {
         Body::Hint(words) => hint(words),
         Body::Space(height) => space().width(Length::Fill).height(height).into(),
         Body::Scene(primitives, height) => interactive(primitives, height).into(),
@@ -597,11 +683,17 @@ fn track_body<'a>(
     }
 }
 
-pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool) -> Body {
-    let viewport = session.viewport;
-    let contig = session.contig;
-    let mode = track.mode(contig);
-    if let Some(error) = &track.slot.error {
+pub(super) fn body(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    shape: Shape,
+    repack: bool,
+) -> Body {
+    let (contig, viewport) = session.view(panel);
+    let slot = track.slot(panel);
+    let mode = track.mode_at(panel, contig);
+    if let Some(error) = &slot.error {
         return Body::Hint(error.clone());
     }
     if viewport.visible().len() > track.source.span() {
@@ -616,11 +708,11 @@ pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool)
         };
         return Body::Hint(words.to_owned());
     }
-    match track.data(contig).map(|data| &data.content) {
+    match slot.data(contig).map(|data| &data.content) {
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
             let columns = signal_columns(track, viewport, &data.summaries);
-            let Some(scale) = signal_scale(session, track, &columns) else {
+            let Some(scale) = signal_scale(session, track, panel, &columns) else {
                 return Body::Space(height);
             };
             let width = viewport.width() as f32;
@@ -630,7 +722,9 @@ pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool)
             } else {
                 let others: Vec<(Vec<signal::Column>, Hue)> = members
                     .iter()
-                    .filter_map(|member| Some((member_columns(session, member)?, member.hue)))
+                    .filter_map(|member| {
+                        Some((member_columns(session, member, panel)?, member.hue))
+                    })
                     .collect();
                 let mut layers: Vec<(&[signal::Column], Hue)> = vec![(&columns, track.hue)];
                 layers.extend(
@@ -670,14 +764,14 @@ pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool)
                 let (rows, groups) = if repack {
                     let (rows, _, groups) = pile.packed(viewport.visible());
                     let starts: Vec<usize> = groups.iter().map(|(first, _)| *first).collect();
-                    packed = match &track.slot.order {
+                    packed = match &slot.order {
                         Some((at, _)) => sort_rows(&pile.reads, &rows, &starts, *at),
                         None => rows,
                     };
                     bands = groups;
                     (packed.as_slice(), bands.as_slice())
                 } else {
-                    (track.rows(pile), pile.groups.as_slice())
+                    (slot.rows(pile), pile.groups.as_slice())
                 };
                 let pairs = track.plot.pairs;
                 let primitives =
@@ -699,9 +793,20 @@ fn track_view<'a>(
     draft: Option<&'a str>,
 ) -> Element<'a, Message> {
     let id = track.id;
-    let shape = shape(session, track, repack);
-    let body = track_body(session, track, shape, repack);
-    let height = track.height.unwrap_or(shape.height);
+    let count = session.count();
+    let shapes: Vec<Shape> = (0..count)
+        .map(|panel| shape(session, track, panel, repack))
+        .collect();
+    let tallest = shapes
+        .iter()
+        .copied()
+        .max_by(|a, b| a.height.total_cmp(&b.height))
+        .unwrap_or(Shape::plain(EMPTY_HEIGHT));
+    let height = track.height.unwrap_or(tallest.height);
+    let shape = tallest;
+    let body = across(count, height, |panel| {
+        track_body(session, track, panel, shapes[panel], repack)
+    });
     let edge = Grip::new(
         space().width(Length::Fill).height(EDGE),
         move |delta| Message::Lane(id, Lane::Resized(delta)),
@@ -787,13 +892,14 @@ impl Shape {
     }
 }
 
-pub(super) fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
-    let viewport = session.viewport;
-    if track.slot.error.is_some() || viewport.visible().len() > track.source.span() {
+pub(super) fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape {
+    let (contig, viewport) = session.view(panel);
+    let slot = track.slot(panel);
+    if slot.error.is_some() || viewport.visible().len() > track.source.span() {
         return Shape::plain(EMPTY_HEIGHT);
     }
-    let mode = track.mode(session.contig);
-    match track.data(session.contig).map(|data| &data.content) {
+    let mode = track.mode_at(panel, contig);
+    match slot.data(contig).map(|data| &data.content) {
         Some(Content::Features(annotation)) => {
             let rows = if mode == features::Mode::Collapsed {
                 1
@@ -863,6 +969,7 @@ pub(super) fn signal_columns(
 pub(super) fn signal_scale(
     session: &Session,
     track: &Track,
+    panel: usize,
     columns: &[signal::Column],
 ) -> Option<signal::Scale> {
     if let Some(range) = track.plot.range {
@@ -872,7 +979,7 @@ pub(super) fn signal_scale(
     if !members.is_empty() {
         return members
             .iter()
-            .filter_map(|member| signal::range(&member_columns(session, member)?))
+            .filter_map(|member| signal::range(&member_columns(session, member, panel)?))
             .chain(signal::range(columns))
             .reduce(signal::Scale::union);
     }
@@ -883,12 +990,7 @@ pub(super) fn signal_scale(
         .tracks
         .iter()
         .filter(|other| other.plot.linked)
-        .filter_map(|other| match other.data(session.contig)?.content {
-            Content::Signal(ref data) => {
-                signal::range(&signal_columns(other, session.viewport, &data.summaries))
-            }
-            _ => None,
-        })
+        .filter_map(|other| signal::range(&member_columns(session, other, panel)?))
         .reduce(signal::Scale::union)
 }
 
@@ -900,11 +1002,12 @@ pub(super) fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track>
         .collect()
 }
 
-fn member_columns(session: &Session, member: &Track) -> Option<Vec<signal::Column>> {
-    let Content::Signal(data) = &member.data(session.contig)?.content else {
+fn member_columns(session: &Session, member: &Track, panel: usize) -> Option<Vec<signal::Column>> {
+    let (contig, viewport) = session.view(panel);
+    let Content::Signal(data) = &member.slot(panel).data(contig)?.content else {
         return None;
     };
-    Some(signal_columns(member, session.viewport, &data.summaries))
+    Some(signal_columns(member, viewport, &data.summaries))
 }
 
 pub(super) fn links(session: &Session, track: &Track) -> (&'static str, Vec<(String, Message)>) {
@@ -935,9 +1038,11 @@ pub(super) fn links(session: &Session, track: &Track) -> (&'static str, Vec<(Str
 }
 
 pub(super) fn body_height(session: &Session, track: &Track) -> f32 {
-    track
-        .height
-        .unwrap_or_else(|| shape(session, track, false).height)
+    track.height.unwrap_or_else(|| {
+        (0..session.count())
+            .map(|panel| shape(session, track, panel, false).height)
+            .fold(0.0, f32::max)
+    })
 }
 
 fn drop_line<'a>() -> Element<'a, Message> {

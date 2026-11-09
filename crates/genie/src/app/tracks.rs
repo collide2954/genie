@@ -154,7 +154,7 @@ impl Genie {
             return None;
         };
         let columns = signal_columns(track, session.viewport, &data.summaries);
-        signal_scale(session, track, &columns)
+        signal_scale(session, track, 0, &columns)
     }
 
     pub(super) fn range(&mut self, id: u64, ranging: Ranging) {
