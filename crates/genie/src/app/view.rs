@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
-use genie_core::{Locus, Span, Viewport, grouped};
+use genie_core::{Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
@@ -37,7 +37,7 @@ use super::{
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
-const HEADER_HEIGHT: f32 = 20.0;
+pub(super) const HEADER_HEIGHT: f32 = 20.0;
 const NAME_WIDTH: f32 = 160.0;
 pub(super) const RULER_HEIGHT: f32 = 20.0;
 pub(super) const BASE_HEIGHT: f32 = 16.0;
@@ -612,14 +612,8 @@ pub(super) fn across<'a>(
 }
 
 fn header(session: &Session, panel: usize) -> Element<'_, Message> {
-    let (contig, viewport) = session.view(panel);
-    let locus = Locus {
-        name: session.reference.assembly.contigs()[contig].name.clone(),
-        span: Span::Region(viewport.visible()),
-    }
-    .to_string();
     row![
-        button(text(locus).size(11).font(font::MONO))
+        button(text(session.locus_at(panel)).size(11).font(font::MONO))
             .padding([2, 6])
             .width(Length::Fill)
             .style(style::ghost)
@@ -1061,13 +1055,24 @@ fn note<'a>(hidden: usize) -> Element<'a, Message> {
         .into()
 }
 
-pub(super) fn ruler_view<'a>(viewport: Viewport) -> Element<'a, Message> {
-    container(scene::view(
+pub(super) fn ruler_view<'a>(session: &Session, panel: usize) -> Element<'a, Message> {
+    let (_, viewport) = session.view(panel);
+    let ruler = container(scene::view(
         ruler::scene(viewport, RULER_HEIGHT),
         RULER_HEIGHT,
-    ))
-    .id("ruler")
-    .into()
+    ));
+    if panel > 0 {
+        return ruler.id(format!("ruler-{panel}")).into();
+    }
+    ruler.id("ruler").into()
+}
+
+pub(super) fn panel_label<'a>(session: &Session, panel: usize) -> Element<'a, Message> {
+    container(text(session.locus_at(panel)).size(11).font(font::MONO))
+        .padding([0, 10])
+        .height(HEADER_HEIGHT)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn hint<'a>(message: String) -> Element<'a, Message> {

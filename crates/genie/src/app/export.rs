@@ -7,7 +7,7 @@ use crate::export;
 use crate::paths::file_name;
 use crate::{font, style};
 
-use super::view::{hairline, ruler_view};
+use super::view::{HEADER_HEIGHT, RULER_HEIGHT, across, hairline, panel_label, ruler_view};
 use super::{Genie, Message, Session};
 
 pub(super) const CAPTION_HEIGHT: f32 = 22.0;
@@ -31,28 +31,37 @@ impl Genie {
     }
 
     pub(super) fn export_view<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
-        let caption = container(
-            row![
-                text(&session.reference.name).size(CAPTION_SIZE),
-                text("·").size(CAPTION_SIZE).style(style::muted),
-                text(session.locus())
-                    .font(font::MONO)
-                    .size(CAPTION_SIZE)
-                    .style(style::muted),
-            ]
+        let count = session.count();
+        let mut title = row![text(&session.reference.name).size(CAPTION_SIZE)]
             .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding([0, 8])
-        .height(CAPTION_HEIGHT)
-        .align_y(Alignment::Center);
-        column![
-            caption,
-            hairline(),
-            ruler_view(session.viewport),
-            hairline(),
-            self.tracks(session, true)
-        ]
+            .align_y(Alignment::Center);
+        if count == 1 {
+            title = title
+                .push(text("·").size(CAPTION_SIZE).style(style::muted))
+                .push(
+                    text(session.locus())
+                        .font(font::MONO)
+                        .size(CAPTION_SIZE)
+                        .style(style::muted),
+                );
+        }
+        let caption = container(title)
+            .padding([0, 8])
+            .height(CAPTION_HEIGHT)
+            .align_y(Alignment::Center);
+        let mut page = column![caption, hairline()];
+        if count > 1 {
+            page = page
+                .push(across(count, HEADER_HEIGHT, |panel| {
+                    panel_label(session, panel)
+                }))
+                .push(hairline());
+        }
+        page.push(across(count, RULER_HEIGHT, |panel| {
+            ruler_view(session, panel)
+        }))
+        .push(hairline())
+        .push(self.tracks(session, true))
         .into()
     }
 

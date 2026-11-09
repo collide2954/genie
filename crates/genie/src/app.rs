@@ -500,21 +500,18 @@ impl Session {
         self.transition = Some(Transition::new(self.viewport, to, Instant::now()));
     }
 
+    fn locus_at(&self, panel: usize) -> String {
+        let (contig, viewport) = self.view(panel);
+        Locus {
+            name: self.reference.assembly.contigs()[contig].name.clone(),
+            span: Span::Region(viewport.visible()),
+        }
+        .to_string()
+    }
+
     fn locus(&self) -> String {
-        let contigs = self.reference.assembly.contigs();
-        let one = |contig: usize, viewport: Viewport| {
-            Locus {
-                name: contigs[contig].name.clone(),
-                span: Span::Region(viewport.visible()),
-            }
-            .to_string()
-        };
-        std::iter::once(one(self.contig, self.viewport))
-            .chain(
-                self.panels
-                    .iter()
-                    .map(|panel| one(panel.contig, panel.viewport)),
-            )
+        (0..self.count())
+            .map(|panel| self.locus_at(panel))
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -1937,6 +1934,18 @@ mod tests {
         );
         let _ = genie.update(Message::Pan(3, -100.0));
         assert!(locus(&genie).ends_with(" chr2:226-275"));
+    }
+
+    #[test]
+    fn exports_draw_every_panel() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200 chr2:1-50");
+        let session = genie.session.as_ref().unwrap();
+        let mut ui = simulator(genie.export_view(session));
+        assert!(ui.find("chr1:101-200").is_ok());
+        assert!(ui.find("chr2:1-50").is_ok());
+        assert!(ui.find("chr1:101-200 chr2:1-50").is_err());
+        assert!(ui.find(selector::id("ruler-1")).is_ok());
     }
 
     #[test]
