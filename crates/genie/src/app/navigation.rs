@@ -303,40 +303,48 @@ impl Genie {
         self.fetch()
     }
 
-    pub(super) fn sweep_ruler(&mut self, sweep: Sweep) -> Task<Message> {
-        let Some(session) = &self.session else {
+    pub(super) fn sweep_ruler(&mut self, panel: usize, sweep: Sweep) -> Task<Message> {
+        let Some(session) = self
+            .session
+            .as_ref()
+            .filter(|session| panel < session.count())
+        else {
             return Task::none();
         };
-        let viewport = session.viewport;
+        let (contig, viewport) = session.view(panel);
         let at = |share: f32| viewport.to_bp(f64::from(share) * viewport.width());
         match sweep {
             Sweep::Pressed(share) => {
                 self.drop_draft();
-                self.sweep = Some((at(share), at(share)));
+                self.sweep = Some((panel, at(share), at(share)));
             }
             Sweep::Dragged(share) => {
-                if let Some((start, _)) = self.sweep {
-                    self.sweep = Some((start, at(share)));
+                if let Some((swept, start, _)) = self.sweep
+                    && swept == panel
+                {
+                    self.sweep = Some((panel, start, at(share)));
                 }
             }
             Sweep::Released => {
-                let Some((start, end)) = self.sweep.take() else {
+                let Some((swept, start, end)) = self.sweep.take() else {
                     return Task::none();
                 };
-                if (viewport.to_px(end) - viewport.to_px(start)).abs() < MIN_SWEEP {
+                if swept != panel || (viewport.to_px(end) - viewport.to_px(start)).abs() < MIN_SWEEP
+                {
                     return Task::none();
                 }
                 let length = viewport.length() as f64;
                 let low = start.min(end).clamp(0.0, length).round() as u64;
                 let high = start.max(end).clamp(0.0, length).round() as u64;
-                let (contig, region) = (session.contig, Region::between(low, high.max(low + 1)));
+                let region = Region::between(low, high.max(low + 1));
                 if self.modifiers.shift() {
                     return self.mark_region(contig, region);
                 }
-                return self.go_to(Target {
-                    contig,
-                    span: Span::Region(region),
-                });
+                let span = Span::Region(region);
+                if panel > 0 {
+                    return self.navigate(panel, |viewport| viewport.jump(span));
+                }
+                return self.go_to(Target { contig, span });
             }
         }
         Task::none()

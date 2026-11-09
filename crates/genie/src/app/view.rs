@@ -510,20 +510,10 @@ impl Genie {
 
     fn ruler_at<'a>(&self, session: &Session, panel: usize) -> Element<'a, Message> {
         let (_, viewport) = session.view(panel);
-        if panel == 0 {
-            return self.ruler(viewport);
-        }
-        container(scene::view(
-            ruler::scene(viewport, RULER_HEIGHT),
-            RULER_HEIGHT,
-        ))
-        .id(format!("ruler-{panel}"))
-        .into()
-    }
-
-    fn ruler<'a>(&self, viewport: Viewport) -> Element<'a, Message> {
         let mut primitives = Vec::new();
-        if let Some((start, end)) = self.sweep {
+        if let Some((swept, start, end)) = self.sweep
+            && swept == panel
+        {
             let from = viewport.to_px(start.min(end)) as f32;
             let to = viewport.to_px(start.max(end)) as f32;
             primitives.push(Primitive::Rect {
@@ -536,10 +526,13 @@ impl Genie {
         }
         primitives.extend(ruler::scene(viewport, RULER_HEIGHT));
         let ruler = scene::view(primitives, RULER_HEIGHT)
-            .on_press(|share| Message::Ruler(Sweep::Pressed(share)))
-            .on_drag(|share| Message::Ruler(Sweep::Dragged(share)))
-            .on_release(Message::Ruler(Sweep::Released))
+            .on_press(move |share| Message::Ruler(panel, Sweep::Pressed(share)))
+            .on_drag(move |share| Message::Ruler(panel, Sweep::Dragged(share)))
+            .on_release(Message::Ruler(panel, Sweep::Released))
             .crosshair();
+        if panel > 0 {
+            return container(ruler).id(format!("ruler-{panel}")).into();
+        }
         container(Context::new(ruler, |at| Message::CopyMenu(None, at)))
             .id("ruler")
             .into()

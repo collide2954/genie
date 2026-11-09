@@ -85,7 +85,7 @@ pub struct Genie {
     hover: Option<Card>,
     pinned: Option<Card>,
     pending: Vec<Location>,
-    sweep: Option<(f64, f64)>,
+    sweep: Option<(usize, f64, f64)>,
     pointed: Option<u64>,
     anchor: Option<(Visit, u64)>,
     sidebar: Option<Sidebar>,
@@ -494,7 +494,7 @@ pub enum Message {
     Command(Command),
     Frame(Instant),
     Overview(Sweep),
-    Ruler(Sweep),
+    Ruler(usize, Sweep),
     FileHovered,
     FileHoverEnded,
     FileDropped(PathBuf),
@@ -825,7 +825,7 @@ impl Genie {
             Message::Command(command) => return self.command(command),
             Message::Frame(now) => self.frame(now),
             Message::Overview(sweep) => return self.sweep_overview(sweep),
-            Message::Ruler(sweep) => return self.sweep_ruler(sweep),
+            Message::Ruler(panel, sweep) => return self.sweep_ruler(panel, sweep),
             Message::ExportPicked(path) => return self.export_to(path),
             Message::SessionPicked(path) => return self.session_picked(path),
             Message::Exported(result, cut) => return self.exported(result, cut),
@@ -1889,6 +1889,31 @@ mod tests {
     }
 
     #[test]
+    fn ruler_drags_zoom_their_own_panel() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:1-1000 chr2:1-500");
+        let _ = genie.update(Message::Ruler(1, Sweep::Pressed(0.2)));
+        let _ = genie.update(Message::Ruler(1, Sweep::Dragged(0.4)));
+        assert_eq!(genie.sweep.map(|(panel, ..)| panel), Some(1));
+        let _ = genie.update(Message::Ruler(1, Sweep::Released));
+        settle(&mut genie);
+        let locus = genie.session.as_ref().unwrap().locus();
+        assert_eq!(locus, "chr1:1-1,000 chr2:101-200");
+        let mut ui = simulator(genie.view());
+        let ruler = ui.find(selector::id("ruler-1")).unwrap().bounds().center();
+        ui.point_at(ruler);
+        let left = iced::mouse::Button::Left;
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::ButtonPressed(left))]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Ruler(1, Sweep::Pressed(_)))),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
     fn submitting_a_locus_jumps_there() {
         let mut genie = opened();
         go(&mut genie, "chr1:101-200");
@@ -1917,12 +1942,12 @@ mod tests {
     #[test]
     fn dragging_on_the_ruler_zooms_to_the_range() {
         let mut genie = opened();
-        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.3)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.2)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.1)));
-        let (start, end) = genie.sweep.unwrap();
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.3)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.2)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.1)));
+        let (_, start, end) = genie.sweep.unwrap();
         assert!((start - 300.0).abs() < 0.01 && (end - 100.0).abs() < 0.01);
-        let _ = genie.update(Message::Ruler(Sweep::Released));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:101-300"));
         assert_eq!(genie.sweep, None);
@@ -1934,14 +1959,14 @@ mod tests {
     #[test]
     fn short_ruler_drags_and_escape_keep_the_view() {
         let mut genie = opened();
-        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.101)));
-        let _ = genie.update(Message::Ruler(Sweep::Released));
-        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.5)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.101)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.5)));
         let _ = genie.update(Message::Command(Command::Dismiss));
         assert_eq!(genie.sweep, None);
-        let _ = genie.update(Message::Ruler(Sweep::Released));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:1-1,000"));
     }
@@ -2173,9 +2198,9 @@ mod tests {
     fn shift_drags_on_the_ruler_add_a_region() {
         let mut genie = opened();
         let _ = genie.update(Message::Modifiers(iced::keyboard::Modifiers::SHIFT));
-        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.3)));
-        let _ = genie.update(Message::Ruler(Sweep::Released));
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.3)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
         settle(&mut genie);
         let added = marks(&genie);
         assert_eq!(added.len(), 1);
@@ -2183,9 +2208,9 @@ mod tests {
         assert_eq!(chosen(&genie), Some(added[0].id));
         assert!(shows(&genie, "chr1:1-1,000"));
         let _ = genie.update(Message::Modifiers(iced::keyboard::Modifiers::empty()));
-        let _ = genie.update(Message::Ruler(Sweep::Pressed(0.1)));
-        let _ = genie.update(Message::Ruler(Sweep::Dragged(0.3)));
-        let _ = genie.update(Message::Ruler(Sweep::Released));
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.1)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.3)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
         settle(&mut genie);
         assert_eq!(marks(&genie).len(), 1);
         assert!(shows(&genie, "chr1:101-300"));
