@@ -3302,8 +3302,8 @@ mod tests {
         let svg = genie.figure(genie.session.as_ref().unwrap());
         assert!(svg.starts_with("<svg"), "{svg}");
         for text in [
-            ">ref.fa</text>",
-            ">chr1:1-1,000</text>",
+            ">ref.fa</tspan>",
+            ">chr1:1-1,000</tspan>",
             ">Sequence</text>",
             ">coverage.bedGraph</text>",
             ">other.bedGraph</text>",

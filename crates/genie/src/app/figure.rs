@@ -64,17 +64,13 @@ impl Genie {
         let viewport = session.viewport;
         let center = CAPTION_HEIGHT / 2.0;
         let name = session.reference.name.as_str();
-        let mut x = 8.0;
+        let locus = session.locus();
         let caption = [
             (name, Face::Ui, tokens.text),
             ("·", Face::Ui, tokens.muted),
-            (&session.locus(), Face::Mono, tokens.muted),
+            (locus.as_str(), Face::Mono, tokens.muted),
         ];
-        for (words, face, color) in caption {
-            page.svg
-                .text((x, center), words, CAPTION_SIZE, face, color, Align::Start);
-            x += svg::width(words, CAPTION_SIZE, face) + GAP;
-        }
+        page.svg.spans((8.0, center), CAPTION_SIZE, &caption, GAP);
         let mut y = CAPTION_HEIGHT;
         page.hairline(y);
         y += 1.0;

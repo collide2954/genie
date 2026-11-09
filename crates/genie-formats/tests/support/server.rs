@@ -6,7 +6,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const MEETING: Duration = Duration::from_secs(1);
 
 pub struct Server {
     pub port: u16,
@@ -34,6 +36,7 @@ pub fn serve(files: Vec<(String, Vec<u8>)>) -> Server {
     let files: Arc<HashMap<String, Vec<u8>>> = Arc::new(files.into_iter().collect());
     let connections = Arc::new(AtomicUsize::new(0));
     let requests = Arc::new(AtomicUsize::new(0));
+    let inflight = Arc::new(AtomicUsize::new(0));
     let (opened, asked) = (Arc::clone(&connections), Arc::clone(&requests));
     thread::spawn(move || {
         for stream in listener.incoming() {
@@ -41,8 +44,12 @@ pub fn serve(files: Vec<(String, Vec<u8>)>) -> Server {
                 break;
             };
             opened.fetch_add(1, Ordering::SeqCst);
-            let (files, asked) = (Arc::clone(&files), Arc::clone(&asked));
-            thread::spawn(move || answer(stream, &files, &asked));
+            let (files, asked, inflight) = (
+                Arc::clone(&files),
+                Arc::clone(&asked),
+                Arc::clone(&inflight),
+            );
+            thread::spawn(move || answer(stream, &files, &asked, &inflight));
         }
     });
     Server {
@@ -52,7 +59,31 @@ pub fn serve(files: Vec<(String, Vec<u8>)>) -> Server {
     }
 }
 
-fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, requests: &AtomicUsize) {
+struct Meeting<'a>(&'a AtomicUsize);
+
+impl<'a> Meeting<'a> {
+    fn new(inflight: &'a AtomicUsize) -> Self {
+        inflight.fetch_add(1, Ordering::SeqCst);
+        let deadline = Instant::now() + MEETING;
+        while inflight.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        Self(inflight)
+    }
+}
+
+impl Drop for Meeting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn answer(
+    stream: TcpStream,
+    files: &HashMap<String, Vec<u8>>,
+    requests: &AtomicUsize,
+    inflight: &AtomicUsize,
+) {
     let Ok(copy) = stream.try_clone() else {
         return;
     };
@@ -101,7 +132,8 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, requests: &Atomic
         let (chunked, path) = route(path, "/chunked");
         let (whole, path) = route(path, "/whole");
         let (close, path) = route(path, "/close");
-        let path = pause(path);
+        let (slow, path) = route(path, "/slow");
+        let _meeting = slow.then(|| Meeting::new(inflight));
         let Some(data) = files.get(path) else {
             let head = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             if writer.write_all(head.as_bytes()).is_err() {
@@ -109,58 +141,55 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, requests: &Atomic
             }
             continue;
         };
-        let (status, extra, body) = match range.filter(|_| !whole) {
-            Some((start, _)) if start >= data.len() => (
-                "416 Range Not Satisfiable",
-                format!("Content-Range: bytes */{}\r\n", data.len()),
-                &data[0..0],
-            ),
-            Some((start, end)) => {
-                let end = (end + 1).min(data.len());
-                (
-                    "206 Partial Content",
-                    format!(
-                        "Content-Range: bytes {start}-{}/{}\r\n",
-                        end - 1,
-                        data.len()
-                    ),
-                    &data[start..end],
-                )
-            }
-            None => ("200 OK", String::new(), data.as_slice()),
-        };
-        let mut head = format!("HTTP/1.1 {status}\r\n{extra}");
-        if close {
-            head.push_str("Connection: close\r\n");
-        }
-        let mut message = Vec::new();
-        if chunked {
-            head.push_str("Transfer-Encoding: chunked\r\n\r\n");
-            message.extend_from_slice(head.as_bytes());
-            for part in body.chunks(body.len().div_ceil(3).max(1)) {
-                message.extend_from_slice(format!("{:x};note=yes\r\n", part.len()).as_bytes());
-                message.extend_from_slice(part);
-                message.extend_from_slice(b"\r\n");
-            }
-            message.extend_from_slice(b"0\r\n\r\n");
-        } else {
-            let length = format!("Content-Length: {}\r\n\r\n", body.len());
-            head.push_str(&length);
-            message.extend_from_slice(head.as_bytes());
-            message.extend_from_slice(body);
-        }
+        let message = message(data, range.filter(|_| !whole), chunked, close);
         if writer.write_all(&message).is_err() || close {
             return;
         }
     }
 }
 
-fn pause(path: &str) -> &str {
-    let (slow, path) = route(path, "/slow");
-    if slow {
-        thread::sleep(Duration::from_millis(50));
+fn message(data: &[u8], range: Option<(usize, usize)>, chunked: bool, close: bool) -> Vec<u8> {
+    let (status, extra, body) = match range {
+        Some((start, _)) if start >= data.len() => (
+            "416 Range Not Satisfiable",
+            format!("Content-Range: bytes */{}\r\n", data.len()),
+            &data[0..0],
+        ),
+        Some((start, end)) => {
+            let end = (end + 1).min(data.len());
+            (
+                "206 Partial Content",
+                format!(
+                    "Content-Range: bytes {start}-{}/{}\r\n",
+                    end - 1,
+                    data.len()
+                ),
+                &data[start..end],
+            )
+        }
+        None => ("200 OK", String::new(), data),
+    };
+    let mut head = format!("HTTP/1.1 {status}\r\n{extra}");
+    if close {
+        head.push_str("Connection: close\r\n");
     }
-    path
+    let mut message = Vec::new();
+    if chunked {
+        head.push_str("Transfer-Encoding: chunked\r\n\r\n");
+        message.extend_from_slice(head.as_bytes());
+        for part in body.chunks(body.len().div_ceil(3).max(1)) {
+            message.extend_from_slice(format!("{:x};note=yes\r\n", part.len()).as_bytes());
+            message.extend_from_slice(part);
+            message.extend_from_slice(b"\r\n");
+        }
+        message.extend_from_slice(b"0\r\n\r\n");
+    } else {
+        let length = format!("Content-Length: {}\r\n\r\n", body.len());
+        head.push_str(&length);
+        message.extend_from_slice(head.as_bytes());
+        message.extend_from_slice(body);
+    }
+    message
 }
 
 fn route<'a>(path: &'a str, prefix: &str) -> (bool, &'a str) {

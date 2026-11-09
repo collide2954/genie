@@ -20,6 +20,14 @@ pub enum Face {
 }
 
 impl Face {
+    fn attributes(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Ui => (UI, ""),
+            Self::Mono => (MONO, ""),
+            Self::MonoStrong => (MONO, " font-weight=\"700\""),
+        }
+    }
+
     fn font(self) -> iced::Font {
         match self {
             Self::Ui => font::UI,
@@ -116,6 +124,37 @@ impl Svg {
         );
     }
 
+    pub fn spans(
+        &mut self,
+        (x, center): (f32, f32),
+        size: f32,
+        parts: &[(&str, Face, Color)],
+        gap: f32,
+    ) {
+        let _ = write!(
+            self.body,
+            "<text x=\"{}\" y=\"{}\" font-size=\"{}\">",
+            number(x),
+            number(center + DROP * size),
+            number(size)
+        );
+        for (index, (content, face, color)) in parts.iter().enumerate() {
+            let shift = if index == 0 {
+                String::new()
+            } else {
+                format!(" dx=\"{}\"", number(gap))
+            };
+            let (family, weight) = face.attributes();
+            let _ = write!(
+                self.body,
+                "<tspan{shift} font-family=\"{family}\"{weight}{}>{}</tspan>",
+                fill(*color),
+                escape(content)
+            );
+        }
+        self.body.push_str("</text>\n");
+    }
+
     pub fn text(
         &mut self,
         (x, center): (f32, f32),
@@ -125,11 +164,7 @@ impl Svg {
         color: Color,
         align: Align,
     ) {
-        let (family, weight) = match face {
-            Face::Ui => (UI, ""),
-            Face::Mono => (MONO, ""),
-            Face::MonoStrong => (MONO, " font-weight=\"700\""),
-        };
+        let (family, weight) = face.attributes();
         let anchor = match align {
             Align::Start => "",
             Align::Center => " text-anchor=\"middle\"",
@@ -331,6 +366,22 @@ mod tests {
         assert!(text.contains("JetBrains Mono"), "{text}");
         assert!(text.contains("<polyline points=\"0,0 2,3 0,6\""), "{text}");
         assert!(text.trim_end().ends_with("</svg>"), "{text}");
+    }
+
+    #[test]
+    fn lines_of_parts_flow_in_one_text() {
+        let mut svg = Svg::new(100.0);
+        let parts = [
+            ("ref.fa", Face::Ui, Color::BLACK),
+            ("·", Face::Ui, Color::WHITE),
+            ("chr1:1-10", Face::Mono, Color::WHITE),
+        ];
+        svg.spans((8.0, 11.0), 11.0, &parts, 6.0);
+        let text = svg.finish(22.0, Color::WHITE);
+        assert_eq!(text.matches("<text ").count(), 1, "{text}");
+        assert_eq!(text.matches("<tspan").count(), 3, "{text}");
+        assert_eq!(text.matches("<tspan dx=\"6\"").count(), 2, "{text}");
+        assert!(text.contains(">chr1:1-10</tspan></text>"), "{text}");
     }
 
     #[test]
