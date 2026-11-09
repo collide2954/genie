@@ -102,6 +102,9 @@ impl Genie {
                     location: track.source.location.clone(),
                     name: (track.name != self.track_name(&track.source))
                         .then(|| track.name.clone()),
+                    over: track
+                        .over
+                        .and_then(|base| session.tracks.iter().position(|other| other.id == base)),
                     mode: track.mode,
                     hue: track.hue,
                     height: track.height,

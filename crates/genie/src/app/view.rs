@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
 use genie_core::{Viewport, grouped};
-use genie_render::scene::{Paint, Primitive};
+use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
 };
@@ -12,7 +12,7 @@ use iced::widget::{
     Column, button, center, column, container, mouse_area, pin, row, scrollable, space, stack,
     text, text_input, tooltip,
 };
-use iced::{Alignment, Border, Element, Length, Padding, Point, mouse};
+use iced::{Alignment, Border, Element, Length, Padding, Point, Theme, mouse};
 
 use crate::card;
 use crate::chrome::{self, Controls, LocusField};
@@ -28,7 +28,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{Content, Track};
+use crate::track::{Change, Content, Track};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -279,7 +279,14 @@ impl Genie {
             base: session.viewport.to_bp(f64::from(at.x)).floor().max(0.0) as u64,
         };
         let mode = track.mode(session.contig);
-        Some(menu::view(track, mode, &place, self.range_draft.as_ref()))
+        let links = links(session, track);
+        Some(menu::view(
+            track,
+            mode,
+            &place,
+            self.range_draft.as_ref(),
+            links,
+        ))
     }
 
     fn suggestion_menu(&self) -> Option<Element<'_, Message>> {
@@ -479,6 +486,9 @@ impl Genie {
         };
         let mut data = column![container(sequence).id("sequence"), line(0)];
         for (index, track) in session.tracks.iter().enumerate() {
+            if track.over.is_some() {
+                continue;
+            }
             let draft = self
                 .renaming
                 .as_ref()
@@ -589,8 +599,22 @@ fn track_body<'a>(
                 return space().width(Length::Fill).height(height).into();
             };
             let width = viewport.width() as f32;
-            let style = track.plot.style;
-            let primitives = signal::scene(&columns, scale, style, track.hue, height, width);
+            let members = members(session, track);
+            let primitives = if members.is_empty() {
+                signal::scene(&columns, scale, track.plot.style, track.hue, height, width)
+            } else {
+                let others: Vec<(Vec<signal::Column>, Hue)> = members
+                    .iter()
+                    .filter_map(|member| Some((member_columns(session, member)?, member.hue)))
+                    .collect();
+                let mut layers: Vec<(&[signal::Column], Hue)> = vec![(&columns, track.hue)];
+                layers.extend(
+                    others
+                        .iter()
+                        .map(|(columns, hue)| (columns.as_slice(), *hue)),
+                );
+                signal::traces(&layers, scale, height, width)
+            };
             interactive(primitives, height).into()
         }
         Some(Content::Variants(calls)) => {
@@ -643,7 +667,7 @@ fn track_body<'a>(
 }
 
 fn track_view<'a>(
-    session: &Session,
+    session: &'a Session,
     track: &'a Track,
     repack: bool,
     padding: f32,
@@ -675,7 +699,7 @@ fn track_view<'a>(
         .into(),
         None => Grip::new(
             chrome::tip(
-                label(&track.name),
+                name_label(session, track),
                 "Drag to move · Double-click to rename · Right-click for options",
                 tooltip::Position::Right,
             ),
@@ -819,6 +843,14 @@ pub(super) fn signal_scale(
     if let Some(range) = track.plot.range {
         return Some(range);
     }
+    let members = members(session, track);
+    if !members.is_empty() {
+        return members
+            .iter()
+            .filter_map(|member| signal::range(&member_columns(session, member)?))
+            .chain(signal::range(columns))
+            .reduce(signal::Scale::union);
+    }
     if !track.plot.linked {
         return signal::range(columns);
     }
@@ -833,6 +865,48 @@ pub(super) fn signal_scale(
             _ => None,
         })
         .reduce(signal::Scale::union)
+}
+
+fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track> {
+    session
+        .tracks
+        .iter()
+        .filter(|other| other.over == Some(track.id))
+        .collect()
+}
+
+fn member_columns(session: &Session, member: &Track) -> Option<Vec<signal::Column>> {
+    let Content::Signal(data) = &member.data(session.contig)?.content else {
+        return None;
+    };
+    Some(signal_columns(member, session.viewport, &data.summaries))
+}
+
+pub(super) fn links(session: &Session, track: &Track) -> (&'static str, Vec<(String, Message)>) {
+    if !track.source.has_signal() || track.over.is_some() {
+        return ("", Vec::new());
+    }
+    let members = members(session, track);
+    if !members.is_empty() {
+        let items = members
+            .iter()
+            .map(|member| {
+                let change = Message::TrackChanged(member.id, Change::Separate);
+                (member.name.clone(), change)
+            })
+            .collect();
+        return ("Separate", items);
+    }
+    let items = session
+        .tracks
+        .iter()
+        .filter(|other| other.id != track.id && other.over.is_none() && other.source.has_signal())
+        .map(|other| {
+            let change = Message::TrackChanged(track.id, Change::Overlay(other.id));
+            (other.name.clone(), change)
+        })
+        .collect();
+    ("Overlay on", items)
 }
 
 pub(super) fn body_height(session: &Session, track: &Track) -> f32 {
@@ -927,12 +1001,36 @@ fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, 
 fn label(name: &str) -> Element<'_, Message> {
     container(text(name).size(LABEL_SIZE).style(style::muted))
         .padding([0, 4])
-        .style(|theme| container::Style {
-            background: Some(tokens(theme).canvas.scale_alpha(scene::CHIP).into()),
-            border: Border::default().rounded(3),
-            ..container::Style::default()
-        })
+        .style(chip)
         .into()
+}
+
+fn name_label<'a>(session: &'a Session, track: &'a Track) -> Element<'a, Message> {
+    let members = members(session, track);
+    if members.is_empty() {
+        return label(&track.name);
+    }
+    let names = std::iter::once(track).chain(members).map(|track| {
+        let hue = track.hue;
+        text(track.name.as_str())
+            .size(LABEL_SIZE)
+            .style(move |theme: &Theme| text::Style {
+                color: Some(crate::theme::data(theme).hues[hue as usize]),
+            })
+            .into()
+    });
+    container(row(names).spacing(6))
+        .padding([0, 4])
+        .style(chip)
+        .into()
+}
+
+fn chip(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(tokens(theme).canvas.scale_alpha(scene::CHIP).into()),
+        border: Border::default().rounded(3),
+        ..container::Style::default()
+    }
 }
 
 pub(super) fn hairline<'a>() -> Element<'a, Message> {

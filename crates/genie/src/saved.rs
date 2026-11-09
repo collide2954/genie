@@ -47,6 +47,7 @@ pub struct SavedRegion {
 pub struct SavedTrack {
     pub location: Location,
     pub name: Option<String>,
+    pub over: Option<usize>,
     pub mode: Option<Mode>,
     pub hue: Hue,
     pub height: Option<f32>,
@@ -77,6 +78,10 @@ impl Saved {
                 Some(SavedTrack {
                     location: read(section.value("file")?, base),
                     name: section.value("name").map(str::to_owned),
+                    over: section
+                        .value("overlay")
+                        .and_then(|text| text.parse::<usize>().ok())
+                        .and_then(|number| number.checked_sub(1)),
                     mode: section.value("mode").and_then(|name| find(&MODES, name)),
                     hue: section
                         .value("color")
@@ -146,6 +151,9 @@ impl Saved {
             let mut entries = vec![("file", written(&track.location, base))];
             if let Some(name) = &track.name {
                 entries.push(("name", name.clone()));
+            }
+            if let Some(over) = track.over {
+                entries.push(("overlay", (over + 1).to_string()));
             }
             if let Some(mode) = track.mode {
                 entries.push(("mode", name(&MODES, mode).to_owned()));
@@ -309,6 +317,7 @@ mod tests {
                 SavedTrack {
                     location: Location::File(base().join("reads.bam")),
                     name: Some("Tumor A".to_owned()),
+                    over: None,
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
@@ -326,6 +335,7 @@ mod tests {
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
                     name: None,
+                    over: None,
                     mode: None,
                     hue: Hue::Vermillion,
                     height: None,
@@ -335,6 +345,7 @@ mod tests {
                 SavedTrack {
                     location: Location::File(base().join("coverage.bw")),
                     name: None,
+                    over: Some(0),
                     mode: None,
                     hue: Hue::Green,
                     height: Some(64.0),
@@ -418,6 +429,7 @@ mod tests {
         assert!(text.contains("style = line"), "{text}");
         assert!(text.contains("scale = shared"), "{text}");
         assert!(text.contains("range = -1.5 50"), "{text}");
+        assert!(text.contains("overlay = 1"), "{text}");
         assert_eq!(text.matches("style =").count(), 1, "{text}");
         assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
         assert_eq!(text.matches("group = phase").count(), 1, "{text}");

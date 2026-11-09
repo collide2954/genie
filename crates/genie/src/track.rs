@@ -450,6 +450,7 @@ pub struct Track {
     pub id: u64,
     pub source: Arc<Source>,
     pub name: String,
+    pub over: Option<u64>,
     pub contigs: Vec<Option<String>>,
     pub names: Option<Arc<Names>>,
     pub hue: Hue,
@@ -469,6 +470,7 @@ impl Track {
         Self {
             id,
             name: source.name.clone(),
+            over: None,
             source,
             contigs,
             names: None,
@@ -559,6 +561,8 @@ pub enum Change {
     Up,
     Down,
     Remove,
+    Overlay(u64),
+    Separate,
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -615,7 +619,44 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Up | Change::Down => {}
         Change::Remove => {
             tracks.remove(position);
+            free(tracks, id);
         }
+        Change::Overlay(base) => overlay(tracks, position, base),
+        Change::Separate => {
+            if tracks[position].over.take().is_none() {
+                free(tracks, id);
+            }
+        }
+    }
+}
+
+fn free(tracks: &mut [Track], base: u64) {
+    for track in tracks.iter_mut().filter(|track| track.over == Some(base)) {
+        track.over = None;
+    }
+}
+
+fn overlay(tracks: &mut [Track], position: usize, base: u64) {
+    let id = tracks[position].id;
+    let fits = tracks[position].source.has_signal()
+        && !tracks.iter().any(|track| track.over == Some(id))
+        && tracks.iter().any(|track| {
+            track.id == base && track.id != id && track.over.is_none() && track.source.has_signal()
+        });
+    if !fits {
+        return;
+    }
+    let used: Vec<Hue> = tracks
+        .iter()
+        .filter(|track| track.id != id && (track.id == base || track.over == Some(base)))
+        .map(|track| track.hue)
+        .collect();
+    let track = &mut tracks[position];
+    track.over = Some(base);
+    if used.contains(&track.hue)
+        && let Some(free) = Hue::ALL.into_iter().find(|hue| !used.contains(hue))
+    {
+        track.hue = free;
     }
 }
 

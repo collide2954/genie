@@ -2532,6 +2532,7 @@ mod tests {
         let saved_track = |name: &str| crate::saved::SavedTrack {
             location: PathBuf::from(format!("/data/{name}")).into(),
             name: None,
+            over: None,
             mode: None,
             hue: Hue::Blue,
             height: None,
@@ -2599,6 +2600,7 @@ mod tests {
             tracks: vec![crate::saved::SavedTrack {
                 location: PathBuf::from("/data/reads.bam").into(),
                 name: None,
+                over: None,
                 mode: None,
                 hue: Hue::Blue,
                 height: None,
@@ -3125,10 +3127,13 @@ mod tests {
             with_reads(),
             with_variants(),
             with_signal(),
+            with_two_signals(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
-            let expected = menu::height(&genie.session.as_ref().unwrap().tracks[0]);
+            let session = genie.session.as_ref().unwrap();
+            let links = super::view::links(session, &session.tracks[0]).1.len();
+            let expected = menu::height(&session.tracks[0], links);
             let mut ui = simulator(genie.view());
             let height = ui.find(selector::id("menu")).unwrap().bounds().height;
             assert!(
@@ -3259,6 +3264,91 @@ mod tests {
         };
         let columns = genie_render::signal::columns(session.viewport, &data.summaries);
         super::view::signal_scale(session, track, &columns)
+    }
+
+    fn other_signal() -> Arc<Source> {
+        Arc::new(Source {
+            location: PathBuf::from("/data/other.bedGraph").into(),
+            name: "other.bedGraph".to_owned(),
+            format: signal_table(),
+        })
+    }
+
+    fn with_two_signals() -> Genie {
+        let mut genie = with_signal();
+        let _ = genie.update(Message::TrackOpened(Ok(other_signal())));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[1];
+        track.wanted = Some((0, region));
+        let values = vec![Summary::single(Region::between(300, 400), 10.0)];
+        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        genie
+    }
+
+    fn overlays(genie: &Genie) -> Vec<(Option<u64>, Hue)> {
+        let session = genie.session.as_ref().unwrap();
+        session
+            .tracks
+            .iter()
+            .map(|track| (track.over, track.hue))
+            .collect()
+    }
+
+    #[test]
+    fn signal_tracks_overlay_in_one_lane_and_separate_again() {
+        let mut genie = with_two_signals();
+        let at = Point::new(100.0, 200.0);
+        let _ = genie.update(Message::TrackMenu(1, at));
+        assert!(shows(&genie, "Overlay on"));
+        let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
+        assert_eq!(overlays(&genie), [(None, Hue::Blue), (Some(0), Hue::Green)]);
+        {
+            let mut ui = simulator(genie.view());
+            assert!(ui.find(selector::id("lane-1")).is_err());
+            assert!(ui.find("other.bedGraph").is_ok());
+        }
+        assert_eq!(
+            scale_of(&genie, 0),
+            Some(Scale {
+                min: 0.0,
+                max: 10.0
+            })
+        );
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert!(shows(&genie, "Separate"));
+        assert!(!shows(&genie, "Overlay on"));
+        let _ = genie.update(Message::TrackChanged(1, Change::Separate));
+        assert_eq!(overlays(&genie)[1].0, None);
+        assert!(simulator(genie.view()).find(selector::id("lane-1")).is_ok());
+        let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Remove));
+        assert_eq!(overlays(&genie), [(None, Hue::Green)]);
+    }
+
+    #[test]
+    fn sessions_keep_overlays_whatever_opens_first() {
+        let mut genie = with_two_signals();
+        let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
+        let saved = genie.saved().unwrap();
+        let links: Vec<Option<usize>> = saved.tracks.iter().map(|track| track.over).collect();
+        assert_eq!(links, [None, Some(0)]);
+        let mut other = opened();
+        other.restoring = Some(saved);
+        other.waiting = 2;
+        let _ = other.update(Message::TrackOpened(Ok(other_signal())));
+        let _ = other.update(Message::TrackOpened(Ok(signal_source(signal_table()))));
+        let session = other.session.as_ref().unwrap();
+        let named = |name: &str| {
+            session
+                .tracks
+                .iter()
+                .find(|track| track.source.name == name)
+                .unwrap()
+        };
+        assert_eq!(
+            named("other.bedGraph").over,
+            Some(named("coverage.bedGraph").id)
+        );
     }
 
     #[test]

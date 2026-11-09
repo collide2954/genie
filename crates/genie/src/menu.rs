@@ -16,6 +16,9 @@ const COLORED_HEIGHT: f32 = 290.5;
 const READS_HEIGHT: f32 = 363.5;
 const VARIANTS_HEIGHT: f32 = 234.5;
 const SIGNAL_HEIGHT: f32 = 271.5;
+const HEADING_HEIGHT: f32 = 21.0;
+const LINK_HEIGHT: f32 = 22.6;
+const SEPARATOR_HEIGHT: f32 = 8.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
@@ -33,7 +36,26 @@ const TOGGLES: [(&str, Toggle); 3] = [
     ("Down-sample", Toggle::Downsample),
 ];
 
-pub fn height(track: &Track) -> f32 {
+pub fn height(track: &Track, links: usize) -> f32 {
+    let extra = if links == 0 {
+        0.0
+    } else {
+        HEADING_HEIGHT + links as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
+    };
+    kind_height(track) + extra
+}
+
+fn link<'a>(label: String, message: Message) -> Element<'a, Message> {
+    button(text(label).size(12).wrapping(text::Wrapping::None))
+        .width(Length::Fill)
+        .padding([3, 8])
+        .clip(true)
+        .style(style::ghost)
+        .on_press(message)
+        .into()
+}
+
+fn kind_height(track: &Track) -> f32 {
     if track.source.has_reads() {
         READS_HEIGHT
     } else if track.source.has_variants() {
@@ -112,13 +134,35 @@ fn range_fields<'a>(id: u64, range: Option<&(String, String)>) -> Element<'a, Me
     .into()
 }
 
+fn signal_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
+    let (id, plot) = (track.id, track.plot);
+    let item = |label: &'a str, change: Change, chosen: bool| {
+        item(label, Message::TrackChanged(id, change), chosen, true)
+    };
+    column![]
+        .spacing(1)
+        .extend(STYLES.map(|(label, style)| item(label, Change::Style(style), plot.style == style)))
+        .push(separator())
+        .push(item("Shared scale", Change::Link, plot.linked))
+        .push(range_fields(id, range))
+        .push(self::item(
+            "Auto range",
+            Message::Range(id, Ranging::Auto),
+            plot.range.is_none(),
+            true,
+        ))
+        .push(separator())
+}
+
 pub fn view<'a>(
     track: &Track,
     mode: Mode,
     place: &Place,
     range: Option<&(String, String)>,
+    (heading, links): (&'static str, Vec<(String, Message)>),
 ) -> Element<'a, Message> {
     let id = track.id;
+    let count = links.len();
     let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
         item(label, Message::TrackChanged(id, change), chosen, enabled)
     };
@@ -134,27 +178,11 @@ pub fn view<'a>(
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let mut content =
-        if track.source.has_signal() {
-            let plot = track.plot;
-            column![]
-                .spacing(1)
-                .extend(STYLES.map(|(label, style)| {
-                    item(label, Change::Style(style), plot.style == style, true)
-                }))
-                .push(separator())
-                .push(item("Shared scale", Change::Link, plot.linked, true))
-                .push(range_fields(id, range))
-                .push(self::item(
-                    "Auto range",
-                    Message::Range(id, Ranging::Auto),
-                    plot.range.is_none(),
-                    true,
-                ))
-                .push(separator())
-        } else {
-            column![column(modes).spacing(1), separator()].spacing(1)
-        };
+    let mut content = if track.source.has_signal() {
+        signal_items(track, range)
+    } else {
+        column![column(modes).spacing(1), separator()].spacing(1)
+    };
     if track.source.has_reads() {
         let options = track.options;
         content = content
@@ -197,6 +225,20 @@ pub fn view<'a>(
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());
     }
+    if count > 0 {
+        content = content
+            .push(
+                container(text(heading).size(11).style(style::muted))
+                    .padding([3, 8])
+                    .height(HEADING_HEIGHT - 1.0),
+            )
+            .extend(
+                links
+                    .into_iter()
+                    .map(|(label, message)| link(label, message)),
+            )
+            .push(separator());
+    }
     let content = content.extend(jumps(track)).extend([
         self::item("Rename", Message::Rename(Renaming::Start(id)), false, true),
         item("Move up", Change::Up, false, place.position > 0),
@@ -209,7 +251,7 @@ pub fn view<'a>(
         separator(),
         item("Remove", Change::Remove, false, true),
     ]);
-    card(content, place.at, place.window, height(track))
+    card(content, place.at, place.window, height(track, count))
 }
 
 fn jumps<'a>(track: &Track) -> Vec<Element<'a, Message>> {

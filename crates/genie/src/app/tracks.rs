@@ -107,7 +107,13 @@ impl Genie {
         let heights: Vec<f32> = session
             .tracks
             .iter()
-            .map(|track| body_height(session, track) + 2.0 * padding + 1.0)
+            .map(|track| {
+                if track.over.is_some() {
+                    0.0
+                } else {
+                    body_height(session, track) + 2.0 * padding + 1.0
+                }
+            })
             .collect();
         let from = session.tracks.iter().position(|track| track.id == id)?;
         let pointer = heights[..from].iter().sum::<f32>() + GRAB + delta;
@@ -538,6 +544,23 @@ impl Genie {
             session
                 .tracks
                 .sort_by_key(|track| saved_at(&track.source.location).unwrap_or(usize::MAX));
+            let links: Vec<(u64, u64)> = session
+                .tracks
+                .iter()
+                .filter(|track| track.over.is_none())
+                .filter_map(|track| {
+                    let base = saved.tracks[saved_at(&track.source.location)?].over?;
+                    let location = &saved.tracks.get(base)?.location;
+                    let base = session
+                        .tracks
+                        .iter()
+                        .find(|other| other.source.location == *location)?;
+                    Some((track.id, base.id))
+                })
+                .collect();
+            for (member, base) in links {
+                track::change(&mut session.tracks, member, Change::Overlay(base));
+            }
         } else {
             session.tracks.push(track);
         }
