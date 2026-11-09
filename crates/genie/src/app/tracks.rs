@@ -203,11 +203,11 @@ impl Genie {
         });
     }
 
-    pub(super) fn hovered(&mut self, id: u64, pointer: Option<Pointer>) {
+    pub(super) fn hovered(&mut self, id: u64, panel: usize, pointer: Option<Pointer>) {
         if pointer.is_some() {
             self.pointed = Some(id);
         }
-        self.hover = pointer.and_then(|pointer| self.card(id, pointer));
+        self.hover = pointer.and_then(|pointer| self.card(id, panel, pointer));
     }
 
     pub(super) fn change_reading(&mut self, change: reading::Change) {
@@ -215,12 +215,14 @@ impl Genie {
         self.on_session(|session| session.reading.change(change));
     }
 
-    pub(super) fn card(&self, id: u64, pointer: Pointer) -> Option<Card> {
+    pub(super) fn card(&self, id: u64, panel: usize, pointer: Pointer) -> Option<Card> {
         let session = self.session.as_ref()?;
         let track = session.tracks.iter().find(|track| track.id == id)?;
-        let data = track.data(session.contig)?;
-        let mode = track.mode(session.contig);
-        let (viewport, x, y) = (session.viewport, pointer.local.x, pointer.local.y);
+        let (contig, viewport) = session.view(panel);
+        let slot = track.slot(panel);
+        let data = slot.data(contig)?;
+        let mode = track.mode_at(panel, contig);
+        let (x, y) = (pointer.local.x, pointer.local.y);
         let detail = match &data.content {
             Content::Features(annotation) => {
                 let index =
@@ -228,12 +230,12 @@ impl Genie {
                 Detail::Feature(annotation.features[index].clone())
             }
             Content::Reads(pile) => {
-                let rows = track.rows(pile);
+                let rows = slot.rows(pile);
                 let groups = &pile.groups;
                 let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
                 let read = pile.reads[index].alignment.clone();
                 let names = track.source.contigs();
-                let own = track.contigs[session.contig]
+                let own = track.contigs[contig]
                     .as_ref()
                     .and_then(|name| names.iter().position(|known| known == name));
                 let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
@@ -259,9 +261,7 @@ impl Genie {
         };
         Some(Card {
             track: id,
-            contig: session.reference.assembly.contigs()[session.contig]
-                .name
-                .clone(),
+            contig: session.reference.assembly.contigs()[contig].name.clone(),
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
         })

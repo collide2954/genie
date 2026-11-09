@@ -534,10 +534,6 @@ impl Track {
         }
     }
 
-    pub fn rows<'a>(&'a self, pile: &'a Pile) -> &'a [usize] {
-        self.slot.rows(pile)
-    }
-
     pub fn data(&self, contig: usize) -> Option<&Loaded> {
         self.slot.data(contig)
     }

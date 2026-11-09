@@ -656,12 +656,9 @@ fn track_body<'a>(
 ) -> Element<'a, Message> {
     let id = track.id;
     let interactive = |primitives, height| {
-        let view = scene::view(primitives, height);
-        if panel > 0 {
-            return view;
-        }
-        view.on_hover(move |pointer| Message::TrackHovered(id, pointer))
-            .on_click(move |pointer| Message::TrackClicked(id, pointer))
+        scene::view(primitives, height)
+            .on_hover(move |pointer| Message::TrackHovered(id, panel, pointer))
+            .on_click(move |pointer| Message::TrackClicked(id, panel, pointer))
     };
     match body(session, track, panel, shape, repack) {
         Body::Hint(words) => hint(words),

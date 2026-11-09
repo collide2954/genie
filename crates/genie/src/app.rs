@@ -507,8 +507,8 @@ pub enum Message {
     MenuDismissed,
     Scrolled(f32),
     WindowResized(Size),
-    TrackHovered(u64, Option<Pointer>),
-    TrackClicked(u64, Pointer),
+    TrackHovered(u64, usize, Option<Pointer>),
+    TrackClicked(u64, usize, Pointer),
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
@@ -773,8 +773,10 @@ impl Genie {
             Message::NoticeDismissed => self.notice = None,
             Message::TrackMenu(id, at) => self.open_menu(id, at),
             Message::TrackChanged(id, change) => return self.change_track(id, change),
-            Message::TrackHovered(id, pointer) => self.hovered(id, pointer),
-            Message::TrackClicked(id, pointer) => self.pinned = self.card(id, pointer),
+            Message::TrackHovered(id, panel, pointer) => self.hovered(id, panel, pointer),
+            Message::TrackClicked(id, panel, pointer) => {
+                self.pinned = self.card(id, panel, pointer);
+            }
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
@@ -1889,6 +1891,39 @@ mod tests {
     }
 
     #[test]
+    fn cards_read_the_panel_under_the_pointer() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200 chr1:801-900");
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let (id, (_, region)) = (track.id, track.slot(1).wanted.unwrap());
+        let feature = Feature::new("TP53", Region::between(850, 860), Strand::Forward);
+        let loaded = Arc::new(Loaded::features(region, vec![feature]));
+        let _ = genie.update(Message::TrackLoaded(id, 1, 0, region, Ok(loaded)));
+        let x = 55.0 * 499.5 / 100.0;
+        let _ = genie.update(Message::TrackHovered(id, 0, Some(over(x, 5.0))));
+        assert!(genie.hover.is_none());
+        let _ = genie.update(Message::TrackHovered(id, 1, Some(over(x, 5.0))));
+        assert!(shows(&genie, "TP53"));
+        assert!(shows(&genie, "chr1:851-860"));
+        let _ = genie.update(Message::TrackClicked(id, 1, over(x, 5.0)));
+        assert!(genie.pinned.is_some());
+        let mut ui = simulator(genie.view());
+        let label = ui.find("genes.bed.gz").unwrap().bounds().center();
+        let position = Point::new(1_000.0, label.y);
+        ui.point_at(position);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+            position,
+        })]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::TrackHovered(_, 1, Some(_)))),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
     fn ruler_drags_zoom_their_own_panel() {
         let mut genie = opened();
         go(&mut genie, "chr1:1-1000 chr2:1-500");
@@ -2017,7 +2052,7 @@ mod tests {
     fn hovering_or_a_menu_points_at_a_track() {
         let mut genie = with_track();
         assert_eq!(genie.pointed, None);
-        let _ = genie.update(Message::TrackHovered(0, Some(over(10.0, 10.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(10.0, 10.0))));
         assert_eq!(genie.pointed, Some(0));
         genie.pointed = None;
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
@@ -3142,11 +3177,11 @@ mod tests {
     #[test]
     fn hovering_a_feature_shows_its_card() {
         let mut genie = with_features();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, 5.0))));
         assert!(shows(&genie, "BRCA1"));
         assert!(shows(&genie, "chr1:11-20"));
         assert!(shows(&genie, "10 bp · reverse strand"));
-        let _ = genie.update(Message::TrackHovered(0, None));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
         assert!(!shows(&genie, "chr1:11-20"));
     }
 
@@ -3193,10 +3228,10 @@ mod tests {
     #[test]
     fn navigating_hides_the_hover_card() {
         let mut genie = with_features();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, 5.0))));
         let _ = genie.update(Message::Pan(0, -40.0));
         assert!(genie.hover.is_none());
-        let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, 5.0))));
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
         assert!(genie.hover.is_none());
     }
@@ -3349,7 +3384,7 @@ mod tests {
             ..read("pair1", 10)
         };
         add_reads(&mut genie, vec![paired]);
-        let _ = genie.update(Message::TrackHovered(0, Some(over(20.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, 5.0))));
         assert!(shows(&genie, "Mate chr1:301 · insert 330 · FR · first"));
     }
 
@@ -3517,10 +3552,10 @@ mod tests {
     #[test]
     fn hovering_a_signal_shows_its_value() {
         let mut genie = with_signal();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(150.0, 20.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(150.0, 20.0))));
         assert!(shows(&genie, "Value 4"));
         assert!(shows(&genie, "chr1:101-200"));
-        let _ = genie.update(Message::TrackHovered(0, Some(over(500.0, 20.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(500.0, 20.0))));
         assert!(genie.hover.is_none());
     }
 
@@ -3783,12 +3818,12 @@ mod tests {
     #[test]
     fn hovering_a_genotype_shows_the_sample() {
         let mut genie = with_variants();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(20.5, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
         assert!(shows(&genie, "rs20"));
         assert!(shows(&genie, "A > G · QUAL 50 · PASS"));
         assert!(shows(&genie, "DP=12"));
         assert!(!shows(&genie, "NA2 · homozygous alternate"));
-        let _ = genie.update(Message::TrackHovered(0, Some(over(20.5, 28.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 28.0))));
         assert!(shows(&genie, "NA2 · homozygous alternate"));
     }
 
@@ -3811,7 +3846,7 @@ mod tests {
     #[test]
     fn hovering_a_read_shows_its_card() {
         let mut genie = with_reads();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(20.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, 5.0))));
         assert!(shows(&genie, "read7"));
         assert!(shows(&genie, "CIGAR 40M"));
         assert!(shows(&genie, "40 bp · forward strand · MAPQ 60"));
@@ -3840,15 +3875,15 @@ mod tests {
     #[test]
     fn hovering_empty_space_shows_no_card() {
         let mut genie = with_features();
-        let _ = genie.update(Message::TrackHovered(0, Some(over(500.0, 5.0))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(500.0, 5.0))));
         assert!(genie.hover.is_none());
     }
 
     #[test]
     fn clicking_pins_the_card_until_dismissed() {
         let mut genie = with_features();
-        let _ = genie.update(Message::TrackClicked(0, over(15.0, 5.0)));
-        let _ = genie.update(Message::TrackHovered(0, None));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(15.0, 5.0)));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
         assert!(shows(&genie, "chr1:11-20"));
         let _ = genie.update(Message::Command(Command::Dismiss));
         assert!(!shows(&genie, "chr1:11-20"));
@@ -3857,7 +3892,7 @@ mod tests {
     #[test]
     fn removing_a_track_drops_its_cards() {
         let mut genie = with_features();
-        let _ = genie.update(Message::TrackClicked(0, over(15.0, 5.0)));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(15.0, 5.0)));
         let _ = genie.update(Message::TrackChanged(0, Change::Remove));
         assert!(genie.pinned.is_none());
     }
