@@ -198,10 +198,19 @@ enum Status {
 const MAX_PANELS: usize = 4;
 const PANEL_GAP: f32 = 1.0;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 struct Panel {
     contig: usize,
     viewport: Viewport,
+    transition: Option<Transition>,
+}
+
+impl Panel {
+    fn destination(&self) -> Viewport {
+        self.transition
+            .as_ref()
+            .map_or(self.viewport, Transition::target)
+    }
 }
 
 #[derive(Debug)]
@@ -249,9 +258,40 @@ impl Session {
             .checked_sub(1)
             .and_then(|index| self.panels.get(index))
         {
-            Some(extra) => (extra.contig, extra.viewport),
+            Some(extra) => (extra.contig, extra.destination()),
             None => (self.contig, self.destination()),
         }
+    }
+
+    fn motion(&mut self, panel: usize) -> Option<(&mut Viewport, &mut Option<Transition>)> {
+        if panel == 0 {
+            return Some((&mut self.viewport, &mut self.transition));
+        }
+        let extra = self.panels.get_mut(panel - 1)?;
+        Some((&mut extra.viewport, &mut extra.transition))
+    }
+
+    fn shift(&mut self, panel: usize, change: impl FnOnce(Viewport) -> Viewport) {
+        if let Some((viewport, transition)) = self.motion(panel) {
+            *transition = None;
+            *viewport = change(*viewport);
+        }
+    }
+
+    fn steer(&mut self, panel: usize, change: impl FnOnce(Viewport) -> Viewport, motion: bool) {
+        if let Some((viewport, transition)) = self.motion(panel) {
+            let to = change(transition.as_ref().map_or(*viewport, Transition::target));
+            if motion {
+                *transition = Some(Transition::new(*viewport, to, Instant::now()));
+            } else {
+                *transition = None;
+                *viewport = to;
+            }
+        }
+    }
+
+    fn is_moving(&self) -> bool {
+        self.transition.is_some() || self.panels.iter().any(|extra| extra.transition.is_some())
     }
 
     fn view(&self, panel: usize) -> (usize, Viewport) {
@@ -265,18 +305,15 @@ impl Session {
     }
 
     fn only(&mut self, panel: usize, width: f32) {
-        if let Some(extra) = panel
+        if let Some((contig, visible)) = panel
             .checked_sub(1)
             .and_then(|index| self.panels.get(index))
-            .copied()
+            .map(|extra| (extra.contig, extra.destination().visible()))
         {
-            let length = self.reference.assembly.contigs()[extra.contig].length;
+            let length = self.reference.assembly.contigs()[contig].length;
             self.transition = None;
-            self.contig = extra.contig;
-            self.viewport = self
-                .viewport
-                .retarget(length)
-                .jump(Span::Region(extra.viewport.visible()));
+            self.contig = contig;
+            self.viewport = self.viewport.retarget(length).jump(Span::Region(visible));
             for track in &mut self.tracks {
                 if panel <= track.extra.len() {
                     track.slot = track.extra.remove(panel - 1);
@@ -288,11 +325,11 @@ impl Session {
 
     fn close(&mut self, panel: usize, width: f32) {
         if panel == 0 {
-            if let Some(next) = self.panels.first().copied() {
+            if !self.panels.is_empty() {
+                let next = self.panels.remove(0);
                 self.transition = None;
                 self.contig = next.contig;
-                self.viewport = next.viewport;
-                self.panels.remove(0);
+                self.viewport = next.destination();
                 for track in &mut self.tracks {
                     track.slot = if track.extra.is_empty() {
                         crate::track::Slot::default()
@@ -331,6 +368,7 @@ impl Session {
             .map(|(target, length)| Panel {
                 contig: target.contig,
                 viewport: Viewport::new(*length, width).jump(target.span),
+                transition: None,
             })
             .collect();
         for track in &mut self.tracks {
@@ -355,7 +393,8 @@ impl Session {
         let visible = self.viewport.visible();
         self.viewport = self.viewport.resize(width).show(visible);
         for panel in &mut self.panels {
-            let visible = panel.viewport.visible();
+            let visible = panel.destination().visible();
+            panel.transition = None;
             panel.viewport = panel.viewport.resize(width).show(visible);
         }
     }
@@ -365,7 +404,8 @@ impl Session {
         self.transition = None;
         self.viewport = self.viewport.resize(width);
         for panel in &mut self.panels {
-            panel.viewport = panel.viewport.resize(width);
+            panel.viewport = panel.destination().resize(width);
+            panel.transition = None;
         }
     }
 
@@ -412,10 +452,14 @@ impl Session {
     }
 
     fn advance(&mut self, now: Instant) {
-        if let Some(transition) = &self.transition {
-            self.viewport = transition.at(now);
-            if transition.is_done(now) {
-                self.transition = None;
+        for panel in 0..self.count() {
+            if let Some((viewport, transition)) = self.motion(panel)
+                && let Some(running) = transition.as_ref()
+            {
+                *viewport = running.at(now);
+                if running.is_done(now) {
+                    *transition = None;
+                }
             }
         }
     }
@@ -855,11 +899,7 @@ impl Genie {
     }
 
     fn is_animating(&self) -> bool {
-        self.slide.is_animating(self.now)
-            || self
-                .session
-                .as_ref()
-                .is_some_and(|session| session.transition.is_some())
+        self.slide.is_animating(self.now) || self.session.as_ref().is_some_and(Session::is_moving)
     }
 
     fn toggle(&mut self, popup: Popup) {
@@ -1888,6 +1928,27 @@ mod tests {
         );
         let _ = genie.update(Message::Pan(3, -100.0));
         assert!(locus(&genie).ends_with(" chr2:226-275"));
+    }
+
+    #[test]
+    fn keys_and_ruler_drags_glide_every_panel() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200 chr2:1-100");
+        let _ = genie.update(Message::Command(Command::Pan(-1.0)));
+        assert!(genie.is_animating());
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.view(1).1.visible(), Region::between(0, 100));
+        assert_eq!(session.frame(1).1.visible(), Region::between(100, 200));
+        settle(&mut genie);
+        assert!(!genie.is_animating());
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.locus(), "chr1:201-300 chr2:101-200");
+        let _ = genie.update(Message::Ruler(1, Sweep::Pressed(0.2)));
+        let _ = genie.update(Message::Ruler(1, Sweep::Dragged(0.4)));
+        let _ = genie.update(Message::Ruler(1, Sweep::Released));
+        assert!(genie.is_animating());
+        let _ = genie.update(Message::Pan(1, 0.0));
+        assert!(!genie.is_animating());
     }
 
     #[test]

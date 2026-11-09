@@ -342,7 +342,11 @@ impl Genie {
                 }
                 let span = Span::Region(region);
                 if panel > 0 {
-                    return self.navigate(panel, |viewport| viewport.jump(span));
+                    let motion = self.settings.motion;
+                    self.on_session(|session| {
+                        session.steer(panel, |viewport| viewport.jump(span), motion);
+                    });
+                    return self.fetch();
                 }
                 return self.go_to(Target { contig, span });
             }
@@ -465,14 +469,7 @@ impl Genie {
         change: impl FnOnce(Viewport) -> Viewport,
     ) -> Task<Message> {
         self.hover = None;
-        self.on_session(|session| {
-            if panel == 0 {
-                session.transition = None;
-                session.viewport = change(session.viewport);
-            } else if let Some(extra) = session.panels.get_mut(panel - 1) {
-                extra.viewport = change(extra.viewport);
-            }
-        });
+        self.on_session(|session| session.shift(panel, change));
         self.fetch()
     }
 
@@ -480,15 +477,8 @@ impl Genie {
         self.hover = None;
         let motion = self.settings.motion;
         self.on_session(|session| {
-            let to = change(session.destination());
-            if motion && session.panels.is_empty() {
-                session.glide(to);
-            } else {
-                session.transition = None;
-                session.viewport = to;
-                for extra in &mut session.panels {
-                    extra.viewport = change(extra.viewport);
-                }
+            for panel in 0..session.count() {
+                session.steer(panel, &change, motion);
             }
         });
         self.fetch()
