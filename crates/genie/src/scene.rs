@@ -21,8 +21,8 @@ const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
 const HALF: f32 = 0.5;
 const PAIR: f32 = 0.85;
-const CHIP_PADDING: f32 = 4.0;
-const CHIP_LINE: f32 = 1.3;
+pub const CHIP_PADDING: f32 = 4.0;
+pub const CHIP_LINE: f32 = 1.3;
 
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
 

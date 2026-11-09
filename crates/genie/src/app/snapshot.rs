@@ -12,7 +12,7 @@ use genie_core::{Locus, Region, Span, Target};
 use genie_formats::bed;
 use genie_formats::features::Entry;
 
-use crate::export::{self, Image};
+use crate::export;
 use crate::font;
 use crate::genome;
 use crate::location::Location;
@@ -26,8 +26,7 @@ use crate::track;
 use super::sessions::local;
 use super::{Genie, Message};
 
-pub(super) const USAGE: &str =
-    "Usage: genie snapshot SESSION REGIONS FOLDER [--width POINTS] [--theme light|dark]";
+pub(super) const USAGE: &str = "Usage: genie snapshot SESSION REGIONS FOLDER [--width POINTS] [--theme light|dark] [--format png|svg]";
 const WIDTH: f32 = 1280.0;
 const WIDTHS: RangeInclusive<f32> = 200.0..=4096.0;
 
@@ -38,13 +37,14 @@ pub(super) struct Request {
     pub(super) folder: PathBuf,
     pub(super) width: f32,
     pub(super) dark: bool,
+    pub(super) svg: bool,
 }
 
 impl Request {
     pub(super) fn parse(arguments: &[OsString]) -> Result<Self, String> {
         let wrong = |message: &str| format!("{message}\n{USAGE}");
         let mut files = Vec::new();
-        let (mut width, mut dark) = (WIDTH, false);
+        let (mut width, mut dark, mut svg) = (WIDTH, false, false);
         let mut rest = arguments.iter();
         while let Some(argument) = rest.next() {
             match argument.to_str() {
@@ -62,6 +62,13 @@ impl Request {
                         _ => return Err(wrong("The theme must be light or dark.")),
                     };
                 }
+                Some("--format") => {
+                    svg = match rest.next().and_then(|value| value.to_str()) {
+                        Some("png") => false,
+                        Some("svg") => true,
+                        _ => return Err(wrong("The format must be png or svg.")),
+                    };
+                }
                 Some(option) if option.starts_with("--") => {
                     return Err(wrong(&format!("genie does not know the option {option}.")));
                 }
@@ -76,6 +83,7 @@ impl Request {
             folder,
             width,
             dark,
+            svg,
         })
     }
 }
@@ -99,7 +107,7 @@ pub fn command(arguments: &[OsString]) -> ExitCode {
     }
 }
 
-pub(super) fn image_names(entries: &[Entry]) -> Vec<String> {
+pub(super) fn image_names(entries: &[Entry], extension: &str) -> Vec<String> {
     let mut used = HashSet::new();
     entries
         .iter()
@@ -109,11 +117,11 @@ pub(super) fn image_names(entries: &[Entry]) -> Vec<String> {
             } else {
                 export::safe(&entry.name)
             };
-            let mut name = format!("{stem}.png");
+            let mut name = format!("{stem}.{extension}");
             let mut copy = 1;
             while !used.insert(name.to_lowercase()) {
                 copy += 1;
-                name = format!("{stem}-{copy}.png");
+                name = format!("{stem}-{copy}.{extension}");
             }
             name
         })
@@ -142,13 +150,16 @@ pub(super) fn run(request: &Request, report: &mut dyn FnMut(String)) -> Result<u
     })?;
     let count = regions.len();
     let mut failed = 0;
-    for (index, (entry, name)) in regions.iter().zip(image_names(&regions)).enumerate() {
+    let extension = if request.svg { "svg" } else { "png" };
+    let names = image_names(&regions, extension);
+    for (index, (entry, name)) in regions.iter().zip(names).enumerate() {
         let number = index + 1;
+        let path = request.folder.join(&name);
         let result = genie
-            .picture(entry)
-            .and_then(|image| export::save(request.folder.join(&name), &image));
+            .visit(entry)
+            .and_then(|()| genie.save(path, request.svg));
         match result {
-            Ok(_) => report(format!("Saved {name} ({number} of {count}).")),
+            Ok(()) => report(format!("Saved {name} ({number} of {count}).")),
             Err(error) => {
                 failed += 1;
                 let locus = Locus {
@@ -203,7 +214,7 @@ impl Genie {
         Ok(())
     }
 
-    fn picture(&mut self, entry: &Entry) -> Result<Image, String> {
+    fn visit(&mut self, entry: &Entry) -> Result<(), String> {
         let contig = self
             .session
             .as_ref()
@@ -214,12 +225,21 @@ impl Genie {
             span: Span::Region(entry.span),
         });
         self.load_now();
+        Ok(())
+    }
+
+    pub(super) fn save(&self, path: PathBuf, svg: bool) -> Result<(), String> {
         let session = self
             .session
             .as_ref()
             .ok_or_else(|| "There is no reference.".to_owned())?;
-        export::render(self.export_view(session), self.width, &self.theme())
-            .ok_or_else(|| "The view could not be drawn.".to_owned())
+        if svg {
+            return fs::write(path, self.figure(session))
+                .map_err(|error| format!("The image could not be saved. {error}"));
+        }
+        let image = export::render(self.export_view(session), self.width, &self.theme())
+            .ok_or_else(|| "The view could not be drawn.".to_owned())?;
+        export::save(path, &image).map(|_| ())
     }
 
     fn load_now(&mut self) {
@@ -285,6 +305,7 @@ mod tests {
                 folder: PathBuf::from("out"),
                 width: 1280.0,
                 dark: false,
+                svg: false,
             }
         );
         let words = [
@@ -294,11 +315,17 @@ mod tests {
             "--theme",
             "dark",
             "regions.bed",
+            "--format",
+            "svg",
             "out",
         ];
         let request = Request::parse(&args(&words)).unwrap();
-        assert_eq!((request.width, request.dark), (800.0, true));
-        let wrong: [&[&str]; 6] = [
+        assert_eq!(
+            (request.width, request.dark, request.svg),
+            (800.0, true, true)
+        );
+        let wrong: [&[&str]; 7] = [
+            &["a", "b", "c", "--format", "gif"],
             &["work.genie", "regions.bed"],
             &["a", "b", "c", "d"],
             &["a", "b", "c", "--width"],
@@ -329,9 +356,10 @@ mod tests {
             entry("a/b c", "chr2", 0, 5),
         ];
         assert_eq!(
-            image_names(&entries),
+            image_names(&entries, "png"),
             ["BRCA1.png", "chr1_100-200.png", "BRCA1-2.png", "a_b_c.png"]
         );
+        assert_eq!(image_names(&entries[..1], "svg"), ["BRCA1.svg"]);
     }
 
     #[test]
@@ -355,6 +383,7 @@ mod tests {
             folder: folder.clone(),
             width: 400.0,
             dark: true,
+            svg: false,
         };
         let mut lines = Vec::new();
         let failed = run(&request, &mut |line| lines.push(line)).unwrap();
@@ -370,6 +399,16 @@ mod tests {
         let png = fs::read(folder.join("geneA.png")).unwrap();
         assert_eq!(png[16..20], 800_u32.to_be_bytes());
         assert!(folder.join("chr1_1-50.png").is_file());
+        let request = Request {
+            svg: true,
+            ..request
+        };
+        assert_eq!(run(&request, &mut |_| {}), Ok(1));
+        let svg = fs::read_to_string(folder.join("geneA.svg")).unwrap();
+        assert!(
+            svg.starts_with("<svg") && svg.contains(">geneA</text>"),
+            "{svg}"
+        );
     }
 
     #[test]
@@ -383,6 +422,7 @@ mod tests {
             folder: session.with_file_name("out"),
             width: 400.0,
             dark: false,
+            svg: false,
         };
         assert!(run(&request, &mut |_| {}).is_err());
         let request = Request {

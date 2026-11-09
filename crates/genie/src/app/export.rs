@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iced::widget::{column, container, row, text};
 use iced::{Alignment, Element, Task};
@@ -10,8 +10,8 @@ use crate::{font, style};
 use super::view::{hairline, ruler_view};
 use super::{Genie, Message, Session};
 
-const CAPTION_HEIGHT: f32 = 22.0;
-const CAPTION_SIZE: f32 = 11.0;
+pub(super) const CAPTION_HEIGHT: f32 = 22.0;
+pub(super) const CAPTION_SIZE: f32 = 11.0;
 const DRAW_FAILED: &str = "The view could not be drawn.";
 const EXPORT_CUT: &str = "The view is too tall. The image shows only the top part.";
 
@@ -69,6 +69,12 @@ impl Genie {
         let (Some(path), Some(session)) = (path, &self.session) else {
             return Task::none();
         };
+        if is_svg(&path) {
+            let result = std::fs::write(&path, self.figure(session))
+                .map(|()| path)
+                .map_err(|error| format!("The image could not be saved. {error}"));
+            return self.exported(result, false);
+        }
         if let Some(image) = export::render(self.export_view(session), self.width, &self.theme()) {
             let cut = image.cut;
             Task::perform(
@@ -93,11 +99,17 @@ impl Genie {
     }
 }
 
+pub(super) fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+}
+
 async fn save_as(name: String) -> Option<PathBuf> {
     rfd::AsyncFileDialog::new()
-        .set_title("Export PNG")
+        .set_title("Export image")
         .set_file_name(name)
         .add_filter("PNG image", &["png"])
+        .add_filter("SVG image", &["svg"])
         .save_file()
         .await
         .map(|file| file.path().to_owned())

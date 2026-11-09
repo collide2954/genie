@@ -36,11 +36,11 @@ use super::{Genie, Lane, Message, Popup, Renaming, Session, Status, Suggestion, 
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
 const NAME_WIDTH: f32 = 160.0;
-const RULER_HEIGHT: f32 = 20.0;
-const BASE_HEIGHT: f32 = 16.0;
-const EMPTY_HEIGHT: f32 = 20.0;
+pub(super) const RULER_HEIGHT: f32 = 20.0;
+pub(super) const BASE_HEIGHT: f32 = 16.0;
+pub(super) const EMPTY_HEIGHT: f32 = 20.0;
 const EDGE: f32 = 4.0;
-const LABEL_SIZE: f32 = 10.0;
+pub(super) const LABEL_SIZE: f32 = 10.0;
 const READ_HINT: &str = "Zoom in to see the reads";
 pub(super) const VARIANT_HINT: &str = "Zoom in to see the variants";
 pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
@@ -561,23 +561,48 @@ impl Genie {
     }
 }
 
+pub(super) enum Body {
+    Hint(String),
+    Space(f32),
+    Scene(Vec<Primitive>, f32),
+    Reads {
+        coverage: Vec<Primitive>,
+        reads: Option<(Vec<Primitive>, f32)>,
+    },
+}
+
 fn track_body<'a>(
     session: &Session,
     track: &'a Track,
     shape: Shape,
     repack: bool,
 ) -> Element<'a, Message> {
-    let viewport = session.viewport;
-    let contig = session.contig;
     let id = track.id;
     let interactive = |primitives, height| {
         scene::view(primitives, height)
             .on_hover(move |pointer| Message::TrackHovered(id, pointer))
             .on_click(move |pointer| Message::TrackClicked(id, pointer))
     };
+    match body(session, track, shape, repack) {
+        Body::Hint(words) => hint(words),
+        Body::Space(height) => space().width(Length::Fill).height(height).into(),
+        Body::Scene(primitives, height) => interactive(primitives, height).into(),
+        Body::Reads { coverage, reads } => {
+            let mut body = column![scene::view(coverage, alignments::COVERAGE_HEIGHT)].spacing(1);
+            if let Some((primitives, height)) = reads {
+                body = body.push(interactive(primitives, height));
+            }
+            body.into()
+        }
+    }
+}
+
+pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool) -> Body {
+    let viewport = session.viewport;
+    let contig = session.contig;
     let mode = track.mode(contig);
     if let Some(error) = &track.error {
-        return hint(error.clone());
+        return Body::Hint(error.clone());
     }
     if viewport.visible().len() > track.source.span() {
         let words = if track.source.has_reads() {
@@ -589,14 +614,14 @@ fn track_body<'a>(
         } else {
             ZOOM_HINT
         };
-        return hint(words.to_owned());
+        return Body::Hint(words.to_owned());
     }
     match track.data(contig).map(|data| &data.content) {
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
             let columns = signal_columns(track, viewport, &data.summaries);
             let Some(scale) = signal_scale(session, track, &columns) else {
-                return space().width(Length::Fill).height(height).into();
+                return Body::Space(height);
             };
             let width = viewport.width() as f32;
             let members = members(session, track);
@@ -615,11 +640,11 @@ fn track_body<'a>(
                 );
                 signal::traces(&layers, scale, height, width)
             };
-            interactive(primitives, height).into()
+            Body::Scene(primitives, height)
         }
         Some(Content::Variants(calls)) => {
             let primitives = variants::scene(viewport, &calls.variants, mode);
-            interactive(primitives, shape.height).into()
+            Body::Scene(primitives, shape.height)
         }
         Some(Content::Features(annotation)) => {
             let primitives = features::scene(
@@ -630,16 +655,16 @@ fn track_body<'a>(
                 track.hue,
                 track.plot.colors,
             );
-            interactive(primitives, shape.height).into()
+            Body::Scene(primitives, shape.height)
         }
         Some(Content::Reads(pile)) => {
-            let depth = alignments::coverage(
+            let coverage = alignments::coverage(
                 viewport,
                 &pile.coverage,
                 |at| pile.base(at),
                 alignments::COVERAGE_HEIGHT,
             );
-            let mut body = column![scene::view(depth, alignments::COVERAGE_HEIGHT)].spacing(1);
+            let mut reads = None;
             if mode != features::Mode::Collapsed {
                 let (packed, bands);
                 let (rows, groups) = if repack {
@@ -658,11 +683,11 @@ fn track_body<'a>(
                 let primitives =
                     alignments::reads(viewport, &pile.reads, rows, groups, mode, pairs);
                 let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
-                body = body.push(interactive(primitives, height));
+                reads = Some((primitives, height));
             }
-            body.into()
+            Body::Reads { coverage, reads }
         }
-        None => space().width(Length::Fill).height(EMPTY_HEIGHT).into(),
+        None => Body::Space(EMPTY_HEIGHT),
     }
 }
 
@@ -736,8 +761,8 @@ fn track_view<'a>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Shape {
-    height: f32,
+pub(super) struct Shape {
+    pub(super) height: f32,
     rows: usize,
     fixed: f32,
     row_height: f32,
@@ -753,7 +778,7 @@ impl Shape {
         }
     }
 
-    fn hidden(self, height: f32) -> usize {
+    pub(super) fn hidden(self, height: f32) -> usize {
         if self.row_height <= 0.0 {
             return 0;
         }
@@ -762,7 +787,7 @@ impl Shape {
     }
 }
 
-fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
+pub(super) fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
     let viewport = session.viewport;
     if track.error.is_some() || viewport.visible().len() > track.source.span() {
         return Shape::plain(EMPTY_HEIGHT);
@@ -867,7 +892,7 @@ pub(super) fn signal_scale(
         .reduce(signal::Scale::union)
 }
 
-fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track> {
+pub(super) fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track> {
     session
         .tracks
         .iter()

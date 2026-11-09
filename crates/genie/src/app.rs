@@ -34,6 +34,7 @@ use crate::{font, paths, timer};
 mod address;
 mod copy;
 mod export;
+mod figure;
 mod navigation;
 mod offline;
 mod orders;
@@ -3292,6 +3293,53 @@ mod tests {
             .iter()
             .map(|track| (track.over, track.hue))
             .collect()
+    }
+
+    #[test]
+    fn figures_hold_the_caption_the_ruler_and_the_tracks_as_svg() {
+        let mut genie = with_two_signals();
+        let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
+        let svg = genie.figure(genie.session.as_ref().unwrap());
+        assert!(svg.starts_with("<svg"), "{svg}");
+        for text in [
+            ">ref.fa</text>",
+            ">chr1:1-1,000</text>",
+            ">Sequence</text>",
+            ">coverage.bedGraph</text>",
+            ">other.bedGraph</text>",
+            ">0-10</text>",
+        ] {
+            assert!(svg.contains(text), "{text}\n{svg}");
+        }
+        assert!(svg.contains("clip-path=\"url(#"), "{svg}");
+        assert_eq!(svg.matches("<svg").count(), 1);
+    }
+
+    #[test]
+    fn exports_save_svg_for_svg_names() {
+        let scratch = crate::scratch::Scratch::new("export-svg");
+        let path = scratch.file("marker", "").with_file_name("view.svg");
+        let mut genie = with_signal();
+        let _ = genie.update(Message::ExportPicked(Some(path.clone())));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("<svg"), "{text}");
+        assert!(shows(&genie, "Saved view.svg."));
+    }
+
+    #[test]
+    fn snapshot_orders_save_svg_for_svg_names() {
+        let scratch = crate::scratch::Scratch::new("port-svg");
+        let folder = scratch.file("marker", "").parent().unwrap().to_owned();
+        let mut genie = opened();
+        load_tiles(&mut genie);
+        let line = format!("snapshotDirectory \"{}\"", folder.display());
+        assert_eq!(told(&ask(&mut genie, &line)).as_deref(), Some("OK"));
+        assert_eq!(
+            told(&ask(&mut genie, "snapshot view.svg")).as_deref(),
+            Some("OK")
+        );
+        let text = std::fs::read_to_string(folder.join("view.svg")).unwrap();
+        assert!(text.starts_with("<svg"), "{text}");
     }
 
     #[test]

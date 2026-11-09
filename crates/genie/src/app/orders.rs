@@ -246,12 +246,9 @@ impl Genie {
                 || PathBuf::from(export::file_name(contig, session.viewport.visible())),
                 PathBuf::from,
             );
-        let Some(image) = export::render(self.export_view(session), self.width, &self.theme())
-        else {
-            return "The view could not be drawn.".to_owned();
-        };
-        match export::save(folder.join(file), &image) {
-            Ok(_) => "OK".to_owned(),
+        let svg = super::export::is_svg(&file);
+        match self.save(folder.join(file), svg) {
+            Ok(()) => "OK".to_owned(),
             Err(error) => error,
         }
     }
