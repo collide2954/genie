@@ -1,6 +1,7 @@
 use crate::{Region, Span};
 
 pub const MAX_PIXELS_PER_BASE: f64 = 32.0;
+const NOISE: f64 = 1e-4;
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,8 +77,8 @@ impl Viewport {
     }
 
     pub fn visible(self) -> Region {
-        let start = self.start.floor().max(0.0) as u64;
-        let end = self.end().ceil().max(0.0) as u64;
+        let start = (self.start + NOISE).floor().max(0.0) as u64;
+        let end = (self.end() - NOISE).ceil().max(0.0) as u64;
         Region::between(start.min(self.length), end.min(self.length))
     }
 
@@ -205,6 +206,20 @@ mod tests {
         let viewport = zoomed_in();
         assert_close(viewport.start(), 400.0);
         assert_close(viewport.scale(), 1.0);
+    }
+
+    #[test]
+    fn visible_regions_ignore_rounding_noise() {
+        let viewport = Viewport::new(1_000, 499.5);
+        let shown = |start, end| viewport.show(region(start, end)).visible();
+        assert_eq!(shown(0, 500), region(0, 500));
+        assert_eq!(shown(500, 1_000), region(500, 1_000));
+        let wide = Viewport::new(250_000_000, 333.3);
+        let start = 200_000_001;
+        assert_eq!(
+            wide.show(region(start, start + 777)).visible(),
+            region(start, start + 777)
+        );
     }
 
     #[test]
