@@ -220,6 +220,8 @@ impl Genie {
             .as_ref()
             .and_then(|session| session.reference.assembly.find(&entry.contig))
             .ok_or_else(|| format!("The reference has no contig {}.", entry.contig))?;
+        let width = self.width;
+        self.on_session(|session| session.join(width));
         let _ = self.go_to(Target {
             contig,
             span: Span::Region(entry.span),
@@ -409,6 +411,29 @@ mod tests {
             svg.starts_with("<svg") && svg.contains(">geneA</text>"),
             "{svg}"
         );
+    }
+
+    #[test]
+    fn snapshots_show_one_region_from_sessions_with_panels() {
+        let scratch = Scratch::new("snapshot-panels");
+        scratch.file("ref.fa", format!(">chr1\n{}\n", "ACGT".repeat(250)));
+        let session = scratch.file(
+            "work.genie",
+            "[session]\nreference = ref.fa\nlocus = chr1:1-500 chr1:501-1000\n",
+        );
+        let regions = scratch.file("regions.bed", "chr1\t100\t400\tgeneA\n");
+        let folder = session.with_file_name("pictures");
+        let request = Request {
+            session,
+            regions,
+            folder: folder.clone(),
+            width: 400.0,
+            dark: false,
+            svg: true,
+        };
+        assert_eq!(run(&request, &mut |_| {}), Ok(0));
+        let svg = fs::read_to_string(folder.join("geneA.svg")).unwrap();
+        assert!(svg.contains(">chr1:101-400<"), "{svg}");
     }
 
     #[test]
