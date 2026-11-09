@@ -195,6 +195,15 @@ enum Status {
     Failed(String),
 }
 
+const MAX_PANELS: usize = 4;
+const PANEL_GAP: f32 = 1.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Panel {
+    contig: usize,
+    viewport: Viewport,
+}
+
 #[derive(Debug)]
 struct Session {
     reference: Arc<Reference>,
@@ -206,6 +215,12 @@ struct Session {
     reading: Reading,
     history: History,
     marks: Marks,
+    panels: Vec<Panel>,
+}
+
+fn panel_width(width: f32, count: usize) -> f32 {
+    let gaps = PANEL_GAP * count.saturating_sub(1) as f32;
+    ((width - gaps) / count.max(1) as f32).max(1.0)
 }
 
 impl Session {
@@ -221,6 +236,64 @@ impl Session {
             reading: Reading::default(),
             history: History::default(),
             marks: Marks::default(),
+            panels: Vec::new(),
+        }
+    }
+
+    fn count(&self) -> usize {
+        1 + self.panels.len()
+    }
+
+    fn frame(&self, panel: usize) -> (usize, Viewport) {
+        match panel
+            .checked_sub(1)
+            .and_then(|index| self.panels.get(index))
+        {
+            Some(extra) => (extra.contig, extra.viewport),
+            None => (self.contig, self.destination()),
+        }
+    }
+
+    fn split(&mut self, targets: &[Target], width: f32) {
+        let width = f64::from(panel_width(width, targets.len()));
+        let lengths: Vec<u64> = targets
+            .iter()
+            .map(|target| self.reference.assembly.contigs()[target.contig].length)
+            .collect();
+        self.transition = None;
+        self.contig = targets[0].contig;
+        self.viewport = self
+            .viewport
+            .retarget(lengths[0])
+            .resize(width)
+            .jump(targets[0].span);
+        self.panels = targets[1..]
+            .iter()
+            .zip(&lengths[1..])
+            .map(|(target, length)| Panel {
+                contig: target.contig,
+                viewport: Viewport::new(*length, width).jump(target.span),
+            })
+            .collect();
+        for track in &mut self.tracks {
+            track.extra.clear();
+        }
+    }
+
+    fn join(&mut self, width: f32) {
+        if self.panels.is_empty() {
+            return;
+        }
+        self.panels.clear();
+        self.resize(width);
+    }
+
+    fn resize(&mut self, width: f32) {
+        let width = f64::from(panel_width(width, self.count()));
+        self.transition = None;
+        self.viewport = self.viewport.resize(width);
+        for panel in &mut self.panels {
+            panel.viewport = panel.viewport.resize(width);
         }
     }
 
@@ -277,13 +350,13 @@ impl Session {
 
     fn accept(
         &mut self,
-        id: u64,
+        (id, panel): (u64, usize),
         contig: usize,
         region: Region,
         result: Result<Arc<Loaded>, String>,
     ) {
         if let Some(track) = self.tracks.iter_mut().find(|track| track.id == id) {
-            track.accept(contig, region, result);
+            track.accept_at(panel, contig, region, result);
         }
     }
 
@@ -312,11 +385,22 @@ impl Session {
     }
 
     fn locus(&self) -> String {
-        Locus {
-            name: self.reference.assembly.contigs()[self.contig].name.clone(),
-            span: Span::Region(self.viewport.visible()),
-        }
-        .to_string()
+        let contigs = self.reference.assembly.contigs();
+        let one = |contig: usize, viewport: Viewport| {
+            Locus {
+                name: contigs[contig].name.clone(),
+                span: Span::Region(viewport.visible()),
+            }
+            .to_string()
+        };
+        std::iter::once(one(self.contig, self.viewport))
+            .chain(
+                self.panels
+                    .iter()
+                    .map(|panel| one(panel.contig, panel.viewport)),
+            )
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
@@ -344,7 +428,7 @@ pub enum Message {
     FileDropped(PathBuf),
     SuggestionChosen(usize),
     TrackOpened(Result<Arc<Source>, String>),
-    TrackLoaded(u64, usize, Region, Result<Arc<Loaded>, String>),
+    TrackLoaded(u64, usize, usize, Region, Result<Arc<Loaded>, String>),
     NoticeDismissed,
     TrackMenu(u64, Point),
     TrackChanged(u64, Change),
@@ -604,8 +688,8 @@ impl Genie {
             Message::Opened(result) => return self.opened(result),
             Message::Indexing(name, percent) => self.indexing = Some((name, percent)),
             Message::TrackOpened(result) => return self.track_opened(result),
-            Message::TrackLoaded(id, contig, region, result) => {
-                self.on_session(|session| session.accept(id, contig, region, result));
+            Message::TrackLoaded(id, panel, contig, region, result) => {
+                self.on_session(|session| session.accept((id, panel), contig, region, result));
             }
             Message::NoticeDismissed => self.notice = None,
             Message::TrackMenu(id, at) => self.open_menu(id, at),
@@ -650,10 +734,7 @@ impl Genie {
                 return self
                     .navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
             }
-            Message::Resized(width) => {
-                self.width = width;
-                return self.navigate(|viewport| viewport.resize(f64::from(width)));
-            }
+            Message::Resized(width) => return self.resize(width),
             Message::TileLoaded(generation, key, result) => {
                 self.tile_loaded(generation, key, result);
             }
@@ -1209,7 +1290,7 @@ mod tests {
         let region = Region::between(0, 1_000);
         let feature = Feature::new("a", Region::between(10, 20), Strand::Forward);
         let loaded = Arc::new(Loaded::features(region, vec![feature; 12]));
-        let _ = genie.update(Message::TrackLoaded(0, 0, region, Ok(loaded)));
+        let _ = genie.update(Message::TrackLoaded(0, 0, 0, region, Ok(loaded)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
         assert_eq!(track.data(0).unwrap().count(), 12);
         assert_eq!(track.mode(0), Rows::Squished);
@@ -1221,7 +1302,7 @@ mod tests {
         let _ = genie.update(Message::Zoom(2.0, 0.0));
         let error = "The strand is not +, - or ..".to_owned();
         let region = Region::between(0, 1_000);
-        let _ = genie.update(Message::TrackLoaded(0, 0, region, Err(error.clone())));
+        let _ = genie.update(Message::TrackLoaded(0, 0, 0, region, Err(error.clone())));
         assert!(shows(&genie, &error));
     }
 
@@ -1630,6 +1711,55 @@ mod tests {
             &genie,
             "genie cannot take commands on port 60151. The address is in use."
         ));
+    }
+
+    #[test]
+    fn several_loci_open_side_by_side_panels() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200 chr2:1-50");
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.count(), 2);
+        let (contig, viewport) = session.frame(1);
+        assert_eq!((contig, viewport.visible()), (1, Region::between(0, 50)));
+        assert!(
+            (viewport.width() - 499.5).abs() < 0.01,
+            "{}",
+            viewport.width()
+        );
+        assert_eq!(session.locus(), "chr1:101-200 chr2:1-50");
+        assert!(shows(&genie, "chr1:101-200 chr2:1-50"));
+        go(&mut genie, "chr2:11-20");
+        settle(&mut genie);
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.count(), 1);
+        assert!((session.viewport.width() - 1_000.0).abs() < 0.01);
+        go(&mut genie, "chr1 chr1 chr1 chr1 chr1");
+        assert_eq!(
+            genie.locus_error.as_deref(),
+            Some("genie shows up to 4 loci.")
+        );
+        go(&mut genie, "chr1 chrZ");
+        assert_eq!(
+            genie.locus_error.as_deref(),
+            Some("genie cannot find chrZ.")
+        );
+        assert_eq!(genie.session.as_ref().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn panels_load_their_own_track_data() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200 chr1:801-900");
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let (contig, region) = track.slot(1).wanted.unwrap();
+        assert_eq!(contig, 0);
+        assert!(region.start() <= 800 && region.end() >= 900, "{region:?}");
+        let id = track.id;
+        let loaded = Arc::new(Loaded::features(region, Vec::new()));
+        let _ = genie.update(Message::TrackLoaded(id, 1, 0, region, Ok(loaded)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert!(track.slot(1).data(0).is_some());
+        assert!(track.data(0).is_none());
     }
 
     #[test]
@@ -2699,7 +2829,8 @@ mod tests {
         let feature = Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.slot.wanted = Some((0, region));
-        track.accept(
+        track.accept_at(
+            0,
             0,
             region,
             Ok(Arc::new(Loaded::features(region, vec![feature]))),
@@ -2721,7 +2852,12 @@ mod tests {
             .collect();
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
         track.slot.wanted = Some((0, region));
-        track.accept(0, region, Ok(Arc::new(Loaded::features(region, features))));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
         genie
     }
 
@@ -2946,7 +3082,7 @@ mod tests {
             gather.add(read);
         }
         let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
-        track.accept(0, region, Ok(Arc::new(loaded)));
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
     }
 
     #[test]
@@ -3182,7 +3318,7 @@ mod tests {
         track.slot.wanted = Some((0, region));
         let variants = vec![site(20, vec![Call::Het, Call::Alternate])];
         let loaded = Loaded::variants(region, variants, 2);
-        track.accept(0, region, Ok(Arc::new(loaded)));
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
         genie
     }
 
@@ -3210,7 +3346,12 @@ mod tests {
             Summary::single(Region::between(0, 100), 1.0),
             Summary::single(Region::between(100, 200), 4.0),
         ];
-        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::signal(region, values, 1))),
+        );
         genie
     }
 
@@ -3282,7 +3423,12 @@ mod tests {
         let track = &mut genie.session.as_mut().unwrap().tracks[1];
         track.slot.wanted = Some((0, region));
         let values = vec![Summary::single(Region::between(300, 400), 10.0)];
-        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::signal(region, values, 1))),
+        );
         genie
     }
 
@@ -3448,7 +3594,12 @@ mod tests {
         let track = &mut genie.session.as_mut().unwrap().tracks[1];
         track.slot.wanted = Some((0, region));
         let values = vec![Summary::single(Region::between(300, 400), 10.0)];
-        track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::signal(region, values, 1))),
+        );
         let own = Scale { min: 0.0, max: 4.0 };
         assert_eq!(scale_of(&genie, 0), Some(own));
         for id in [0, 1] {

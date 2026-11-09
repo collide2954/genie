@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::SystemTime;
 
-use genie_core::Region;
+use genie_core::{Region, Viewport};
 use genie_render::{alignments, features, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::time::Instant;
@@ -293,21 +293,38 @@ impl Genie {
         let Some(session) = &mut self.session else {
             return Task::none();
         };
-        let viewport = session.destination();
+        let frames: Vec<(usize, usize, Viewport)> = (0..session.count())
+            .map(|panel| {
+                let (contig, viewport) = session.frame(panel);
+                (panel, contig, viewport)
+            })
+            .collect();
+        let mut tasks = Vec::new();
+        for (panel, contig, viewport) in frames {
+            tasks.extend(Self::fetch_panel(session, panel, contig, viewport));
+        }
+        Task::batch(tasks)
+    }
+
+    fn fetch_panel(
+        session: &mut super::Session,
+        panel: usize,
+        contig: usize,
+        viewport: Viewport,
+    ) -> Vec<Task<Message>> {
         let visible = viewport.visible();
-        let contig = session.contig;
         let length = viewport.length();
         let wanted = visible.expand(visible.len(), length);
         let step = track::step(viewport.scale());
         let detail = track::detailed(visible);
         let reference = &session.reference;
-        let tasks: Vec<Task<Message>> = session
+        session
             .tracks
             .iter_mut()
-            .filter(|track| track.needs(contig, visible, step))
+            .filter(|track| track.needs_at(panel, contig, visible, step))
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;
-                track.slot.wanted = Some((contig, wanted));
+                track.slot_mut(panel).wanted = Some((contig, wanted));
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let reference = Arc::clone(reference);
                 Some(Task::perform(
@@ -330,40 +347,38 @@ impl Genie {
                         }
                         result.map(Arc::new)
                     },
-                    move |result| Message::TrackLoaded(id, contig, wanted, result),
+                    move |result| Message::TrackLoaded(id, panel, contig, wanted, result),
                 ))
             })
-            .collect();
-        Task::batch(tasks)
+            .collect()
     }
 
     fn fetch_bases(&mut self) -> Task<Message> {
         let Some(session) = &self.session else {
             return Task::none();
         };
-        let viewport = session.destination();
-        if viewport.scale() > 1.0 {
-            return Task::none();
-        }
-        let visible = viewport.visible();
-        let wanted = visible.expand(visible.len(), viewport.length());
         let generation = self.generation;
-        Task::batch(
-            self.tiles
-                .request(session.contig, wanted)
-                .into_iter()
-                .map(|key| {
-                    let reference = Arc::clone(&session.reference);
-                    Task::perform(
-                        async move {
-                            reference
-                                .fetch(key.contig, TILING.span(key.index))
-                                .map(Arc::from)
-                        },
-                        move |result| Message::TileLoaded(generation, key, result),
-                    )
-                }),
-        )
+        let mut keys = Vec::new();
+        for panel in 0..session.count() {
+            let (contig, viewport) = session.frame(panel);
+            if viewport.scale() > 1.0 {
+                continue;
+            }
+            let visible = viewport.visible();
+            let wanted = visible.expand(visible.len(), viewport.length());
+            keys.extend(self.tiles.request(contig, wanted));
+        }
+        Task::batch(keys.into_iter().map(|key| {
+            let reference = Arc::clone(&session.reference);
+            Task::perform(
+                async move {
+                    reference
+                        .fetch(key.contig, TILING.span(key.index))
+                        .map(Arc::from)
+                },
+                move |result| Message::TileLoaded(generation, key, result),
+            )
+        }))
     }
 
     pub(super) fn open_genome(&mut self, id: &str) -> Task<Message> {

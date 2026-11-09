@@ -227,6 +227,7 @@ impl Genie {
                 session.transition.is_none()
                     && session.tracks.iter().all(|track| {
                         track.slot.wanted.is_none()
+                            && track.extra.iter().all(|slot| slot.wanted.is_none())
                             && (track.names.is_some() || track.source.has_reads())
                     })
             })

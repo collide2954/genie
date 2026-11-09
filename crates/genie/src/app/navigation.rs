@@ -8,10 +8,24 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, Message, Regions, Suggestion, Sweep};
+use super::{Genie, MAX_PANELS, Message, Regions, Session, Suggestion, Sweep};
 
 const SUGGESTIONS: usize = 8;
 const MIN_SWEEP: f64 = 3.0;
+
+fn resolve(session: &Session, text: &str) -> Option<Target> {
+    session.reference.assembly.resolve(text).ok().or_else(|| {
+        session
+            .tracks
+            .iter()
+            .filter_map(|track| track.names.as_deref())
+            .find_map(|names| names.find(text))
+            .map(|named| Target {
+                contig: named.contig,
+                span: Span::Region(named.span),
+            })
+    })
+}
 
 impl Genie {
     pub(super) fn command(&mut self, command: Command) -> Task<Message> {
@@ -144,11 +158,53 @@ impl Genie {
         }
     }
 
+    pub(super) fn resize(&mut self, width: f32) -> Task<Message> {
+        self.width = width;
+        self.hover = None;
+        self.on_session(|session| session.resize(width));
+        self.fetch()
+    }
+
+    fn submit_many(&mut self, text: String) -> Task<Message> {
+        let width = self.width;
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let parts: Vec<&str> = text.split_whitespace().collect();
+        let error = if parts.len() > MAX_PANELS {
+            format!("genie shows up to {MAX_PANELS} loci.")
+        } else {
+            let targets: Result<Vec<Target>, String> = parts
+                .iter()
+                .map(|part| {
+                    resolve(session, part).ok_or_else(|| format!("genie cannot find {part}."))
+                })
+                .collect();
+            match targets {
+                Ok(targets) => {
+                    session.split(&targets, width);
+                    (self.hover, self.pinned) = (None, None);
+                    self.locus_error = None;
+                    return self.fetch();
+                }
+                Err(error) => error,
+            }
+        };
+        self.draft = Some(text);
+        self.locus_error = Some(error);
+        Task::none()
+    }
+
     pub(super) fn submit(&mut self) -> Task<Message> {
+        let width = self.width;
         let Some(session) = &mut self.session else {
             return Task::none();
         };
         let text = self.draft.take().unwrap_or_else(|| session.locus());
+        if text.split_whitespace().nth(1).is_some() {
+            return self.submit_many(text);
+        }
+        session.join(width);
         let resolved = session.reference.assembly.resolve(&text).or_else(|error| {
             session
                 .tracks

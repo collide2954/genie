@@ -273,7 +273,7 @@ impl Genie {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
             let result =
                 track::load(&source, &name, region, options, step, detail, bases).map(Arc::new);
-            self.on_session(|session| session.accept(id, contig, region, result));
+            self.on_session(|session| session.accept((id, 0), contig, region, result));
         }
     }
 }

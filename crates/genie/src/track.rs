@@ -559,10 +559,6 @@ impl Track {
         })
     }
 
-    pub fn needs(&self, contig: usize, visible: Region, step: u64) -> bool {
-        self.needs_at(0, contig, visible, step)
-    }
-
     pub fn needs_at(&self, panel: usize, contig: usize, visible: Region, step: u64) -> bool {
         let slot = self.slot(panel);
         let covers = |(wanted, region): (usize, Region)| {
@@ -580,10 +576,6 @@ impl Track {
             && visible.len() <= self.source.span()
             && !loaded.is_some_and(covers)
             && !slot.wanted.is_some_and(covers)
-    }
-
-    pub fn accept(&mut self, contig: usize, region: Region, result: Result<Arc<Loaded>, String>) {
-        self.accept_at(0, contig, region, result);
     }
 
     pub fn accept_at(
@@ -1189,11 +1181,11 @@ mod tests {
         let wide = region(0, 100);
         let loaded = piled(wide, reads, Options::default());
         tracks[1].slot.wanted = Some((0, wide));
-        tracks[1].accept(0, wide, Ok(Arc::new(loaded)));
+        tracks[1].accept_at(0, 0, wide, Ok(Arc::new(loaded)));
         change(&mut tracks, 1, Change::Sort(15));
         assert_eq!(tracks[1].slot.order.as_ref().map(|(at, _)| *at), Some(15));
         tracks[1].slot.wanted = Some((0, wide));
-        tracks[1].accept(0, wide, Ok(loaded_reads(wide)));
+        tracks[1].accept_at(0, 0, wide, Ok(loaded_reads(wide)));
         assert_eq!(tracks[1].slot.order, None);
     }
 
@@ -1620,14 +1612,19 @@ mod tests {
         let wide = region(0, 1_000_000);
         track.slot.wanted = Some((0, wide));
         let features = Loaded::features(wide, Vec::new());
-        track.accept(0, wide, Ok(Arc::new(features)));
-        assert!(!track.needs(0, region(100, 200), 1));
-        assert!(!track.needs(0, region(0, 900_000), 1));
+        track.accept_at(0, 0, wide, Ok(Arc::new(features)));
+        assert!(!track.needs_at(0, 0, region(100, 200), 1));
+        assert!(!track.needs_at(0, 0, region(0, 900_000), 1));
         let mut far = Track::new(6, Arc::clone(&track.source), &assembly());
         far.contigs = track.contigs.clone();
         far.slot.wanted = Some((0, wide));
-        far.accept(0, wide, Ok(Arc::new(Loaded::signal(wide, Vec::new(), 4))));
-        assert!(far.needs(0, region(100, 200), 4));
+        far.accept_at(
+            0,
+            0,
+            wide,
+            Ok(Arc::new(Loaded::signal(wide, Vec::new(), 4))),
+        );
+        assert!(far.needs_at(0, 0, region(100, 200), 4));
     }
 
     #[test]
@@ -1704,11 +1701,16 @@ mod tests {
         track.contigs = vec![Some("chr1".to_owned()), None, None];
         let wide = region(0, 1_000);
         track.slot.wanted = Some((0, wide));
-        track.accept(0, wide, Ok(Arc::new(Loaded::signal(wide, Vec::new(), 16))));
+        track.accept_at(
+            0,
+            0,
+            wide,
+            Ok(Arc::new(Loaded::signal(wide, Vec::new(), 16))),
+        );
         let shown = region(100, 200);
-        assert!(!track.needs(0, shown, 16));
-        assert!(!track.needs(0, shown, 64));
-        assert!(track.needs(0, shown, 4));
+        assert!(!track.needs_at(0, 0, shown, 16));
+        assert!(!track.needs_at(0, 0, shown, 64));
+        assert!(track.needs_at(0, 0, shown, 4));
     }
 
     #[test]
@@ -1848,12 +1850,12 @@ mod tests {
     fn data_for_other_options_is_reloaded_or_dropped() {
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
-        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
-        assert!(!track.needs(0, region(100, 200), 1));
+        track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 1)));
+        assert!(!track.needs_at(0, 0, region(100, 200), 1));
         track.options = track.options.toggled(Toggle::Clips);
-        assert!(track.needs(0, region(100, 200), 1));
+        assert!(track.needs_at(0, 0, region(100, 200), 1));
         track.slot.wanted = Some((0, region(0, 300)));
-        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 2)));
+        track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 2)));
         assert_eq!(track.data(0).unwrap().count(), 1);
         assert_eq!(track.slot.wanted, Some((0, region(0, 300))));
     }
@@ -1953,23 +1955,23 @@ mod tests {
     #[test]
     fn needs_data_until_a_request_covers_the_view() {
         let mut track = track();
-        assert!(track.needs(0, region(100, 200), 1));
-        assert!(!track.needs(1, region(100, 200), 1));
-        assert!(!track.needs(0, region(0, 20_000_000), 1));
+        assert!(track.needs_at(0, 0, region(100, 200), 1));
+        assert!(!track.needs_at(0, 1, region(100, 200), 1));
+        assert!(!track.needs_at(0, 0, region(0, 20_000_000), 1));
         track.slot.wanted = Some((0, region(0, 300)));
-        assert!(!track.needs(0, region(100, 200), 1));
-        assert!(track.needs(0, region(250, 350), 1));
+        assert!(!track.needs_at(0, 0, region(100, 200), 1));
+        assert!(track.needs_at(0, 0, region(250, 350), 1));
     }
 
     #[test]
     fn accepts_only_the_latest_request() {
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
-        track.accept(0, region(0, 100), Ok(loaded(region(0, 100), 1)));
+        track.accept_at(0, 0, region(0, 100), Ok(loaded(region(0, 100), 1)));
         assert!(track.data(0).is_none());
-        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
+        track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 1)));
         assert_eq!(track.data(0).unwrap().region, region(0, 300));
-        assert!(!track.needs(0, region(100, 200), 1));
+        assert!(!track.needs_at(0, 0, region(100, 200), 1));
         assert!(track.data(1).is_none());
     }
 
@@ -1994,7 +1996,7 @@ mod tests {
     fn keeps_errors_for_the_view() {
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
-        track.accept(0, region(0, 300), Err("The file is broken.".to_owned()));
+        track.accept_at(0, 0, region(0, 300), Err("The file is broken.".to_owned()));
         assert_eq!(track.slot.error.as_deref(), Some("The file is broken."));
     }
 
@@ -2002,7 +2004,7 @@ mod tests {
     fn fits_the_mode_to_the_rows_unless_chosen() {
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
-        track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 20)));
+        track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 20)));
         assert_eq!(track.mode(0), Mode::Squished);
         track.mode = Some(Mode::Collapsed);
         assert_eq!(track.mode(0), Mode::Collapsed);
