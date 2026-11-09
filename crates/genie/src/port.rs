@@ -58,11 +58,8 @@ pub fn parse(line: &str) -> Result<Order, String> {
                 .find_map(|word| word.strip_prefix("name="))
                 .map(str::to_owned),
         },
-        "goto" => match rest {
-            [locus] => Order::Goto(locus.clone()),
-            [] => return Err(format!("{first} needs a locus.")),
-            _ => return Err("genie shows one locus at a time.".to_owned()),
-        },
+        "goto" if rest.is_empty() => return Err(format!("{first} needs a locus.")),
+        "goto" => Order::Goto(rest.join(" ")),
         "region" => region(first, rest)?,
         "snapshotdirectory" => Order::Folder(PathBuf::from(needs("a folder")?)),
         "snapshot" => Order::Snapshot(optional),
@@ -313,6 +310,10 @@ mod tests {
             Ok(Order::Goto(text("chr1:100-200")))
         );
         assert_eq!(
+            parse("goto chr1:100-200  chr2:5-9"),
+            Ok(Order::Goto(text("chr1:100-200 chr2:5-9")))
+        );
+        assert_eq!(
             parse("load \"/data/my reads.bam\" index=x.bai name=Tumor"),
             Ok(Order::Load {
                 file: text("/data/my reads.bam"),
@@ -359,7 +360,6 @@ mod tests {
         let wrong = |line: &str| parse(line).unwrap_err();
         assert_eq!(wrong("fly away"), "genie does not know the command fly.");
         assert_eq!(wrong("goto"), "goto needs a locus.");
-        assert_eq!(wrong("goto chr1 chr2"), "genie shows one locus at a time.");
         assert_eq!(wrong("load"), "load needs a file.");
         assert_eq!(wrong("genome"), "genome needs a genome or a file.");
         assert_eq!(

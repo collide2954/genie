@@ -1627,6 +1627,15 @@ mod tests {
         let wrong = ask(&mut genie, "goto chr9:1-10");
         assert!(told(&wrong).is_some_and(|text| text != "OK"));
         assert_eq!(genie.draft, None);
+        let both = ask(&mut genie, "goto chr1:101-200 chr2:1-50");
+        settle(&mut genie);
+        load_tiles(&mut genie);
+        assert_eq!(told(&both).as_deref(), Some("OK"));
+        let locus = genie.session.as_ref().unwrap().locus();
+        assert_eq!(locus, "chr1:101-200 chr2:1-50");
+        let many = ask(&mut genie, "goto chr1 chr1 chr1 chr1 chr1");
+        assert_eq!(told(&many).as_deref(), Some("genie shows up to 4 loci."));
+        assert_eq!(genie.draft, None);
         let alone = ask(&mut Genie::default(), "goto chr1");
         assert_eq!(
             told(&alone).as_deref(),
