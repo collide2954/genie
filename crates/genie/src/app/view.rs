@@ -601,7 +601,7 @@ pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool)
     let viewport = session.viewport;
     let contig = session.contig;
     let mode = track.mode(contig);
-    if let Some(error) = &track.error {
+    if let Some(error) = &track.slot.error {
         return Body::Hint(error.clone());
     }
     if viewport.visible().len() > track.source.span() {
@@ -670,7 +670,7 @@ pub(super) fn body(session: &Session, track: &Track, shape: Shape, repack: bool)
                 let (rows, groups) = if repack {
                     let (rows, _, groups) = pile.packed(viewport.visible());
                     let starts: Vec<usize> = groups.iter().map(|(first, _)| *first).collect();
-                    packed = match &track.order {
+                    packed = match &track.slot.order {
                         Some((at, _)) => sort_rows(&pile.reads, &rows, &starts, *at),
                         None => rows,
                     };
@@ -789,7 +789,7 @@ impl Shape {
 
 pub(super) fn shape(session: &Session, track: &Track, repack: bool) -> Shape {
     let viewport = session.viewport;
-    if track.error.is_some() || viewport.visible().len() > track.source.span() {
+    if track.slot.error.is_some() || viewport.visible().len() > track.source.span() {
         return Shape::plain(EMPTY_HEIGHT);
     }
     let mode = track.mode(session.contig);

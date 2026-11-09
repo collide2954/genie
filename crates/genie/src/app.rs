@@ -1199,7 +1199,7 @@ mod tests {
         let mut genie = with_track();
         let _ = genie.update(Message::Zoom(2.0, 0.0));
         let track = &genie.session.as_ref().unwrap().tracks[0];
-        assert_eq!(track.wanted, Some((0, Region::between(0, 1_000))));
+        assert_eq!(track.slot.wanted, Some((0, Region::between(0, 1_000))));
     }
 
     #[test]
@@ -2698,7 +2698,7 @@ mod tests {
         let region = Region::between(0, 1_000);
         let feature = Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         track.accept(
             0,
             region,
@@ -2720,7 +2720,7 @@ mod tests {
             })
             .collect();
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         track.accept(0, region, Ok(Arc::new(Loaded::features(region, features))));
         genie
     }
@@ -2940,7 +2940,7 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         let mut gather = crate::track::Gather::new(region, 0, Options::default());
         for read in reads {
             gather.add(read);
@@ -3085,7 +3085,7 @@ mod tests {
         assert!(shows(&genie, "Sort by base at 21"));
         let _ = genie.update(Message::TrackChanged(0, Change::Sort(20)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
-        assert_eq!(track.order.as_ref().map(|(at, _)| *at), Some(20));
+        assert_eq!(track.slot.order.as_ref().map(|(at, _)| *at), Some(20));
     }
 
     #[test]
@@ -3103,7 +3103,7 @@ mod tests {
         let _ = genie.update(Message::TrackChanged(0, Change::Toggle(Toggle::Duplicates)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
         assert!(track.options.duplicates);
-        assert!(track.wanted.is_some());
+        assert!(track.slot.wanted.is_some());
     }
 
     fn with_gff() -> Genie {
@@ -3179,7 +3179,7 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         let variants = vec![site(20, vec![Call::Het, Call::Alternate])];
         let loaded = Loaded::variants(region, variants, 2);
         track.accept(0, region, Ok(Arc::new(loaded)));
@@ -3205,7 +3205,7 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(signal_source(signal_table()))));
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         let values = vec![
             Summary::single(Region::between(0, 100), 1.0),
             Summary::single(Region::between(100, 200), 4.0),
@@ -3280,7 +3280,7 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(other_signal())));
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[1];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         let values = vec![Summary::single(Region::between(300, 400), 10.0)];
         track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
         genie
@@ -3446,7 +3446,7 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(other)));
         let region = Region::between(0, 1_000);
         let track = &mut genie.session.as_mut().unwrap().tracks[1];
-        track.wanted = Some((0, region));
+        track.slot.wanted = Some((0, region));
         let values = vec![Summary::single(Region::between(300, 400), 10.0)];
         track.accept(0, region, Ok(Arc::new(Loaded::signal(region, values, 1))));
         let own = Scale { min: 0.0, max: 4.0 };

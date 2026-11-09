@@ -307,7 +307,7 @@ impl Genie {
             .filter(|track| track.needs(contig, visible, step))
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;
-                track.wanted = Some((contig, wanted));
+                track.slot.wanted = Some((contig, wanted));
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let reference = Arc::clone(reference);
                 Some(Task::perform(

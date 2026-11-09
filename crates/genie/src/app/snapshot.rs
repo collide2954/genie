@@ -254,7 +254,7 @@ impl Genie {
             .tracks
             .iter()
             .filter_map(|track| {
-                let (contig, region) = track.wanted?;
+                let (contig, region) = track.slot.wanted?;
                 let name = track.contigs[contig].clone()?;
                 let source = Arc::clone(&track.source);
                 Some((track.id, source, name, contig, region, track.options))

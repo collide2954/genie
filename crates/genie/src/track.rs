@@ -445,6 +445,34 @@ fn count(rows: &[usize]) -> usize {
     rows.iter().max().map_or(0, |row| row + 1)
 }
 
+#[derive(Debug, Default)]
+pub struct Slot {
+    pub loaded: Option<(usize, Arc<Loaded>)>,
+    pub wanted: Option<(usize, Region)>,
+    pub error: Option<String>,
+    pub order: Option<(u64, Vec<usize>)>,
+}
+
+static EMPTY: Slot = Slot {
+    loaded: None,
+    wanted: None,
+    error: None,
+    order: None,
+};
+
+impl Slot {
+    pub fn data(&self, contig: usize) -> Option<&Loaded> {
+        self.loaded
+            .as_ref()
+            .filter(|(loaded, _)| *loaded == contig)
+            .map(|(_, data)| data.as_ref())
+    }
+
+    pub fn rows<'a>(&'a self, pile: &'a Pile) -> &'a [usize] {
+        self.order.as_ref().map_or(&pile.rows, |(_, rows)| rows)
+    }
+}
+
 #[derive(Debug)]
 pub struct Track {
     pub id: u64,
@@ -458,10 +486,8 @@ pub struct Track {
     pub options: Options,
     pub plot: Plot,
     pub height: Option<f32>,
-    pub loaded: Option<(usize, Arc<Loaded>)>,
-    pub wanted: Option<(usize, Region)>,
-    pub error: Option<String>,
-    pub order: Option<(u64, Vec<usize>)>,
+    pub slot: Slot,
+    pub extra: Vec<Slot>,
 }
 
 impl Track {
@@ -479,27 +505,50 @@ impl Track {
             options: Options::default(),
             plot: Plot::default(),
             height: None,
-            loaded: None,
-            wanted: None,
-            error: None,
-            order: None,
+            slot: Slot::default(),
+            extra: Vec::new(),
+        }
+    }
+
+    pub fn slot(&self, panel: usize) -> &Slot {
+        match panel {
+            0 => &self.slot,
+            _ => self.extra.get(panel - 1).unwrap_or(&EMPTY),
+        }
+    }
+
+    pub fn slot_mut(&mut self, panel: usize) -> &mut Slot {
+        if panel == 0 {
+            return &mut self.slot;
+        }
+        if self.extra.len() < panel {
+            self.extra.resize_with(panel, Slot::default);
+        }
+        &mut self.extra[panel - 1]
+    }
+
+    pub fn forget(&mut self) {
+        self.slot.wanted = None;
+        for slot in &mut self.extra {
+            slot.wanted = None;
         }
     }
 
     pub fn rows<'a>(&'a self, pile: &'a Pile) -> &'a [usize] {
-        self.order.as_ref().map_or(&pile.rows, |(_, rows)| rows)
+        self.slot.rows(pile)
     }
 
     pub fn data(&self, contig: usize) -> Option<&Loaded> {
-        self.loaded
-            .as_ref()
-            .filter(|(loaded, _)| *loaded == contig)
-            .map(|(_, data)| data.as_ref())
+        self.slot.data(contig)
     }
 
     pub fn mode(&self, contig: usize) -> Mode {
+        self.mode_at(0, contig)
+    }
+
+    pub fn mode_at(&self, panel: usize, contig: usize) -> Mode {
         self.mode.unwrap_or_else(|| {
-            let count = self.data(contig).map_or(0, Loaded::count);
+            let count = self.slot(panel).data(contig).map_or(0, Loaded::count);
             if self.source.has_reads() {
                 alignments::fit(count)
             } else if self.source.has_variants() {
@@ -511,6 +560,11 @@ impl Track {
     }
 
     pub fn needs(&self, contig: usize, visible: Region, step: u64) -> bool {
+        self.needs_at(0, contig, visible, step)
+    }
+
+    pub fn needs_at(&self, panel: usize, contig: usize, visible: Region, step: u64) -> bool {
+        let slot = self.slot(panel);
         let covers = |(wanted, region): (usize, Region)| {
             wanted == contig && region.start() <= visible.start() && visible.end() <= region.end()
         };
@@ -518,31 +572,42 @@ impl Track {
             !self.source.is_bigbed()
                 || matches!(data.content, Content::Features(_)) == detailed(visible)
         };
-        let loaded = self
+        let loaded = slot
             .data(contig)
             .filter(|data| data.options == self.options && data.step() <= step && fits(data))
             .map(|data| (contig, data.region));
         self.contigs.get(contig).is_some_and(Option::is_some)
             && visible.len() <= self.source.span()
             && !loaded.is_some_and(covers)
-            && !self.wanted.is_some_and(covers)
+            && !slot.wanted.is_some_and(covers)
     }
 
     pub fn accept(&mut self, contig: usize, region: Region, result: Result<Arc<Loaded>, String>) {
+        self.accept_at(0, contig, region, result);
+    }
+
+    pub fn accept_at(
+        &mut self,
+        panel: usize,
+        contig: usize,
+        region: Region,
+        result: Result<Arc<Loaded>, String>,
+    ) {
         let stale = result
             .as_ref()
             .is_ok_and(|data| data.options != self.options);
-        if self.wanted != Some((contig, region)) || stale {
+        let slot = self.slot_mut(panel);
+        if slot.wanted != Some((contig, region)) || stale {
             return;
         }
-        self.wanted = None;
+        slot.wanted = None;
         match result {
             Ok(data) => {
-                self.loaded = Some((contig, data));
-                self.error = None;
-                self.order = None;
+                slot.loaded = Some((contig, data));
+                slot.error = None;
+                slot.order = None;
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => slot.error = Some(error),
         }
     }
 }
@@ -595,24 +660,26 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             } else {
                 grouping
             };
-            track.wanted = None;
+            track.forget();
         }
         Change::Sort(at) => {
             let track = &mut tracks[position];
-            track.order = track
-                .loaded
-                .as_ref()
-                .and_then(|(_, data)| match &data.content {
-                    Content::Reads(pile) => {
-                        Some((at, sort_rows(&pile.reads, &pile.rows, &pile.starts(), at)))
-                    }
-                    _ => None,
-                });
+            track.slot.order =
+                track
+                    .slot
+                    .loaded
+                    .as_ref()
+                    .and_then(|(_, data)| match &data.content {
+                        Content::Reads(pile) => {
+                            Some((at, sort_rows(&pile.reads, &pile.rows, &pile.starts(), at)))
+                        }
+                        _ => None,
+                    });
         }
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
             track.options = track.options.toggled(toggle);
-            track.wanted = None;
+            track.forget();
         }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
         Change::Down if position + 1 < tracks.len() => tracks.swap(position, position + 1),
@@ -1029,10 +1096,10 @@ mod tests {
     fn changes_toggle_the_pair_colors() {
         let mut tracks = three();
         assert!(tracks[1].plot.pairs);
-        tracks[1].wanted = Some((0, region(0, 10)));
+        tracks[1].slot.wanted = Some((0, region(0, 10)));
         change(&mut tracks, 1, Change::Pairs);
         assert!(!tracks[1].plot.pairs);
-        assert_eq!(tracks[1].wanted, Some((0, region(0, 10))));
+        assert_eq!(tracks[1].slot.wanted, Some((0, region(0, 10))));
     }
 
     #[test]
@@ -1076,10 +1143,10 @@ mod tests {
     #[test]
     fn changes_switch_the_grouping_and_reload() {
         let mut tracks = three();
-        tracks[1].wanted = Some((0, region(0, 10)));
+        tracks[1].slot.wanted = Some((0, region(0, 10)));
         change(&mut tracks, 1, Change::Group(Grouping::Phase));
         assert_eq!(tracks[1].options.group, Grouping::Phase);
-        assert_eq!(tracks[1].wanted, None);
+        assert_eq!(tracks[1].slot.wanted, None);
         change(&mut tracks, 1, Change::Group(Grouping::Strand));
         assert_eq!(tracks[1].options.group, Grouping::Strand);
         change(&mut tracks, 1, Change::Group(Grouping::Strand));
@@ -1121,13 +1188,13 @@ mod tests {
         ];
         let wide = region(0, 100);
         let loaded = piled(wide, reads, Options::default());
-        tracks[1].wanted = Some((0, wide));
+        tracks[1].slot.wanted = Some((0, wide));
         tracks[1].accept(0, wide, Ok(Arc::new(loaded)));
         change(&mut tracks, 1, Change::Sort(15));
-        assert_eq!(tracks[1].order.as_ref().map(|(at, _)| *at), Some(15));
-        tracks[1].wanted = Some((0, wide));
+        assert_eq!(tracks[1].slot.order.as_ref().map(|(at, _)| *at), Some(15));
+        tracks[1].slot.wanted = Some((0, wide));
         tracks[1].accept(0, wide, Ok(loaded_reads(wide)));
-        assert_eq!(tracks[1].order, None);
+        assert_eq!(tracks[1].slot.order, None);
     }
 
     fn loaded_reads(wide: Region) -> Arc<Loaded> {
@@ -1551,14 +1618,14 @@ mod tests {
         let mut track = Track::new(5, Arc::new(source), &assembly());
         track.contigs = vec![Some("chr1".to_owned()), None, None];
         let wide = region(0, 1_000_000);
-        track.wanted = Some((0, wide));
+        track.slot.wanted = Some((0, wide));
         let features = Loaded::features(wide, Vec::new());
         track.accept(0, wide, Ok(Arc::new(features)));
         assert!(!track.needs(0, region(100, 200), 1));
         assert!(!track.needs(0, region(0, 900_000), 1));
         let mut far = Track::new(6, Arc::clone(&track.source), &assembly());
         far.contigs = track.contigs.clone();
-        far.wanted = Some((0, wide));
+        far.slot.wanted = Some((0, wide));
         far.accept(0, wide, Ok(Arc::new(Loaded::signal(wide, Vec::new(), 4))));
         assert!(far.needs(0, region(100, 200), 4));
     }
@@ -1636,7 +1703,7 @@ mod tests {
         let mut track = Track::new(3, Arc::new(source), &assembly());
         track.contigs = vec![Some("chr1".to_owned()), None, None];
         let wide = region(0, 1_000);
-        track.wanted = Some((0, wide));
+        track.slot.wanted = Some((0, wide));
         track.accept(0, wide, Ok(Arc::new(Loaded::signal(wide, Vec::new(), 16))));
         let shown = region(100, 200);
         assert!(!track.needs(0, shown, 16));
@@ -1769,10 +1836,10 @@ mod tests {
     #[test]
     fn toggles_flip_options_and_drop_the_request() {
         let mut tracks = three();
-        tracks[1].wanted = Some((0, region(0, 300)));
+        tracks[1].slot.wanted = Some((0, region(0, 300)));
         change(&mut tracks, 1, Change::Toggle(Toggle::Duplicates));
         assert!(tracks[1].options.duplicates);
-        assert_eq!(tracks[1].wanted, None);
+        assert_eq!(tracks[1].slot.wanted, None);
         change(&mut tracks, 1, Change::Toggle(Toggle::Duplicates));
         assert!(!tracks[1].options.duplicates);
     }
@@ -1780,15 +1847,15 @@ mod tests {
     #[test]
     fn data_for_other_options_is_reloaded_or_dropped() {
         let mut track = track();
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
         assert!(!track.needs(0, region(100, 200), 1));
         track.options = track.options.toggled(Toggle::Clips);
         assert!(track.needs(0, region(100, 200), 1));
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 2)));
         assert_eq!(track.data(0).unwrap().count(), 1);
-        assert_eq!(track.wanted, Some((0, region(0, 300))));
+        assert_eq!(track.slot.wanted, Some((0, region(0, 300))));
     }
 
     #[test]
@@ -1889,7 +1956,7 @@ mod tests {
         assert!(track.needs(0, region(100, 200), 1));
         assert!(!track.needs(1, region(100, 200), 1));
         assert!(!track.needs(0, region(0, 20_000_000), 1));
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         assert!(!track.needs(0, region(100, 200), 1));
         assert!(track.needs(0, region(250, 350), 1));
     }
@@ -1897,7 +1964,7 @@ mod tests {
     #[test]
     fn accepts_only_the_latest_request() {
         let mut track = track();
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 100), Ok(loaded(region(0, 100), 1)));
         assert!(track.data(0).is_none());
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 1)));
@@ -1907,17 +1974,34 @@ mod tests {
     }
 
     #[test]
+    fn each_panel_keeps_its_own_data() {
+        let mut track = track();
+        let wanted = region(0, 300);
+        track.slot_mut(2).wanted = Some((0, wanted));
+        track.accept_at(2, 0, wanted, Ok(loaded(wanted, 3)));
+        assert!(track.data(0).is_none());
+        assert_eq!(track.slot(2).data(0).unwrap().region, wanted);
+        assert!(track.slot(1).data(0).is_none());
+        assert!(track.needs_at(1, 0, region(0, 100), 1));
+        assert!(!track.needs_at(2, 0, region(0, 100), 1));
+        assert!(track.slot(9).data(0).is_none());
+        track.slot_mut(1).wanted = Some((0, wanted));
+        track.forget();
+        assert_eq!(track.slot(1).wanted, None);
+    }
+
+    #[test]
     fn keeps_errors_for_the_view() {
         let mut track = track();
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Err("The file is broken.".to_owned()));
-        assert_eq!(track.error.as_deref(), Some("The file is broken."));
+        assert_eq!(track.slot.error.as_deref(), Some("The file is broken."));
     }
 
     #[test]
     fn fits_the_mode_to_the_rows_unless_chosen() {
         let mut track = track();
-        track.wanted = Some((0, region(0, 300)));
+        track.slot.wanted = Some((0, region(0, 300)));
         track.accept(0, region(0, 300), Ok(loaded(region(0, 300), 20)));
         assert_eq!(track.mode(0), Mode::Squished);
         track.mode = Some(Mode::Collapsed);
