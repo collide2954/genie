@@ -148,6 +148,9 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin.
 - A signal track has a bar for each pixel. The bar goes to the mean value, and a light color goes to the maximum value. Values below zero go down from a zero line. The range of the values in view is at the top right.
 - Right-click a signal track to show a line instead of bars. Turn on "Shared scale" on two or more signal tracks to give them the same range.
+- To fix the range of a signal track, right-click it, type the minimum and the maximum, then push Enter. The fields show the range in view. **Auto range** goes back to the range of the data in view. A track with a fixed range does not use "Shared scale".
+- To show two or more signal tracks in one lane, right-click a signal track, then click a track under **Overlay on**. The lane shows each signal as a line in the color of its track, with one range for all. If two tracks have the same color, genie gives the added track a different color. To show a track in its own lane again, right-click the lane and click the track under **Separate**.
+- Double-click a track name to change it, then push Enter. Push Escape to stop. If you delete the name, the track shows its file name again. The track menu also has **Rename**.
 - Right-click a track to set its rows, its color or its place.
 - Right-click a read track to show duplicate reads and soft clips, or to keep all reads.
 - genie colors unusual read pairs: vermillion for an insert size that is larger than expected, blue for a smaller one, green for two mates on the same strand, purple for mates that point away from each other, and orange for a mate on a different chromosome. The expected insert sizes come from the loaded pairs. Right-click a read track to turn these colors off.
@@ -159,13 +162,16 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 ## Sessions
 
-To save the reference, the tracks, the view and the regions as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
+To save the reference, the tracks (with their names, colors, ranges and overlays), the view and the regions as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
 
 If a file is in the folder of the session file, the session file has its path relative to that folder.
 
 ## Export
 
-To save the view as a PNG image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. The scale of the image is 2, and the image uses the current theme. The maximum height of the image is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
+To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. It uses the current theme.
+
+- If the file name ends with `.svg`, genie saves an SVG image. The SVG has shapes and text that you can edit, for example in Inkscape or Illustrator. The text uses the fonts Inter and JetBrains Mono. If a computer does not have these fonts, it uses similar fonts.
+- Other names give a PNG image. The scale of a PNG image is 2. Its maximum height is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
 
 ## Images from the command line
 
@@ -177,7 +183,7 @@ cargo run -p genie -- snapshot work.genie regions.bed pictures
 
 - genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it.
 - The name of an image is the name of the region (BED column 4) or the locus, for example `chr1_1001-2000.png`. If two regions have the same name, genie adds `-2`, `-3` and so on.
-- `--width POINTS` sets the width of the view, from 200 to 4,096 (default 1,280). The image has two pixels for each point. `--theme dark` uses the dark theme. The default is light.
+- `--width POINTS` sets the width of the view, from 200 to 4,096 (default 1,280). A PNG image has two pixels for each point. `--theme dark` uses the dark theme. The default is light. `--format svg` saves SVG images. The default is PNG.
 - genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.
 - The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.
 
@@ -192,7 +198,7 @@ While genie runs, programs on the same computer (for example R, Python or Jupyte
 | `goto chr1:1,000-2,000`, `goto BRCA1` | Goes to a locus or a feature name |
 | `region chr1 1001 2000 promoter` | Adds a region to the region list. The start and the end are 1-based and are in the region. |
 | `snapshotDirectory /data/pictures` | Sets the folder for snapshots |
-| `snapshot BRCA1.png` | Saves the view as a PNG image in that folder. Without a name, the name is the locus. |
+| `snapshot BRCA1.png` | Saves the view as an image in that folder: SVG for a name that ends with `.svg`, else PNG. Without a name, the image is a PNG named after the locus. |
 | `expand`, `squish`, `collapse` | Sets the rows of all tracks, or of one track, for example `squish Tumor` |
 | `new` | Removes all tracks and regions |
 | `echo` | Answers `echo` |
