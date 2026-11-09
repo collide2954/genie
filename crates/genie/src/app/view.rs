@@ -10,13 +10,14 @@ use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Column, button, center, column, container, mouse_area, pin, row, scrollable, space, stack,
-    text, tooltip,
+    text, text_input, tooltip,
 };
 use iced::{Alignment, Border, Element, Length, Padding, Point, mouse};
 
 use crate::card;
 use crate::chrome::{self, Controls, LocusField};
 use crate::context::Context;
+use crate::escape::Escape;
 use crate::genome;
 use crate::grip::Grip;
 use crate::icon::{self, Icon};
@@ -30,9 +31,11 @@ use crate::tiles;
 use crate::track::{Content, Track};
 use crate::{font, scene, style};
 
-use super::{Genie, Lane, Message, Popup, Session, Status, Suggestion, Sweep};
+use super::tracks::TRACK_NAME;
+use super::{Genie, Lane, Message, Popup, Renaming, Session, Status, Suggestion, Sweep};
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
+const NAME_WIDTH: f32 = 160.0;
 const RULER_HEIGHT: f32 = 20.0;
 const BASE_HEIGHT: f32 = 16.0;
 const EMPTY_HEIGHT: f32 = 20.0;
@@ -475,8 +478,13 @@ impl Genie {
         };
         let mut data = column![container(sequence).id("sequence"), line(0)];
         for (index, track) in session.tracks.iter().enumerate() {
+            let draft = self
+                .renaming
+                .as_ref()
+                .filter(|(id, _)| !repack && *id == track.id)
+                .map(|(_, draft)| draft.as_str());
             data = data
-                .push(track_view(session, track, repack, padding))
+                .push(track_view(session, track, repack, padding, draft))
                 .push(line(index + 1));
         }
         data.into()
@@ -638,6 +646,7 @@ fn track_view<'a>(
     track: &'a Track,
     repack: bool,
     padding: f32,
+    draft: Option<&'a str>,
 ) -> Element<'a, Message> {
     let id = track.id;
     let shape = shape(session, track, repack);
@@ -650,15 +659,31 @@ fn track_view<'a>(
     )
     .on_double_click(Message::Lane(id, Lane::Fit))
     .interaction(mouse::Interaction::ResizingVertically);
-    let handle = Grip::new(
-        chrome::tip(
-            label(&track.name),
-            "Drag to move · Right-click for options",
-            tooltip::Position::Right,
-        ),
-        move |delta| Message::Lane(id, Lane::Moved(delta)),
-        Message::Lane(id, Lane::Dropped),
-    );
+    let handle: Element<'a, Message> = match draft {
+        Some(draft) => Escape::new(
+            text_input("Name", draft)
+                .id(TRACK_NAME)
+                .size(LABEL_SIZE)
+                .padding([0, 4])
+                .width(NAME_WIDTH)
+                .style(style::locus)
+                .on_input(|text| Message::Rename(Renaming::Draft(text)))
+                .on_submit(Message::Rename(Renaming::Done)),
+            Message::Rename(Renaming::Cancel),
+        )
+        .into(),
+        None => Grip::new(
+            chrome::tip(
+                label(&track.name),
+                "Drag to move · Double-click to rename · Right-click for options",
+                tooltip::Position::Right,
+            ),
+            move |delta| Message::Lane(id, Lane::Moved(delta)),
+            Message::Lane(id, Lane::Dropped),
+        )
+        .on_double_click(Message::Rename(Renaming::Start(id)))
+        .into(),
+    };
     let mut layers = stack![
         container(body)
             .height(height + 2.0 * padding)

@@ -99,6 +99,7 @@ pub struct Genie {
     answers: Vec<(Answer, Reply)>,
     looking: Option<Reply>,
     folder: Option<PathBuf>,
+    renaming: Option<(u64, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +164,7 @@ impl Default for Genie {
             answers: Vec::new(),
             looking: None,
             folder: None,
+            renaming: None,
         }
     }
 }
@@ -374,6 +376,15 @@ pub enum Message {
     CopyMenu(Option<u64>, Point),
     Copy(Copying),
     Port(Port),
+    Rename(Renaming),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Renaming {
+    Start(u64),
+    Draft(String),
+    Done,
+    Cancel,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -614,6 +625,7 @@ impl Genie {
             Message::CopyMenu(region, at) => self.open_copy_menu(region, at),
             Message::Copy(copying) => return self.copying(copying),
             Message::Port(event) => return self.port(event),
+            Message::Rename(renaming) => return self.rename(renaming),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -869,8 +881,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Genie, Lane, Message, Offline, Port, Regions, Sweep, mouse_button,
-        shortcut, window_event,
+        Address, Copying, Genie, Lane, Message, Offline, Port, Regions, Renaming, Sweep,
+        mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -1510,6 +1522,99 @@ mod tests {
             told(&missing).as_deref(),
             Some("genie cannot open /data/missing.fa. The file is gone.")
         );
+    }
+
+    fn track_name(genie: &Genie) -> String {
+        genie.session.as_ref().unwrap().tracks[0].name.clone()
+    }
+
+    fn rename(genie: &mut Genie, id: u64, text: &str) {
+        let _ = genie.update(Message::Rename(Renaming::Start(id)));
+        let _ = genie.update(Message::Rename(Renaming::Draft(text.to_owned())));
+        let _ = genie.update(Message::Rename(Renaming::Done));
+    }
+
+    #[test]
+    fn tracks_take_a_new_name() {
+        let mut genie = with_track();
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        let _ = genie.update(Message::Rename(Renaming::Start(id)));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("track-name"))
+                .is_ok()
+        );
+        let _ = genie.update(Message::Rename(Renaming::Draft("Tumor\tA ".to_owned())));
+        let _ = genie.update(Message::Rename(Renaming::Done));
+        assert_eq!(track_name(&genie), "Tumor A");
+        assert!(shows(&genie, "Tumor A"));
+        rename(&mut genie, id, "  ");
+        assert_eq!(track_name(&genie), "genes.bed.gz");
+        let _ = genie.update(Message::Rename(Renaming::Start(id)));
+        let _ = genie.update(Message::Rename(Renaming::Draft("Other".to_owned())));
+        let _ = genie.update(Message::Rename(Renaming::Cancel));
+        assert_eq!(track_name(&genie), "genes.bed.gz");
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("track-name"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn double_clicks_and_the_menu_start_a_rename_and_escape_ends_it() {
+        let mut genie = with_track();
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        let mut ui = simulator(genie.view());
+        let label = ui.find("genes.bed.gz").unwrap().bounds().center();
+        ui.point_at(label);
+        let left = iced::mouse::Button::Left;
+        for _ in 0..2 {
+            let _ = ui.simulate([
+                iced::Event::Mouse(iced::mouse::Event::ButtonPressed(left)),
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(left)),
+            ]);
+        }
+        let started: Vec<Message> = ui
+            .into_messages()
+            .filter(|message| matches!(message, Message::Rename(_)))
+            .collect();
+        assert_eq!(started, [Message::Rename(Renaming::Start(id))]);
+        let _ = genie.update(Message::TrackMenu(id, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Rename").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Rename(Renaming::Start(id))));
+        let _ = genie.update(Message::Rename(Renaming::Start(id)));
+        let mut ui = simulator(genie.view());
+        let escape = keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(Named::Escape),
+            modified_key: keyboard::Key::Named(Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        };
+        let _ = ui.simulate([iced::Event::Keyboard(escape)]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Rename(Renaming::Cancel)));
+    }
+
+    #[test]
+    fn sessions_keep_new_track_names() {
+        let mut genie = with_track();
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        rename(&mut genie, id, "Tumor");
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[0].name.as_deref(), Some("Tumor"));
+        let mut other = opened();
+        other.restoring = Some(saved);
+        other.waiting = 1;
+        let _ = other.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        assert_eq!(track_name(&other), "Tumor");
+        rename(&mut genie, id, "");
+        assert_eq!(genie.saved().unwrap().tracks[0].name, None);
     }
 
     #[test]
@@ -2423,6 +2528,7 @@ mod tests {
     fn tracks_opened_after_a_restore_keep_their_moves() {
         let saved_track = |name: &str| crate::saved::SavedTrack {
             location: PathBuf::from(format!("/data/{name}")).into(),
+            name: None,
             mode: None,
             hue: Hue::Blue,
             height: None,
@@ -2489,6 +2595,7 @@ mod tests {
             reading: crate::reading::Reading::default(),
             tracks: vec![crate::saved::SavedTrack {
                 location: PathBuf::from("/data/reads.bam").into(),
+                name: None,
                 mode: None,
                 hue: Hue::Blue,
                 height: None,

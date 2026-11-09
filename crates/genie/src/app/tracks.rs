@@ -7,6 +7,7 @@ use genie_core::Region;
 use genie_render::{alignments, features, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::time::Instant;
+use iced::widget::operation;
 use iced::{Point, Task};
 
 use crate::card::{Card, Detail};
@@ -21,8 +22,9 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Source, Track};
 
 use super::view::{body_height, signal_columns};
-use super::{Genie, Lane, Message, Opening, Status};
+use super::{Genie, Lane, Message, Opening, Renaming, Status};
 
+pub(super) const TRACK_NAME: &str = "track-name";
 const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -374,7 +376,60 @@ impl Genie {
         })
     }
 
-    fn track_name(&self, source: &Source) -> String {
+    pub(super) fn rename(&mut self, renaming: Renaming) -> Task<Message> {
+        match renaming {
+            Renaming::Start(id) => {
+                self.close_menus();
+                let name = self
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.tracks.iter().find(|track| track.id == id))
+                    .map(|track| track.name.clone());
+                if let Some(name) = name {
+                    self.renaming = Some((id, name));
+                    return Task::batch([
+                        operation::focus(TRACK_NAME),
+                        operation::select_all(TRACK_NAME),
+                    ]);
+                }
+            }
+            Renaming::Draft(text) => {
+                if let Some((_, draft)) = &mut self.renaming {
+                    *draft = text;
+                }
+            }
+            Renaming::Done => {
+                let Some((id, draft)) = self.renaming.take() else {
+                    return Task::none();
+                };
+                let clean: String = draft
+                    .chars()
+                    .map(|letter| if letter.is_control() { ' ' } else { letter })
+                    .collect();
+                let source = self
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.tracks.iter().find(|track| track.id == id))
+                    .map(|track| Arc::clone(&track.source));
+                let Some(source) = source else {
+                    return Task::none();
+                };
+                let name = match clean.trim() {
+                    "" => self.track_name(&source),
+                    name => name.to_owned(),
+                };
+                self.on_session(|session| {
+                    if let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) {
+                        track.name = name;
+                    }
+                });
+            }
+            Renaming::Cancel => self.renaming = None,
+        }
+        Task::none()
+    }
+
+    pub(super) fn track_name(&self, source: &Source) -> String {
         let genes = self
             .current_genome()
             .zip(self.cache.as_deref())
@@ -406,6 +461,9 @@ impl Genie {
                     .position(|known| known.location == *location)
             };
             if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
+                if let Some(name) = &found.name {
+                    track.name.clone_from(name);
+                }
                 track.mode = found.mode;
                 track.hue = found.hue;
                 track.height = found.height;

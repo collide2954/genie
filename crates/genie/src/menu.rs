@@ -5,17 +5,17 @@ use genie_render::signal::Style;
 use iced::widget::{Column, button, column, container, pin, row, space, text};
 use iced::{Element, Length, Point, Size};
 
-use crate::app::Message;
+use crate::app::{Message, Renaming};
 use crate::style;
 use crate::theme::tokens;
 use crate::track::{Change, Grouping, Toggle, Track};
 
 pub const WIDTH: f32 = 168.0;
-const FEATURES_HEIGHT: f32 = 245.0;
-const COLORED_HEIGHT: f32 = 268.0;
-const READS_HEIGHT: f32 = 341.0;
-const VARIANTS_HEIGHT: f32 = 212.0;
-const SIGNAL_HEIGHT: f32 = 200.0;
+const FEATURES_HEIGHT: f32 = 267.5;
+const COLORED_HEIGHT: f32 = 290.5;
+const READS_HEIGHT: f32 = 363.5;
+const VARIANTS_HEIGHT: f32 = 234.5;
+const SIGNAL_HEIGHT: f32 = 222.5;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
@@ -163,6 +163,7 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
             .push(separator());
     }
     let content = content.extend(jumps(track)).extend([
+        self::item("Rename", Message::Rename(Renaming::Start(id)), false, true),
         item("Move up", Change::Up, false, place.position > 0),
         item(
             "Move down",

@@ -2,6 +2,7 @@ mod app;
 mod card;
 mod chrome;
 mod context;
+mod escape;
 mod export;
 mod font;
 mod genome;

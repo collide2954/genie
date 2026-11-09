@@ -100,6 +100,8 @@ impl Genie {
                 .iter()
                 .map(|track| SavedTrack {
                     location: track.source.location.clone(),
+                    name: (track.name != self.track_name(&track.source))
+                        .then(|| track.name.clone()),
                     mode: track.mode,
                     hue: track.hue,
                     height: track.height,

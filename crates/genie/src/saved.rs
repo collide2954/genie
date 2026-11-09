@@ -46,6 +46,7 @@ pub struct SavedRegion {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SavedTrack {
     pub location: Location,
+    pub name: Option<String>,
     pub mode: Option<Mode>,
     pub hue: Hue,
     pub height: Option<f32>,
@@ -75,6 +76,7 @@ impl Saved {
                 let on = |key| section.value(key) == Some("on");
                 Some(SavedTrack {
                     location: read(section.value("file")?, base),
+                    name: section.value("name").map(str::to_owned),
                     mode: section.value("mode").and_then(|name| find(&MODES, name)),
                     hue: section
                         .value("color")
@@ -141,6 +143,9 @@ impl Saved {
         let mut sections = vec![section("session", session)];
         for track in &self.tracks {
             let mut entries = vec![("file", written(&track.location, base))];
+            if let Some(name) = &track.name {
+                entries.push(("name", name.clone()));
+            }
             if let Some(mode) = track.mode {
                 entries.push(("mode", name(&MODES, mode).to_owned()));
             }
@@ -288,6 +293,7 @@ mod tests {
             tracks: vec![
                 SavedTrack {
                     location: Location::File(base().join("reads.bam")),
+                    name: Some("Tumor A".to_owned()),
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
@@ -304,6 +310,7 @@ mod tests {
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
+                    name: None,
                     mode: None,
                     hue: Hue::Vermillion,
                     height: None,
@@ -312,6 +319,7 @@ mod tests {
                 },
                 SavedTrack {
                     location: Location::File(base().join("coverage.bw")),
+                    name: None,
                     mode: None,
                     hue: Hue::Green,
                     height: Some(64.0),
@@ -370,6 +378,13 @@ mod tests {
         assert_eq!(text.matches("[region]").count(), 2, "{text}");
         assert!(text.contains("locus = chr1:1,201-1,450"), "{text}");
         assert!(text.contains("name = promoter A"), "{text}");
+    }
+
+    #[test]
+    fn tracks_keep_a_new_name() {
+        let text = saved().text(&base());
+        assert!(text.contains("name = Tumor A"), "{text}");
+        assert_eq!(text.matches("name = ").count(), 3, "{text}");
     }
 
     #[test]
