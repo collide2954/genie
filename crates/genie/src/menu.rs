@@ -2,10 +2,10 @@ use genie_core::grouped;
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
-use iced::widget::{Column, button, column, container, pin, row, space, text};
-use iced::{Element, Length, Point, Size};
+use iced::widget::{Column, button, column, container, pin, row, space, text, text_input};
+use iced::{Alignment, Element, Length, Point, Size};
 
-use crate::app::{Message, Renaming};
+use crate::app::{Message, Ranging, Renaming};
 use crate::style;
 use crate::theme::tokens;
 use crate::track::{Change, Grouping, Toggle, Track};
@@ -15,7 +15,7 @@ const FEATURES_HEIGHT: f32 = 267.5;
 const COLORED_HEIGHT: f32 = 290.5;
 const READS_HEIGHT: f32 = 363.5;
 const VARIANTS_HEIGHT: f32 = 234.5;
-const SIGNAL_HEIGHT: f32 = 222.5;
+const SIGNAL_HEIGHT: f32 = 271.5;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
@@ -89,7 +89,35 @@ pub fn card(
     pin(card).x(x).y(y).into()
 }
 
-pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message> {
+fn range_fields<'a>(id: u64, range: Option<&(String, String)>) -> Element<'a, Message> {
+    let (min, max) = range.map_or(("", ""), |(min, max)| (min.as_str(), max.as_str()));
+    let field = |placeholder: &str, value: &str, edit: fn(String) -> Ranging| {
+        text_input(placeholder, value)
+            .size(12)
+            .padding([2, 4])
+            .style(style::locus)
+            .on_input(move |text| Message::Range(id, edit(text)))
+            .on_submit(Message::Range(id, Ranging::Fix))
+    };
+    container(
+        row![
+            field("Min", min, Ranging::Min),
+            text("to").size(12).style(style::muted),
+            field("Max", max, Ranging::Max),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding([3, 8])
+    .into()
+}
+
+pub fn view<'a>(
+    track: &Track,
+    mode: Mode,
+    place: &Place,
+    range: Option<&(String, String)>,
+) -> Element<'a, Message> {
     let id = track.id;
     let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
         item(label, Message::TrackChanged(id, change), chosen, enabled)
@@ -116,6 +144,13 @@ pub fn view<'a>(track: &Track, mode: Mode, place: &Place) -> Element<'a, Message
                 }))
                 .push(separator())
                 .push(item("Shared scale", Change::Link, plot.linked, true))
+                .push(range_fields(id, range))
+                .push(self::item(
+                    "Auto range",
+                    Message::Range(id, Ranging::Auto),
+                    plot.range.is_none(),
+                    true,
+                ))
                 .push(separator())
         } else {
             column![column(modes).spacing(1), separator()].spacing(1)

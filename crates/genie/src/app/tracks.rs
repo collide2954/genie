@@ -21,10 +21,11 @@ use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Source, Track};
 
-use super::view::{body_height, signal_columns};
-use super::{Genie, Lane, Message, Opening, Renaming, Status};
+use super::view::{body_height, signal_columns, signal_scale};
+use super::{Genie, Lane, Message, Opening, Ranging, Renaming, Status};
 
 pub(super) const TRACK_NAME: &str = "track-name";
+const BAD_RANGE: &str = "Type two numbers. The maximum must be larger than the minimum.";
 const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -126,11 +127,74 @@ impl Genie {
         self.copy_menu = None;
         self.popup = None;
         self.address = None;
+        self.range_draft = None;
     }
 
     pub(super) fn open_menu(&mut self, id: u64, at: Point) {
         self.pointed = Some(id);
         self.menu = Some((id, Point::new(at.x, at.y - self.scroll)));
+        self.range_draft = self
+            .shown_range(id)
+            .map(|scale| (signal::number(scale.min), signal::number(scale.max)));
+    }
+
+    fn shown_range(&self, id: u64) -> Option<signal::Scale> {
+        let session = self.session.as_ref()?;
+        let track = session.tracks.iter().find(|track| track.id == id)?;
+        if let Some(range) = track.plot.range {
+            return Some(range);
+        }
+        let Content::Signal(data) = &track.data(session.contig)?.content else {
+            return None;
+        };
+        let columns = signal_columns(track, session.viewport, &data.summaries);
+        signal_scale(session, track, &columns)
+    }
+
+    pub(super) fn range(&mut self, id: u64, ranging: Ranging) {
+        let fixed = match ranging {
+            Ranging::Min(text) => {
+                if let Some((min, _)) = &mut self.range_draft {
+                    *min = text;
+                }
+                return;
+            }
+            Ranging::Max(text) => {
+                if let Some((_, max)) = &mut self.range_draft {
+                    *max = text;
+                }
+                return;
+            }
+            Ranging::Auto => None,
+            Ranging::Fix => {
+                let number = |text: &str| {
+                    text.trim()
+                        .replace(',', "")
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|value| value.is_finite())
+                };
+                let draft = self.range_draft.as_ref();
+                let parsed = draft.map(|(min, max)| (number(min), number(max)));
+                let Some((Some(min), Some(max))) = parsed.filter(|pair| match pair {
+                    (Some(min), Some(max)) => max > min,
+                    _ => false,
+                }) else {
+                    self.warn(BAD_RANGE.to_owned());
+                    return;
+                };
+                Some(signal::Scale { min, max })
+            }
+        };
+        self.close_menus();
+        self.on_session(|session| {
+            if let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) {
+                track.plot.range = fixed;
+                if fixed.is_some() {
+                    track.plot.linked = false;
+                }
+            }
+        });
     }
 
     pub(super) fn hovered(&mut self, id: u64, pointer: Option<Pointer>) {

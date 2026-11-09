@@ -100,6 +100,7 @@ pub struct Genie {
     looking: Option<Reply>,
     folder: Option<PathBuf>,
     renaming: Option<(u64, String)>,
+    range_draft: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +166,7 @@ impl Default for Genie {
             looking: None,
             folder: None,
             renaming: None,
+            range_draft: None,
         }
     }
 }
@@ -377,6 +379,15 @@ pub enum Message {
     Copy(Copying),
     Port(Port),
     Rename(Renaming),
+    Range(u64, Ranging),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ranging {
+    Min(String),
+    Max(String),
+    Fix,
+    Auto,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -626,6 +637,7 @@ impl Genie {
             Message::Copy(copying) => return self.copying(copying),
             Message::Port(event) => return self.port(event),
             Message::Rename(renaming) => return self.rename(renaming),
+            Message::Range(id, ranging) => self.range(id, ranging),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
             Message::Pan(dx) => {
@@ -644,17 +656,8 @@ impl Genie {
             Message::TileLoaded(generation, key, result) => {
                 self.tile_loaded(generation, key, result);
             }
-            Message::LocusEdited(text) => {
-                self.draft = Some(text);
-                self.locus_error = None;
-                self.highlight = None;
-            }
-            Message::LocusSubmitted => {
-                return match self.highlight {
-                    Some(position) => self.choose(position),
-                    None => self.submit(),
-                };
-            }
+            Message::LocusEdited(text) => self.edit_locus(text),
+            Message::LocusSubmitted => return self.submit_locus(),
             Message::SuggestionChosen(position) => return self.choose(position),
             Message::Command(command) => return self.command(command),
             Message::Frame(now) => self.frame(now),
@@ -881,7 +884,7 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Genie, Lane, Message, Offline, Port, Regions, Renaming, Sweep,
+        Address, Copying, Genie, Lane, Message, Offline, Port, Ranging, Regions, Renaming, Sweep,
         mouse_button, shortcut, window_event,
     };
     use crate::export;
@@ -3256,6 +3259,42 @@ mod tests {
         };
         let columns = genie_render::signal::columns(session.viewport, &data.summaries);
         super::view::signal_scale(session, track, &columns)
+    }
+
+    #[test]
+    fn signal_menus_fix_the_range_or_go_back_to_auto() {
+        let mut genie = with_signal();
+        let at = Point::new(100.0, 200.0);
+        let _ = genie.update(Message::TrackChanged(0, Change::Link));
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert_eq!(genie.range_draft, Some(("0".to_owned(), "4".to_owned())));
+        assert!(shows(&genie, "Auto range"));
+        let _ = genie.update(Message::Range(0, Ranging::Max("50".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        let fixed = Scale {
+            min: 0.0,
+            max: 50.0,
+        };
+        assert_eq!(scale_of(&genie, 0), Some(fixed));
+        assert!(!genie.session.as_ref().unwrap().tracks[0].plot.linked);
+        assert!(!shows(&genie, "Auto range"));
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert_eq!(genie.range_draft, Some(("0".to_owned(), "50".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Min("60".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        assert!(shows(
+            &genie,
+            "Type two numbers. The maximum must be larger than the minimum."
+        ));
+        assert_eq!(scale_of(&genie, 0), Some(fixed));
+        let _ = genie.update(Message::Range(0, Ranging::Auto));
+        assert_eq!(scale_of(&genie, 0), Some(Scale { min: 0.0, max: 4.0 }));
+        let _ = genie.update(Message::TrackMenu(0, at));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        let _ = genie.update(Message::TrackChanged(0, Change::Link));
+        let plot = genie.session.as_ref().unwrap().tracks[0].plot;
+        assert!(plot.linked);
+        assert_eq!(plot.range, None);
     }
 
     #[test]

@@ -131,6 +131,19 @@ impl Genie {
         self.highlight = None;
     }
 
+    pub(super) fn edit_locus(&mut self, text: String) {
+        self.draft = Some(text);
+        self.locus_error = None;
+        self.highlight = None;
+    }
+
+    pub(super) fn submit_locus(&mut self) -> Task<Message> {
+        match self.highlight {
+            Some(position) => self.choose(position),
+            None => self.submit(),
+        }
+    }
+
     pub(super) fn submit(&mut self) -> Task<Message> {
         let Some(session) = &mut self.session else {
             return Task::none();

@@ -6,7 +6,7 @@ use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
-use genie_render::signal::Style;
+use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
@@ -101,6 +101,7 @@ impl Saved {
                         linked: section.value("scale") == Some("shared"),
                         pairs: section.value("pairs") != Some("off"),
                         colors: section.value("colors") != Some("off"),
+                        range: section.value("range").and_then(range),
                     },
                 })
             })
@@ -170,6 +171,9 @@ impl Saved {
             }
             if track.plot.linked {
                 entries.push(("scale", "shared".to_owned()));
+            }
+            if let Some(range) = track.plot.range {
+                entries.push(("range", format!("{} {}", range.min, range.max)));
             }
             if !track.plot.pairs {
                 entries.push(("pairs", "off".to_owned()));
@@ -264,13 +268,24 @@ fn find<T: Copy>(table: &[(&str, T)], name: &str) -> Option<T> {
         .map(|(_, value)| *value)
 }
 
+fn range(text: &str) -> Option<Scale> {
+    let mut numbers = text
+        .split_whitespace()
+        .map(|word| word.parse::<f32>().ok().filter(|value| value.is_finite()));
+    let (Some(Some(min)), Some(Some(max)), None) = (numbers.next(), numbers.next(), numbers.next())
+    else {
+        return None;
+    };
+    (max > min).then_some(Scale { min, max })
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
-    use genie_render::signal::Style;
+    use genie_render::signal::{Scale, Style};
 
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
@@ -328,6 +343,10 @@ mod tests {
                         style: Style::Line,
                         linked: true,
                         colors: false,
+                        range: Some(Scale {
+                            min: -1.5,
+                            max: 50.0,
+                        }),
                         ..Plot::default()
                     },
                 },
@@ -398,6 +417,7 @@ mod tests {
         let text = saved().text(&base());
         assert!(text.contains("style = line"), "{text}");
         assert!(text.contains("scale = shared"), "{text}");
+        assert!(text.contains("range = -1.5 50"), "{text}");
         assert_eq!(text.matches("style =").count(), 1, "{text}");
         assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
         assert_eq!(text.matches("group = phase").count(), 1, "{text}");

@@ -125,7 +125,7 @@ pub fn range(columns: &[Column]) -> Option<Scale> {
     })
 }
 
-fn number(value: f32) -> String {
+pub fn number(value: f32) -> String {
     let size = value.abs();
     let digits = if size >= 100.0 {
         0

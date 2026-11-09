@@ -278,7 +278,8 @@ impl Genie {
             window: self.window,
             base: session.viewport.to_bp(f64::from(at.x)).floor().max(0.0) as u64,
         };
-        Some(menu::view(track, track.mode(session.contig), &place))
+        let mode = track.mode(session.contig);
+        Some(menu::view(track, mode, &place, self.range_draft.as_ref()))
     }
 
     fn suggestion_menu(&self) -> Option<Element<'_, Message>> {
@@ -815,6 +816,9 @@ pub(super) fn signal_scale(
     track: &Track,
     columns: &[signal::Column],
 ) -> Option<signal::Scale> {
+    if let Some(range) = track.plot.range {
+        return Some(range);
+    }
     if !track.plot.linked {
         return signal::range(columns);
     }

@@ -11,7 +11,7 @@ use genie_formats::features::Kind;
 use genie_formats::{bbi, tabix};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
-use genie_render::signal::Style;
+use genie_render::signal::{Scale, Style};
 use genie_render::{alignments, rows};
 
 use crate::location::{Location, Reader};
@@ -161,12 +161,13 @@ impl Default for Options {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plot {
     pub style: Style,
     pub linked: bool,
     pub pairs: bool,
     pub colors: bool,
+    pub range: Option<Scale>,
 }
 
 impl Default for Plot {
@@ -176,6 +177,7 @@ impl Default for Plot {
             linked: false,
             pairs: true,
             colors: true,
+            range: None,
         }
     }
 }
@@ -570,6 +572,9 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Link => {
             let plot = &mut tracks[position].plot;
             plot.linked = !plot.linked;
+            if plot.linked {
+                plot.range = None;
+            }
         }
         Change::Pairs => {
             let plot = &mut tracks[position].plot;
