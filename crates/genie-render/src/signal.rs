@@ -161,9 +161,7 @@ pub fn scene(
     width: f32,
 ) -> Vec<Primitive> {
     let usable = height - 1.0;
-    let y = |value: f32| {
-        (scale.max - value.clamp(scale.min, scale.max)) / (scale.max - scale.min) * usable
-    };
+    let y = |value: f32| to_y(scale, usable, value);
     let bar = |x: f32, width: f32, from: f32, to: f32, paint: Paint| {
         let (top, bottom) = (y(from.max(to)), y(from.min(to)));
         (bottom > top).then_some(Primitive::Rect {
@@ -186,34 +184,78 @@ pub fn scene(
             continue;
         }
         primitives.extend(bar(x, size, 0.0, mean, Paint::Tint(hue)));
-        let top = (y(mean) - LINE / 2.0).clamp(0.0, (usable - LINE).max(0.0));
+        line(&mut primitives, column, (scale, usable), hue, &mut previous);
+    }
+    primitives.push(range_label(scale, width));
+    primitives
+}
+
+pub fn traces(
+    layers: &[(&[Column], Hue)],
+    scale: Scale,
+    height: f32,
+    width: f32,
+) -> Vec<Primitive> {
+    let usable = height - 1.0;
+    let mut primitives = Vec::new();
+    for (columns, hue) in layers {
+        let mut previous = None;
+        for column in *columns {
+            line(
+                &mut primitives,
+                column,
+                (scale, usable),
+                *hue,
+                &mut previous,
+            );
+        }
+    }
+    primitives.push(range_label(scale, width));
+    primitives
+}
+
+fn to_y(scale: Scale, usable: f32, value: f32) -> f32 {
+    (scale.max - value.clamp(scale.min, scale.max)) / (scale.max - scale.min) * usable
+}
+
+fn line(
+    primitives: &mut Vec<Primitive>,
+    column: &Column,
+    (scale, usable): (Scale, f32),
+    hue: Hue,
+    previous: &mut Option<(f32, f32)>,
+) {
+    let mean = column.bin.mean() as f32;
+    let (x, size) = (column.x, column.width);
+    let top = (to_y(scale, usable, mean) - LINE / 2.0).clamp(0.0, (usable - LINE).max(0.0));
+    primitives.push(Primitive::Rect {
+        x,
+        y: top,
+        width: size,
+        height: LINE,
+        paint: Paint::Hue(hue),
+    });
+    if let Some((right, last)) = *previous
+        && (right - x).abs() < 0.5
+    {
         primitives.push(Primitive::Rect {
-            x,
-            y: top,
-            width: size,
-            height: LINE,
+            x: x - 0.5,
+            y: last.min(top),
+            width: 1.0,
+            height: (last - top).abs() + LINE,
             paint: Paint::Hue(hue),
         });
-        if let Some((right, last)) = previous
-            && (right - x).abs() < 0.5
-        {
-            primitives.push(Primitive::Rect {
-                x: x - 0.5,
-                y: last.min(top),
-                width: 1.0,
-                height: (last - top).abs() + LINE,
-                paint: Paint::Hue(hue),
-            });
-        }
-        previous = Some((x + size, top));
     }
-    primitives.push(Primitive::Label {
+    *previous = Some((x + size, top));
+}
+
+fn range_label(scale: Scale, width: f32) -> Primitive {
+    Primitive::Label {
         x: width - 4.0,
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(label(scale)),
         size: RANGE_SIZE,
-    });
-    primitives
+    }
 }
 
 pub fn hit(columns: &[Column], x: f32) -> Option<Column> {
@@ -228,7 +270,7 @@ mod tests {
     use genie_core::signal::{Bin, Summary};
     use genie_core::{Region, Viewport};
 
-    use super::{Column, Scale, Style, columns, density, hit, range, scene};
+    use super::{Column, Scale, Style, columns, density, hit, range, scene, traces};
     use crate::scene::{Hue, Paint, Primitive};
 
     fn view(start: u64, end: u64) -> Viewport {
@@ -397,6 +439,27 @@ mod tests {
         assert_eq!(lines[1], [1.0, 0.0, 1.0, 2.0]);
         assert_eq!(lines[2], [0.5, 0.0, 1.0, 21.0]);
         assert!(found.contains(&([0.0, 20.0, 1.0, 20.0], Paint::Tint(Hue::Blue))));
+    }
+
+    #[test]
+    fn traces_draw_a_line_for_each_layer_and_one_range() {
+        let scale = Scale { min: 0.0, max: 4.0 };
+        let low = [column(0.0, 2.0, 2.0, 2.0)];
+        let high = [column(0.0, 4.0, 4.0, 4.0)];
+        let shown = traces(
+            &[(&low[..], Hue::Blue), (&high[..], Hue::Green)],
+            scale,
+            41.0,
+            100.0,
+        );
+        assert_eq!(
+            rects(&shown),
+            [
+                ([0.0, 19.0, 1.0, 2.0], Paint::Hue(Hue::Blue)),
+                ([0.0, 0.0, 1.0, 2.0], Paint::Hue(Hue::Green)),
+            ]
+        );
+        assert_eq!(labels(&shown), [("0-4".to_owned(), 96.0)]);
     }
 
     #[test]
