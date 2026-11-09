@@ -9,20 +9,23 @@ const LINE_HEIGHT: f32 = 40.0;
 const ZOOM_RATE: f32 = 0.005;
 
 type Callback<'a, Message, T> = Box<dyn Fn(T) -> Message + 'a>;
+type Pan<'a, Message> = Box<dyn Fn(usize, f32) -> Message + 'a>;
+type Zoom<'a, Message> = Box<dyn Fn(usize, f32, f32) -> Message + 'a>;
 
 pub struct Navigator<'a, Message> {
     content: Element<'a, Message>,
     width: f32,
     inset: f32,
-    on_pan: Option<Callback<'a, Message, f32>>,
-    on_zoom: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
+    panels: (usize, f32),
+    on_pan: Option<Pan<'a, Message>>,
+    on_zoom: Option<Zoom<'a, Message>>,
     on_resize: Option<Callback<'a, Message, f32>>,
 }
 
 #[derive(Default)]
 struct State {
     modifiers: Modifiers,
-    drag: Option<f32>,
+    drag: Option<(usize, f32)>,
     click: Option<Click>,
 }
 
@@ -32,6 +35,7 @@ impl<'a, Message> Navigator<'a, Message> {
             content: content.into(),
             width,
             inset: 0.0,
+            panels: (1, 0.0),
             on_pan: None,
             on_zoom: None,
             on_resize: None,
@@ -43,12 +47,17 @@ impl<'a, Message> Navigator<'a, Message> {
         self
     }
 
-    pub fn on_pan(mut self, on_pan: impl Fn(f32) -> Message + 'a) -> Self {
+    pub fn panels(mut self, count: usize, gap: f32) -> Self {
+        self.panels = (count.max(1), gap);
+        self
+    }
+
+    pub fn on_pan(mut self, on_pan: impl Fn(usize, f32) -> Message + 'a) -> Self {
         self.on_pan = Some(Box::new(on_pan));
         self
     }
 
-    pub fn on_zoom(mut self, on_zoom: impl Fn(f32, f32) -> Message + 'a) -> Self {
+    pub fn on_zoom(mut self, on_zoom: impl Fn(usize, f32, f32) -> Message + 'a) -> Self {
         self.on_zoom = Some(Box::new(on_zoom));
         self
     }
@@ -58,16 +67,28 @@ impl<'a, Message> Navigator<'a, Message> {
         self
     }
 
-    fn pan(&self, shell: &mut Shell<'_, Message>, dx: f32) {
+    fn locate(&self, bounds: Rectangle, x: f32) -> (usize, f32) {
+        let x = x - bounds.x - self.inset;
+        let (count, gap) = self.panels;
+        if count == 1 {
+            return (0, x);
+        }
+        let width = bounds.width - 2.0 * self.inset;
+        let step = (width - gap * (count - 1) as f32) / count as f32 + gap;
+        let panel = ((x / step).max(0.0) as usize).min(count - 1);
+        (panel, x - panel as f32 * step)
+    }
+
+    fn pan(&self, shell: &mut Shell<'_, Message>, panel: usize, dx: f32) {
         if let Some(on_pan) = &self.on_pan {
-            shell.publish(on_pan(dx));
+            shell.publish(on_pan(panel, dx));
         }
         shell.capture_event();
     }
 
-    fn zoom(&self, shell: &mut Shell<'_, Message>, factor: f32, anchor: f32) {
+    fn zoom(&self, shell: &mut Shell<'_, Message>, (panel, anchor): (usize, f32), factor: f32) {
         if let Some(on_zoom) = &self.on_zoom {
-            shell.publish(on_zoom(factor, anchor));
+            shell.publish(on_zoom(panel, factor, anchor));
         }
         shell.capture_event();
     }
@@ -146,9 +167,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Navigator<'_, Message> {
                         ScrollDelta::Lines { x, y } => (x * LINE_HEIGHT, y * LINE_HEIGHT),
                         ScrollDelta::Pixels { x, y } => (x, y),
                     };
+                    let at = self.locate(bounds, position.x);
                     if state.modifiers.command() {
-                        let anchor = position.x - bounds.x - self.inset;
-                        return self.zoom(shell, (dy * ZOOM_RATE).exp(), anchor);
+                        return self.zoom(shell, at, (dy * ZOOM_RATE).exp());
                     }
                     let dx = if state.modifiers.shift() {
                         dy
@@ -158,14 +179,14 @@ impl<Message> Widget<Message, Theme, Renderer> for Navigator<'_, Message> {
                         0.0
                     };
                     if dx.abs() > f32::EPSILON {
-                        return self.pan(shell, dx);
+                        return self.pan(shell, at.0, dx);
                     }
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if let Some(last) = state.drag {
-                    state.drag = Some(position.x);
-                    return self.pan(shell, position.x - last);
+                if let Some((panel, last)) = state.drag {
+                    state.drag = Some((panel, position.x));
+                    return self.pan(shell, panel, position.x - last);
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -192,11 +213,11 @@ impl<Message> Widget<Message, Theme, Renderer> for Navigator<'_, Message> {
             let state = tree.state.downcast_mut::<State>();
             let click = Click::new(position, mouse::Button::Left, state.click);
             state.click = Some(click);
+            let at = self.locate(bounds, position.x);
             if click.kind() == click::Kind::Double {
-                let anchor = position.x - bounds.x - self.inset;
-                self.zoom(shell, 2.0, anchor);
+                self.zoom(shell, at, 2.0);
             } else {
-                state.drag = Some(position.x);
+                state.drag = Some((at.0, position.x));
                 shell.capture_event();
             }
         }
@@ -284,14 +305,15 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq)]
     enum Probe {
-        Pan(f32),
-        Zoom(f32, f32),
+        Pan(usize, f32),
+        Zoom(usize, f32, f32),
         Resized(f32),
     }
 
-    fn run(width: f32, at: Point, events: Vec<Event>) -> Vec<Probe> {
+    fn run_with(panels: usize, width: f32, at: Point, events: Vec<Event>) -> Vec<Probe> {
         let navigator = Navigator::new(space().width(Length::Fill).height(Length::Fill), width)
             .inset(10.0)
+            .panels(panels, 1.0)
             .on_pan(Probe::Pan)
             .on_zoom(Probe::Zoom)
             .on_resize(Probe::Resized);
@@ -299,6 +321,28 @@ mod tests {
         ui.point_at(at);
         let _ = ui.simulate(events);
         ui.into_messages().collect()
+    }
+
+    fn run(width: f32, at: Point, events: Vec<Event>) -> Vec<Probe> {
+        run_with(1, width, at, events)
+    }
+
+    #[test]
+    fn wheel_and_drag_act_on_the_panel_under_the_pointer() {
+        let at = Point::new(310.0, 50.0);
+        let zoom = run_with(
+            2,
+            380.0,
+            at,
+            vec![modifiers(Modifiers::COMMAND), wheel(1.0)],
+        );
+        let [Probe::Zoom(panel, _, anchor)] = zoom.as_slice() else {
+            panic!("expected one zoom, got {zoom:?}");
+        };
+        assert_eq!(*panel, 1);
+        assert!((anchor - 109.5).abs() < 0.01, "{anchor}");
+        let drag = run_with(2, 380.0, at, vec![press(), moved(250.0), release()]);
+        assert_eq!(drag, [Probe::Pan(1, -60.0)]);
     }
 
     fn modifiers(modifiers: Modifiers) -> Event {
@@ -326,7 +370,7 @@ mod tests {
             Point::new(110.0, 50.0),
             vec![modifiers(Modifiers::COMMAND), wheel(1.0)],
         );
-        let [Probe::Zoom(factor, anchor)] = messages.as_slice() else {
+        let [Probe::Zoom(0, factor, anchor)] = messages.as_slice() else {
             panic!("expected one zoom, got {messages:?}");
         };
         assert!(*factor > 1.0);
@@ -346,7 +390,7 @@ mod tests {
             Point::new(100.0, 50.0),
             vec![press(), moved(150.0), release()],
         );
-        assert_eq!(messages, [Probe::Pan(50.0)]);
+        assert_eq!(messages, [Probe::Pan(0, 50.0)]);
     }
 
     #[test]
@@ -382,7 +426,7 @@ mod tests {
     #[test]
     fn mostly_horizontal_swipes_pan() {
         let messages = run(380.0, Point::new(100.0, 50.0), vec![swipe(40.0, 3.0)]);
-        assert_eq!(messages, [Probe::Pan(40.0)]);
+        assert_eq!(messages, [Probe::Pan(0, 40.0)]);
     }
 
     #[test]
@@ -393,7 +437,7 @@ mod tests {
             vec![modifiers(Modifiers::SHIFT), wheel(1.0)],
         );
         assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0], Probe::Pan(dx) if dx > 0.0));
+        assert!(matches!(messages[0], Probe::Pan(0, dx) if dx > 0.0));
     }
 
     #[test]
@@ -403,7 +447,7 @@ mod tests {
             Point::new(110.0, 50.0),
             vec![press(), release(), press(), release()],
         );
-        assert_eq!(messages, [Probe::Zoom(2.0, 100.0)]);
+        assert_eq!(messages, [Probe::Zoom(0, 2.0, 100.0)]);
     }
 
     #[test]

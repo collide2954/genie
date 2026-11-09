@@ -485,8 +485,8 @@ pub enum Message {
     Picked(Option<PathBuf>),
     Reopen(Location),
     Opened(Result<Arc<Reference>, String>),
-    Pan(f32),
-    Zoom(f32, f32),
+    Pan(usize, f32),
+    Zoom(usize, f32, f32),
     Resized(f32),
     TileLoaded(u64, Key, Result<Arc<[u8]>, String>),
     LocusEdited(String),
@@ -805,14 +805,15 @@ impl Genie {
             Message::Panel(panel, paneling) => return self.panel(panel, paneling),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
-            Message::Pan(dx) => {
+            Message::Pan(panel, dx) => {
                 self.drop_draft();
-                return self.navigate(|viewport| viewport.pan(f64::from(dx)));
+                return self.navigate(panel, |viewport| viewport.pan(f64::from(dx)));
             }
-            Message::Zoom(factor, anchor) => {
+            Message::Zoom(panel, factor, anchor) => {
                 self.drop_draft();
-                return self
-                    .navigate(|viewport| viewport.zoom(f64::from(factor), f64::from(anchor)));
+                return self.navigate(panel, |viewport| {
+                    viewport.zoom(f64::from(factor), f64::from(anchor))
+                });
             }
             Message::Resized(width) => return self.resize(width),
             Message::TileLoaded(generation, key, result) => {
@@ -1358,7 +1359,7 @@ mod tests {
     #[test]
     fn navigating_requests_features_around_the_view() {
         let mut genie = with_track();
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         let track = &genie.session.as_ref().unwrap().tracks[0];
         assert_eq!(track.slot.wanted, Some((0, Region::between(0, 1_000))));
     }
@@ -1366,7 +1367,7 @@ mod tests {
     #[test]
     fn loaded_features_fill_the_track() {
         let mut genie = with_track();
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         let region = Region::between(0, 1_000);
         let feature = Feature::new("a", Region::between(10, 20), Strand::Forward);
         let loaded = Arc::new(Loaded::features(region, vec![feature; 12]));
@@ -1379,7 +1380,7 @@ mod tests {
     #[test]
     fn load_errors_show_inside_the_track() {
         let mut genie = with_track();
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         let error = "The strand is not +, - or ..".to_owned();
         let region = Region::between(0, 1_000);
         let _ = genie.update(Message::TrackLoaded(0, 0, 0, region, Err(error.clone())));
@@ -1865,6 +1866,29 @@ mod tests {
     }
 
     #[test]
+    fn pointer_moves_change_one_panel_and_keys_change_all() {
+        let mut genie = opened();
+        let locus = |genie: &Genie| genie.session.as_ref().unwrap().locus();
+        go(&mut genie, "chr1:101-200 chr2:1-100");
+        let _ = genie.update(Message::Pan(1, -499.5));
+        assert_eq!(locus(&genie), "chr1:101-200 chr2:101-200");
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
+        assert_eq!(locus(&genie), "chr1:101-150 chr2:101-200");
+        let _ = genie.update(Message::Command(Command::Pan(-1.0)));
+        settle(&mut genie);
+        assert_eq!(locus(&genie), "chr1:151-200 chr2:201-300");
+        let _ = genie.update(Message::Command(Command::Zoom(2.0)));
+        settle(&mut genie);
+        assert!(
+            locus(&genie).ends_with(" chr2:226-275"),
+            "{}",
+            locus(&genie)
+        );
+        let _ = genie.update(Message::Pan(3, -100.0));
+        assert!(locus(&genie).ends_with(" chr2:226-275"));
+    }
+
+    #[test]
     fn submitting_a_locus_jumps_there() {
         let mut genie = opened();
         go(&mut genie, "chr1:101-200");
@@ -1878,7 +1902,7 @@ mod tests {
         go(&mut genie, "chr1:101-200");
         go(&mut genie, "chr2:51-150");
         settle(&mut genie);
-        let _ = genie.update(Message::Pan(-100.0));
+        let _ = genie.update(Message::Pan(0, -100.0));
         let _ = genie.update(Message::Command(Command::Back));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:101-200"));
@@ -1960,7 +1984,7 @@ mod tests {
         let _ = genie.update(Message::Jumped(0, true, near));
         settle(&mut genie);
         assert_eq!(genie.jump_from(), Some(500));
-        let _ = genie.update(Message::Pan(-100.0));
+        let _ = genie.update(Message::Pan(0, -100.0));
         assert_eq!(genie.jump_from(), Some(520));
     }
 
@@ -2282,7 +2306,7 @@ mod tests {
     #[test]
     fn arrow_keys_pan_a_quarter_view() {
         let mut genie = opened();
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         let _ = genie.update(Message::Command(Command::Pan(-0.25)));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:126-625"));
@@ -2407,9 +2431,9 @@ mod tests {
     #[test]
     fn dragging_cancels_a_running_transition() {
         let mut genie = opened();
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));
-        let _ = genie.update(Message::Pan(-100.0));
+        let _ = genie.update(Message::Pan(0, -100.0));
         settle(&mut genie);
         assert!(shows(&genie, "chr1:51-550"));
     }
@@ -2438,7 +2462,7 @@ mod tests {
     fn navigating_drops_an_unsubmitted_draft() {
         let mut genie = opened();
         let _ = genie.update(Message::LocusEdited("chr1:5".to_owned()));
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         assert!(shows(&genie, "chr1:1-500"));
     }
 
@@ -2458,9 +2482,9 @@ mod tests {
     fn zoom_and_pan_move_the_locus() {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Opened(Ok(reference())));
-        let _ = genie.update(Message::Zoom(2.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
         assert!(shows(&genie, "chr1:1-500"));
-        let _ = genie.update(Message::Pan(-100.0));
+        let _ = genie.update(Message::Pan(0, -100.0));
         assert!(shows(&genie, "chr1:51-550"));
     }
 
@@ -2549,7 +2573,7 @@ mod tests {
     #[test]
     fn dragging_the_overview_window_moves_the_view() {
         let mut genie = opened();
-        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 4.0, 0.0));
         let _ = genie.update(Message::Overview(Sweep::Pressed(0.0625)));
         let _ = genie.update(Message::Overview(Sweep::Dragged(0.5)));
         let _ = genie.update(Message::Overview(Sweep::Released));
@@ -2559,7 +2583,7 @@ mod tests {
     #[test]
     fn pressing_the_overview_outside_the_window_centers_there() {
         let mut genie = opened();
-        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 4.0, 0.0));
         let _ = genie.update(Message::Overview(Sweep::Pressed(0.75)));
         assert!(shows(&genie, "chr1:626-875"));
     }
@@ -2567,7 +2591,7 @@ mod tests {
     #[test]
     fn overview_drags_stop_at_release() {
         let mut genie = opened();
-        let _ = genie.update(Message::Zoom(4.0, 0.0));
+        let _ = genie.update(Message::Zoom(0, 4.0, 0.0));
         let _ = genie.update(Message::Overview(Sweep::Pressed(0.1)));
         let _ = genie.update(Message::Overview(Sweep::Released));
         let _ = genie.update(Message::Overview(Sweep::Dragged(0.9)));
@@ -3145,7 +3169,7 @@ mod tests {
     fn navigating_hides_the_hover_card() {
         let mut genie = with_features();
         let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
-        let _ = genie.update(Message::Pan(-40.0));
+        let _ = genie.update(Message::Pan(0, -40.0));
         assert!(genie.hover.is_none());
         let _ = genie.update(Message::TrackHovered(0, Some(over(15.0, 5.0))));
         let _ = genie.update(Message::Command(Command::Zoom(2.0)));

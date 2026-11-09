@@ -451,23 +451,38 @@ impl Genie {
         })
     }
 
-    pub(super) fn navigate(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
+    pub(super) fn navigate(
+        &mut self,
+        panel: usize,
+        change: impl FnOnce(Viewport) -> Viewport,
+    ) -> Task<Message> {
         self.hover = None;
-        if let Some(session) = &mut self.session {
-            session.transition = None;
-            session.viewport = change(session.viewport);
-        }
+        self.on_session(|session| {
+            if panel == 0 {
+                session.transition = None;
+                session.viewport = change(session.viewport);
+            } else if let Some(extra) = session.panels.get_mut(panel - 1) {
+                extra.viewport = change(extra.viewport);
+            }
+        });
         self.fetch()
     }
 
-    fn glide(&mut self, change: impl FnOnce(Viewport) -> Viewport) -> Task<Message> {
-        if !self.settings.motion {
-            return self.navigate(change);
-        }
+    fn glide(&mut self, change: impl Fn(Viewport) -> Viewport) -> Task<Message> {
         self.hover = None;
-        if let Some(session) = &mut self.session {
-            session.glide(change(session.destination()));
-        }
+        let motion = self.settings.motion;
+        self.on_session(|session| {
+            let to = change(session.destination());
+            if motion && session.panels.is_empty() {
+                session.glide(to);
+            } else {
+                session.transition = None;
+                session.viewport = to;
+                for extra in &mut session.panels {
+                    extra.viewport = change(extra.viewport);
+                }
+            }
+        });
         self.fetch()
     }
 }

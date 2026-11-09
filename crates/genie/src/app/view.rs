@@ -587,6 +587,7 @@ impl Genie {
             )
             .height(Length::Fill);
         Navigator::new(tracks, self.width)
+            .panels(count, PANEL_GAP)
             .on_pan(Message::Pan)
             .on_zoom(Message::Zoom)
             .on_resize(Message::Resized)
