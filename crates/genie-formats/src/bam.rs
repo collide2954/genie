@@ -140,6 +140,7 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
             Ok((*op, value >> 4))
         })
         .collect::<Result<_, Error>>()?;
+    let cigar = long_cigar(cigar, length, || &bytes[fields.at..]);
     let packed = fields.take(length.div_ceil(2))?;
     let bases = (0..length)
         .map(|index| {
@@ -194,8 +195,53 @@ fn integer(kind: u8, value: &[u8]) -> Option<i64> {
     })
 }
 
-fn tags(mut aux: &[u8]) -> Tags {
+fn long_cigar<'a>(
+    cigar: Vec<(Op, u32)>,
+    length: usize,
+    rest: impl FnOnce() -> &'a [u8],
+) -> Vec<(Op, u32)> {
+    let [(Op::SoftClip, clipped), (Op::Skip, _)] = cigar.as_slice() else {
+        return cigar;
+    };
+    if *clipped as usize != length {
+        return cigar;
+    }
+    let rest = rest();
+    let aux = rest.get(length.div_ceil(2) + length..).unwrap_or_default();
+    let mut real = None;
+    walk(aux, |key, kind, value| {
+        if key == *b"CG"
+            && kind == b'B'
+            && let [b'I', _, _, _, _, words @ ..] = value
+        {
+            real = words
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|word| {
+                    let value = u32::from_le_bytes(*word);
+                    OPS.get((value & 0xF) as usize).map(|op| (*op, value >> 4))
+                })
+                .collect();
+        }
+    });
+    real.unwrap_or(cigar)
+}
+
+fn tags(aux: &[u8]) -> Tags {
     let mut tags = Tags::default();
+    walk(aux, |key, kind, value| match key {
+        [b'H', b'P'] => tags.phase = integer(kind, value),
+        [b'R', b'G'] if kind == b'Z' => {
+            let text = value.strip_suffix(&[0]).unwrap_or(value);
+            tags.group = Some(String::from_utf8_lossy(text).into_owned());
+        }
+        _ => {}
+    });
+    tags
+}
+
+fn walk(mut aux: &[u8], mut each: impl FnMut([u8; 2], u8, &[u8])) {
     while let [first, second, kind, rest @ ..] = aux {
         let size = match kind {
             b'A' | b'c' | b'C' => 1,
@@ -222,17 +268,9 @@ fn tags(mut aux: &[u8]) -> Tags {
         let Some(value) = rest.get(..size) else {
             break;
         };
-        match [*first, *second] {
-            [b'H', b'P'] => tags.phase = integer(*kind, value),
-            [b'R', b'G'] if *kind == b'Z' => {
-                let text = value.strip_suffix(&[0]).unwrap_or(value);
-                tags.group = Some(String::from_utf8_lossy(text).into_owned());
-            }
-            _ => {}
-        }
+        each([*first, *second], *kind, value);
         aux = &rest[size..];
     }
-    tags
 }
 
 fn word(reader: &mut impl Read) -> io::Result<u32> {
@@ -360,6 +398,30 @@ mod tests {
     fn rejects_other_files() {
         let result = header(&mut Cursor::new(b"BAI\x01\0\0\0\0".to_vec()));
         assert!(matches!(result, Err(Error::Invalid(Reason::NotBam))));
+    }
+
+    #[test]
+    fn long_cigars_come_from_the_cg_tag() {
+        let bases = "ACGTACGTACGTACGTA";
+        let mut long = body(40, "long", 0, &[(17, 4), (15, 3)], bases);
+        long.extend(bases.bytes().map(|_| 30));
+        long.extend(b"CGBI");
+        long.extend(3_u32.to_le_bytes());
+        for (length, op) in [(10_u32, 0_u32), (2, 1), (5, 0)] {
+            long.extend((length << 4 | op).to_le_bytes());
+        }
+        let mut reader = Cursor::new(sized(long));
+        let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
+        let expected = [(Op::Match, 10), (Op::Insertion, 2), (Op::Match, 5)];
+        assert_eq!(read.cigar, expected);
+        let mut short = body(40, "short", 0, &[(17, 0)], bases);
+        short.extend(bases.bytes().map(|_| 30));
+        short.extend(b"CGBI");
+        short.extend(1_u32.to_le_bytes());
+        short.extend((5_u32 << 4).to_le_bytes());
+        let mut reader = Cursor::new(sized(short));
+        let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
+        assert_eq!(read.cigar, [(Op::Match, 17)]);
     }
 
     #[test]
