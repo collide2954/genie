@@ -1,6 +1,6 @@
 # genie
 
-genie is a genome browser for Windows, macOS and Linux. It uses the [iced](https://iced.rs) GUI library.
+genie is a genome browser for Windows, macOS and Linux. It uses the [iced](https://iced.rs) GUI library. The project page is at [collide2954.github.io/genie](https://collide2954.github.io/genie/).
 
 genie is not complete. There is no release. Each push to `main` makes a test build for each operating system. The builds are in the artifacts of the CI runs for 30 days.
 
@@ -126,6 +126,15 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.
 - genie sorts the contigs. First are the numbered chromosomes in number order (1, 2 … 22, also arms such as 2L and 2R, and Roman numbers such as I to XVI). Then come X, Y, W and Z, and then M. The other contigs follow in the order of the file. The region list and the feature search use this order.
 
+## Several loci
+
+- Type two to four loci in the locus box, with a space between them, for example `BRCA1 BRCA2`. genie shows the loci side by side in panels of equal width.
+- The top of each panel shows its locus and its ruler. Click the locus to show only that panel. Click × to close the panel. To show one panel again, type one locus.
+- Drag, turn the wheel or drag on the ruler in a panel to move or zoom that panel. The arrow keys and + and - move and zoom all panels.
+- Put the pointer on a feature, a read or a variant in a panel to see its data.
+- Back, forward, region jumps and feature jumps move the first panel.
+- Sessions, Ctrl+C (Cmd+C on macOS) and the `goto` command keep all loci. Images show all panels.
+
 ## Regions
 
 - Click the bookmark button to show the region list. Push Ctrl+D (Cmd+D on macOS) to add the view to the list, or hold Shift and drag on the ruler to add a range.
@@ -135,7 +144,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 ## Copy
 
-- Push Ctrl+C (Cmd+C on macOS) to copy the locus of the view, for example `chr1:1,001-2,000`. If you clicked a card to keep it open, Ctrl+C copies the text of the card.
+- Push Ctrl+C (Cmd+C on macOS) to copy the locus of the view, for example `chr1:1,001-2,000`. If the view has several loci, genie copies all of them, with a space between them. If you clicked a card to keep it open, Ctrl+C copies the text of the card.
 - Right-click the ruler or a region in the region list, then click **Copy locus** or **Copy sequence**.
 - **Copy sequence** copies the bases in FASTA format, with 60 bases on each line. The header is the locus, for example `>chr1:1001-2000`. If the sequence track shows the reverse strand, genie copies the reverse complement and adds `(-)` to the header. genie copies up to 1 Mb.
 
@@ -168,7 +177,7 @@ If a file is in the folder of the session file, the session file has its path re
 
 ## Export
 
-To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. It uses the current theme.
+To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. The image uses the current theme.
 
 - If the file name ends with `.svg`, genie saves an SVG image. The SVG has shapes and text that you can edit, for example in Inkscape or Illustrator. The text uses the fonts Inter and JetBrains Mono. If a computer does not have these fonts, it uses similar fonts.
 - Other names give a PNG image. The scale of a PNG image is 2. Its maximum height is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
@@ -181,7 +190,7 @@ To save one image for each region in a BED file, without a window:
 cargo run -p genie -- snapshot work.genie regions.bed pictures
 ```
 
-- genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it.
+- genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.
 - The name of an image is the name of the region (BED column 4) or the locus, for example `chr1_1001-2000.png`. If two regions have the same name, genie adds `-2`, `-3` and so on.
 - `--width POINTS` sets the width of the view, from 200 to 4,096 (default 1,280). A PNG image has two pixels for each point. `--theme dark` uses the dark theme. The default is light. `--format svg` saves SVG images. The default is PNG.
 - genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.
@@ -195,7 +204,7 @@ While genie runs, programs on the same computer (for example R, Python or Jupyte
 | --- | --- |
 | `genome hg38`, `genome /data/genome.fa` | Opens a genome from the list or a reference file |
 | `load /data/reads.bam name=Tumor` | Adds a track. `name=` sets the track name. |
-| `goto chr1:1,000-2,000`, `goto BRCA1` | Goes to a locus or a feature name |
+| `goto chr1:1,000-2,000`, `goto BRCA1`, `goto BRCA1 BRCA2` | Goes to a locus or a feature name. Two to four loci show side by side. |
 | `region chr1 1001 2000 promoter` | Adds a region to the region list. The start and the end are 1-based and are in the region. |
 | `snapshotDirectory /data/pictures` | Sets the folder for snapshots |
 | `snapshot BRCA1.png` | Saves the view as an image in that folder: SVG for a name that ends with `.svg`, else PNG. Without a name, the image is a PNG named after the locus. |
