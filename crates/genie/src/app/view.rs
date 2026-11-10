@@ -151,13 +151,11 @@ impl Genie {
         };
         let locus = self.session.as_ref().map(|session| {
             let reference = &session.reference;
-            let (genome, about) = match reference.genome.as_deref().and_then(genome::find) {
-                Some(genome) => (
-                    genome.label,
-                    format!("{} {}", genome.species, genome.assembly),
-                ),
-                None => (reference.name.clone(), reference.location.to_string()),
+            let about = match reference.genome.as_deref().and_then(genome::find) {
+                Some(genome) => format!("{} {}", genome.species, genome.assembly),
+                None => reference.location.to_string(),
             };
+            let genome = reference.label();
             LocusField {
                 value: self.draft.clone().unwrap_or_else(|| session.locus()),
                 error: self.locus_error.clone(),

@@ -1998,6 +1998,17 @@ mod tests {
     }
 
     #[test]
+    fn image_captions_name_the_genome() {
+        let mut genie = Genie::default();
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        let session = genie.session.as_ref().unwrap();
+        assert!(simulator(genie.export_view(session)).find("hg38").is_ok());
+        assert!(genie.figure(session).contains(">hg38</tspan>"));
+    }
+
+    #[test]
     fn exports_draw_every_panel() {
         let mut genie = opened();
         go(&mut genie, "chr1:101-200 chr2:1-50");

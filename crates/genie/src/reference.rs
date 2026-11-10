@@ -144,6 +144,13 @@ fn contigs(records: &[FaiRecord]) -> Vec<Contig> {
 }
 
 impl Reference {
+    pub fn label(&self) -> String {
+        self.genome
+            .as_deref()
+            .and_then(crate::genome::find)
+            .map_or_else(|| self.name.clone(), |genome| genome.label)
+    }
+
     pub fn fasta(path: PathBuf, records: Vec<FaiRecord>) -> Result<Self, String> {
         Self::new(
             Location::File(path),

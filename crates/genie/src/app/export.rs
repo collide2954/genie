@@ -32,7 +32,7 @@ impl Genie {
 
     pub(super) fn export_view<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let count = session.count();
-        let mut title = row![text(&session.reference.name).size(CAPTION_SIZE)]
+        let mut title = row![text(session.reference.label()).size(CAPTION_SIZE)]
             .spacing(6)
             .align_y(Alignment::Center);
         if count == 1 {

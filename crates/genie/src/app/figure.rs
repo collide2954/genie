@@ -82,8 +82,8 @@ impl Page<'_> {
 impl Page<'_> {
     fn head(&mut self, session: &Session) -> f32 {
         let tokens = self.colors.0;
-        let locus = session.locus();
-        let mut caption = vec![(session.reference.name.as_str(), Face::Ui, tokens.text)];
+        let (label, locus) = (session.reference.label(), session.locus());
+        let mut caption = vec![(label.as_str(), Face::Ui, tokens.text)];
         if self.count == 1 {
             caption.push(("·", Face::Ui, tokens.muted));
             caption.push((locus.as_str(), Face::Mono, tokens.muted));
