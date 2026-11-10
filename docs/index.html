@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>genie · genome browser</title>
+<meta name="description" content="genie is a genome browser for Windows, macOS and Linux. It shows sequences, genes, reads, variants and signal from local files and files on the web.">
+<meta property="og:title" content="genie · genome browser">
+<meta property="og:description" content="A genome browser for Windows, macOS and Linux, written in Rust with iced.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/brca1-light.png">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cstyle%3Erect%7Bfill:%232B2B2B%7D@media (prefers-color-scheme:dark)%7Brect%7Bfill:%23CCCCCC%7D%7D%3C/style%3E%3Crect width='16' height='16' rx='4'/%3E%3C/svg%3E">
+<style>
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("fonts/JetBrainsMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --canvas: #F8F8F8;
+  --surface: #FFFFFF;
+  --line: #E5E5E5;
+  --text: #2B2B2B;
+  --muted: #6E6E6E;
+  --accent: #2B2B2B;
+  --on-accent: #FFFFFF;
+  --soft: rgba(0, 0, 0, 0.08);
+  --ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #181818;
+    --surface: #1F1F1F;
+    --line: #2B2B2B;
+    --text: #CCCCCC;
+    --muted: #9D9D9D;
+    --accent: #CCCCCC;
+    --on-accent: #181818;
+    --soft: rgba(255, 255, 255, 0.10);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font: 15px/1.55 var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration-color: var(--muted); text-underline-offset: 2px; }
+a:hover { text-decoration-color: var(--text); }
+
+code, pre, .mono { font-family: var(--mono); }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+
+header.bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--canvas);
+  border-bottom: 1px solid var(--line);
+}
+header.bar .wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 44px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+.logo {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--accent);
+}
+header.bar nav { margin-left: auto; display: flex; gap: 4px; min-width: 0; }
+header.bar nav a {
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: 5px;
+}
+header.bar nav a:hover { color: var(--text); background: var(--soft); }
+
+.hero { padding-top: 40px; padding-bottom: 20px; }
+.hero h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.hero .lead { margin: 6px 0 0; font-size: 18px; }
+.hero .about { margin: 12px 0 0; max-width: 66ch; color: var(--muted); }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+.button {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.button:hover { background: var(--soft); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.button.primary:hover { opacity: 0.9; }
+.status { font-size: 13px; color: var(--muted); }
+
+.shot {
+  margin: 24px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--canvas);
+}
+.shot img { display: block; width: 100%; height: auto; }
+.caption { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+
+section { padding: 36px 0 0; }
+section h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+section > .wrap > p { max-width: 70ch; margin: 0 0 10px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.grid > div { background: var(--surface); padding: 14px 16px 16px; }
+.grid h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.grid p { margin: 0; font-size: 14px; color: var(--muted); }
+
+pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+p code, li code {
+  font-size: 13px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--soft);
+}
+
+ol.steps { margin: 0 0 12px; padding-left: 20px; max-width: 70ch; }
+ol.steps li { margin: 0 0 8px; }
+
+footer {
+  margin-top: 48px;
+  padding: 18px 0 28px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+footer p { margin: 0 0 4px; }
+
+@media (max-width: 600px) {
+  header.bar nav a.wide { display: none; }
+}
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .hero { padding-top: 28px; padding-bottom: 12px; }
+  .hero h1 { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="genie"><span class="logo" aria-hidden="true"></span>genie</a>
+    <nav aria-label="Sections">
+      <a href="#features">Features</a>
+      <a class="wide" href="#loci">Several loci</a>
+      <a class="wide" href="#automation">Automation</a>
+      <a href="#run">Run</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <h1>genie</h1>
+    <p class="lead">A genome browser for Windows, macOS and Linux.</p>
+    <p class="about">genie shows sequences, genes, reads, variants and signal. It opens files on your computer and files on the web, and it reads only the parts of a file that the view needs. genie uses Rust and the <a href="https://iced.rs">iced</a> GUI library.</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/collide2954/genie">Source on GitHub</a>
+      <a class="button" href="#run">Run genie</a>
+      <span class="status">genie is not complete. There is no release yet.</span>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/brca1-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="images/brca1-light.png" width="1280" height="264" alt="genie at BRCA1 on human chromosome 17, with the RefSeq Select genes, ClinVar variants in the colors of the file, and phyloP 100-way conservation.">
+      </picture>
+    </figure>
+    <p class="caption">BRCA1 on hg38, with RefSeq Select genes, ClinVar variants and phyloP 100-way conservation.</p>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Features</h2>
+      <div class="grid">
+        <div>
+          <h3>Genomes</h3>
+          <p>Ten genomes from the UCSC Genome Browser: human (hg38, hg19, T2T), mouse (mm39, mm10), rat, zebrafish, fly, worm and yeast. Each genome opens with its gene track and its chromosome bands. Click <b>Use offline</b> to keep a genome on your computer.</p>
+        </div>
+        <div>
+          <h3>Files</h3>
+          <p>Sequences: FASTA and 2bit. Features: BED, GFF3, GTF and bigBed. Reads: BAM. Variants: VCF. Signal: bigWig and bedGraph. genie also opens files from web servers. It reads only the parts that the view needs.</p>
+        </div>
+        <div>
+          <h3>Tracks</h3>
+          <p>Put the pointer on a feature, a read or a variant to see its data. genie colors unusual read pairs, sorts and groups reads, and shows reading frames. Two or more signal tracks can share one lane.</p>
+        </div>
+        <div>
+          <h3>Navigation</h3>
+          <p>Drag to move. Zoom with the wheel, with the keys or with a drag on the ruler. Type a locus, a gene name or a variant ID to go to it. Go back and forward through your jumps.</p>
+        </div>
+        <div>
+          <h3>Regions and sessions</h3>
+          <p>Keep regions in a list, and import or export them as BED files. Save the genome, the tracks, the view and the regions as a session. genie keeps your last session.</p>
+        </div>
+        <div>
+          <h3>Images</h3>
+          <p>Save the view as a PNG or an SVG image. The SVG keeps text as text, so you can edit it in Inkscape or Illustrator.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="loci">
+    <div class="wrap">
+      <h2>Several loci</h2>
+      <p>Type two to four loci in the locus box, with a space between them. genie shows them side by side. Each panel moves and zooms on its own. Click the locus above a panel to show only that locus.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/loci-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/loci-light.png" width="1280" height="190" loading="lazy" alt="genie with two panels side by side: BRCA1 on chromosome 17 and BRCA2 on chromosome 13, each with its own locus, ruler, genes and phyloP signal.">
+        </picture>
+      </figure>
+      <p class="caption">BRCA1 and BRCA2 side by side.</p>
+    </div>
+  </section>
+
+  <section id="automation">
+    <div class="wrap">
+      <h2>Automation</h2>
+      <p>Make one image for each region in a BED file, without a window:</p>
+<pre><code>cargo run -p genie -- snapshot work.genie regions.bed pictures</code></pre>
+      <p>While genie runs, programs on the same computer, for example R, Python or Jupyter, can control it through port 60151. genie takes the batch commands of IGV, for example <code>goto</code>, <code>load</code> and <code>snapshot</code>. It answers each command when the work is complete.</p>
+<pre><code>import socket
+
+with socket.create_connection(("127.0.0.1", 60151)) as connection:
+    answers = connection.makefile("r")
+    for line in ["goto BRCA1", "snapshotDirectory /tmp", "snapshot brca1.png"]:
+        connection.sendall((line + "\n").encode())
+        print(answers.readline().strip())</code></pre>
+    </div>
+  </section>
+
+  <section id="run">
+    <div class="wrap">
+      <h2>Run genie</h2>
+      <ol class="steps">
+        <li>Install <a href="https://rustup.rs">rustup</a>. rustup installs the Rust toolchain that genie needs.</li>
+        <li>Get the source and start genie:</li>
+      </ol>
+<pre><code>git clone https://github.com/collide2954/genie
+cd genie
+cargo run -p genie</code></pre>
+      <p>Each push to <code>main</code> makes test builds for Windows, macOS and Linux. The builds are in the artifacts of the <a href="https://github.com/collide2954/genie/actions/workflows/ci.yml">CI runs</a> for 30 days.</p>
+      <p>The <a href="https://github.com/collide2954/genie#readme">README</a> has the full guide: genomes, file formats, navigation, tracks, sessions, images and commands.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The screenshots show hg38, RefSeq Select, ClinVar and phyloP 100-way from the <a href="https://genome.ucsc.edu">UCSC Genome Browser</a>.</p>
+  </div>
+</footer>
+</body>
+</html>
