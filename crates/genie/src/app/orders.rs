@@ -224,7 +224,7 @@ impl Genie {
             && self.looking.is_none()
             && self.tiles.waiting().is_empty()
             && self.session.as_ref().is_none_or(|session| {
-                session.transition.is_none()
+                !session.is_moving()
                     && session.tracks.iter().all(|track| {
                         track.slot.wanted.is_none()
                             && track.extra.iter().all(|slot| slot.wanted.is_none())

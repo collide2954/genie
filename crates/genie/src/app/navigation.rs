@@ -214,7 +214,6 @@ impl Genie {
         if text.split_whitespace().nth(1).is_some() {
             return self.submit_many(text);
         }
-        session.join(width);
         let resolved = session.reference.assembly.resolve(&text).or_else(|error| {
             session
                 .tracks
@@ -228,7 +227,10 @@ impl Genie {
                 .ok_or(error)
         });
         match resolved {
-            Ok(target) => self.go_to(target),
+            Ok(target) => {
+                session.join(width);
+                self.go_to(target)
+            }
             Err(error) => {
                 let sources: Vec<Arc<Source>> = session
                     .tracks
@@ -457,6 +459,8 @@ impl Genie {
             self.answers.push((super::Answer::Done, reply));
         }
         self.draft = None;
+        let width = self.width;
+        self.on_session(|session| session.join(width));
         self.go_to(Target {
             contig: named.contig,
             span: Span::Region(named.span),

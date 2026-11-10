@@ -1641,6 +1641,28 @@ mod tests {
     }
 
     #[test]
+    fn orders_wait_until_every_panel_stops() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200 chr2:1-100");
+        settle(&mut genie);
+        load_tiles(&mut genie);
+        let _ = genie.update(Message::Command(Command::Pan(-1.0)));
+        load_tiles(&mut genie);
+        genie.session.as_mut().unwrap().transition = None;
+        assert!(
+            genie.session.as_ref().unwrap().panels[0]
+                .transition
+                .is_some()
+        );
+        let (reply, answer) = crate::port::Reply::new();
+        genie.answers.push((super::Answer::Done, reply));
+        let _ = genie.update(Message::Modifiers(keyboard::Modifiers::default()));
+        assert_eq!(told(&answer), None);
+        settle(&mut genie);
+        assert_eq!(told(&answer).as_deref(), Some("OK"));
+    }
+
+    #[test]
     fn orders_add_regions_set_rows_and_start_again() {
         let mut genie = with_track();
         let answer = ask(&mut genie, "region chr1 101 200 promoter");
@@ -1873,6 +1895,25 @@ mod tests {
             Some("genie cannot find chrZ.")
         );
         assert_eq!(genie.session.as_ref().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn loci_that_fail_keep_every_panel() {
+        let mut genie = opened();
+        let locus = |genie: &Genie| genie.session.as_ref().unwrap().locus();
+        go(&mut genie, "chr1:101-200 chr2:1-50");
+        go(&mut genie, "chrZ:1-10");
+        assert_eq!(locus(&genie), "chr1:101-200 chr2:1-50");
+        go(&mut genie, "chr1:5,000-6,000");
+        assert_eq!(locus(&genie), "chr1:101-200 chr2:1-50");
+        let found = genie_core::Named {
+            name: "geneA".to_owned(),
+            contig: 1,
+            span: Region::between(100, 300),
+        };
+        let _ = genie.update(Message::Looked(Some(found), String::new()));
+        settle(&mut genie);
+        assert_eq!(locus(&genie), "chr2:101-300");
     }
 
     #[test]
