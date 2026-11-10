@@ -11,6 +11,10 @@ use crate::{font, style};
 
 pub const BAR_HEIGHT: f32 = 32.0;
 pub const LOCUS_WIDTH: f32 = 240.0;
+const LOCUS_MAX_WIDTH: f32 = 480.0;
+const LOCUS_SIZE: f32 = 12.0;
+const LOCUS_PADDING: f32 = 8.0;
+const MONO_ADVANCE: f32 = 0.6;
 const TOOL_SIZE: f32 = 24.0;
 const TOOL_GAP: f32 = 2.0;
 const TOOL_ICON: f32 = 14.0;
@@ -315,13 +319,18 @@ pub fn resize_handles<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn locus_width(value: &str) -> f32 {
+    let text = value.chars().count() as f32 * MONO_ADVANCE * LOCUS_SIZE;
+    (text + 2.0 * LOCUS_PADDING + LOCUS_SIZE).clamp(LOCUS_WIDTH, LOCUS_MAX_WIDTH)
+}
+
 fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
     let input = text_input("chr1:1,000-2,000", &field.value)
         .id(LOCUS)
         .font(font::MONO)
-        .size(12)
-        .padding([2, 8])
-        .width(LOCUS_WIDTH)
+        .size(LOCUS_SIZE)
+        .padding([2.0, LOCUS_PADDING])
+        .width(locus_width(&field.value))
         .style(style::locus)
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
@@ -589,6 +598,20 @@ mod tests {
             Some(field("chr1:1-4", None)),
         ));
         assert!(ui.find("chr1:1-4").is_ok());
+    }
+
+    #[test]
+    fn the_locus_box_grows_to_show_several_loci() {
+        let width = |value: &str| {
+            let bar = title_bar(Controls::Custom, Icon::Monitor, Some(field(value, None)));
+            let mut ui =
+                iced_test::Simulator::with_size(iced::Settings::default(), (1280.0, 300.0), bar);
+            ui.find(selector::id(LOCUS)).unwrap().bounds().width
+        };
+        assert!((width("chr1:1-4") - 240.0).abs() < 0.5);
+        let two = width("chr17:43,041,001-43,128,600 chr13:32,312,901-32,402,900");
+        assert!(two >= 55.0 * 7.2 + 16.0, "{two}");
+        assert!((width(&"chr1:1-4 ".repeat(20)) - 480.0).abs() < 0.5);
     }
 
     #[test]
