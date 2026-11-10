@@ -913,9 +913,10 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
             let row_height = variants::row_height(mode);
             let fixed = variants::SITE_HEIGHT + 1.0;
+            let rows = variants::rows(calls.samples);
             Shape {
-                height: fixed + calls.samples as f32 * row_height,
-                rows: calls.samples,
+                height: fixed + rows as f32 * row_height,
+                rows,
                 fixed,
                 row_height,
             }

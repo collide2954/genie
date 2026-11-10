@@ -6,6 +6,7 @@ use crate::scene::{Allele, Base, Paint, Primitive, Shade};
 
 pub const SITE_HEIGHT: f32 = 12.0;
 pub const LIMIT: usize = 100;
+pub const GROUP_LIMIT: usize = 300;
 
 const REACH: f32 = 3.0;
 const NARROWEST: f32 = 3.0;
@@ -48,8 +49,24 @@ fn strength(call: Call) -> u8 {
     }
 }
 
+pub fn group(samples: usize) -> usize {
+    samples.div_ceil(GROUP_LIMIT).max(1)
+}
+
+pub fn rows(samples: usize) -> usize {
+    samples.div_ceil(group(samples))
+}
+
+pub fn strongest(calls: &[Call]) -> Call {
+    calls
+        .iter()
+        .copied()
+        .max_by_key(|call| strength(*call))
+        .unwrap_or(Call::Missing)
+}
+
 pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primitive> {
-    let (row, offset, size) = shape(mode);
+    let (row, offset, mark) = shape(mode);
     let visible = viewport.visible();
     let px = |bp: u64| viewport.to_px(bp as f64) as f32;
     let samples = if mode == Mode::Collapsed {
@@ -61,7 +78,8 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primit
             .max()
             .unwrap_or(0)
     };
-    let mut drawn: Vec<(i64, u8)> = vec![(i64::MIN, 0); samples + 1];
+    let (size, count) = (group(samples), rows(samples));
+    let mut drawn: Vec<(i64, u8)> = vec![(i64::MIN, 0); count + 1];
     let mut primitives = Vec::new();
     for variant in variants {
         let span = variant.span;
@@ -108,19 +126,20 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode) -> Vec<Primit
                 paint: Paint::Allele(allele, shade),
             });
         }
-        for (sample, call) in variant.calls.iter().take(samples).enumerate() {
+        for (index, part) in variant.calls.chunks(size).take(count).enumerate() {
+            let call = strongest(part);
             let paint = match call {
                 Call::Missing => continue,
                 Call::Reference => Paint::HomRef,
                 Call::Het => Paint::Allele(allele, Shade::Half),
                 Call::Alternate => Paint::Allele(allele, Shade::Full),
             };
-            if place(sample + 1, strength(*call)) {
+            if place(index + 1, strength(call)) {
                 primitives.push(Primitive::Rect {
                     x,
-                    y: SITE_HEIGHT + 1.0 + sample as f32 * row + offset,
+                    y: SITE_HEIGHT + 1.0 + index as f32 * row + offset,
                     width,
-                    height: size,
+                    height: mark,
                     paint,
                 });
             }
@@ -154,8 +173,8 @@ pub fn hit(
     if row <= 0.0 {
         return None;
     }
-    let sample = ((y - SITE_HEIGHT - 1.0) / row) as usize;
-    (sample < variants[index].calls.len()).then_some((index, Some(sample)))
+    let line = ((y - SITE_HEIGHT - 1.0) / row) as usize;
+    (line < rows(variants[index].calls.len())).then_some((index, Some(line)))
 }
 
 #[cfg(test)]
@@ -163,7 +182,7 @@ mod tests {
     use genie_core::variant::{Call, Variant};
     use genie_core::{Region, Viewport};
 
-    use super::{SITE_HEIGHT, hit, row_height, scene};
+    use super::{SITE_HEIGHT, group, hit, row_height, rows, scene};
     use crate::features::Mode;
     use crate::scene::{Allele, Base, Paint, Primitive, Shade};
 
@@ -302,5 +321,45 @@ mod tests {
         );
         assert_eq!(hit(viewport, &sites, Mode::Expanded, 30.0, 5.0), None);
         assert_eq!(hit(viewport, &sites, Mode::Expanded, 50.5, 200.0), None);
+    }
+
+    #[test]
+    fn big_cohorts_draw_one_row_per_group_of_samples() {
+        let mut calls = vec![Call::Reference; 3_202];
+        calls[25] = Call::Het;
+        calls[3_201] = Call::Alternate;
+        let sites = [variant(10, "A", "T", &calls), variant(50, "A", "C", &calls)];
+        assert_eq!((group(3_202), rows(3_202)), (11, 292));
+        assert_eq!((group(300), rows(300)), (1, 300));
+        let found = rects(&scene(view(0, 100), &sites, Mode::Squished));
+        assert_eq!(found.len(), 2 * (1 + 292));
+        let row = row_height(Mode::Squished);
+        let paint_at = |y: f32| {
+            found
+                .iter()
+                .find(|(rect, _)| rect[0] < 10.0 && (rect[1] - y).abs() < 0.01)
+                .map(|(_, paint)| *paint)
+        };
+        let top = SITE_HEIGHT + 1.0;
+        let t = Allele::Base(Base::T);
+        assert_eq!(
+            paint_at(top + 2.0 * row),
+            Some(Paint::Allele(t, Shade::Half))
+        );
+        assert_eq!(paint_at(top + 3.0 * row), Some(Paint::HomRef));
+        assert_eq!(
+            paint_at(top + 291.0 * row),
+            Some(Paint::Allele(t, Shade::Full))
+        );
+        let in_row = |row_index: f32| top + (row_index + 0.5) * row;
+        let viewport = view(0, 100);
+        assert_eq!(
+            hit(viewport, &sites, Mode::Squished, 10.5, in_row(2.0)),
+            Some((0, Some(2)))
+        );
+        assert_eq!(
+            hit(viewport, &sites, Mode::Squished, 10.5, in_row(292.0)),
+            None
+        );
     }
 }

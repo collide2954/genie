@@ -243,11 +243,21 @@ impl Genie {
                 Detail::Read { read, mate, same }
             }
             Content::Variants(calls) => {
-                let (index, sample) = variants::hit(viewport, &calls.variants, mode, x, y)?;
+                let (index, line) = variants::hit(viewport, &calls.variants, mode, x, y)?;
                 let variant = calls.variants[index].clone();
-                let sample = sample.and_then(|sample| {
-                    let name = track.source.samples().get(sample)?.clone();
-                    Some((name, variant.calls[sample]))
+                let sample = line.and_then(|line| {
+                    let names = track.source.samples();
+                    let size = variants::group(variant.calls.len());
+                    let first = line * size;
+                    let last = (first + size).min(variant.calls.len());
+                    let call = variants::strongest(variant.calls.get(first..last)?);
+                    let label = if last - first == 1 {
+                        names.get(first)?.clone()
+                    } else {
+                        let (from, to) = (names.get(first)?, names.get(last - 1)?);
+                        format!("{from} to {to} ({} samples)", last - first)
+                    };
+                    Some((label, call))
                 });
                 Detail::Variant { variant, sample }
             }

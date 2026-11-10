@@ -4002,6 +4002,33 @@ mod tests {
     }
 
     #[test]
+    fn big_cohorts_show_groups_of_samples() {
+        let mut genie = opened();
+        let samples: Vec<String> = (1..=3_202).map(|index| format!("S{index}")).collect();
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/cohort.vcf").into(),
+            name: "cohort.vcf".to_owned(),
+            format: Format::Variants(VariantFile::Table {
+                table: genie_formats::features::Table::new(Vec::new()),
+                samples,
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let mut calls = vec![Call::Reference; 3_202];
+        calls[25] = Call::Het;
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let loaded = Loaded::variants(region, vec![site(20, calls)], 3_202);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let session = genie.session.as_ref().unwrap();
+        let height = super::view::body_height(session, &session.tracks[0]);
+        assert!(height < 900.0, "{height}");
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 13.0 + 7.5))));
+        assert!(shows(&genie, "S23 to S33 (11 samples) · heterozygous"));
+    }
+
+    #[test]
     fn variant_menus_offer_no_read_toggles() {
         let mut genie = with_variants();
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
