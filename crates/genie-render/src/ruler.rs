@@ -11,6 +11,7 @@ const LABEL_SPACING: f64 = 100.0;
 const MINOR_SPACING: f64 = 10.0;
 const LABEL_SIZE: f32 = 11.0;
 const LABEL_OFFSET: f32 = 4.0;
+const MONO_ADVANCE: f32 = 0.6;
 
 pub fn scene(viewport: Viewport, height: f32) -> Vec<Primitive> {
     let scale = viewport.scale();
@@ -18,21 +19,26 @@ pub fn scene(viewport: Viewport, height: f32) -> Vec<Primitive> {
     let minor = minor_step(major, scale, MINOR_SPACING).unwrap_or(major);
     let first = viewport.start().max(0.0);
     let last = viewport.end().min(viewport.length() as f64);
+    let width = viewport.width() as f32;
     let mut primitives = Vec::new();
     let mut position = (first / minor as f64).ceil() as u64 * minor;
     while position as f64 <= last {
         let x = viewport.to_px(position as f64) as f32;
         if position.is_multiple_of(major) {
             primitives.push(tick(x, height, MAJOR_HEIGHT, Paint::Muted));
-            primitives.push(Primitive::Text {
-                x: x + LABEL_OFFSET,
-                y: (height - MAJOR_HEIGHT) / 2.0,
-                content: Cow::Owned(label(position, major)),
-                size: LABEL_SIZE,
-                paint: Paint::Muted,
-                font: Font::Mono,
-                align: Align::Start,
-            });
+            let text = label(position, major);
+            let size = text.chars().count() as f32 * MONO_ADVANCE * LABEL_SIZE;
+            if x + LABEL_OFFSET + size <= width {
+                primitives.push(Primitive::Text {
+                    x: x + LABEL_OFFSET,
+                    y: (height - MAJOR_HEIGHT) / 2.0,
+                    content: Cow::Owned(text),
+                    size: LABEL_SIZE,
+                    paint: Paint::Muted,
+                    font: Font::Mono,
+                    align: Align::Start,
+                });
+            }
         } else {
             primitives.push(tick(x, height, MINOR_HEIGHT, Paint::Line));
         }
@@ -122,11 +128,19 @@ mod tests {
         let viewport = Viewport::new(1_000, 100.0).show(Region::new(400, 500).unwrap());
         let primitives = scene(viewport, 24.0);
         assert_eq!(positions(&ticks(&primitives, Paint::Muted)), [0.0, 100.0]);
-        assert_eq!(
-            labels(&primitives),
-            [(4.0, "400".to_owned()), (104.0, "500".to_owned())]
-        );
+        assert_eq!(labels(&primitives), [(4.0, "400".to_owned())]);
         assert_eq!(ticks(&primitives, Paint::Line).len(), 9);
+    }
+
+    #[test]
+    fn labels_end_inside_the_view() {
+        let viewport = Viewport::new(120_000, 999.5).show(Region::between(4_999, 8_000));
+        let found = labels(&scene(viewport, 20.0));
+        assert!(found.iter().any(|(_, text)| text == "7,500"), "{found:?}");
+        for (x, text) in found {
+            let end = x + text.chars().count() as f32 * 0.6 * 11.0;
+            assert!(end <= 999.5, "{text} ends at {end}");
+        }
     }
 
     #[test]
