@@ -274,14 +274,17 @@ impl Genie {
         let session = self.session.as_ref()?;
         let position = session.tracks.iter().position(|track| track.id == id)?;
         let track = &session.tracks[position];
+        let (panel, x) = session.locate(at.x, self.width);
+        let (contig, viewport) = session.view(panel);
         let place = Place {
             position,
             count: session.tracks.len(),
             at,
             window: self.window,
-            base: session.viewport.to_bp(f64::from(at.x)).floor().max(0.0) as u64,
+            panel,
+            base: viewport.to_bp(f64::from(x)).floor().max(0.0) as u64,
         };
-        let mode = track.mode(session.contig);
+        let mode = track.mode_at(panel, contig);
         let links = links(session, track);
         Some(menu::view(
             track,

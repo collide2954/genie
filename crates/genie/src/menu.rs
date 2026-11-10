@@ -74,6 +74,7 @@ pub struct Place {
     pub count: usize,
     pub at: Point,
     pub window: Size,
+    pub panel: usize,
     pub base: u64,
 }
 
@@ -198,7 +199,7 @@ pub fn view<'a>(
             .push(separator())
             .push(self::item(
                 format!("Sort by base at {}", grouped(place.base + 1)),
-                Message::TrackChanged(id, Change::Sort(place.base)),
+                Message::TrackChanged(id, Change::Sort(place.panel, place.base)),
                 false,
                 true,
             ))

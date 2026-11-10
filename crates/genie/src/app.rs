@@ -263,6 +263,13 @@ impl Session {
         }
     }
 
+    fn locate(&self, x: f32, width: f32) -> (usize, f32) {
+        let count = self.count();
+        let step = panel_width(width, count) + PANEL_GAP;
+        let panel = ((x / step).max(0.0) as usize).min(count - 1);
+        (panel, x - panel as f32 * step)
+    }
+
     fn motion(&mut self, panel: usize) -> Option<(&mut Viewport, &mut Option<Transition>)> {
         if panel == 0 {
             return Some((&mut self.viewport, &mut self.transition));
@@ -1413,7 +1420,7 @@ mod tests {
         let _ = genie.update(Message::TrackLoaded(0, 0, 0, region, Ok(loaded)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
         assert_eq!(track.data(0).unwrap().count(), 12);
-        assert_eq!(track.mode(0), Rows::Squished);
+        assert_eq!(track.mode_at(0, 0), Rows::Squished);
     }
 
     #[test]
@@ -3539,9 +3546,29 @@ mod tests {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackMenu(0, Point::new(20.5, 200.0)));
         assert!(shows(&genie, "Sort by base at 21"));
-        let _ = genie.update(Message::TrackChanged(0, Change::Sort(20)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Sort(0, 20)));
         let track = &genie.session.as_ref().unwrap().tracks[0];
         assert_eq!(track.slot.order.as_ref().map(|(at, _)| *at), Some(20));
+    }
+
+    #[test]
+    fn read_menus_sort_the_panel_under_the_pointer() {
+        let mut genie = with_reads();
+        go(&mut genie, "chr1:1-100 chr1:501-600");
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot_mut(1).wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, Options::default());
+        gather.add(read("read9", 510));
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(1, 0, region, Ok(Arc::new(loaded)));
+        let x = 500.5 + 20.0 * 4.995 + 2.5;
+        let _ = genie.update(Message::TrackMenu(0, Point::new(x, 200.0)));
+        assert!(shows(&genie, "Sort by base at 521"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Sort(1, 520)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.slot(1).order.as_ref().map(|(at, _)| *at), Some(520));
+        assert!(track.slot.order.is_none());
     }
 
     #[test]

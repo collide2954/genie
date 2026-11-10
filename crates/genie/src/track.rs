@@ -538,10 +538,6 @@ impl Track {
         self.slot.data(contig)
     }
 
-    pub fn mode(&self, contig: usize) -> Mode {
-        self.mode_at(0, contig)
-    }
-
     pub fn mode_at(&self, panel: usize, contig: usize) -> Mode {
         self.mode.unwrap_or_else(|| {
             let count = self.slot(panel).data(contig).map_or(0, Loaded::count);
@@ -609,7 +605,7 @@ pub enum Change {
     Link,
     Pairs,
     Colors,
-    Sort(u64),
+    Sort(usize, u64),
     Group(Grouping),
     Up,
     Down,
@@ -650,19 +646,17 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             };
             track.forget();
         }
-        Change::Sort(at) => {
-            let track = &mut tracks[position];
-            track.slot.order =
-                track
-                    .slot
-                    .loaded
-                    .as_ref()
-                    .and_then(|(_, data)| match &data.content {
-                        Content::Reads(pile) => {
-                            Some((at, sort_rows(&pile.reads, &pile.rows, &pile.starts(), at)))
-                        }
-                        _ => None,
-                    });
+        Change::Sort(panel, at) => {
+            let slot = tracks[position].slot_mut(panel);
+            slot.order = slot
+                .loaded
+                .as_ref()
+                .and_then(|(_, data)| match &data.content {
+                    Content::Reads(pile) => {
+                        Some((at, sort_rows(&pile.reads, &pile.rows, &pile.starts(), at)))
+                    }
+                    _ => None,
+                });
         }
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
@@ -1178,7 +1172,7 @@ mod tests {
         let loaded = piled(wide, reads, Options::default());
         tracks[1].slot.wanted = Some((0, wide));
         tracks[1].accept_at(0, 0, wide, Ok(Arc::new(loaded)));
-        change(&mut tracks, 1, Change::Sort(15));
+        change(&mut tracks, 1, Change::Sort(0, 15));
         assert_eq!(tracks[1].slot.order.as_ref().map(|(at, _)| *at), Some(15));
         tracks[1].slot.wanted = Some((0, wide));
         tracks[1].accept_at(0, 0, wide, Ok(loaded_reads(wide)));
@@ -2001,9 +1995,9 @@ mod tests {
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
         track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 20)));
-        assert_eq!(track.mode(0), Mode::Squished);
+        assert_eq!(track.mode_at(0, 0), Mode::Squished);
         track.mode = Some(Mode::Collapsed);
-        assert_eq!(track.mode(0), Mode::Collapsed);
+        assert_eq!(track.mode_at(0, 0), Mode::Collapsed);
     }
 
     #[test]
