@@ -78,7 +78,7 @@ impl Location {
         match self {
             Self::File(path) => File::open(path)
                 .map(Reader::File)
-                .map_err(|error| error.to_string()),
+                .map_err(|error| format!("genie cannot open {}. {error}", self.name())),
             Self::Url(url) => Remote::open(url)
                 .map(|remote| Reader::Remote(Box::new(remote)))
                 .map_err(|error| error.to_string()),
@@ -89,7 +89,7 @@ impl Location {
         match self {
             Self::File(path) => fs::metadata(path)
                 .map(|metadata| metadata.len())
-                .map_err(|error| error.to_string()),
+                .map_err(|error| format!("genie cannot open {}. {error}", self.name())),
             Self::Url(url) => Remote::open(url)
                 .map(|remote| remote.size())
                 .map_err(|error| error.to_string()),
@@ -182,5 +182,19 @@ mod tests {
         reader.read_to_string(&mut text).unwrap();
         assert_eq!(text, "world");
         assert!(location.with_suffix(".missing").open().is_err());
+    }
+
+    #[test]
+    fn missing_files_name_themselves_in_errors() {
+        let scratch = Scratch::new("location-missing");
+        let path = scratch.file("a.txt", "x").with_file_name("gone.bed");
+        let location = Location::File(path);
+        let opened = location.open().err().unwrap();
+        assert!(
+            opened.starts_with("genie cannot open gone.bed. "),
+            "{opened}"
+        );
+        let sized = location.size().unwrap_err();
+        assert!(sized.starts_with("genie cannot open gone.bed. "), "{sized}");
     }
 }

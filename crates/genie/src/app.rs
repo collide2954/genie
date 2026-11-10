@@ -232,6 +232,14 @@ fn panel_width(width: f32, count: usize) -> f32 {
     ((width - gaps) / count.max(1) as f32).max(1.0)
 }
 
+fn cannot_open(name: &str, reason: &str) -> String {
+    if reason.starts_with("genie cannot open") {
+        reason.to_owned()
+    } else {
+        format!("genie cannot open {name}. {reason}")
+    }
+}
+
 impl Session {
     fn new(reference: Arc<Reference>, width: f32) -> Self {
         let length = reference.assembly.contigs()[0].length;
@@ -1765,6 +1773,11 @@ mod tests {
             told(&missing).as_deref(),
             Some("genie cannot open /data/missing.fa. The file is gone.")
         );
+        let named = ask(&mut genie, "genome /data/gone.fa");
+        let error = "genie cannot open gone.fa. The file is gone.";
+        let _ = genie.update(Message::Opened(Err(error.to_owned())));
+        load_tiles(&mut genie);
+        assert_eq!(told(&named).as_deref(), Some(error));
     }
 
     fn track_name(genie: &Genie) -> String {

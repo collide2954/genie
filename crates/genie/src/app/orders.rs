@@ -268,7 +268,7 @@ impl Genie {
             _ => self.notice.as_ref().map(|notice| notice.text.clone()),
         };
         match reason {
-            Some(reason) => format!("genie cannot open {text}. {reason}"),
+            Some(reason) => super::cannot_open(text, &reason),
             None => format!("genie cannot open {text}."),
         }
     }

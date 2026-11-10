@@ -207,7 +207,7 @@ impl Genie {
             let name = location.name();
             let result = track::open(location).map(Arc::new);
             if let Err(error) = &result {
-                report(format!("genie cannot open the track {name}. {error}"));
+                report(super::cannot_open(&format!("the track {name}"), error));
             }
             let _ = self.update(Message::TrackOpened(result));
         }
