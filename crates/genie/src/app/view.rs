@@ -779,14 +779,7 @@ fn track_view<'a>(
 ) -> Element<'a, Message> {
     let id = track.id;
     let count = session.count();
-    let shapes: Vec<Shape> = (0..count)
-        .map(|panel| shape(session, track, panel, repack))
-        .collect();
-    let tallest = shapes
-        .iter()
-        .copied()
-        .max_by(|a, b| a.height.total_cmp(&b.height))
-        .unwrap_or(Shape::plain(EMPTY_HEIGHT));
+    let (shapes, tallest) = shapes(session, track, repack);
     let height = track.height.unwrap_or(tallest.height);
     let shape = tallest;
     let body = across(count, height, |panel| {
@@ -877,7 +870,19 @@ impl Shape {
     }
 }
 
-pub(super) fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape {
+pub(super) fn shapes(session: &Session, track: &Track, repack: bool) -> (Vec<Shape>, Shape) {
+    let shapes: Vec<Shape> = (0..session.count())
+        .map(|panel| shape(session, track, panel, repack))
+        .collect();
+    let tallest = shapes
+        .iter()
+        .copied()
+        .max_by(|a, b| a.height.total_cmp(&b.height))
+        .unwrap_or(Shape::plain(EMPTY_HEIGHT));
+    (shapes, tallest)
+}
+
+fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape {
     let (contig, viewport) = session.view(panel);
     let slot = track.slot(panel);
     if slot.error.is_some() || viewport.visible().len() > track.source.span() {

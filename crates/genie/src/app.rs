@@ -3721,6 +3721,26 @@ mod tests {
     }
 
     #[test]
+    fn figures_draw_every_panel() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200 chr1:801-900");
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let (id, (_, region)) = (track.id, track.slot(1).wanted.unwrap());
+        let feature = Feature::new("TP53", Region::between(850, 860), Strand::Forward);
+        let loaded = Arc::new(Loaded::features(region, vec![feature]));
+        let _ = genie.update(Message::TrackLoaded(id, 1, 0, region, Ok(loaded)));
+        let svg = genie.figure(genie.session.as_ref().unwrap());
+        for text in [
+            ">chr1:101-200</text>",
+            ">chr1:801-900</text>",
+            ">TP53</text>",
+        ] {
+            assert!(svg.contains(text), "{text}\n{svg}");
+        }
+        assert!(!svg.contains("chr1:101-200 chr1:801-900"), "{svg}");
+    }
+
+    #[test]
     fn figures_hold_the_caption_the_ruler_and_the_tracks_as_svg() {
         let mut genie = with_two_signals();
         let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
