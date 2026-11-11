@@ -2009,6 +2009,27 @@ mod tests {
     }
 
     #[test]
+    fn tracks_with_too_much_to_draw_show_a_hint() {
+        let mut genie = with_track();
+        let region = Region::between(0, 1_000);
+        let features: Vec<Feature> = (0..200_500_u64)
+            .map(|index| {
+                let start = (index % 500) * 2;
+                Feature::new("", Region::between(start, start + 2), Strand::Unknown)
+            })
+            .collect();
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+        assert!(shows(&genie, "There is too much to draw here. Zoom in."));
+    }
+
+    #[test]
     fn images_pack_only_the_features_in_view() {
         let mut genie = with_track();
         go(&mut genie, "chr1:481-620");

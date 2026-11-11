@@ -49,6 +49,8 @@ pub(super) const VARIANT_HINT: &str = "Zoom in to see the variants";
 pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
 pub(super) const DROP_HINT: &str = "Drop the file to open it";
 pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
+const CROWDED_HINT: &str = "There is too much to draw here. Zoom in.";
+const DRAW_LIMIT: usize = 200_000;
 pub(super) const WELCOME: &str = "Pick a genome or open a reference.";
 const SPECIES_WIDTH: f32 = 72.0;
 const MENU_ROW: f32 = 24.0;
@@ -676,6 +678,21 @@ pub(super) fn body(
     shape: Shape,
     repack: bool,
 ) -> Body {
+    let body = drawing(session, track, panel, shape, repack);
+    let count = match &body {
+        Body::Scene(primitives, _) => primitives.len(),
+        Body::Reads { coverage, reads } => {
+            coverage.len() + reads.as_ref().map_or(0, |(primitives, _)| primitives.len())
+        }
+        Body::Hint(_) | Body::Space(_) => 0,
+    };
+    if count > DRAW_LIMIT {
+        return Body::Hint(CROWDED_HINT.to_owned());
+    }
+    body
+}
+
+fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack: bool) -> Body {
     let (contig, viewport) = session.view(panel);
     let slot = track.slot(panel);
     let mode = track.mode_at(panel, contig);
