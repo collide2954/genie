@@ -282,6 +282,23 @@ fn pack(
     (rows, groups)
 }
 
+impl Annotation {
+    pub fn packed(&self, visible: Region) -> (Vec<usize>, usize) {
+        let shown: Vec<usize> = (0..self.features.len())
+            .filter(|&index| {
+                let span = self.features[index].span();
+                span.start() <= visible.end() && span.end() >= visible.start()
+            })
+            .collect();
+        let packed = rows::pack(&shown, |&index| self.features[index].span(), 0);
+        let mut rows = vec![0; self.features.len()];
+        for (&index, &row) in shown.iter().zip(&packed) {
+            rows[index] = row;
+        }
+        (rows, count(&packed))
+    }
+}
+
 impl Pile {
     pub fn packed(&self, visible: Region) -> (Vec<usize>, usize, Vec<(usize, String)>) {
         let shown: Vec<usize> = (0..self.reads.len())

@@ -2009,6 +2009,39 @@ mod tests {
     }
 
     #[test]
+    fn images_pack_only_the_features_in_view() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:481-620");
+        settle(&mut genie);
+        let region = Region::between(0, 1_000);
+        let feature = |name: &str, start, end| {
+            Feature::new(name, Region::between(start, end), Strand::Forward)
+        };
+        let features = vec![
+            feature("A", 0, 100),
+            feature("B", 50, 150),
+            feature("C", 500, 600),
+        ];
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+        let session = genie.session.as_ref().unwrap();
+        let (_, live) = super::view::shapes(session, &session.tracks[0], false);
+        let (_, image) = super::view::shapes(session, &session.tracks[0], true);
+        assert!(
+            image.height < live.height,
+            "{} {}",
+            image.height,
+            live.height
+        );
+    }
+
+    #[test]
     fn exports_draw_every_panel() {
         let mut genie = opened();
         go(&mut genie, "chr1:101-200 chr2:1-50");

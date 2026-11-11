@@ -727,10 +727,17 @@ pub(super) fn body(
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Features(annotation)) => {
+            let packed;
+            let rows = if repack {
+                packed = annotation.packed(viewport.visible()).0;
+                packed.as_slice()
+            } else {
+                annotation.rows.as_slice()
+            };
             let primitives = features::scene(
                 viewport,
                 &annotation.features,
-                &annotation.rows,
+                rows,
                 mode,
                 track.hue,
                 track.plot.colors,
@@ -894,6 +901,8 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Features(annotation)) => {
             let rows = if mode == features::Mode::Collapsed {
                 1
+            } else if repack {
+                annotation.packed(viewport.visible()).1.max(1)
             } else {
                 annotation.count.max(1)
             };
