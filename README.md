@@ -168,6 +168,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Right-click the sequence to show the reverse strand and 3 or 6 reading frames.
 - Drag a track name to move the track.
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
+- If a track has more than 200,000 shapes to draw in the view, it shows "There is too much to draw here. Zoom in." in place of the data.
 
 ## Sessions
 
