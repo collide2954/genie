@@ -121,14 +121,18 @@ pub fn scene(
         }
     };
     let mut primitives = Vec::new();
-    let mut labels = Vec::new();
-    let mut edges: Vec<f32> = Vec::new();
+    let mut labels = Labels::default();
+    let mut narrow = Columns::default();
     for (feature, &row) in features.iter().zip(rows) {
         let span = feature.span();
         if span.start() > visible.end() || span.end() < visible.start() {
             continue;
         }
         let row = if mode == Mode::Collapsed { 0 } else { row };
+        let extent = (px(span.start()), px(span.end()));
+        if narrow.taken(row, extent) {
+            continue;
+        }
         let top = row as f32 * shape.row;
         let paint = feature
             .color()
@@ -177,32 +181,63 @@ pub fn scene(
             }
         }
         if shape.marks && !feature.name().is_empty() {
-            let half = feature.name().chars().count() as f32 * LABEL_SIZE * GLYPH_WIDTH / 2.0;
-            let center = f32::midpoint(px(span.start()).max(0.0), px(span.end()).min(width));
-            let center = if width > half * 2.0 {
-                center.clamp(half, width - half)
-            } else {
-                center
-            };
-            if edges.len() <= row {
-                edges.resize(row + 1, f32::NEG_INFINITY);
-            }
-            if center - half >= edges[row] + LABEL_GAP {
-                edges[row] = center + half;
-                labels.push(Primitive::Text {
-                    x: center,
-                    y: top + shape.row - LABEL_SIZE / 2.0,
-                    content: Cow::Owned(feature.name().to_owned()),
-                    size: LABEL_SIZE,
-                    paint: Paint::Text,
-                    font: Font::Ui,
-                    align: Align::Center,
-                });
-            }
+            let y = top + shape.row - LABEL_SIZE / 2.0;
+            labels.place(feature.name(), row, extent, (width, y));
         }
     }
-    primitives.extend(labels);
+    primitives.extend(labels.texts);
     primitives
+}
+
+#[derive(Default)]
+struct Columns(Vec<i64>);
+
+impl Columns {
+    fn taken(&mut self, row: usize, (left, right): (f32, f32)) -> bool {
+        if right - left >= 1.0 {
+            return false;
+        }
+        if self.0.len() <= row {
+            self.0.resize(row + 1, i64::MIN);
+        }
+        let column = left.floor() as i64;
+        let taken = self.0[row] == column;
+        self.0[row] = column;
+        taken
+    }
+}
+
+#[derive(Default)]
+struct Labels {
+    edges: Vec<f32>,
+    texts: Vec<Primitive>,
+}
+
+impl Labels {
+    fn place(&mut self, name: &str, row: usize, (left, right): (f32, f32), (width, y): (f32, f32)) {
+        let half = name.chars().count() as f32 * LABEL_SIZE * GLYPH_WIDTH / 2.0;
+        let center = f32::midpoint(left.max(0.0), right.min(width));
+        let center = if width > half * 2.0 {
+            center.clamp(half, width - half)
+        } else {
+            center
+        };
+        if self.edges.len() <= row {
+            self.edges.resize(row + 1, f32::NEG_INFINITY);
+        }
+        if center - half >= self.edges[row] + LABEL_GAP {
+            self.edges[row] = center + half;
+            self.texts.push(Primitive::Text {
+                x: center,
+                y,
+                content: Cow::Owned(name.to_owned()),
+                size: LABEL_SIZE,
+                paint: Paint::Text,
+                font: Font::Ui,
+                align: Align::Center,
+            });
+        }
+    }
 }
 
 fn chevrons(
@@ -261,6 +296,26 @@ mod tests {
 
     fn draw(features: &[Feature], rows: &[usize], mode: Mode) -> Vec<Primitive> {
         scene(view(), features, rows, mode, Hue::Green, true)
+    }
+
+    #[test]
+    fn narrow_features_share_pixel_columns() {
+        let features: Vec<Feature> = (0..10_000)
+            .map(|start| Feature::new("", region(start, start + 1), Strand::Unknown))
+            .collect();
+        let wide = Viewport::new(1_000_000, 100.0).show(region(0, 10_000));
+        for (mode, rows) in [
+            (Mode::Collapsed, vec![0; 10_000]),
+            (Mode::Squished, (0..10_000).map(|index| index % 3).collect()),
+        ] {
+            let found = scene(wide, &features, &rows, mode, Hue::Green, true);
+            assert!(found.len() <= 3 * 101, "{mode:?}: {}", found.len());
+        }
+        let wider = [named("a", 0, 10_000)];
+        assert_eq!(
+            scene(wide, &wider, &[0], Mode::Squished, Hue::Green, true).len(),
+            1
+        );
     }
 
     #[test]
