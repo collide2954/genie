@@ -16,6 +16,7 @@ use crate::font;
 use crate::theme::{DataColors, Tokens, data, tokens};
 
 pub const CHIP: f32 = 0.85;
+const GLYPH_REACH: f32 = 0.7;
 
 const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
@@ -364,7 +365,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                         },
                         Point::new(bounds.x + x, bounds.y + y),
                         color(*paint, tokens, data),
-                        bounds,
+                        text_clip(bounds, *x, content.chars().count() as f32 * size, *align),
                     ),
                     Primitive::Label {
                         x,
@@ -378,6 +379,24 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                 renderer.draw_geometry(frame.into_geometry());
             }
         });
+    }
+}
+
+fn text_clip(bounds: Rectangle, x: f32, ems: f32, align: Align) -> Rectangle {
+    let reach = ems * GLYPH_REACH;
+    let (from, to) = match align {
+        Align::Start => (x, x + reach),
+        Align::Center => (x - reach / 2.0, x + reach / 2.0),
+        Align::End => (x - reach, x),
+    };
+    if from >= 0.0 && to <= bounds.width {
+        return bounds;
+    }
+    Rectangle {
+        x: bounds.x - 1.0,
+        y: bounds.y - 1.0,
+        width: bounds.width + 2.0,
+        height: bounds.height + 2.0,
     }
 }
 
@@ -434,6 +453,29 @@ mod tests {
 
     use super::{Pointer, color, view};
     use crate::theme::{DARK, DARK_DATA, LIGHT, LIGHT_DATA};
+
+    #[test]
+    fn text_stays_inside_its_scene_in_images() {
+        crate::font::load();
+        let text = genie_render::scene::Primitive::Text {
+            x: 60.0,
+            y: 10.0,
+            content: std::borrow::Cow::Borrowed("OVERFLOWING TEXT"),
+            size: 12.0,
+            paint: Paint::Text,
+            font: genie_render::scene::Font::Ui,
+            align: genie_render::scene::Align::Start,
+        };
+        let scene = container(view::<()>(vec![text], 20.0)).width(100);
+        let page = iced::widget::row![scene, iced::widget::space().width(100)];
+        let image = crate::export::render(page.into(), 200.0, &crate::theme::light()).unwrap();
+        let width = image.width as usize;
+        let dark = (0..image.height as usize)
+            .flat_map(|y| (204..width).map(move |x| (y * width + x) * 4))
+            .filter(|&at| image.rgba[at] < 200)
+            .count();
+        assert_eq!(dark, 0);
+    }
 
     #[test]
     fn base_paints_use_data_colors() {
