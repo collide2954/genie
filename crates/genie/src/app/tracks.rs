@@ -590,6 +590,7 @@ impl Genie {
                 track.height = found.height;
                 track.options = found.options;
                 track.plot = found.plot;
+                track.filter = found.filter.clone();
             }
             session.tracks.push(track);
             session

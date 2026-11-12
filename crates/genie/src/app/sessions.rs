@@ -118,6 +118,7 @@ impl Genie {
                     height: track.height,
                     options: track.options,
                     plot: track.plot,
+                    filter: track.filter.clone(),
                 })
                 .collect(),
             regions: session

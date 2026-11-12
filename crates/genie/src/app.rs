@@ -3130,6 +3130,7 @@ mod tests {
             height: None,
             options: crate::track::Options::default(),
             plot: crate::track::Plot::default(),
+            filter: crate::track::Filter::default(),
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -3212,6 +3213,7 @@ mod tests {
                 height: None,
                 options: crate::track::Options::default(),
                 plot: crate::track::Plot::default(),
+                filter: crate::track::Filter::default(),
             }],
             regions: Vec::new(),
         };
@@ -4399,6 +4401,21 @@ mod tests {
         let pass = field_rule("Filter", Test::Keep("PASS".to_owned()));
         let _ = genie.update(Message::Filter(0, Filtering::Add(pass)));
         assert_eq!(variant_count(&genie), 1);
+    }
+
+    #[test]
+    fn sessions_keep_track_filters() {
+        let genie = with_filtered();
+        let saved = genie.saved().unwrap();
+        let filter = saved.tracks[0].filter.clone();
+        assert_eq!(filter.rules, [field_rule("Column 14", Test::AtLeast(0.1))]);
+        assert_eq!(filter.label.as_deref(), Some("Column 13"));
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        let _ = restored.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.filter, filter);
     }
 
     #[test]

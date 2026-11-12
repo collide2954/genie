@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use genie_formats::fields::{self, Rule, Test};
 use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
 use genie_render::features::Mode;
@@ -10,7 +11,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Grouping, Options, Plot};
+use crate::track::{Filter, Grouping, Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -53,6 +54,7 @@ pub struct SavedTrack {
     pub height: Option<f32>,
     pub options: Options,
     pub plot: Plot,
+    pub filter: Filter,
 }
 
 impl Saved {
@@ -107,6 +109,14 @@ impl Saved {
                         pairs: section.value("pairs") != Some("off"),
                         colors: section.value("colors") != Some("off"),
                         range: section.value("range").and_then(range),
+                    },
+                    filter: Filter {
+                        rules: section
+                            .entries
+                            .iter()
+                            .filter_map(|(key, value)| rule(key, value))
+                            .collect(),
+                        label: section.value("label").map(str::to_owned),
                     },
                 })
             })
@@ -188,6 +198,18 @@ impl Saved {
             }
             if !track.plot.colors {
                 entries.push(("colors", "off".to_owned()));
+            }
+            for rule in &track.filter.rules {
+                let (key, value) = match &rule.test {
+                    Test::Keep(value) => ("keep", value.clone()),
+                    Test::Hide(value) => ("hide", value.clone()),
+                    Test::AtLeast(bound) => ("least", bound.to_string()),
+                    Test::AtMost(bound) => ("most", bound.to_string()),
+                };
+                entries.push((key, format!("{}: {value}", rule.label)));
+            }
+            if let Some(label) = &track.filter.label {
+                entries.push(("label", label.clone()));
             }
             sections.push(section("track", entries));
         }
@@ -276,6 +298,22 @@ fn find<T: Copy>(table: &[(&str, T)], name: &str) -> Option<T> {
         .map(|(_, value)| *value)
 }
 
+fn rule(key: &str, entry: &str) -> Option<Rule> {
+    let (label, value) = entry.split_once(':')?;
+    let value = value.trim();
+    let test = match key {
+        "keep" => Test::Keep(value.to_owned()),
+        "hide" => Test::Hide(value.to_owned()),
+        "least" => Test::AtLeast(fields::number(value)?),
+        "most" => Test::AtMost(fields::number(value)?),
+        _ => return None,
+    };
+    Some(Rule {
+        label: label.trim().to_owned(),
+        test,
+    })
+}
+
 fn range(text: &str) -> Option<Scale> {
     let mut numbers = text
         .split_whitespace()
@@ -295,13 +333,37 @@ mod tests {
     use genie_render::scene::Hue;
     use genie_render::signal::{Scale, Style};
 
+    use genie_formats::fields::{Rule, Test};
+
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Grouping, Options, Plot};
+    use crate::track::{Filter, Grouping, Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
+    }
+
+    fn rule(label: &str, test: Test) -> Rule {
+        Rule {
+            label: label.to_owned(),
+            test,
+        }
+    }
+
+    #[test]
+    fn tracks_keep_their_filter_and_label() {
+        let text = saved().text(&base());
+        for line in [
+            "keep = Clinical significance: Pathogenic",
+            "least = Minor allele frequency: 0.05",
+            "hide = Gene type: lncRNA",
+            "most = Quality: 30",
+            "label = Gene symbol",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+        assert_eq!(text.matches("keep =").count(), 1, "{text}");
     }
 
     fn saved() -> Saved {
@@ -331,6 +393,7 @@ mod tests {
                         pairs: false,
                         ..Plot::default()
                     },
+                    filter: Filter::default(),
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
@@ -341,6 +404,15 @@ mod tests {
                     height: None,
                     options: Options::default(),
                     plot: Plot::default(),
+                    filter: Filter {
+                        rules: vec![
+                            rule("Clinical significance", Test::Keep("Pathogenic".to_owned())),
+                            rule("Minor allele frequency", Test::AtLeast(0.05)),
+                            rule("Gene type", Test::Hide("lncRNA".to_owned())),
+                            rule("Quality", Test::AtMost(30.0)),
+                        ],
+                        label: Some("Gene symbol".to_owned()),
+                    },
                 },
                 SavedTrack {
                     location: Location::File(base().join("coverage.bw")),
@@ -360,6 +432,7 @@ mod tests {
                         }),
                         ..Plot::default()
                     },
+                    filter: Filter::default(),
                 },
             ],
             regions: vec![
