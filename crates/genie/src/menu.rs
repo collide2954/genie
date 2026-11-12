@@ -21,6 +21,7 @@ const SIGNAL_HEIGHT: f32 = 271.5;
 const HEADING_HEIGHT: f32 = 21.0;
 const LINK_HEIGHT: f32 = 22.6;
 const SEPARATOR_HEIGHT: f32 = 8.0;
+const FILTER_WIDTH: f32 = 260.0;
 const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 const MODES: [(&str, Mode); 3] = [
@@ -329,7 +330,17 @@ pub fn view<'a>(
             separator(),
             item("Remove", Change::Remove, false, true),
         ]);
-    card(content, place.at, place.window, height(track, count))
+    let width = if track.filter.is_empty() {
+        WIDTH
+    } else {
+        FILTER_WIDTH
+    };
+    sized(
+        content,
+        place.at,
+        place.window,
+        (width, height(track, count)),
+    )
 }
 
 fn jumps<'a>(track: &Track) -> Vec<Element<'a, Message>> {

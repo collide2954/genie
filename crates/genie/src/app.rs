@@ -4350,6 +4350,22 @@ mod tests {
     }
 
     #[test]
+    fn track_menus_with_rules_are_wider() {
+        let width = |genie: &Genie| {
+            simulator(genie.view())
+                .find(selector::id("menu"))
+                .unwrap()
+                .bounds()
+                .width
+        };
+        let mut plain = with_two_features();
+        let _ = plain.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut filtered = with_filtered();
+        let _ = filtered.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(width(&filtered) > width(&plain) + 50.0);
+    }
+
+    #[test]
     fn the_track_menu_lists_rules_and_removes_them() {
         let mut genie = with_filtered();
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
