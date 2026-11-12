@@ -4,6 +4,54 @@ pub struct Field {
     pub value: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Test {
+    Keep(String),
+    Hide(String),
+    AtLeast(f64),
+    AtMost(f64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rule {
+    pub label: String,
+    pub test: Test,
+}
+
+impl Rule {
+    pub fn passes(&self, fields: &[Field]) -> bool {
+        let value = fields
+            .iter()
+            .find(|field| field.label == self.label)
+            .map(|field| field.value.as_str());
+        let mut found = value.into_iter().flat_map(items);
+        match &self.test {
+            Test::Keep(wanted) => found.any(|item| item == wanted),
+            Test::Hide(unwanted) => !found.any(|item| item == unwanted),
+            Test::AtLeast(bound) => found.filter_map(number).any(|number| number >= *bound),
+            Test::AtMost(bound) => found.filter_map(number).any(|number| number <= *bound),
+        }
+    }
+}
+
+pub fn passes(rules: &[Rule], fields: &[Field]) -> bool {
+    rules.iter().all(|rule| rule.passes(fields))
+}
+
+pub fn items(value: &str) -> impl Iterator<Item = &str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+}
+
+pub fn number(item: &str) -> Option<f64> {
+    item.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+}
+
 const LABEL_LIMIT: usize = 40;
 const STOPS: [&str; 8] = ["(", "{", "[", ",", ";", ":", ". ", "|"];
 const ENTITIES: [(&str, &str); 6] = [
@@ -121,7 +169,66 @@ pub fn plain(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{label, linked, plain, shown};
+    use super::{Field, Rule, Test, items, label, linked, number, passes, plain, shown};
+
+    fn fields(pairs: &[(&str, &str)]) -> Vec<Field> {
+        pairs
+            .iter()
+            .map(|(label, value)| Field {
+                label: (*label).to_owned(),
+                value: (*value).to_owned(),
+            })
+            .collect()
+    }
+
+    fn rule(label: &str, test: Test) -> Rule {
+        Rule {
+            label: label.to_owned(),
+            test,
+        }
+    }
+
+    #[test]
+    fn rules_keep_hide_and_bound_any_item() {
+        let gene = fields(&[
+            ("Tags", "CCDS, basic"),
+            ("Gene type", "protein_coding"),
+            ("Frequency", "0.42,-inf,0.08"),
+        ]);
+        let other = fields(&[
+            ("Tags", "MANE_Select"),
+            ("Gene type", "lncRNA"),
+            ("Frequency", "0.01,-inf,x"),
+        ]);
+        let keep = rule("Tags", Test::Keep("basic".to_owned()));
+        assert!(keep.passes(&gene));
+        assert!(!keep.passes(&other));
+        assert!(!keep.passes(&[]));
+        let hide = rule("Gene type", Test::Hide("lncRNA".to_owned()));
+        assert!(hide.passes(&gene));
+        assert!(!hide.passes(&other));
+        assert!(hide.passes(&[]));
+        let least = rule("Frequency", Test::AtLeast(0.05));
+        assert!(least.passes(&gene));
+        assert!(!least.passes(&other));
+        assert!(!least.passes(&[]));
+        let most = rule("Frequency", Test::AtMost(0.01));
+        assert!(!most.passes(&gene));
+        assert!(most.passes(&other));
+        assert!(passes(&[keep.clone(), hide], &gene));
+        assert!(!passes(&[keep, least], &other));
+        assert!(passes(&[], &other));
+    }
+
+    #[test]
+    fn values_split_into_items_and_numbers() {
+        assert_eq!(items(" a, ,b ").collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(number("0.5"), Some(0.5));
+        assert_eq!(number(" 30 "), Some(30.0));
+        assert_eq!(number("-inf"), None);
+        assert_eq!(number("NaN"), None);
+        assert_eq!(number("x"), None);
+    }
 
     #[test]
     fn labels_are_short_descriptions() {
