@@ -17,6 +17,8 @@ const RECORD: usize = 32;
 const DEPTH: usize = 32;
 const KEY_LIMIT: usize = 256;
 const BLOCK_LIMIT: u64 = 1 << 26;
+const AUTO_SQL_LIMIT: u64 = 1 << 16;
+const LABELS: [&str; 2] = ["geneName2", "name2"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Zoom {
@@ -34,6 +36,7 @@ pub struct Index {
     full: u64,
     zooms: Vec<Zoom>,
     lookup: Option<u64>,
+    labels: Vec<usize>,
 }
 
 struct Item<'a> {
@@ -82,11 +85,47 @@ fn line(contig: &str, item: &Item<'_>) -> String {
     line
 }
 
-fn feature(contig: &str, item: &Item<'_>) -> Result<Feature, Error> {
-    bed::parse(&line(contig, item))
+fn feature(contig: &str, item: &Item<'_>, labels: &[usize]) -> Result<Feature, Error> {
+    let feature = bed::parse(&line(contig, item))
         .map_err(Error::Invalid)?
         .map(|(_, feature)| feature)
-        .ok_or(Error::Invalid(Reason::BadRecord))
+        .ok_or(Error::Invalid(Reason::BadRecord))?;
+    if labels.is_empty() {
+        return Ok(feature);
+    }
+    let fields: Vec<&str> = item.rest.split('\t').collect();
+    let label = labels
+        .iter()
+        .filter_map(|&column| fields.get(column - 3))
+        .find(|value| !value.is_empty());
+    Ok(match label {
+        Some(label) => feature.with_name(*label),
+        None => feature,
+    })
+}
+
+fn auto_sql(reader: &mut (impl Read + Seek), offset: u64) -> Result<String, Error> {
+    reader.seek(SeekFrom::Start(offset))?;
+    let mut bytes = Vec::new();
+    reader.take(AUTO_SQL_LIMIT).read_to_end(&mut bytes)?;
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
+}
+
+fn label_columns(auto_sql: &str) -> Vec<usize> {
+    let fields: Vec<&str> = auto_sql
+        .lines()
+        .filter_map(|line| line.split_once(';'))
+        .filter_map(|(declaration, _)| declaration.split_whitespace().last())
+        .collect();
+    LABELS
+        .iter()
+        .filter_map(|wanted| fields.iter().position(|field| field == wanted))
+        .filter(|&column| column > 3)
+        .collect()
 }
 
 fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
@@ -460,7 +499,7 @@ impl Index {
         let _data = bytes.u64()?;
         let full = bytes.u64()?;
         let _fields = bytes.u32()?;
-        let _schema = bytes.u64()?;
+        let schema = bytes.u64()?;
         let _total = bytes.u64()?;
         let buffer = bytes.u32()?;
         let extension = bytes.u64()?;
@@ -480,6 +519,11 @@ impl Index {
         } else {
             None
         };
+        let labels = if bed && schema != 0 {
+            label_columns(&auto_sql(reader, schema)?)
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             big,
             bed,
@@ -489,6 +533,7 @@ impl Index {
             full,
             zooms,
             lookup,
+            labels,
         })
     }
 
@@ -519,7 +564,7 @@ impl Index {
             let block = self.block(reader, offset, size)?;
             for item in items(&block, self.big)? {
                 if item.chromosome == id && touches(item.start, item.end, region) {
-                    found.push(feature(contig, &item)?);
+                    found.push(feature(contig, &item, &self.labels)?);
                 }
             }
         }
@@ -556,7 +601,7 @@ impl Index {
                     continue;
                 }
                 if let Some(contig) = self.contig(item.chromosome) {
-                    found.push((contig.to_owned(), feature(contig, &item)?));
+                    found.push((contig.to_owned(), feature(contig, &item, &self.labels)?));
                 }
             }
         }

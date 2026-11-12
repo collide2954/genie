@@ -68,6 +68,41 @@ tabix -f -p bed genes.bed.gz
     done
 } > genes.bb.expected
 
+cat > genes.pred.as << 'AS'
+table bigGenePred
+"bigGenePred gene models"
+   (
+   string chrom;       "Reference sequence chromosome or scaffold"
+   uint   chromStart;  "Start position in chromosome"
+   uint   chromEnd;    "End position in chromosome"
+   string name;        "Name or ID of item"
+   uint score;         "Score (0-1000)"
+   char[1] strand;     "+ or - for strand"
+   uint thickStart;    "Start of where display should be thick (start codon)"
+   uint thickEnd;      "End of where display should be thick (stop codon)"
+   uint reserved;      "RGB value (use R,G,B string in input file)"
+   int blockCount;     "Number of blocks"
+   int[blockCount] blockSizes; "Comma separated list of block sizes"
+   int[blockCount] chromStarts; "Start positions relative to chromStart"
+   string name2;       "Alternative/human readable name"
+   string cdsStartStat; "Status of CDS start annotation"
+   string cdsEndStat;   "Status of CDS end annotation"
+   int[blockCount] exonFrames; "Exon frame {0,1,2}, or -1 if no frame for exon"
+   string type;        "Transcript type"
+   string geneName;    "Primary identifier for gene"
+   string geneName2;   "Alternative/human readable gene name"
+   string geneType;    "Gene type"
+   )
+AS
+printf '%s\n' \
+    'chr1	1000	5000	ENST01.1	0	+	1100	4900	0	2	1000,1000,	0,3000,	GENEA	cmpl	cmpl	0,1,	coding	ENSG01	GENEA	protein_coding' \
+    'chr1	2000	2600	ENST02.3	0	-	2000	2000	0	1	600,	0,	GENEB	none	none	-1,	noncoding	ENSG02	GENEB	lncRNA' \
+    'chr1	7000	9000	ENST03.2	0	+	7100	8900	0	1	2000,	0,	GENEC	cmpl	cmpl	0,	coding	ENSG03		protein_coding' \
+    > genes.pred.tmp
+printf 'chr1\t20000\n' > genes.pred.sizes
+bedToBigBed -tab -type=bed12+8 -as=genes.pred.as genes.pred.tmp genes.pred.sizes genes.pred.bb > /dev/null
+rm genes.pred.as genes.pred.tmp genes.pred.sizes
+
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
 function exons(contig, strand, id, position, count, exon, intron, only_ends, gtf,    e, left, low, high) {

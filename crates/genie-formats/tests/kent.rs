@@ -266,6 +266,24 @@ fn whole_bigbed_contigs_read_as_ucsc_lines() {
 }
 
 #[test]
+fn big_gene_pred_features_take_gene_names() {
+    let mut reader = File::open(data("genes.pred.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let features = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    let names: Vec<&str> = features.iter().map(Feature::name).collect();
+    assert_eq!(names, ["GENEA", "GENEB", "GENEC"]);
+    assert_eq!(features[0].blocks().len(), 2);
+    let plain = Index::read(&mut File::open(data("genes.bb")).unwrap()).unwrap();
+    let mut reader = File::open(data("genes.bb")).unwrap();
+    let first = plain
+        .features(&mut reader, "chr1", Region::between(0, 20_000))
+        .unwrap();
+    assert_eq!(first[0].name(), "chr1_001");
+}
+
+#[test]
 fn contigs_come_from_the_chromosome_tree() {
     let index = Index::read(&mut File::open(data("signal.bw")).unwrap()).unwrap();
     let mut names = index.names().to_vec();
