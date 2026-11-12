@@ -32,11 +32,17 @@ pub struct Entry {
     pub name: &'static str,
     pub about: &'static str,
     pub path: &'static str,
+    pub label: Option<&'static str>,
 }
 
 impl Entry {
     pub fn url(&self) -> String {
         format!("{UCSC}/{}", self.path)
+    }
+
+    const fn labeled(mut self, field: &'static str) -> Self {
+        self.label = Some(field);
+        self
     }
 }
 
@@ -46,6 +52,7 @@ const fn entry(group: Group, name: &'static str, about: &'static str, path: &'st
         name,
         about,
         path,
+        label: None,
     }
 }
 
@@ -178,7 +185,8 @@ const MM10: &[Entry] = &[
         "UCSC Genes",
         "UCSC Known Genes transcripts, based on GENCODE.",
         "gbdb/mm10/knownGene.bb",
-    ),
+    )
+    .labeled("geneName"),
     entry(
         Group::Variation,
         "EVA SNP 6",
@@ -277,11 +285,21 @@ pub fn entries(genome: &str) -> &'static [Entry] {
     }
 }
 
+const LISTS: [&[Entry]; 9] = [HG38, HG19, MM39, MM10, HS1, RN7, DANRER11, DM6, CE11];
+
+pub fn label(url: &str) -> Option<&'static str> {
+    LISTS
+        .iter()
+        .flat_map(|list| list.iter())
+        .find(|entry| entry.url() == url)
+        .and_then(|entry| entry.label)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use super::{Group, entries};
+    use super::{Group, entries, label};
     use crate::genome;
 
     fn groups(genome: &str) -> Vec<Group> {
@@ -311,6 +329,20 @@ mod tests {
         }
         assert_eq!(entries("sacCer3").len(), 0);
         assert_eq!(entries("nope").len(), 0);
+    }
+
+    #[test]
+    fn some_entries_name_their_label_field() {
+        let url = |genome: &str, name: &str| {
+            entries(genome)
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .url()
+        };
+        assert_eq!(label(&url("mm10", "UCSC Genes")), Some("geneName"));
+        assert_eq!(label(&url("hg38", "MANE Select")), None);
+        assert_eq!(label("https://example.org/gbdb/mm10/knownGene.bb"), None);
     }
 
     #[test]

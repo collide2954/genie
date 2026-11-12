@@ -817,7 +817,11 @@ pub fn open(location: impl Into<Location>) -> Result<Source, String> {
     } else if is_vcf(&name) {
         Format::Variants(VariantFile::open(&location, &name)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
-        open_bbi(&location, &name)?
+        open_bbi(
+            &location,
+            &name,
+            crate::catalog::label(&location.to_string()),
+        )?
     } else if is_signal(&name) {
         Format::Signal(SignalFile::open(&location, &name)?)
     } else {
@@ -830,10 +834,13 @@ pub fn open(location: impl Into<Location>) -> Result<Source, String> {
     })
 }
 
-fn open_bbi(location: &Location, name: &str) -> Result<Format, String> {
+fn open_bbi(location: &Location, name: &str, label: Option<&str>) -> Result<Format, String> {
     let mut file = location.open()?;
-    let index = bbi::Index::read(&mut file)
+    let mut index = bbi::Index::read(&mut file)
         .map_err(|error| format!("The file {name} is not valid. {error}"))?;
+    if let Some(field) = label {
+        index.label_with(field);
+    }
     Ok(if index.is_bed() {
         Format::Features(FeatureFile::BigBed { index })
     } else {
@@ -1000,7 +1007,7 @@ mod tests {
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, SignalFile,
         Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load, lookup,
-        names, neighbor, open, spans, step,
+        names, neighbor, open, open_bbi, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -1306,6 +1313,28 @@ mod tests {
         let names = names(&source, &assembly()).unwrap();
         let gene = names.find("gene1003").unwrap();
         assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
+    }
+
+    #[test]
+    fn a_label_field_names_big_gene_pred_features() {
+        let location = Location::File(fixture("genes.pred.bb"));
+        let names = |label: Option<&str>| -> Vec<String> {
+            let source = Source {
+                location: location.clone(),
+                name: "genes.pred.bb".to_owned(),
+                format: open_bbi(&location, "genes.pred.bb", label).unwrap(),
+            };
+            let window = region(0, 10_000);
+            let options = Options::default();
+            let loaded = load(&source, "chr1", window, options, 1, true, no_reference).unwrap();
+            let Content::Features(annotation) = &loaded.content else {
+                panic!("expected features");
+            };
+            let features = annotation.features.iter();
+            features.map(|feature| feature.name().to_owned()).collect()
+        };
+        assert_eq!(names(None), ["GENEA", "GENEB", "GENEC"]);
+        assert_eq!(names(Some("geneName")), ["ENSG01", "ENSG02", "ENSG03"]);
     }
 
     #[test]
