@@ -284,6 +284,17 @@ fn big_gene_pred_features_take_gene_names() {
 }
 
 #[test]
+fn gene_models_take_the_field_that_holds_the_gene_symbol() {
+    let mut reader = File::open(data("gencode.pred.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let features = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    let names: Vec<&str> = features.iter().map(Feature::name).collect();
+    assert_eq!(names, ["GENEA", "GENEB", "ENST03.2"]);
+}
+
+#[test]
 fn fields_after_the_bed_fields_stay_out_of_the_features() {
     let mut reader = File::open(data("snps.bb")).unwrap();
     let index = Index::read(&mut reader).unwrap();

@@ -19,6 +19,7 @@ const KEY_LIMIT: usize = 256;
 const BLOCK_LIMIT: u64 = 1 << 26;
 const AUTO_SQL_LIMIT: u64 = 1 << 16;
 const LABELS: [&str; 2] = ["geneName2", "name2"];
+const SYMBOL_FIELDS: [&str; 3] = ["geneName", "geneName2", "name2"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Zoom {
@@ -110,7 +111,7 @@ fn feature(
     let label = labels
         .iter()
         .filter_map(|&column| fields.get(column - 3))
-        .find(|value| !value.is_empty());
+        .find(|value| !value.is_empty() && **value != "none");
     Ok(match label {
         Some(label) => feature.with_name(*label),
         None => feature,
@@ -129,16 +130,33 @@ fn auto_sql(reader: &mut (impl Read + Seek), offset: u64) -> Result<String, Erro
 }
 
 fn label_columns(auto_sql: &str) -> Vec<usize> {
-    let fields: Vec<&str> = auto_sql
+    let fields: Vec<(&str, &str)> = auto_sql
         .lines()
         .filter_map(|line| line.split_once(';'))
-        .filter_map(|(declaration, _)| declaration.split_whitespace().last())
+        .filter_map(|(declaration, about)| Some((declaration.split_whitespace().last()?, about)))
         .collect();
+    let symbols: Vec<usize> = fields
+        .iter()
+        .enumerate()
+        .filter(|(column, (field, about))| {
+            *column > 3 && SYMBOL_FIELDS.contains(field) && names_symbol(about)
+        })
+        .map(|(column, _)| column)
+        .collect();
+    if !symbols.is_empty() {
+        return symbols;
+    }
     LABELS
         .iter()
-        .filter_map(|wanted| fields.iter().position(|field| field == wanted))
+        .filter_map(|wanted| fields.iter().position(|(field, _)| field == wanted))
         .filter(|&column| column > 3)
         .collect()
+}
+
+fn names_symbol(about: &str) -> bool {
+    about
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| word.eq_ignore_ascii_case("symbol"))
 }
 
 fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
