@@ -27,7 +27,12 @@ pub fn label(description: &str, name: &str) -> String {
     let Some(first) = characters.next() else {
         return name.to_owned();
     };
-    let label: String = first.to_uppercase().chain(characters).collect();
+    let word = text.split_whitespace().next().unwrap_or_default();
+    let label: String = if word.chars().any(char::is_uppercase) {
+        text.to_owned()
+    } else {
+        first.to_uppercase().chain(characters).collect()
+    };
     if label.chars().count() <= LABEL_LIMIT {
         return label;
     }
@@ -99,6 +104,8 @@ mod tests {
             label("Allele frequency: 0.5 is half", "AF"),
             "Allele frequency"
         );
+        assert_eq!(label("dbSNP membership", "DB"), "dbSNP membership");
+        assert_eq!(label("mRNA count", "N"), "mRNA count");
         assert_eq!(label("", "zScore"), "zScore");
         assert_eq!(label("\"\"", "zScore"), "zScore");
         assert_eq!(
