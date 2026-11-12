@@ -42,6 +42,7 @@ mod regions;
 mod sessions;
 pub mod snapshot;
 mod tracks;
+mod ucsc;
 mod view;
 
 use orders::Answer;
@@ -108,6 +109,7 @@ pub struct Genie {
 enum Popup {
     Settings,
     Genomes,
+    Catalog,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -587,6 +589,9 @@ pub enum Message {
     Strip(Option<Pointer>),
     Genome(String),
     GenomeMenu,
+    CatalogMenu,
+    Catalog(usize),
+    CatalogOpened(usize, Result<Arc<Source>, String>),
     Offline(Offline),
     CopyMenu(Option<u64>, Point),
     Copy(Copying),
@@ -854,6 +859,9 @@ impl Genie {
             Message::Strip(pointer) => self.strip = pointer,
             Message::Genome(id) => return self.open_genome(&id),
             Message::GenomeMenu => self.toggle(Popup::Genomes),
+            Message::CatalogMenu => self.toggle(Popup::Catalog),
+            Message::Catalog(index) => return self.open_catalog(index),
+            Message::CatalogOpened(index, result) => return self.catalog_opened(index, result),
             Message::Offline(offline) => return self.offline(offline),
             Message::CopyMenu(region, at) => self.open_copy_menu(region, at),
             Message::Copy(copying) => return self.copying(copying),
@@ -2006,6 +2014,40 @@ mod tests {
         let session = genie.session.as_ref().unwrap();
         assert!(simulator(genie.export_view(session)).find("hg38").is_ok());
         assert!(genie.figure(session).contains(">hg38</tspan>"));
+    }
+
+    #[test]
+    fn the_catalog_adds_ucsc_tracks_with_their_names() {
+        let mut genie = Genie::default();
+        let mut human = Arc::try_unwrap(reference()).unwrap();
+        human.genome = Some("hg38".to_owned());
+        let _ = genie.update(Message::Opened(Ok(Arc::new(human))));
+        let _ = genie.update(Message::CatalogMenu);
+        assert!(shows(&genie, "MANE Select"));
+        assert!(shows(&genie, "Conservation"));
+        let entries = crate::catalog::entries("hg38");
+        let index = entries
+            .iter()
+            .position(|entry| entry.name == "ClinVar")
+            .unwrap();
+        let busy = genie.busy;
+        let _ = genie.update(Message::Catalog(index));
+        assert!(!shows(&genie, "MANE Select"));
+        assert_eq!(genie.busy, busy + 1);
+        let url = genie_formats::http::Url::parse(&entries[index].url()).unwrap();
+        let source = Arc::new(Source {
+            location: Location::Url(url),
+            name: "clinvarMain.bb".to_owned(),
+            format: Format::Features(FeatureFile::Indexed {
+                kind: Kind::Bed,
+                index: Index::default(),
+            }),
+        });
+        let _ = genie.update(Message::CatalogOpened(index, Ok(source)));
+        assert_eq!(genie.busy, busy);
+        assert_eq!(track_name(&genie), "ClinVar");
+        let _ = genie.update(Message::CatalogMenu);
+        assert!(shows(&genie, "Added"));
     }
 
     #[test]

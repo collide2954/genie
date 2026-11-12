@@ -1,5 +1,6 @@
 mod app;
 mod card;
+mod catalog;
 mod chrome;
 mod context;
 mod escape;

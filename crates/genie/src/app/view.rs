@@ -165,6 +165,10 @@ impl Genie {
                 forward: session.history.can_go_forward(),
                 genome,
                 about,
+                catalog: reference
+                    .genome
+                    .as_deref()
+                    .is_some_and(|genome| !crate::catalog::entries(genome).is_empty()),
             }
         });
         let mut layers = stack![column![
@@ -209,6 +213,7 @@ impl Genie {
             .or_else(panel)
             .or_else(|| self.address_view())
             .or_else(|| self.genome_menu())
+            .or_else(|| self.catalog_menu())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)

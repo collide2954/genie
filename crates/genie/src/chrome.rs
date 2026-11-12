@@ -39,8 +39,13 @@ pub const fn locus_x(controls: Controls) -> f32 {
 }
 
 pub const fn genome_x(controls: Controls) -> f32 {
+    let files = 3.0 * TOOL_SIZE + 2.0 * TOOL_GAP;
     let pair = 2.0 * TOOL_SIZE + TOOL_GAP;
-    inset(controls) + BRAND_WIDTH + BRAND_GAP + pair + NAVIGATION_GAP + pair + NAVIGATION_GAP
+    inset(controls) + BRAND_WIDTH + BRAND_GAP + files + NAVIGATION_GAP + pair + NAVIGATION_GAP
+}
+
+pub const fn catalog_x(controls: Controls) -> f32 {
+    inset(controls) + BRAND_WIDTH + BRAND_GAP + 2.0 * (TOOL_SIZE + TOOL_GAP)
 }
 
 pub const fn settings_inset(controls: Controls) -> f32 {
@@ -166,6 +171,7 @@ pub struct LocusField {
     pub forward: bool,
     pub genome: String,
     pub about: String,
+    pub catalog: bool,
 }
 
 pub const GENOME: &str = "genome";
@@ -233,7 +239,7 @@ pub fn title_bar<'a>(
         Icon::Moon => "Theme: dark",
         _ => "Theme: system",
     };
-    let navigation = row![files()]
+    let navigation = row![files(locus.as_ref().is_some_and(|field| field.catalog))]
         .push(
             locus
                 .as_ref()
@@ -386,7 +392,12 @@ fn tool<'a>(
         .into()
 }
 
-fn files<'a>() -> Element<'a, Message> {
+fn files<'a>(catalog: bool) -> Element<'a, Message> {
+    let words = if catalog {
+        "UCSC tracks"
+    } else {
+        "No UCSC tracks for this reference"
+    };
     row![
         tool(Icon::Open, "open", "Open a file", Message::Open),
         tool(
@@ -394,6 +405,13 @@ fn files<'a>() -> Element<'a, Message> {
             "open-url",
             format!("Open a URL ({})", keys('U')),
             Message::Command(Command::OpenUrl)
+        ),
+        step(
+            Icon::Layers,
+            "catalog",
+            words.to_owned(),
+            Message::CatalogMenu,
+            catalog
         ),
     ]
     .spacing(TOOL_GAP)
@@ -411,14 +429,14 @@ fn history<'a>(back: bool, forward: bool) -> Element<'a, Message> {
             Icon::Back,
             "back",
             format!("Back ({back_keys})"),
-            Command::Back,
+            Message::Command(Command::Back),
             back
         ),
         step(
             Icon::Forward,
             "forward",
             format!("Forward ({forward_keys})"),
-            Command::Forward,
+            Message::Command(Command::Forward),
             forward
         ),
     ]
@@ -430,7 +448,7 @@ fn step<'a>(
     icon: Icon,
     id: &'static str,
     words: String,
-    command: Command,
+    message: Message,
     enabled: bool,
 ) -> Element<'a, Message> {
     let glyph = if enabled {
@@ -443,7 +461,7 @@ fn step<'a>(
         .height(TOOL_SIZE)
         .padding(0)
         .style(style::ghost)
-        .on_press_maybe(enabled.then_some(Message::Command(command)));
+        .on_press_maybe(enabled.then_some(message));
     container(tip(button, words, tooltip::Position::Bottom))
         .id(id)
         .into()
@@ -537,6 +555,7 @@ mod tests {
             forward: false,
             genome: "hg38".to_owned(),
             about: "Human GRCh38".to_owned(),
+            catalog: false,
         }
     }
 
@@ -598,6 +617,28 @@ mod tests {
             Some(field("chr1:1-4", None)),
         ));
         assert!(ui.find("chr1:1-4").is_ok());
+    }
+
+    #[test]
+    fn the_catalog_button_opens_the_track_catalog() {
+        let catalog = LocusField {
+            catalog: true,
+            ..field("chr1:1-4", None)
+        };
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, Some(catalog)));
+        ui.click(selector::id("catalog")).unwrap();
+        assert_eq!(
+            ui.into_messages().collect::<Vec<_>>(),
+            [Message::CatalogMenu]
+        );
+        let mut ui = simulator(title_bar(
+            Controls::Custom,
+            Icon::Monitor,
+            Some(field("chr1:1-4", None)),
+        ));
+        ui.click(selector::id("catalog")).unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(!messages.contains(&Message::CatalogMenu), "{messages:?}");
     }
 
     #[test]

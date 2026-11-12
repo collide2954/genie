@@ -98,12 +98,21 @@ pub fn card(
     window: Size,
     height: f32,
 ) -> Element<'_, Message> {
+    sized(content, at, window, (WIDTH, height))
+}
+
+pub fn sized(
+    content: Column<'_, Message>,
+    at: Point,
+    window: Size,
+    (width, height): (f32, f32),
+) -> Element<'_, Message> {
     let card = container(content)
         .id("menu")
-        .width(WIDTH)
+        .width(width)
         .padding(4)
         .style(style::menu);
-    let x = at.x.min(window.width - WIDTH - EDGE).max(0.0);
+    let x = at.x.min(window.width - width - EDGE).max(0.0);
     let y = if at.y + height > window.height {
         (at.y - height).max(0.0)
     } else {
