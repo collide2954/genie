@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use genie_core::{Feature, Region, Strand};
 
+use crate::fields::{self, Field};
 use crate::{
     Reason,
     bed::{number, strand},
@@ -70,6 +71,7 @@ pub struct Record {
     pub strand: Strand,
     pub parents: Vec<String>,
     pub attributes: Vec<(String, String)>,
+    pub text: String,
 }
 
 impl Record {
@@ -106,8 +108,17 @@ pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
         span: columns.span,
         strand: columns.strand,
         parents,
+        text: text(&attributes),
         attributes,
     }))
+}
+
+pub(crate) fn text(pairs: &[(String, String)]) -> String {
+    let pairs: Vec<String> = pairs
+        .iter()
+        .map(|(key, value)| format!("{key}={}", value.replace('\t', " ")))
+        .collect();
+    pairs.join("\t")
 }
 
 pub fn assemble(records: &[Record]) -> Vec<Feature> {
@@ -141,7 +152,8 @@ pub fn assemble(records: &[Record]) -> Vec<Feature> {
         .filter(|(index, _)| !consumed[*index] && (!parts[*index].is_empty() || !grouping[*index]))
         .map(|(index, record)| {
             let parent = parents[index].map(|parent| &records[parent]);
-            let feature = Feature::new(label(record, parent), record.span, record.strand);
+            let feature = Feature::new(label(record, parent), record.span, record.strand)
+                .with_extra(record.text.clone());
             if parts[index].is_empty() {
                 return feature;
             }
@@ -159,6 +171,18 @@ pub fn assemble(records: &[Record]) -> Vec<Feature> {
             }
             let coding = spans(&CODING).into_iter().reduce(Region::hull);
             feature.with_blocks(blocks).with_coding(coding)
+        })
+        .collect()
+}
+
+pub fn fields(extra: &str) -> Vec<Field> {
+    extra
+        .split('\t')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(_, value)| fields::shown(value))
+        .map(|(key, value)| Field {
+            label: key.to_owned(),
+            value: fields::plain(value),
         })
         .collect()
 }
@@ -207,8 +231,32 @@ fn hex(digit: u8) -> Option<u8> {
 mod tests {
     use genie_core::{Feature, Region, Strand};
 
-    use super::{Record, assemble, parse};
+    use super::{Record, assemble, fields, parse};
     use crate::Reason;
+    use crate::fields::Field;
+
+    #[test]
+    fn transcripts_keep_the_attributes_of_their_line() {
+        let mrna = "chr1\tsrc\tmRNA\t1001\t2000\t.\t+\t.\tID=t1;Parent=g1;Name=ABC-201;tag=basic%2CCCDS;Note=.";
+        let features = features(&[GENE, mrna, EXONS[0], EXONS[1]]);
+        assert_eq!(
+            features[0].extra(),
+            "ID=t1\tParent=g1\tName=ABC-201\ttag=basic,CCDS\tNote=."
+        );
+        let field = |label: &str, value: &str| Field {
+            label: label.to_owned(),
+            value: value.to_owned(),
+        };
+        assert_eq!(
+            fields(features[0].extra()),
+            [
+                field("ID", "t1"),
+                field("Parent", "g1"),
+                field("Name", "ABC-201"),
+                field("tag", "basic,CCDS")
+            ]
+        );
+    }
 
     const GENE: &str = "chr1\tsrc\tgene\t1001\t2000\t.\t+\t.\tID=g1;Name=ABC";
     const MRNA: &str = "chr1\tsrc\tmRNA\t1001\t2000\t.\t+\t.\tID=t1;Parent=g1;Name=ABC-201";
@@ -275,7 +323,8 @@ mod tests {
     fn assembles_transcripts_from_exons_and_cds() {
         let expected = Feature::new("ABC", region(1000, 2000), Strand::Forward)
             .with_blocks(vec![region(1000, 1200), region(1800, 2000)])
-            .with_coding(Some(region(1100, 1900)));
+            .with_coding(Some(region(1100, 1900)))
+            .with_extra("ID=t1\tParent=g1\tName=ABC-201");
         let lines = [GENE, MRNA, EXONS[0], EXONS[1], CDS[0], CDS[1]];
         assert_eq!(features(&lines), [expected]);
     }
@@ -306,7 +355,8 @@ mod tests {
         let gene = "chr1\tsrc\tgene\t101\t400\t.\t-\t.\tID=g2;Name=dnaA";
         let cds = "chr1\tsrc\tCDS\t101\t400\t.\t-\t0\tParent=g2";
         let expected = Feature::new("dnaA", region(100, 400), Strand::Reverse)
-            .with_blocks(vec![region(100, 400)]);
+            .with_blocks(vec![region(100, 400)])
+            .with_extra("ID=g2\tName=dnaA");
         assert_eq!(features(&[gene, cds]), [expected]);
     }
 
@@ -316,8 +366,8 @@ mod tests {
         assert_eq!(
             features(&[repeat, EXONS[0]]),
             [
-                Feature::new("r1", region(10, 20), Strand::Unknown),
-                Feature::new("", region(1000, 1200), Strand::Forward),
+                Feature::new("r1", region(10, 20), Strand::Unknown).with_extra("ID=r1"),
+                Feature::new("", region(1000, 1200), Strand::Forward).with_extra("Parent=t1"),
             ]
         );
     }

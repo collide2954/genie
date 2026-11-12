@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::Reason;
-use crate::gff::{Record, columns};
+use crate::gff::{self, Record, columns};
 
 pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
     let Some(columns) = columns(line)? else {
@@ -22,6 +22,7 @@ pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
             .map(|(_, value)| value.clone())
     };
     let (gene, transcript) = (get("gene_id"), get("transcript_id"));
+    let text = gff::text(&attributes);
     let mut parents = Vec::new();
     match columns.kind {
         "gene" => {
@@ -48,6 +49,7 @@ pub fn parse(line: &str) -> Result<Option<Record>, Reason> {
         strand: columns.strand,
         parents,
         attributes,
+        text,
     }))
 }
 
@@ -80,6 +82,11 @@ pub fn complete(records: &mut Vec<Record>) {
                 .get("gene_name")
                 .map(|name| ("gene_name".to_owned(), name.to_owned())),
         );
+        let text: Vec<&str> = record
+            .text
+            .split('\t')
+            .filter(|pair| !pair.starts_with("exon_"))
+            .collect();
         slots.insert(parent.clone(), added.len());
         added.push(Record {
             contig: record.contig.clone(),
@@ -88,6 +95,7 @@ pub fn complete(records: &mut Vec<Record>) {
             strand: record.strand,
             parents: gene.into_iter().collect(),
             attributes,
+            text: text.join("\t"),
         });
     }
     records.extend(added);
@@ -147,11 +155,27 @@ mod tests {
     fn assembles_genes_with_transcript_lines() {
         let mut lines = vec![GENE, TRANSCRIPT];
         lines.extend(PARTS);
-        assert_eq!(features(&lines), [transcript()]);
+        let text = "gene_id=g1\ttranscript_id=t1\tgene_name=ABC\ttranscript_name=ABC-201";
+        assert_eq!(features(&lines), [transcript().with_extra(text)]);
+    }
+
+    #[test]
+    fn transcripts_keep_the_attributes_of_the_file() {
+        let mut lines = vec![GENE, TRANSCRIPT];
+        lines.extend(PARTS);
+        assert_eq!(
+            features(&lines)[0].extra(),
+            "gene_id=g1\ttranscript_id=t1\tgene_name=ABC\ttranscript_name=ABC-201"
+        );
+        assert_eq!(
+            features(&PARTS)[0].extra(),
+            "gene_id=g1\ttranscript_id=t1\tgene_name=ABC"
+        );
     }
 
     #[test]
     fn makes_transcripts_that_have_no_line() {
-        assert_eq!(features(&PARTS), [transcript()]);
+        let text = "gene_id=g1\ttranscript_id=t1\tgene_name=ABC";
+        assert_eq!(features(&PARTS), [transcript().with_extra(text)]);
     }
 }

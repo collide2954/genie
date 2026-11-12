@@ -348,7 +348,8 @@ mod tests {
         let table = table(Kind::Gff, &lines).unwrap();
         let expected = Feature::new("ABC", region(1_000, 9_000), Strand::Forward)
             .with_blocks(vec![region(1_000, 1_200), region(8_800, 9_000)])
-            .with_coding(None);
+            .with_coding(None)
+            .with_extra("ID=t1\tParent=g1");
         assert_eq!(table.query("chr1", region(4_000, 5_000)), [expected]);
     }
 
@@ -373,7 +374,8 @@ mod tests {
         assert_eq!(loaded, region(1_000, 9_000));
         let expected = Feature::new("ABC", region(1_000, 9_000), Strand::Forward)
             .with_blocks(vec![region(1_000, 1_200), region(8_800, 9_000)])
-            .with_coding(None);
+            .with_coding(None)
+            .with_extra("ID=t1\tParent=g1");
         assert_eq!(features, [expected]);
     }
 }

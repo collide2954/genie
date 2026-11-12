@@ -2,8 +2,8 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
-use genie_core::Region;
 use genie_core::alignment::{Alignment, Op};
+use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::features::{self, Kind};
@@ -104,6 +104,13 @@ fn gff_transcripts_keep_exons_outside_the_query() {
     assert!(found.contains(transcript));
 }
 
+fn bare(features: Vec<Feature>) -> Vec<Feature> {
+    features
+        .into_iter()
+        .map(|feature| feature.with_extra(""))
+        .collect()
+}
+
 #[test]
 fn gtf_gives_the_same_transcripts_as_gff3() {
     let (gff, gtf) = (index("genes.gff3.gz"), index("genes.gtf.gz"));
@@ -119,7 +126,7 @@ fn gtf_gives_the_same_transcripts_as_gff3() {
         let mut plain = reader("genes.gtf.gz");
         let (_, found) = features::query(Kind::Gtf, &gtf, &mut plain, name, region).unwrap();
         assert_ne!(expected.len(), 0, "{wanted}");
-        assert_eq!(found, expected, "{wanted}");
+        assert_eq!(bare(found), bare(expected), "{wanted}");
     }
     let (table, kept) =
         features::read_table(Kind::Gtf, BufReader::new(reader("genes.gtf.gz"))).unwrap();
