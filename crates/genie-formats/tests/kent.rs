@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 
 use genie_core::signal::Summary;
-use genie_core::{Feature, Region};
+use genie_core::{Feature, Region, Strand};
 use genie_formats::bbi::Index;
 use genie_formats::bgzf::Bgzf;
 use genie_formats::{bed, bedgraph, tabix};
@@ -281,6 +281,45 @@ fn big_gene_pred_features_take_gene_names() {
         .features(&mut reader, "chr1", Region::between(0, 20_000))
         .unwrap();
     assert_eq!(first[0].name(), "chr1_001");
+}
+
+#[test]
+fn fields_after_the_bed_fields_stay_out_of_the_features() {
+    let mut reader = File::open(data("snps.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let snps = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    let found: Vec<(&str, Region, Strand)> = snps
+        .iter()
+        .map(|feature| (feature.name(), feature.span(), feature.strand()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("rs1", Region::between(100, 101), Strand::Unknown),
+            ("rs2", Region::between(200, 201), Strand::Unknown),
+            ("rs3", Region::between(300, 302), Strand::Unknown),
+        ]
+    );
+    let named = index.find(&mut reader, "rs2").unwrap();
+    assert_eq!(named, [("chr1".to_owned(), snps[1].clone())]);
+    let mut reader = File::open(data("ccres.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let ccres = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    let found: Vec<(&str, Option<[u8; 3]>, usize)> = ccres
+        .iter()
+        .map(|feature| (feature.name(), feature.color(), feature.blocks().len()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("EH1", Some([255, 167, 0]), 1),
+            ("EH2", Some([0, 176, 240]), 1)
+        ]
+    );
 }
 
 #[test]

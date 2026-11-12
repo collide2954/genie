@@ -103,6 +103,51 @@ printf 'chr1\t20000\n' > genes.pred.sizes
 bedToBigBed -tab -type=bed12+8 -as=genes.pred.as genes.pred.tmp genes.pred.sizes genes.pred.bb > /dev/null
 rm genes.pred.as genes.pred.tmp genes.pred.sizes
 
+cat > snps.as << 'AS'
+table snps
+"Variants: BED 4 plus extra fields, like bigDbSnp"
+   (
+   string chrom;       "Reference sequence chromosome or scaffold"
+   uint   chromStart;  "Start position in chromosome"
+   uint   chromEnd;    "End position in chromosome"
+   string name;        "Variant identifier"
+   lstring ref;        "Reference allele"
+   int altCount;       "Number of alternate alleles"
+   lstring alts;       "Alternate alleles"
+   )
+AS
+printf '%s\n' \
+    'chr1	100	101	rs1	A	1	G,' \
+    'chr1	200	201	rs2	C	2	T,G,' \
+    'chr1	300	302	rs3	AT	1	A,' \
+    > snps.tmp
+cat > ccres.as << 'AS'
+table ccres
+"Regulatory elements: BED 9 plus extra fields, like ENCODE cCREs"
+   (
+   string chrom;       "Reference sequence chromosome or scaffold"
+   uint   chromStart;  "Start position in chromosome"
+   uint   chromEnd;    "End position in chromosome"
+   string name;        "Name of item"
+   uint score;         "Score (0-1000)"
+   char[1] strand;     "+, - or . for unknown"
+   uint thickStart;    "Start of the thick part"
+   uint thickEnd;      "End of the thick part"
+   uint reserved;      "RGB value (use R,G,B string in input file)"
+   string ccre;        "Class"
+   float zScore;       "Highest DNase Z-score"
+   string ucscLabel;   "Short class label"
+   )
+AS
+printf '%s\n' \
+    'chr1	100	400	EH1	0	.	100	400	255,167,0	pELS	2.5	enhP' \
+    'chr1	500	900	EH2	0	.	500	900	0,176,240	CTCF-only	1.25	CTCF' \
+    > ccres.tmp
+printf 'chr1\t20000\n' > extra.sizes
+bedToBigBed -tab -type=bed4+3 -as=snps.as -extraIndex=name snps.tmp extra.sizes snps.bb > /dev/null
+bedToBigBed -tab -type=bed9+3 -as=ccres.as ccres.tmp extra.sizes ccres.bb > /dev/null
+rm snps.as snps.tmp ccres.as ccres.tmp extra.sizes
+
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
 function exons(contig, strand, id, position, count, exon, intron, only_ends, gtf,    e, left, low, high) {

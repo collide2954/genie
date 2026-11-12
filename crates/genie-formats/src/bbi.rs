@@ -36,6 +36,7 @@ pub struct Index {
     full: u64,
     zooms: Vec<Zoom>,
     lookup: Option<u64>,
+    defined: usize,
     labels: Vec<usize>,
 }
 
@@ -85,15 +86,27 @@ fn line(contig: &str, item: &Item<'_>) -> String {
     line
 }
 
-fn feature(contig: &str, item: &Item<'_>, labels: &[usize]) -> Result<Feature, Error> {
-    let feature = bed::parse(&line(contig, item))
+fn feature(
+    contig: &str,
+    item: &Item<'_>,
+    defined: usize,
+    labels: &[usize],
+) -> Result<Feature, Error> {
+    let fields: Vec<&str> = if item.rest.is_empty() {
+        Vec::new()
+    } else {
+        item.rest.split('\t').collect()
+    };
+    let standard = defined.checked_sub(3).unwrap_or(fields.len());
+    let mut text = format!("{contig}\t{}\t{}", item.start, item.end);
+    for field in fields.iter().take(standard) {
+        text.push('\t');
+        text.push_str(field);
+    }
+    let feature = bed::parse(&text)
         .map_err(Error::Invalid)?
         .map(|(_, feature)| feature)
         .ok_or(Error::Invalid(Reason::BadRecord))?;
-    if labels.is_empty() {
-        return Ok(feature);
-    }
-    let fields: Vec<&str> = item.rest.split('\t').collect();
     let label = labels
         .iter()
         .filter_map(|&column| fields.get(column - 3))
@@ -498,7 +511,8 @@ impl Index {
         let tree = bytes.u64()?;
         let _data = bytes.u64()?;
         let full = bytes.u64()?;
-        let _fields = bytes.u32()?;
+        let _fields = bytes.u16()?;
+        let defined = usize::from(bytes.u16()?);
         let schema = bytes.u64()?;
         let _total = bytes.u64()?;
         let buffer = bytes.u32()?;
@@ -533,6 +547,7 @@ impl Index {
             full,
             zooms,
             lookup,
+            defined,
             labels,
         })
     }
@@ -564,7 +579,7 @@ impl Index {
             let block = self.block(reader, offset, size)?;
             for item in items(&block, self.big)? {
                 if item.chromosome == id && touches(item.start, item.end, region) {
-                    found.push(feature(contig, &item, &self.labels)?);
+                    found.push(feature(contig, &item, self.defined, &self.labels)?);
                 }
             }
         }
@@ -601,7 +616,8 @@ impl Index {
                     continue;
                 }
                 if let Some(contig) = self.contig(item.chromosome) {
-                    found.push((contig.to_owned(), feature(contig, &item, &self.labels)?));
+                    let feature = feature(contig, &item, self.defined, &self.labels)?;
+                    found.push((contig.to_owned(), feature));
                 }
             }
         }
