@@ -5,6 +5,7 @@ use genie_core::signal::Summary;
 use genie_core::{Feature, Region, Strand};
 use genie_formats::bbi::Index;
 use genie_formats::bgzf::Bgzf;
+use genie_formats::fields::Field;
 use genie_formats::{bed, bedgraph, tabix};
 
 const FILES: [&str; 3] = ["signal.bw", "steps.bw", "plain.bw"];
@@ -281,6 +282,53 @@ fn big_gene_pred_features_take_gene_names() {
         .features(&mut reader, "chr1", Region::between(0, 20_000))
         .unwrap();
     assert_eq!(first[0].name(), "chr1_001");
+}
+
+fn labeled(fields: Vec<Field>) -> Vec<(String, String)> {
+    fields
+        .into_iter()
+        .map(|field| (field.label, field.value))
+        .collect()
+}
+
+#[test]
+fn big_bed_fields_take_their_labels_from_the_auto_sql() {
+    let mut reader = File::open(data("ccres.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let ccres = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    assert_eq!(ccres[0].extra(), "pELS\t2.5\tenhP\t<b>EH1</b>");
+    let pairs = [
+        ("Class", "pELS"),
+        ("Highest DNase Z-score", "2.5"),
+        ("Short class label", "enhP"),
+    ];
+    let expected: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
+        .collect();
+    assert_eq!(labeled(index.fields(ccres[0].extra())), expected);
+    let mut reader = File::open(data("genes.pred.bb")).unwrap();
+    let index = Index::read(&mut reader).unwrap();
+    let genes = index
+        .features(&mut reader, "chr1", Region::between(0, 10_000))
+        .unwrap();
+    let labels: Vec<String> = labeled(index.fields(genes[1].extra()))
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Alternative/human readable name",
+            "Exon frame",
+            "Transcript type",
+            "Primary identifier for gene",
+            "Alternative/human readable gene name",
+            "Gene type"
+        ]
+    );
 }
 
 #[test]

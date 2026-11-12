@@ -137,15 +137,16 @@ table ccres
    string ccre;        "Class"
    float zScore;       "Highest DNase Z-score"
    string ucscLabel;   "Short class label"
+   lstring _mouseOver; "Mouse over text"
    )
 AS
 printf '%s\n' \
-    'chr1	100	400	EH1	0	.	100	400	255,167,0	pELS	2.5	enhP' \
-    'chr1	500	900	EH2	0	.	500	900	0,176,240	CTCF-only	1.25	CTCF' \
+    'chr1	100	400	EH1	0	.	100	400	255,167,0	pELS	2.5	enhP	<b>EH1</b>' \
+    'chr1	500	900	EH2	0	.	500	900	0,176,240	CTCF-only	1.25	CTCF	<b>EH2</b>' \
     > ccres.tmp
 printf 'chr1\t20000\n' > extra.sizes
 bedToBigBed -tab -type=bed4+3 -as=snps.as -extraIndex=name snps.tmp extra.sizes snps.bb > /dev/null
-bedToBigBed -tab -type=bed9+3 -as=ccres.as ccres.tmp extra.sizes ccres.bb > /dev/null
+bedToBigBed -tab -type=bed9+4 -as=ccres.as ccres.tmp extra.sizes ccres.bb > /dev/null
 rm snps.as snps.tmp ccres.as ccres.tmp extra.sizes
 
 cat > gencode.pred.as << 'AS'

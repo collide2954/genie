@@ -4,6 +4,7 @@ use genie_core::signal::{self, Bin, Summary};
 use genie_core::{Feature, Region};
 use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
 
+use crate::fields::{self, Field};
 use crate::{Error, Reason, bed};
 
 const MAGIC: u32 = 0x888F_FC26;
@@ -38,7 +39,7 @@ pub struct Index {
     zooms: Vec<Zoom>,
     lookup: Option<u64>,
     defined: usize,
-    fields: Vec<String>,
+    fields: Vec<(String, String)>,
     labels: Vec<usize>,
 }
 
@@ -105,9 +106,10 @@ fn feature(
         text.push('\t');
         text.push_str(field);
     }
+    let extra = fields.get(standard..).unwrap_or_default().join("\t");
     let feature = bed::parse(&text)
         .map_err(Error::Invalid)?
-        .map(|(_, feature)| feature)
+        .map(|(_, feature)| feature.with_extra(extra))
         .ok_or(Error::Invalid(Reason::BadRecord))?;
     let label = labels
         .iter()
@@ -563,7 +565,7 @@ impl Index {
         let declared = declared(&text);
         let fields = declared
             .iter()
-            .map(|(field, _)| (*field).to_owned())
+            .map(|(field, about)| ((*field).to_owned(), (*about).to_owned()))
             .collect();
         let labels = label_columns(&declared);
         Ok(Self {
@@ -589,8 +591,35 @@ impl Index {
         self.lookup.is_some()
     }
 
+    pub fn fields(&self, extra: &str) -> Vec<Field> {
+        if extra.is_empty() {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        for (place, value) in extra.split('\t').enumerate() {
+            let column = self.defined + place;
+            let (name, about) = self
+                .fields
+                .get(column)
+                .map_or(("", ""), |(name, about)| (name.as_str(), about.as_str()));
+            if name.starts_with('_') || !fields::shown(value) {
+                continue;
+            }
+            let label = if name.is_empty() {
+                format!("Column {}", column + 1)
+            } else {
+                fields::label(about, name)
+            };
+            found.push(Field {
+                label,
+                value: fields::plain(value),
+            });
+        }
+        found
+    }
+
     pub fn label_with(&mut self, field: &str) {
-        let column = self.fields.iter().position(|name| name == field);
+        let column = self.fields.iter().position(|(name, _)| name == field);
         if let Some(column) = column.filter(|&column| column > 3) {
             self.labels = vec![column];
         }
