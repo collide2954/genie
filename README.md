@@ -39,6 +39,25 @@ The start view lists ten genomes. Click a genome to open it with its gene track 
 - To use a genome without a network connection, click the genome label, then click **Use offline**. genie downloads the full sequence into its cache folder (human: about 835 MB). If the download stops, genie continues it the next time. Click **Remove offline copy** to delete the sequence. If the open genome reads from the offline copy, genie first changes it to the sequence on UCSC.
 - Sessions and the recent list keep the genome.
 
+## UCSC tracks
+
+Click the tracks button (the layers icon) in the title bar to add a public track from the UCSC Genome Browser to the open genome.
+
+| Genome | Genes | Variation | Conservation | Regulation |
+| --- | --- | --- | --- | --- |
+| hg38 | MANE Select, GENCODE V48 | ClinVar, dbSNP 155 common | phyloP 100-way, phastCons 100-way, GC percent | ENCODE cCREs |
+| hg19 | GENCODE V48lift37 | ClinVar, dbSNP 155 common | phyloP 100-way, phastCons 100-way | |
+| mm39 | GENCODE VM37 | EVA SNP 6 | phyloP 35-way, phastCons 35-way, GC percent | |
+| mm10 | UCSC Genes | EVA SNP 6 | phyloP 60-way, phastCons 60-way, GC percent | ENCODE cCREs |
+| T2T, rn7, danRer11 | | | GC percent | |
+| dm6 | | | phyloP 124-way, GC percent | |
+| ce11 | | | phyloP 135-way, GC percent | |
+
+- genie reads these tracks in parts from the UCSC download server, as for other [files on the web](#files-on-the-web).
+- The track gets the name from the list, for example ClinVar. A track that is open shows **Added** in the list.
+- For yeast and for reference files, the list is empty and the button is off.
+- Sessions keep these tracks with their names.
+
 ## Files
 
 | Kind | Formats |
@@ -153,6 +172,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
 - Type a feature name or a variant ID in the locus box to go to it. The search ignores letter case. genie finds variant IDs in VCF files up to 50 MB. It also finds names in bigBed files that have a name index (`bedToBigBed -extraIndex=name`), and in other bigBed files up to 50 MB.
 - BED and bigBed features use the colors of the file (itemRgb). Right-click the track and turn off "Use file colors" to use the track color.
+- In a bigBed file of gene models (bigGenePred), each transcript shows its gene symbol. genie uses the field that the file describes as the gene symbol. If there is no such field, it uses `geneName2`, then `name2`.
 - In a variant track, the color of a site shows the change: the color of the new base for an SNV, purple for an insertion and dark grey for a deletion. A site that does not pass FILTER has a light color.
 - Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin. If there are more than 300 samples, each row shows a group of samples with the strongest call of the group (homozygous alternate, then heterozygous, then homozygous reference), and the card names the samples of the row.
 - A signal track has a bar for each pixel. The bar goes to the mean value, and a light color goes to the maximum value. Values below zero go down from a zero line. The range of the values in view is at the top right.
