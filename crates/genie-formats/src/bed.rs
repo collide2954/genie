@@ -3,6 +3,7 @@ use std::io::{self, BufRead, Write};
 use genie_core::{Feature, Region, Strand};
 
 use crate::features::Entry;
+use crate::fields::{self, Field};
 use crate::text::lines;
 use crate::{Error, Reason};
 
@@ -91,10 +92,12 @@ pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
     }
     let mut fields = [""; COLUMNS];
     let mut count = 0;
-    for (slot, field) in fields.iter_mut().zip(line.split('\t')) {
+    let mut parts = line.splitn(COLUMNS + 1, '\t');
+    for (slot, field) in fields.iter_mut().zip(parts.by_ref()) {
         *slot = field;
         count += 1;
     }
+    let rest = parts.next().unwrap_or_default();
     if count < 3 {
         return Err(Reason::MissingField);
     }
@@ -114,9 +117,26 @@ pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
         feature = feature.with_color(rgb(fields[8]));
     }
     if count == COLUMNS {
-        feature = feature.with_blocks(blocks(start, fields[9], fields[10], fields[11])?);
+        feature = feature
+            .with_blocks(blocks(start, fields[9], fields[10], fields[11])?)
+            .with_extra(rest);
     }
     Ok(Some((fields[0], feature)))
+}
+
+pub fn fields(extra: &str) -> Vec<Field> {
+    if extra.is_empty() {
+        return Vec::new();
+    }
+    extra
+        .split('\t')
+        .enumerate()
+        .filter(|(_, value)| fields::shown(value))
+        .map(|(place, value)| Field {
+            label: format!("Column {}", COLUMNS + 1 + place),
+            value: fields::plain(value),
+        })
+        .collect()
 }
 
 fn rgb(field: &str) -> Option<[u8; 3]> {
@@ -168,9 +188,28 @@ fn blocks(start: u64, count: &str, sizes: &str, starts: &str) -> Result<Vec<Regi
 mod tests {
     use genie_core::{Feature, Region, Strand};
 
-    use super::{parse, regions, write, write_features};
+    use super::{fields, parse, regions, write, write_features};
     use crate::features::Entry;
+    use crate::fields::Field;
     use crate::{Error, Reason};
+
+    #[test]
+    fn columns_after_twelve_become_fields() {
+        let line = "chr1\t10\t20\tgeneA\t0\t+\t10\t20\t0\t1\t10,\t0,\tcoding\tnone\t<b>x</b>";
+        let (_, feature) = parse(line).unwrap().unwrap();
+        assert_eq!(feature.extra(), "coding\tnone\t<b>x</b>");
+        let field = |label: &str, value: &str| Field {
+            label: label.to_owned(),
+            value: value.to_owned(),
+        };
+        assert_eq!(
+            fields(feature.extra()),
+            [field("Column 13", "coding"), field("Column 15", "x")]
+        );
+        let (_, short) = parse("chr1\t10\t20\tgeneA").unwrap().unwrap();
+        assert_eq!(short.extra(), "");
+        assert_eq!(fields(short.extra()), []);
+    }
 
     fn entry(name: &str, contig: &str, span: Region) -> Entry {
         Entry {
