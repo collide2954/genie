@@ -38,6 +38,7 @@ pub struct Index {
     zooms: Vec<Zoom>,
     lookup: Option<u64>,
     defined: usize,
+    fields: Vec<String>,
     labels: Vec<usize>,
 }
 
@@ -129,12 +130,15 @@ fn auto_sql(reader: &mut (impl Read + Seek), offset: u64) -> Result<String, Erro
     Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
 }
 
-fn label_columns(auto_sql: &str) -> Vec<usize> {
-    let fields: Vec<(&str, &str)> = auto_sql
+fn declared(auto_sql: &str) -> Vec<(&str, &str)> {
+    auto_sql
         .lines()
         .filter_map(|line| line.split_once(';'))
         .filter_map(|(declaration, about)| Some((declaration.split_whitespace().last()?, about)))
-        .collect();
+        .collect()
+}
+
+fn label_columns(fields: &[(&str, &str)]) -> Vec<usize> {
     let symbols: Vec<usize> = fields
         .iter()
         .enumerate()
@@ -551,11 +555,17 @@ impl Index {
         } else {
             None
         };
-        let labels = if bed && schema != 0 {
-            label_columns(&auto_sql(reader, schema)?)
+        let text = if bed && schema != 0 {
+            auto_sql(reader, schema)?
         } else {
-            Vec::new()
+            String::new()
         };
+        let declared = declared(&text);
+        let fields = declared
+            .iter()
+            .map(|(field, _)| (*field).to_owned())
+            .collect();
+        let labels = label_columns(&declared);
         Ok(Self {
             big,
             bed,
@@ -566,6 +576,7 @@ impl Index {
             zooms,
             lookup,
             defined,
+            fields,
             labels,
         })
     }
@@ -576,6 +587,13 @@ impl Index {
 
     pub fn has_lookup(&self) -> bool {
         self.lookup.is_some()
+    }
+
+    pub fn label_with(&mut self, field: &str) {
+        let column = self.fields.iter().position(|name| name == field);
+        if let Some(column) = column.filter(|&column| column > 3) {
+            self.labels = vec![column];
+        }
     }
 
     fn contig(&self, id: u32) -> Option<&str> {

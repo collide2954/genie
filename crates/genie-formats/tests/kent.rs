@@ -284,6 +284,24 @@ fn big_gene_pred_features_take_gene_names() {
 }
 
 #[test]
+fn a_named_field_gives_the_labels() {
+    let mut reader = File::open(data("genes.pred.bb")).unwrap();
+    let mut index = Index::read(&mut reader).unwrap();
+    let names = |index: &Index, reader: &mut File| -> Vec<String> {
+        index
+            .features(reader, "chr1", Region::between(0, 10_000))
+            .unwrap()
+            .iter()
+            .map(|feature| feature.name().to_owned())
+            .collect()
+    };
+    index.label_with("nope");
+    assert_eq!(names(&index, &mut reader), ["GENEA", "GENEB", "GENEC"]);
+    index.label_with("geneName");
+    assert_eq!(names(&index, &mut reader), ["ENSG01", "ENSG02", "ENSG03"]);
+}
+
+#[test]
 fn gene_models_take_the_field_that_holds_the_gene_symbol() {
     let mut reader = File::open(data("gencode.pred.bb")).unwrap();
     let index = Index::read(&mut reader).unwrap();
