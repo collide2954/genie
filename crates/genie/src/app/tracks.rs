@@ -269,11 +269,17 @@ impl Genie {
                 }
             }
         };
+        let fields = match &detail {
+            Detail::Feature(feature) => track::feature_fields(&track.source, feature),
+            Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
+            Detail::Read { .. } | Detail::Signal { .. } => Vec::new(),
+        };
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[contig].name.clone(),
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
+            fields,
         })
     }
 

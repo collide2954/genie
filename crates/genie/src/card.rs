@@ -4,7 +4,9 @@ use genie_core::alignment::{
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
-use iced::widget::{button, column, container, pin, row, text};
+use genie_formats::fields::Field;
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{button, column, container, pin, row, scrollable, text};
 use iced::{Alignment as Align, Element, Length, Point, Size};
 
 use crate::app::Message;
@@ -12,6 +14,8 @@ use crate::icon::{self, Icon};
 use crate::{font, style};
 
 pub const WIDTH: f32 = 240.0;
+const WIDE: f32 = 320.0;
+const PADDING: f32 = 8.0;
 const BASE_HEIGHT: f32 = 52.0;
 const LINE_HEIGHT: f32 = 16.0;
 const OFFSET_X: f32 = 12.0;
@@ -20,7 +24,11 @@ const EDGE: f32 = 4.0;
 const TIP_WIDTH: f32 = 120.0;
 const ALLELE_LIMIT: usize = 12;
 const ALLELE_KEEP: usize = 8;
-const INFO_ENTRIES: usize = 3;
+const LABEL_WIDTH: f32 = 110.0;
+const FIELD_GAP: f32 = 6.0;
+const HOVER_FIELDS: usize = 6;
+const VALUE_LIMIT: usize = 160;
+const CHARACTER: f32 = 6.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detail {
@@ -46,6 +54,7 @@ pub struct Card {
     pub contig: String,
     pub detail: Detail,
     pub at: Point,
+    pub fields: Vec<Field>,
 }
 
 fn strand(strand: Strand) -> Option<&'static str> {
@@ -172,16 +181,6 @@ pub fn variant_facts(variant: &Variant) -> String {
     facts.join(" · ")
 }
 
-pub fn info(variant: &Variant) -> Option<String> {
-    let entries: Vec<&str> = variant
-        .info
-        .split(';')
-        .filter(|entry| !entry.is_empty() && *entry != ".")
-        .take(INFO_ENTRIES)
-        .collect();
-    (!entries.is_empty()).then(|| entries.join(" · "))
-}
-
 pub fn genotype(name: &str, call: Call) -> String {
     let words = match call {
         Call::Missing => "no call",
@@ -225,7 +224,6 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
                 variant.id.clone()
             };
             let mut lines = vec![variant_facts(variant)];
-            lines.extend(info(variant));
             lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
             (title, variant.span, lines)
         }
@@ -256,16 +254,74 @@ fn locus(card: &Card, span: Region) -> Locus {
 
 pub fn plain(card: &Card) -> String {
     let (title, span, lines) = content(&card.detail);
+    let fields = card
+        .fields
+        .iter()
+        .map(|field| format!("{}: {}", field.label, field.value));
     [title, locus(card, span).to_string()]
         .into_iter()
         .chain(lines)
+        .chain(fields)
         .collect::<Vec<_>>()
         .join("\n")
 }
 
+fn more(count: usize) -> String {
+    format!("+{count} fields: click to see all")
+}
+
+fn short(value: &str) -> String {
+    if value.chars().count() <= VALUE_LIMIT {
+        return value.to_owned();
+    }
+    let mut short: String = value.chars().take(VALUE_LIMIT - 1).collect();
+    short.push('…');
+    short
+}
+
+fn wrapped(text: &str, width: f32) -> usize {
+    let per_line = ((width / CHARACTER).floor() as usize).max(1);
+    text.chars().count().div_ceil(per_line).max(1)
+}
+
+fn field_row<'a>(label: String, value: String) -> Element<'a, Message> {
+    row![
+        text(label).size(11).style(style::muted).width(LABEL_WIDTH),
+        text(value).size(11).width(Length::Fill),
+    ]
+    .spacing(FIELD_GAP)
+    .into()
+}
+
 pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
     let (title, span, lines) = content(&card.detail);
-    let height = BASE_HEIGHT + LINE_HEIGHT * lines.len() as f32;
+    let width = if card.fields.is_empty() { WIDTH } else { WIDE };
+    let shown = if pinned {
+        card.fields.len()
+    } else {
+        card.fields.len().min(HOVER_FIELDS)
+    };
+    let hidden = card.fields.len() - shown;
+    let value_width = WIDE - 2.0 * PADDING - LABEL_WIDTH - FIELD_GAP;
+    let rows: Vec<(String, String)> = card.fields[..shown]
+        .iter()
+        .map(|field| {
+            let value = if pinned {
+                field.value.clone()
+            } else {
+                short(&field.value)
+            };
+            (field.label.clone(), value)
+        })
+        .collect();
+    let count = lines.len()
+        + usize::from(hidden > 0)
+        + rows
+            .iter()
+            .map(|(label, value)| wrapped(label, LABEL_WIDTH).max(wrapped(value, value_width)))
+            .sum::<usize>();
+    let room = (window.height - 2.0 * EDGE).max(BASE_HEIGHT);
+    let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
     let locus = locus(card, span);
     let mut heading = row![
         text(title)
@@ -284,7 +340,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
                 .on_press(Message::CardClosed),
         );
     }
-    let body = column![
+    let mut body = column![
         heading,
         text(locus.to_string())
             .font(font::MONO)
@@ -296,13 +352,37 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .into_iter()
             .map(|line| text(line).size(11).style(style::muted).into()),
     )
+    .extend(
+        rows.into_iter()
+            .map(|(label, value)| field_row(label, value)),
+    )
     .spacing(2);
+    if hidden > 0 {
+        body = body.push(text(more(hidden)).size(11).style(style::muted));
+    }
+    let body: Element<'a, Message> = if height > room {
+        scrollable(body)
+            .direction(Direction::Vertical(
+                Scrollbar::new()
+                    .width(4)
+                    .scroller_width(4)
+                    .margin(0)
+                    .spacing(2),
+            ))
+            .style(style::scrollbar)
+            .height(room - 12.0)
+            .into()
+    } else {
+        body.into()
+    };
     let body = container(body)
-        .width(WIDTH)
-        .padding([6, 8])
+        .id("card")
+        .width(width)
+        .padding([6.0, PADDING])
         .style(style::menu);
+    let height = height.min(room);
     let x = (card.at.x + OFFSET_X)
-        .min(window.width - WIDTH - EDGE)
+        .min(window.width - width - EDGE)
         .max(0.0);
     let y = if card.at.y + OFFSET_Y + height > window.height {
         (card.at.y - height - EDGE).max(0.0)
@@ -335,11 +415,13 @@ mod tests {
     use genie_core::signal::Bin;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Feature, Region, Strand};
-    use iced::Point;
+    use genie_formats::fields::Field;
+    use iced::{Point, Size};
+    use iced_test::{selector, simulator};
 
     use super::{
-        Card, Detail, change, cigar, coding, facts, genotype, info, pair_lines, plain, read_facts,
-        signal_facts, variant_facts,
+        Card, Detail, change, cigar, coding, facts, genotype, pair_lines, plain, read_facts,
+        signal_facts, variant_facts, view,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -381,13 +463,11 @@ mod tests {
     }
 
     #[test]
-    fn variants_show_change_quality_filter_and_info() {
+    fn variants_show_change_quality_and_filter() {
         let snv = site("A", &["G", "T"], Some(50.5), "DP=10;AF=0.5;MQ=60;FS=1.2");
         assert_eq!(variant_facts(&snv), "A > G, T · QUAL 50.5 · PASS");
-        assert_eq!(info(&snv).as_deref(), Some("DP=10 · AF=0.5 · MQ=60"));
         let long = site(&"ACGT".repeat(10), &["A"], None, ".");
         assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
-        assert_eq!(info(&long), None);
         assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");
     }
 
@@ -477,6 +557,13 @@ mod tests {
         assert_eq!(pair_lines(&single, None, false), [] as [String; 0]);
     }
 
+    fn field(label: &str, value: &str) -> Field {
+        Field {
+            label: label.to_owned(),
+            value: value.to_owned(),
+        }
+    }
+
     #[test]
     fn card_text_has_one_line_per_field() {
         let feature =
@@ -486,11 +573,43 @@ mod tests {
             contig: "chr1".to_owned(),
             detail: Detail::Feature(feature),
             at: Point::ORIGIN,
+            fields: vec![
+                field("Class", "pELS"),
+                field("Highest DNase Z-score", "2.5"),
+            ],
         };
         assert_eq!(
             plain(&card),
-            "geneA\nchr1:10-20\n11 bp · forward strand\nCoding 12-15"
+            "geneA\nchr1:10-20\n11 bp · forward strand\nCoding 12-15\nClass: pELS\nHighest DNase Z-score: 2.5"
         );
+    }
+
+    #[test]
+    fn cards_with_fields_are_wider_and_scroll_when_tall() {
+        let feature = Feature::new("geneA", region(9, 20), Strand::Forward);
+        let mut card = Card {
+            track: 1,
+            contig: "chr1".to_owned(),
+            detail: Detail::Feature(feature),
+            at: Point::ORIGIN,
+            fields: Vec::new(),
+        };
+        let window = Size::new(1280.0, 400.0);
+        let bounds = |card: &Card, pinned: bool| {
+            simulator(view(card, pinned, window))
+                .find(selector::id("card"))
+                .unwrap()
+                .bounds()
+        };
+        assert!((bounds(&card, false).width - 240.0).abs() < 0.5);
+        card.fields = (0..60)
+            .map(|index| field(&format!("Field {index}"), "x"))
+            .collect();
+        let hover = bounds(&card, false);
+        assert!((hover.width - 320.0).abs() < 0.5, "{hover:?}");
+        let pinned = bounds(&card, true);
+        assert!(pinned.height > hover.height, "{pinned:?} {hover:?}");
+        assert!(pinned.height <= 400.0 - 8.0, "{pinned:?}");
     }
 
     #[test]

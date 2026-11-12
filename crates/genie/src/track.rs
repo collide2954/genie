@@ -8,7 +8,8 @@ use genie_core::signal::Summary;
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::features::Kind;
-use genie_formats::{bbi, tabix};
+use genie_formats::fields::Field;
+use genie_formats::{bbi, bed, gff, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::{Scale, Style};
@@ -855,6 +856,26 @@ fn fits(name: &str, size: u64) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
+    match &source.format {
+        Format::Features(FeatureFile::BigBed { index }) => index.fields(feature.extra()),
+        Format::Features(FeatureFile::Indexed { kind, .. } | FeatureFile::Table { kind, .. }) => {
+            match kind {
+                Kind::Bed => bed::fields(feature.extra()),
+                Kind::Gff | Kind::Gtf => gff::fields(feature.extra()),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
+    match &source.format {
+        Format::Variants(file) => vcf::fields(&variant.info, file.infos()),
+        _ => Vec::new(),
+    }
 }
 
 pub fn load(

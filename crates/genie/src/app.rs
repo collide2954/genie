@@ -1509,6 +1509,7 @@ mod tests {
             contig: "chr1".to_owned(),
             detail: crate::card::Detail::Feature(feature),
             at: Point::ORIGIN,
+            fields: Vec::new(),
         });
         assert_eq!(
             genie.copy_text().as_deref(),
@@ -3773,6 +3774,7 @@ mod tests {
             format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples: vec!["NA1".to_owned(), "NA2".to_owned()],
+                infos: vec![("DP".to_owned(), "Read depth".to_owned())],
             }),
         })
     }
@@ -4118,6 +4120,7 @@ mod tests {
             format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples,
+                infos: Vec::new(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
@@ -4149,7 +4152,8 @@ mod tests {
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
         assert!(shows(&genie, "rs20"));
         assert!(shows(&genie, "A > G · QUAL 50 · PASS"));
-        assert!(shows(&genie, "DP=12"));
+        assert!(shows(&genie, "Read depth"));
+        assert!(shows(&genie, "12"));
         assert!(!shows(&genie, "NA2 · homozygous alternate"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 28.0))));
         assert!(shows(&genie, "NA2 · homozygous alternate"));
@@ -4198,6 +4202,39 @@ mod tests {
                 .find(selector::id("swatches"))
                 .is_ok()
         );
+    }
+
+    fn with_fields() -> Genie {
+        let mut genie = with_track();
+        let region = Region::between(0, 1_000);
+        let values: Vec<String> = (1..=8).map(|index| format!("value{index}")).collect();
+        let feature = Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse)
+            .with_extra(values.join("\t"));
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, vec![feature]))),
+        );
+        genie
+    }
+
+    #[test]
+    fn hover_cards_show_six_fields_and_pinned_cards_show_all() {
+        let mut genie = with_fields();
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, 5.0))));
+        assert!(shows(&genie, "Column 13"));
+        assert!(shows(&genie, "value6"));
+        assert!(!shows(&genie, "value7"));
+        assert!(shows(&genie, "+2 fields: click to see all"));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(15.0, 5.0)));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        assert!(shows(&genie, "value8"));
+        assert!(!shows(&genie, "+2 fields: click to see all"));
+        let text = genie.copy_text().unwrap();
+        assert_eq!(text.lines().last(), Some("Column 20: value8"));
     }
 
     #[test]

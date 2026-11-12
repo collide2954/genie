@@ -15,10 +15,12 @@ pub enum VariantFile {
     Indexed {
         index: tabix::Index,
         samples: Vec<String>,
+        infos: Vec<(String, String)>,
     },
     Table {
         table: Table<Variant>,
         samples: Vec<String>,
+        infos: Vec<(String, String)>,
     },
 }
 
@@ -32,6 +34,7 @@ impl VariantFile {
             return Ok(Self::Table {
                 table,
                 samples: header.samples,
+                infos: header.infos,
             });
         }
         let index = tabix_index(location, name)?;
@@ -39,6 +42,7 @@ impl VariantFile {
         Ok(Self::Indexed {
             index,
             samples: header.samples,
+            infos: header.infos,
         })
     }
 
@@ -52,6 +56,12 @@ impl VariantFile {
     pub fn samples(&self) -> &[String] {
         match self {
             Self::Indexed { samples, .. } | Self::Table { samples, .. } => samples,
+        }
+    }
+
+    pub fn infos(&self) -> &[(String, String)] {
+        match self {
+            Self::Indexed { infos, .. } | Self::Table { infos, .. } => infos,
         }
     }
 
