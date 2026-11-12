@@ -1,11 +1,13 @@
 use genie_core::grouped;
+use genie_formats::fields::{Rule, Test};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
 use iced::widget::{Column, button, column, container, pin, row, space, text, text_input};
 use iced::{Alignment, Element, Length, Point, Size};
 
-use crate::app::{Message, Ranging, Renaming};
+use crate::app::{Filtering, Message, Ranging, Renaming};
+use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
 use crate::track::{Change, Grouping, Toggle, Track};
@@ -42,7 +44,74 @@ pub fn height(track: &Track, links: usize) -> f32 {
     } else {
         HEADING_HEIGHT + links as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
-    kind_height(track) + extra
+    let filter = &track.filter;
+    let rules = if filter.is_empty() {
+        0.0
+    } else {
+        let rows = filter.rules.len() + usize::from(filter.label.is_some());
+        HEADING_HEIGHT + rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
+    };
+    kind_height(track) + extra + rules
+}
+
+pub fn describe(rule: &Rule) -> String {
+    let label = &rule.label;
+    match &rule.test {
+        Test::Keep(value) => format!("{label} = {value}"),
+        Test::Hide(value) => format!("{label} ≠ {value}"),
+        Test::AtLeast(bound) => format!("{label} ≥ {bound}"),
+        Test::AtMost(bound) => format!("{label} ≤ {bound}"),
+    }
+}
+
+fn heading(words: &str) -> Element<'_, Message> {
+    container(text(words).size(11).style(style::muted))
+        .padding([3, 8])
+        .height(HEADING_HEIGHT - 1.0)
+        .into()
+}
+
+fn filter_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let (id, filter) = (track.id, &track.filter);
+    if filter.is_empty() {
+        return Vec::new();
+    }
+    let mut items = vec![heading("Filter")];
+    items.extend(
+        filter
+            .rules
+            .iter()
+            .enumerate()
+            .map(|(index, rule)| rule_row(id, index, rule)),
+    );
+    if filter.label.is_some() {
+        items.push(link(
+            "Label with name".to_owned(),
+            Message::Filter(id, Filtering::Label(None)),
+        ));
+    }
+    items.push(separator());
+    items
+}
+
+fn rule_row<'a>(id: u64, index: usize, rule: &Rule) -> Element<'a, Message> {
+    let words = container(text(describe(rule)).size(12).wrapping(text::Wrapping::None))
+        .width(Length::Fill)
+        .clip(true);
+    let remove = container(
+        button(icon::view(Icon::Close, 10.0))
+            .width(16)
+            .height(16)
+            .padding(0)
+            .style(style::ghost)
+            .on_press(Message::Filter(id, Filtering::Remove(index))),
+    )
+    .id(format!("rule-{index}"));
+    row![words, remove]
+        .spacing(4)
+        .padding([3, 8])
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn link<'a>(label: String, message: Message) -> Element<'a, Message> {
@@ -237,11 +306,7 @@ pub fn view<'a>(
     }
     if count > 0 {
         content = content
-            .push(
-                container(text(heading).size(11).style(style::muted))
-                    .padding([3, 8])
-                    .height(HEADING_HEIGHT - 1.0),
-            )
+            .push(self::heading(heading))
             .extend(
                 links
                     .into_iter()
@@ -249,18 +314,21 @@ pub fn view<'a>(
             )
             .push(separator());
     }
-    let content = content.extend(jumps(track)).extend([
-        self::item("Rename", Message::Rename(Renaming::Start(id)), false, true),
-        item("Move up", Change::Up, false, place.position > 0),
-        item(
-            "Move down",
-            Change::Down,
-            false,
-            place.position + 1 < place.count,
-        ),
-        separator(),
-        item("Remove", Change::Remove, false, true),
-    ]);
+    let content = content
+        .extend(filter_items(track))
+        .extend(jumps(track))
+        .extend([
+            self::item("Rename", Message::Rename(Renaming::Start(id)), false, true),
+            item("Move up", Change::Up, false, place.position > 0),
+            item(
+                "Move down",
+                Change::Down,
+                false,
+                place.position + 1 < place.count,
+            ),
+            separator(),
+            item("Remove", Change::Remove, false, true),
+        ]);
     card(content, place.at, place.window, height(track, count))
 }
 

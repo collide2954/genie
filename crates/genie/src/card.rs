@@ -4,12 +4,13 @@ use genie_core::alignment::{
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
-use genie_formats::fields::Field;
+use genie_formats::fields::{self, Field};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{button, column, container, pin, row, scrollable, text};
 use iced::{Alignment as Align, Element, Length, Point, Size};
 
-use crate::app::Message;
+use crate::app::{Choice, Message};
+use crate::context::Context;
 use crate::icon::{self, Icon};
 use crate::{font, style};
 
@@ -284,10 +285,40 @@ fn wrapped(text: &str, width: f32) -> usize {
     text.chars().count().div_ceil(per_line).max(1)
 }
 
-fn field_row<'a>(label: String, value: String) -> Element<'a, Message> {
+fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
+    let parts: Vec<String> = fields::items(value).map(str::to_owned).collect();
+    if parts.is_empty() {
+        return text(value.to_owned()).size(11).width(Length::Fill).into();
+    }
+    let count = parts.len();
+    let mut cell = row![].spacing(4).width(Length::Fill);
+    for (index, item) in parts.into_iter().enumerate() {
+        let shown = if index + 1 < count {
+            format!("{item},")
+        } else {
+            item.clone()
+        };
+        let label = label.to_owned();
+        cell = cell.push(Context::left(text(shown).size(11), move |at| {
+            Message::Field(Choice {
+                track,
+                label: label.clone(),
+                item: item.clone(),
+                at,
+            })
+        }));
+    }
+    cell.wrap().vertical_spacing(2).into()
+}
+
+fn field_row<'a>(track: Option<u64>, label: String, value: String) -> Element<'a, Message> {
+    let cell = match track {
+        Some(track) => items(track, &label, &value),
+        None => text(value).size(11).width(Length::Fill).into(),
+    };
     row![
         text(label).size(11).style(style::muted).width(LABEL_WIDTH),
-        text(value).size(11).width(Length::Fill),
+        cell,
     ]
     .spacing(FIELD_GAP)
     .into()
@@ -354,7 +385,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     )
     .extend(
         rows.into_iter()
-            .map(|(label, value)| field_row(label, value)),
+            .map(|(label, value)| field_row(pinned.then_some(card.track), label, value)),
     )
     .spacing(2);
     if hidden > 0 {

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
 use genie_formats::features::Entry;
+use genie_formats::fields::Rule;
 use genie_formats::http::Url;
 use iced::theme::Mode;
 use iced::time::Instant;
@@ -35,6 +36,7 @@ mod address;
 mod copy;
 mod export;
 mod figure;
+mod filters;
 mod navigation;
 mod offline;
 mod orders;
@@ -85,6 +87,7 @@ pub struct Genie {
     window: Size,
     hover: Option<Card>,
     pinned: Option<Card>,
+    field: Option<Choice>,
     pending: Vec<Location>,
     sweep: Option<(usize, f64, f64)>,
     pointed: Option<u64>,
@@ -152,6 +155,7 @@ impl Default for Genie {
             window: chrome::WINDOW,
             hover: None,
             pinned: None,
+            field: None,
             pending: Vec::new(),
             sweep: None,
             pointed: None,
@@ -599,6 +603,23 @@ pub enum Message {
     Rename(Renaming),
     Range(u64, Ranging),
     Panel(usize, Paneling),
+    Filter(u64, Filtering),
+    Field(Choice),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice {
+    pub track: u64,
+    pub label: String,
+    pub item: String,
+    pub at: Point,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Filtering {
+    Add(Rule),
+    Remove(usize),
+    Label(Option<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -844,6 +865,11 @@ impl Genie {
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
+            Message::Filter(id, filtering) => self.filter(id, filtering),
+            Message::Field(choice) => {
+                self.close_menus();
+                self.field = Some(choice);
+            }
             Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
                 self.scroll = offset;
@@ -1109,8 +1135,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Genie, Lane, Message, Offline, Paneling, Port, Ranging, Regions,
-        Renaming, Sweep, mouse_button, shortcut, window_event,
+        Address, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port, Ranging,
+        Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -1127,6 +1153,7 @@ mod tests {
         Change, Content, FeatureFile, Format, Grouping, Loaded, Options, ReadFile, SignalFile,
         Source, Toggle, VariantFile,
     };
+    use genie_formats::fields::{Rule, Test};
 
     fn source(name: &str) -> Arc<Source> {
         Arc::new(Source {
@@ -3726,13 +3753,14 @@ mod tests {
 
     #[test]
     fn menus_know_their_height() {
-        let tracks = [
+        let tracks = vec![
             with_track(),
             with_gff(),
             with_reads(),
             with_variants(),
             with_signal(),
             with_two_signals(),
+            with_filtered(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
@@ -4219,6 +4247,133 @@ mod tests {
             Ok(Arc::new(Loaded::features(region, vec![feature]))),
         );
         genie
+    }
+
+    fn with_two_features() -> Genie {
+        let mut genie = with_track();
+        accept_two(&mut genie);
+        genie
+    }
+
+    fn accept_two(genie: &mut Genie) {
+        let region = Region::between(0, 1_000);
+        let features = vec![
+            Feature::new("BRCA1", Region::between(10, 20), Strand::Reverse).with_extra("keep\t0.5"),
+            Feature::new("BRCA2", Region::between(40, 50), Strand::Forward)
+                .with_extra("other\t0.01"),
+        ];
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+    }
+
+    fn shown_names(genie: &Genie) -> Vec<String> {
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        match &track.data(0).unwrap().content {
+            Content::Features(annotation) => annotation
+                .features
+                .iter()
+                .map(|feature| feature.name().to_owned())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn field_rule(label: &str, test: Test) -> Rule {
+        Rule {
+            label: label.to_owned(),
+            test,
+        }
+    }
+
+    #[test]
+    fn filters_keep_matching_features_and_labels_use_a_field() {
+        let mut genie = with_two_features();
+        let keep = field_rule("Column 13", Test::Keep("keep".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(keep)));
+        assert_eq!(shown_names(&genie), ["BRCA1"]);
+        let least = field_rule("Column 14", Test::AtLeast(0.1));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(least)));
+        let _ = genie.update(Message::Filter(0, Filtering::Remove(0)));
+        assert_eq!(shown_names(&genie), ["BRCA1"]);
+        let _ = genie.update(Message::Filter(0, Filtering::Remove(0)));
+        assert_eq!(shown_names(&genie), ["BRCA1", "BRCA2"]);
+        let label = Filtering::Label(Some("Column 13".to_owned()));
+        let _ = genie.update(Message::Filter(0, label));
+        assert_eq!(shown_names(&genie), ["keep", "other"]);
+        let _ = genie.update(Message::Filter(0, Filtering::Label(None)));
+        assert_eq!(shown_names(&genie), ["BRCA1", "BRCA2"]);
+    }
+
+    fn press(genie: &mut Genie, words: &str) {
+        let mut ui = simulator(genie.view());
+        ui.click(words).unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+    }
+
+    fn with_filtered() -> Genie {
+        let mut genie = with_two_features();
+        let least = field_rule("Column 14", Test::AtLeast(0.1));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(least)));
+        let label = Filtering::Label(Some("Column 13".to_owned()));
+        let _ = genie.update(Message::Filter(0, label));
+        genie
+    }
+
+    #[test]
+    fn pinned_card_values_set_filters_and_labels() {
+        let mut genie = with_two_features();
+        let _ = genie.update(Message::TrackClicked(0, 0, over(15.0, 5.0)));
+        press(&mut genie, "keep");
+        assert!(shows(&genie, "Keep only keep"));
+        assert!(!shows(&genie, "At least keep"));
+        press(&mut genie, "Keep only keep");
+        assert_eq!(shown_names(&genie), ["BRCA1"]);
+        press(&mut genie, "0.5");
+        assert!(shows(&genie, "At most 0.5"));
+        press(&mut genie, "Label with this field");
+        assert_eq!(shown_names(&genie), ["0.5"]);
+        press(&mut genie, "0.5");
+        let _ = genie.update(Message::MenuDismissed);
+        assert!(!shows(&genie, "At most 0.5"));
+    }
+
+    #[test]
+    fn the_track_menu_lists_rules_and_removes_them() {
+        let mut genie = with_filtered();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Column 14 ≥ 0.1"));
+        press(&mut genie, "Label with name");
+        assert_eq!(shown_names(&genie), ["BRCA1"]);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(!shows(&genie, "Label with name"));
+        let mut ui = simulator(genie.view());
+        ui.click(selector::id("rule-0")).unwrap();
+        for message in ui.into_messages() {
+            let _ = genie.update(message);
+        }
+        assert_eq!(shown_names(&genie), ["BRCA1", "BRCA2"]);
+    }
+
+    #[test]
+    fn new_data_follows_the_filter() {
+        let mut genie = with_track();
+        let hide = field_rule("Column 13", Test::Hide("keep".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(hide)));
+        accept_two(&mut genie);
+        assert_eq!(shown_names(&genie), ["BRCA2"]);
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let (_, all) = track.slot.loaded.as_ref().unwrap();
+        assert!(
+            matches!(&all.content, Content::Features(annotation) if annotation.features.len() == 2)
+        );
     }
 
     #[test]

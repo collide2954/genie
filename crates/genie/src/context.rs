@@ -6,6 +6,7 @@ use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vect
 pub struct Context<'a, Message> {
     content: Element<'a, Message>,
     on_open: Box<dyn Fn(Point) -> Message + 'a>,
+    button: mouse::Button,
 }
 
 impl<'a, Message> Context<'a, Message> {
@@ -16,6 +17,17 @@ impl<'a, Message> Context<'a, Message> {
         Self {
             content: content.into(),
             on_open: Box::new(on_open),
+            button: mouse::Button::Right,
+        }
+    }
+
+    pub fn left(
+        content: impl Into<Element<'a, Message>>,
+        on_open: impl Fn(Point) -> Message + 'a,
+    ) -> Self {
+        Self {
+            button: mouse::Button::Left,
+            ..Self::new(content, on_open)
         }
     }
 }
@@ -80,7 +92,8 @@ impl<Message> Widget<Message, Theme, Renderer> for Context<'_, Message> {
         if shell.is_event_captured() {
             return;
         }
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event
+        if let Event::Mouse(mouse::Event::ButtonPressed(button)) = event
+            && *button == self.button
             && let Some(position) = cursor.position_over(layout.bounds())
         {
             shell.publish((self.on_open)(position));
@@ -117,6 +130,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Context<'_, Message> {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        if self.button == mouse::Button::Left && cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::Pointer;
+        }
         self.content.as_widget().mouse_interaction(
             &tree.children[0],
             layout,
@@ -161,8 +177,7 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     struct Opened(Point);
 
-    fn run(at: Point, button: mouse::Button) -> Vec<Opened> {
-        let target = Context::new(space().width(Length::Fill).height(40), Opened);
+    fn press(target: Context<'_, Opened>, at: Point, button: mouse::Button) -> Vec<Opened> {
         let element: Element<'_, Opened> = column![space().height(20), target].into();
         let mut ui = Simulator::with_size(Settings::default(), (200.0, 100.0), element);
         ui.point_at(at);
@@ -171,6 +186,22 @@ mod tests {
             Event::Mouse(mouse::Event::ButtonReleased(button)),
         ]);
         ui.into_messages().collect()
+    }
+
+    fn run(at: Point, button: mouse::Button) -> Vec<Opened> {
+        press(
+            Context::new(space().width(Length::Fill).height(40), Opened),
+            at,
+            button,
+        )
+    }
+
+    #[test]
+    fn left_contexts_report_left_presses() {
+        let target = || Context::left(space().width(Length::Fill).height(40), Opened);
+        let at = Point::new(30.0, 35.0);
+        assert_eq!(press(target(), at, mouse::Button::Left), [Opened(at)]);
+        assert_eq!(press(target(), at, mouse::Button::Right), []);
     }
 
     #[test]

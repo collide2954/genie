@@ -22,7 +22,7 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Source, Track};
 
 use super::view::{body_height, signal_columns, signal_scale};
-use super::{Genie, Lane, Message, Opening, Ranging, Renaming, Status};
+use super::{Filtering, Genie, Lane, Message, Opening, Ranging, Renaming, Status};
 
 pub(super) const TRACK_NAME: &str = "track-name";
 const BAD_RANGE: &str = "Type two numbers. The maximum must be larger than the minimum.";
@@ -127,8 +127,28 @@ impl Genie {
         Some((from, heights.len()))
     }
 
+    pub(super) fn filter(&mut self, id: u64, filtering: Filtering) {
+        self.close_menus();
+        self.on_session(|session| {
+            let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) else {
+                return;
+            };
+            let filter = &mut track.filter;
+            match filtering {
+                Filtering::Add(rule) if !filter.rules.contains(&rule) => filter.rules.push(rule),
+                Filtering::Remove(index) if index < filter.rules.len() => {
+                    filter.rules.remove(index);
+                }
+                Filtering::Label(label) => filter.label = label,
+                Filtering::Add(_) | Filtering::Remove(_) => {}
+            }
+            track.refilter();
+        });
+    }
+
     pub(super) fn close_menus(&mut self) {
         self.menu = None;
+        self.field = None;
         self.sequence_menu = None;
         self.copy_menu = None;
         self.popup = None;

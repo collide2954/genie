@@ -214,6 +214,7 @@ impl Genie {
             .or_else(|| self.address_view())
             .or_else(|| self.genome_menu())
             .or_else(|| self.catalog_menu())
+            .or_else(|| self.field_menu())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)

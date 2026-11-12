@@ -8,7 +8,7 @@ use genie_core::signal::Summary;
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::features::Kind;
-use genie_formats::fields::Field;
+use genie_formats::fields::{self, Field, Rule};
 use genie_formats::{bbi, bed, gff, tabix, vcf};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
@@ -463,9 +463,22 @@ fn count(rows: &[usize]) -> usize {
     rows.iter().max().map_or(0, |row| row + 1)
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Filter {
+    pub rules: Vec<Rule>,
+    pub label: Option<String>,
+}
+
+impl Filter {
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty() && self.label.is_none()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Slot {
     pub loaded: Option<(usize, Arc<Loaded>)>,
+    pub shown: Option<Arc<Loaded>>,
     pub wanted: Option<(usize, Region)>,
     pub error: Option<String>,
     pub order: Option<(u64, Vec<usize>)>,
@@ -473,6 +486,7 @@ pub struct Slot {
 
 static EMPTY: Slot = Slot {
     loaded: None,
+    shown: None,
     wanted: None,
     error: None,
     order: None,
@@ -480,10 +494,8 @@ static EMPTY: Slot = Slot {
 
 impl Slot {
     pub fn data(&self, contig: usize) -> Option<&Loaded> {
-        self.loaded
-            .as_ref()
-            .filter(|(loaded, _)| *loaded == contig)
-            .map(|(_, data)| data.as_ref())
+        let (loaded, data) = self.loaded.as_ref()?;
+        (*loaded == contig).then(|| self.shown.as_deref().unwrap_or(data))
     }
 
     pub fn rows<'a>(&'a self, pile: &'a Pile) -> &'a [usize] {
@@ -504,6 +516,7 @@ pub struct Track {
     pub options: Options,
     pub plot: Plot,
     pub height: Option<f32>,
+    pub filter: Filter,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -523,9 +536,77 @@ impl Track {
             options: Options::default(),
             plot: Plot::default(),
             height: None,
+            filter: Filter::default(),
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    pub fn refilter(&mut self) {
+        let shown = self
+            .slot
+            .loaded
+            .as_ref()
+            .and_then(|(_, data)| self.derive(data));
+        self.slot.shown = shown;
+        for index in 0..self.extra.len() {
+            let shown = self.extra[index]
+                .loaded
+                .as_ref()
+                .and_then(|(_, data)| self.derive(data));
+            self.extra[index].shown = shown;
+        }
+    }
+
+    fn derive(&self, data: &Loaded) -> Option<Arc<Loaded>> {
+        if self.filter.is_empty() {
+            return None;
+        }
+        let content = match &data.content {
+            Content::Features(annotation) => {
+                let kept = annotation
+                    .features
+                    .iter()
+                    .filter_map(|feature| self.kept(feature))
+                    .collect();
+                Loaded::features(data.region, kept).content
+            }
+            Content::Variants(calls) => {
+                let rules = &self.filter.rules;
+                let variants = calls
+                    .variants
+                    .iter()
+                    .filter(|variant| fields::passes(rules, &variant_fields(&self.source, variant)))
+                    .cloned()
+                    .collect();
+                Content::Variants(Calls {
+                    variants,
+                    samples: calls.samples,
+                })
+            }
+            Content::Reads(_) | Content::Signal(_) => return None,
+        };
+        Some(Arc::new(Loaded {
+            region: data.region,
+            options: data.options,
+            content,
+        }))
+    }
+
+    fn kept(&self, feature: &Feature) -> Option<Feature> {
+        let fields = feature_fields(&self.source, feature);
+        if !fields::passes(&self.filter.rules, &fields) {
+            return None;
+        }
+        let label = self
+            .filter
+            .label
+            .as_ref()
+            .and_then(|label| fields.iter().find(|field| &field.label == label));
+        Some(match label {
+            Some(field) => feature.clone().with_name(field.value.clone()),
+            None => feature.clone(),
+        })
     }
 
     pub fn slot(&self, panel: usize) -> &Slot {
@@ -598,14 +679,16 @@ impl Track {
         let stale = result
             .as_ref()
             .is_ok_and(|data| data.options != self.options);
-        let slot = self.slot_mut(panel);
-        if slot.wanted != Some((contig, region)) || stale {
+        if self.slot(panel).wanted != Some((contig, region)) || stale {
             return;
         }
+        let shown = result.as_ref().ok().and_then(|data| self.derive(data));
+        let slot = self.slot_mut(panel);
         slot.wanted = None;
         match result {
             Ok(data) => {
                 slot.loaded = Some((contig, data));
+                slot.shown = shown;
                 slot.error = None;
                 slot.order = None;
             }
