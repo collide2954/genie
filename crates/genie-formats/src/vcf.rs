@@ -6,35 +6,94 @@ use genie_core::variant::{Call, Variant};
 
 use crate::bgzf::Bgzf;
 use crate::features::Entry;
+use crate::fields::{self, Field};
 use crate::tabix::Index;
 use crate::table::Table;
 use crate::text::lines;
 use crate::{Error, Reason};
 
 const INFO_LIMIT: usize = 400;
+const MORE: &str = "…";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Header {
     pub samples: Vec<String>,
+    pub infos: Vec<(String, String)>,
+}
+
+pub fn fields(info: &str, infos: &[(String, String)]) -> Vec<Field> {
+    let mut found = Vec::new();
+    for entry in info.split(';') {
+        if entry == MORE {
+            found.push(Field {
+                label: "More INFO".to_owned(),
+                value: format!("Cut at {INFO_LIMIT} characters"),
+            });
+            continue;
+        }
+        let (key, value) = entry.split_once('=').unwrap_or((entry, "yes"));
+        if matches!(key, "" | ".") || !fields::shown(value) {
+            continue;
+        }
+        let label = infos
+            .iter()
+            .find(|(id, _)| id == key)
+            .map_or_else(|| key.to_owned(), |(_, about)| fields::label(about, key));
+        found.push(Field {
+            label,
+            value: fields::plain(value),
+        });
+    }
+    found
+}
+
+fn info_line(line: &str) -> Option<(String, String)> {
+    let body = line.strip_prefix("##INFO=<")?;
+    let id = body
+        .strip_prefix("ID=")
+        .or_else(|| body.split_once(",ID=").map(|(_, rest)| rest))?;
+    let id = id.split([',', '>']).next()?.to_owned();
+    let about = body
+        .split_once("Description=\"")
+        .map_or_else(String::new, |(_, rest)| quoted(rest));
+    Some((id, about))
+}
+
+fn quoted(text: &str) -> String {
+    let mut found = String::new();
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => found.extend(characters.next()),
+            '"' => break,
+            _ => found.push(character),
+        }
+    }
+    found
 }
 
 pub fn header(mut reader: impl BufRead) -> Result<Header, Error> {
     let mut bytes = Vec::new();
+    let mut infos = Vec::new();
     loop {
         bytes.clear();
         if reader.read_until(b'\n', &mut bytes)? == 0 {
-            return Ok(Header::default());
+            return Ok(Header {
+                samples: Vec::new(),
+                infos,
+            });
         }
         let text = String::from_utf8_lossy(&bytes);
         let line = text.trim_end_matches(['\n', '\r']);
         if line.starts_with("##") {
+            infos.extend(info_line(line));
             continue;
         }
         let samples = line
             .strip_prefix('#')
             .map(|columns| columns.split('\t').skip(9).map(str::to_owned).collect())
             .unwrap_or_default();
-        return Ok(Header { samples });
+        return Ok(Header { samples, infos });
     }
 }
 
@@ -85,7 +144,7 @@ pub fn parse(line: &str) -> Result<Option<(&str, Variant)>, Reason> {
             alternates: alternates.split(',').map(str::to_owned).collect(),
             quality,
             filter: filter.to_owned(),
-            info: cut(info).to_owned(),
+            info: cut(info),
             calls,
         },
     )))
@@ -109,9 +168,11 @@ pub fn query<R: Read + Seek>(
 
 pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Error> {
     let mut samples = Vec::new();
+    let mut infos = Vec::new();
     let mut rows = Vec::new();
     lines(reader, |number, line| {
         if line.starts_with("##") {
+            infos.extend(info_line(line));
             return Ok(());
         }
         if line.starts_with('#') {
@@ -127,7 +188,7 @@ pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Erro
         }
         Ok(())
     })?;
-    Ok((Header { samples }, Table::new(rows)))
+    Ok((Header { samples, infos }, Table::new(rows)))
 }
 
 pub fn names(reader: impl BufRead) -> Result<Vec<Entry>, Error> {
@@ -176,21 +237,21 @@ fn field<'a>(fields: &mut Split<'a, char>) -> Result<&'a str, Reason> {
     fields.next().ok_or(Reason::MissingField)
 }
 
-fn cut(info: &str) -> &str {
+fn cut(info: &str) -> String {
     if info.len() <= INFO_LIMIT {
-        return info;
+        return info.to_owned();
     }
-    if let Some(at) = info.as_bytes()[..INFO_LIMIT]
+    let at = info.as_bytes()[..INFO_LIMIT]
         .iter()
-        .rposition(|byte| *byte == b';')
-    {
-        return &info[..at];
-    }
-    let mut end = INFO_LIMIT;
-    while !info.is_char_boundary(end) {
-        end -= 1;
-    }
-    &info[..end]
+        .rposition(|byte| *byte == b';');
+    let end = at.unwrap_or_else(|| {
+        let mut end = INFO_LIMIT;
+        while !info.is_char_boundary(end) {
+            end -= 1;
+        }
+        end
+    });
+    format!("{};{MORE}", &info[..end])
 }
 
 #[cfg(test)]
@@ -200,9 +261,10 @@ mod tests {
     use genie_core::Region;
     use genie_core::variant::Call;
 
-    use super::{extent, header, names, parse, query, read_table};
+    use super::{extent, fields, header, names, parse, query, read_table};
     use crate::bgzf::Bgzf;
     use crate::bgzf::tests::{block, file};
+    use crate::fields::Field;
     use crate::tabix::tests::{Bins, VCF, index};
     use crate::{Error, Reason};
 
@@ -263,9 +325,57 @@ mod tests {
             .join(";");
         let line = format!("chr1\t10\t.\tA\tG\t.\t.\t{info}");
         let (_, variant) = parse(&line).unwrap().unwrap();
-        assert!(variant.info.len() <= 400, "{}", variant.info.len());
-        assert!(variant.info.ends_with('1'), "{}", variant.info);
-        assert!(variant.info.starts_with("K0=1;K1=1"));
+        let kept = variant.info.strip_suffix(";…").unwrap();
+        assert!(kept.len() <= 400, "{}", kept.len());
+        assert!(kept.ends_with('1'), "{kept}");
+        assert!(kept.starts_with("K0=1;K1=1"));
+        let shown = pairs(fields(&variant.info, &[]));
+        assert_eq!(
+            shown.last().unwrap(),
+            &("More INFO".to_owned(), "Cut at 400 characters".to_owned())
+        );
+    }
+
+    fn pairs(fields: Vec<Field>) -> Vec<(String, String)> {
+        fields
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect()
+    }
+
+    const INFOS: &str = "##fileformat=VCFv4.2\n\
+        ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Total depth, all samples\">\n\
+        ##INFO=<ID=DB,Number=0,Type=Flag,Description=\"dbSNP membership\">\n\
+        ##INFO=<ID=NOTE,Number=1,Type=String,Description=\"Note with \\\"quotes\\\"\",Source=\"x\">\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+        chr1\t5\t.\tC\tT\t.\tPASS\tDP=14;DB\n";
+
+    #[test]
+    fn info_fields_take_their_labels_from_the_header() {
+        let expected = [
+            ("DP", "Total depth, all samples"),
+            ("DB", "dbSNP membership"),
+            ("NOTE", "Note with \"quotes\""),
+        ];
+        let expected: Vec<(String, String)> = expected
+            .iter()
+            .map(|(id, about)| ((*id).to_owned(), (*about).to_owned()))
+            .collect();
+        let found = header(INFOS.as_bytes()).unwrap();
+        assert_eq!(found.infos, expected);
+        let (table_header, _) = read_table(INFOS.as_bytes()).unwrap();
+        assert_eq!(table_header.infos, expected);
+        let shown = pairs(fields("DP=14;DB;AF=.;XX=1;.", &found.infos));
+        let wanted = [
+            ("Total depth", "14"),
+            ("dbSNP membership", "yes"),
+            ("XX", "1"),
+        ];
+        let wanted: Vec<(String, String)> = wanted
+            .iter()
+            .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
+            .collect();
+        assert_eq!(shown, wanted);
     }
 
     const TEXT: &str = "##fileformat=VCFv4.2\n\
