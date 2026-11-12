@@ -5,7 +5,7 @@ pub struct Field {
 }
 
 const LABEL_LIMIT: usize = 40;
-const STOPS: [&str; 7] = ["(", "{", "[", ",", ";", ":", ". "];
+const STOPS: [&str; 8] = ["(", "{", "[", ",", ";", ":", ". ", "|"];
 const ENTITIES: [(&str, &str); 6] = [
     ("&lt;", "<"),
     ("&gt;", ">"),
@@ -36,9 +36,61 @@ pub fn label(description: &str, name: &str) -> String {
     if label.chars().count() <= LABEL_LIMIT {
         return label;
     }
-    let mut short: String = label.chars().take(LABEL_LIMIT - 1).collect();
+    let mut short = String::new();
+    for word in label.split(' ') {
+        let length = short.chars().count() + usize::from(!short.is_empty()) + word.chars().count();
+        if length >= LABEL_LIMIT {
+            break;
+        }
+        if !short.is_empty() {
+            short.push(' ');
+        }
+        short.push_str(word);
+    }
+    if short.is_empty() {
+        short = label.chars().take(LABEL_LIMIT - 1).collect();
+    }
     short.push('…');
     short
+}
+
+pub fn linked(value: &str) -> &str {
+    match value.split_once('|') {
+        Some((id, text))
+            if !id.is_empty()
+                && !text.is_empty()
+                && id.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            text
+        }
+        _ => value,
+    }
+}
+
+fn numeric(text: &str) -> String {
+    let mut found = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("&#") {
+        found.push_str(&rest[..at]);
+        let tail = &rest[at + 2..];
+        let decoded = tail.find(';').and_then(|end| {
+            let digits = &tail[..end];
+            let code = match digits.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                None => digits.parse().ok(),
+            }?;
+            Some((char::from_u32(code)?, end))
+        });
+        if let Some((character, end)) = decoded {
+            found.push(character);
+            rest = &tail[end + 1..];
+        } else {
+            found.push_str("&#");
+            rest = tail;
+        }
+    }
+    found.push_str(rest);
+    found
 }
 
 pub fn shown(value: &str) -> bool {
@@ -59,15 +111,17 @@ pub fn plain(value: &str) -> String {
         }
         text.push(character);
     }
-    let text = ENTITIES.iter().fold(text, |text, (entity, character)| {
-        text.replace(entity, character)
-    });
-    text.trim().to_owned()
+    let text = ENTITIES
+        .iter()
+        .fold(numeric(&text), |text, (entity, character)| {
+            text.replace(entity, character)
+        });
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{label, plain, shown};
+    use super::{label, linked, plain, shown};
 
     #[test]
     fn labels_are_short_descriptions() {
@@ -113,8 +167,39 @@ mod tests {
                 "A description that goes on and on without any stop at all",
                 "long"
             ),
-            "A description that goes on and on witho…"
+            "A description that goes on and on…"
         );
+        assert_eq!(
+            label(
+                "VCF position|Can differ from ClinVar position (see VCF)",
+                "vcfDesc"
+            ),
+            "VCF position"
+        );
+        assert_eq!(
+            label(
+                "Number of projects reporting frequencies for this variant",
+                "freqSourceCount"
+            ),
+            "Number of projects reporting…"
+        );
+        assert_eq!(
+            label("Pneumonoultramicroscopicsilicovolcanoconiosis", "x"),
+            "Pneumonoultramicroscopicsilicovolcanoco…"
+        );
+    }
+
+    #[test]
+    fn link_values_keep_their_text() {
+        assert_eq!(linked("2597|GAPDH"), "GAPDH");
+        assert_eq!(
+            linked("4388052|VCV004388052 : NM_002046.7(GAPDH):c.-23-1G>T"),
+            "VCV004388052 : NM_002046.7(GAPDH):c.-23-1G>T"
+        );
+        assert_eq!(linked("Sarcoma|Melanoma"), "Sarcoma|Melanoma");
+        assert_eq!(linked("|x"), "|x");
+        assert_eq!(linked("12|"), "12|");
+        assert_eq!(linked("plain"), "plain");
     }
 
     #[test]
@@ -135,5 +220,10 @@ mod tests {
         );
         assert_eq!(plain("  a < b  "), "a < b");
         assert_eq!(plain("plain"), "plain");
+        assert_eq!(
+            plain("&#9734;&#9734;&#x2605;  based  on: -"),
+            "☆☆★ based on: -"
+        );
+        assert_eq!(plain("&#bad; &#99999999;"), "&#bad; &#99999999;");
     }
 }

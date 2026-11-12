@@ -142,7 +142,7 @@ table ccres
 AS
 printf '%s\n' \
     'chr1	100	400	EH1	0	.	100	400	255,167,0	pELS	2.5	enhP	<b>EH1</b>' \
-    'chr1	500	900	EH2	0	.	500	900	0,176,240	CTCF-only	1.25	CTCF	<b>EH2</b>' \
+    'chr1	500	900	EH2	0	.	500	900	0,176,240	CTCF-only	1.25	7|CTCF	<b>EH2</b>' \
     > ccres.tmp
 printf 'chr1\t20000\n' > extra.sizes
 bedToBigBed -tab -type=bed4+3 -as=snps.as -extraIndex=name snps.tmp extra.sizes snps.bb > /dev/null

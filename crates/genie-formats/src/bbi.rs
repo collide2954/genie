@@ -612,7 +612,7 @@ impl Index {
             };
             found.push(Field {
                 label,
-                value: fields::plain(value),
+                value: fields::plain(fields::linked(value)),
             });
         }
         found

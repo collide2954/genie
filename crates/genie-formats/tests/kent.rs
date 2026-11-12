@@ -309,6 +309,11 @@ fn big_bed_fields_take_their_labels_from_the_auto_sql() {
         .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
         .collect();
     assert_eq!(labeled(index.fields(ccres[0].extra())), expected);
+    let linked = labeled(index.fields(ccres[1].extra()));
+    assert_eq!(
+        linked.last(),
+        Some(&("Short class label".to_owned(), "CTCF".to_owned()))
+    );
     let mut reader = File::open(data("genes.pred.bb")).unwrap();
     let index = Index::read(&mut reader).unwrap();
     let genes = index
