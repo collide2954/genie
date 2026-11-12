@@ -17,6 +17,7 @@ pub struct Feature {
     blocks: Vec<Region>,
     coding: Option<Region>,
     color: Option<[u8; 3]>,
+    extra: String,
 }
 
 impl Feature {
@@ -28,6 +29,7 @@ impl Feature {
             blocks: Vec::new(),
             coding: Some(span),
             color: None,
+            extra: String::new(),
         }
     }
 
@@ -45,6 +47,16 @@ impl Feature {
 
     pub fn color(&self) -> Option<[u8; 3]> {
         self.color
+    }
+
+    #[must_use]
+    pub fn with_extra(mut self, extra: impl Into<String>) -> Self {
+        self.extra = extra.into();
+        self
+    }
+
+    pub fn extra(&self) -> &str {
+        &self.extra
     }
 
     #[must_use]
@@ -131,6 +143,13 @@ mod tests {
             feature.with_color(Some([200, 10, 0])).color(),
             Some([200, 10, 0])
         );
+    }
+
+    #[test]
+    fn features_keep_the_text_of_their_other_fields() {
+        let feature = Feature::new("a", region(10, 50), Strand::Unknown);
+        assert_eq!(feature.extra(), "");
+        assert_eq!(feature.with_extra("pELS\t2.5").extra(), "pELS\t2.5");
     }
 
     #[test]
