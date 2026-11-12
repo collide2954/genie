@@ -173,15 +173,6 @@ pub fn change(variant: &Variant) -> String {
     format!("{} > {}", allele(&variant.reference), alternates.join(", "))
 }
 
-pub fn variant_facts(variant: &Variant) -> String {
-    let mut facts = vec![change(variant)];
-    facts.extend(variant.quality.map(|quality| format!("QUAL {quality}")));
-    if variant.filter != "." {
-        facts.push(variant.filter.clone());
-    }
-    facts.join(" · ")
-}
-
 pub fn genotype(name: &str, call: Call) -> String {
     let words = match call {
         Call::Missing => "no call",
@@ -224,7 +215,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             } else {
                 variant.id.clone()
             };
-            let mut lines = vec![variant_facts(variant)];
+            let mut lines = vec![change(variant)];
             lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
             (title, variant.span, lines)
         }
@@ -452,7 +443,7 @@ mod tests {
 
     use super::{
         Card, Detail, change, cigar, coding, facts, genotype, pair_lines, plain, read_facts,
-        signal_facts, variant_facts, view,
+        signal_facts, view,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -494,9 +485,9 @@ mod tests {
     }
 
     #[test]
-    fn variants_show_change_quality_and_filter() {
+    fn variants_show_their_change() {
         let snv = site("A", &["G", "T"], Some(50.5), "DP=10;AF=0.5;MQ=60;FS=1.2");
-        assert_eq!(variant_facts(&snv), "A > G, T · QUAL 50.5 · PASS");
+        assert_eq!(change(&snv), "A > G, T");
         let long = site(&"ACGT".repeat(10), &["A"], None, ".");
         assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
         assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");

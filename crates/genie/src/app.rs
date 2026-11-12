@@ -4179,7 +4179,9 @@ mod tests {
         let mut genie = with_variants();
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
         assert!(shows(&genie, "rs20"));
-        assert!(shows(&genie, "A > G · QUAL 50 · PASS"));
+        assert!(shows(&genie, "A > G"));
+        assert!(shows(&genie, "Quality"));
+        assert!(shows(&genie, "PASS"));
         assert!(shows(&genie, "Read depth"));
         assert!(shows(&genie, "12"));
         assert!(!shows(&genie, "NA2 · homozygous alternate"));
@@ -4377,6 +4379,26 @@ mod tests {
                 .find("1 of 2")
                 .is_err()
         );
+    }
+
+    fn variant_count(genie: &Genie) -> usize {
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        match &track.data(0).unwrap().content {
+            Content::Variants(calls) => calls.variants.len(),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn variant_tracks_filter_by_quality_and_filter() {
+        let mut genie = with_variants();
+        let high = field_rule("Quality", Test::AtLeast(60.0));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(high)));
+        assert_eq!(variant_count(&genie), 0);
+        let _ = genie.update(Message::Filter(0, Filtering::Remove(0)));
+        let pass = field_rule("Filter", Test::Keep("PASS".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(pass)));
+        assert_eq!(variant_count(&genie), 1);
     }
 
     #[test]

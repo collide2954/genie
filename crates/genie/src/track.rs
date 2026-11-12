@@ -955,10 +955,24 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
 }
 
 pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
-    match &source.format {
-        Format::Variants(file) => vcf::fields(&variant.info, file.infos()),
-        _ => Vec::new(),
+    let Format::Variants(file) = &source.format else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    if let Some(quality) = variant.quality {
+        found.push(Field {
+            label: "Quality".to_owned(),
+            value: quality.to_string(),
+        });
     }
+    if fields::shown(&variant.filter) {
+        found.push(Field {
+            label: "Filter".to_owned(),
+            value: variant.filter.clone(),
+        });
+    }
+    found.extend(vcf::fields(&variant.info, file.infos()));
+    found
 }
 
 pub fn load(
