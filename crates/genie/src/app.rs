@@ -4363,6 +4363,23 @@ mod tests {
     }
 
     #[test]
+    fn filtered_tracks_show_a_count_chip() {
+        let mut genie = with_two_features();
+        assert!(!shows(&genie, "1 of 2"));
+        let keep = field_rule("Column 13", Test::Keep("keep".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(keep)));
+        assert!(shows(&genie, "1 of 2"));
+        press(&mut genie, "1 of 2");
+        assert!(shows(&genie, "Column 13 = keep"));
+        let session = genie.session.as_ref().unwrap();
+        assert!(
+            simulator(genie.export_view(session))
+                .find("1 of 2")
+                .is_err()
+        );
+    }
+
+    #[test]
     fn new_data_follows_the_filter() {
         let mut genie = with_track();
         let hide = field_rule("Column 13", Test::Hide("keep".to_owned()));

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
-use genie_core::{Viewport, grouped};
+use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
     alignments, features, overview, ruler, sequence, signal, translation, variants,
@@ -28,7 +28,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{Change, Content, Track};
+use crate::track::{Change, Content, Loaded, Track};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -50,6 +50,7 @@ pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
 pub(super) const DROP_HINT: &str = "Drop the file to open it";
 pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
 const CROWDED_HINT: &str = "There is too much to draw here. Zoom in.";
+const FILTER_HINT: &str = "Zoom in to use the filter";
 const DRAW_LIMIT: usize = 200_000;
 pub(super) const WELCOME: &str = "Pick a genome or open a reference.";
 const SPECIES_WIDTH: f32 = 72.0;
@@ -663,7 +664,7 @@ fn track_body<'a>(
             .on_hover(move |pointer| Message::TrackHovered(id, panel, pointer))
             .on_click(move |pointer| Message::TrackClicked(id, panel, pointer))
     };
-    match body(session, track, panel, shape, repack) {
+    let content = match body(session, track, panel, shape, repack) {
         Body::Hint(words) => hint(words),
         Body::Space(height) => space().width(Length::Fill).height(height).into(),
         Body::Scene(primitives, height) => interactive(primitives, height).into(),
@@ -674,7 +675,62 @@ fn track_body<'a>(
             }
             body.into()
         }
+    };
+    match count_chip(session, track, panel).filter(|_| !repack) {
+        Some(chip) => stack![
+            content,
+            container(chip)
+                .width(Length::Fill)
+                .align_right(Length::Fill)
+                .padding([1, 4]),
+        ]
+        .into(),
+        None => content,
     }
+}
+
+fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
+    match &data.content {
+        Content::Features(annotation) => Some(
+            annotation
+                .features
+                .iter()
+                .filter(|feature| feature.span().intersection(visible).is_some())
+                .count(),
+        ),
+        Content::Variants(calls) => Some(
+            calls
+                .variants
+                .iter()
+                .filter(|variant| variant.span.intersection(visible).is_some())
+                .count(),
+        ),
+        Content::Reads(_) | Content::Signal(_) => None,
+    }
+}
+
+fn count_chip<'a>(session: &Session, track: &Track, panel: usize) -> Option<Element<'a, Message>> {
+    if track.filter.rules.is_empty() {
+        return None;
+    }
+    let (contig, viewport) = session.view(panel);
+    let visible = viewport.visible();
+    let slot = track.slot(panel);
+    let all = slot
+        .loaded
+        .as_ref()
+        .filter(|(loaded, _)| *loaded == contig)?;
+    let words = match (
+        slot.data(contig).and_then(|data| in_view(data, visible)),
+        in_view(&all.1, visible),
+    ) {
+        (Some(shown), Some(total)) => {
+            format!("{} of {}", grouped(shown as u64), grouped(total as u64))
+        }
+        _ => FILTER_HINT.to_owned(),
+    };
+    let id = track.id;
+    Some(Context::left(label(words), move |at| Message::TrackMenu(id, at)).into())
 }
 
 pub(super) fn body(
@@ -1163,7 +1219,7 @@ fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, 
     .into()
 }
 
-fn label(name: &str) -> Element<'_, Message> {
+fn label<'a>(name: impl text::IntoFragment<'a>) -> Element<'a, Message> {
     container(text(name).size(LABEL_SIZE).style(style::muted))
         .padding([0, 4])
         .style(chip)
@@ -1173,7 +1229,7 @@ fn label(name: &str) -> Element<'_, Message> {
 fn name_label<'a>(session: &'a Session, track: &'a Track) -> Element<'a, Message> {
     let members = members(session, track);
     if members.is_empty() {
-        return label(&track.name);
+        return label(track.name.as_str());
     }
     let names = std::iter::once(track).chain(members).map(|track| {
         let hue = track.hue;
