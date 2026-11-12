@@ -170,6 +170,9 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 ## Tracks
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
+- A card also shows the other fields of the file: bigBed fields with the descriptions from the file, GFF3 and GTF attributes, and the BED columns after column 12 (Column 13 and so on). A variant card shows the INFO entries with the descriptions from the `##INFO` lines of the header. genie does not show empty fields, fields with the value `none` or `.`, and bigBed fields that UCSC hides (names that start with `_`).
+- A card shows up to 6 fields. Click to keep the card open and see all fields. If the card is taller than the window, scroll it. Ctrl+C (Cmd+C on macOS) copies the card with all fields.
+- genie keeps the first 400 characters of the INFO column of each variant. If it cuts the INFO column, the card shows **More INFO**.
 - Type a feature name or a variant ID in the locus box to go to it. The search ignores letter case. genie finds variant IDs in VCF files up to 50 MB. It also finds names in bigBed files that have a name index (`bedToBigBed -extraIndex=name`), and in other bigBed files up to 50 MB.
 - BED and bigBed features use the colors of the file (itemRgb). Right-click the track and turn off "Use file colors" to use the track color.
 - In a bigBed file of gene models (bigGenePred), each transcript shows its gene symbol. genie uses the field that the file describes as the gene symbol. If there is no such field, it uses `geneName2`, then `name2`. A track from the [UCSC track list](#ucsc-tracks) can set the field. For example, mm10 UCSC Genes uses `geneName`.
