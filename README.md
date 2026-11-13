@@ -236,8 +236,15 @@ To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera b
 To save one image for each region in a BED file, without a window:
 
 ```bash
-cargo run -p genie -- snapshot work.genie regions.bed pictures
+genie snapshot work.genie regions.bed pictures
 ```
+
+The command to use depends on how you got genie:
+
+- Windows: genie.exe has no console. In a terminal, use `genie-cli.exe` from the same folder, for example `& "$env:LOCALAPPDATA\genie\genie-cli.exe" snapshot work.genie regions.bed pictures` in PowerShell.
+- macOS: `/Applications/genie.app/Contents/MacOS/genie snapshot work.genie regions.bed pictures`.
+- Linux: `genie snapshot work.genie regions.bed pictures` after you install the .deb, or `./genie-0.1.0-linux-x86_64.AppImage snapshot work.genie regions.bed pictures`.
+- Source code: `cargo run -p genie -- snapshot work.genie regions.bed pictures`.
 
 - genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.
 - The name of an image is the name of the region (BED column 4) or the locus, for example `chr1_1001-2000.png`. If two regions have the same name, genie adds `-2`, `-3` and so on.
