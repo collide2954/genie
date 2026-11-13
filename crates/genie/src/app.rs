@@ -4534,6 +4534,30 @@ mod tests {
     }
 
     #[test]
+    fn chips_at_the_right_edge_stay_clear_of_the_scrollbar() {
+        let room = |genie: &Genie, words: &str| {
+            let mut ui = simulator(genie.view());
+            let lane = ui.find(selector::id("lane-0")).unwrap().bounds();
+            let chip = ui.find(words).unwrap().bounds();
+            lane.x + lane.width - (chip.x + chip.width)
+        };
+        let mut rows = with_rows(3);
+        let _ = rows.update(Message::Lane(0, Lane::Resized(-25.0)));
+        let _ = rows.update(Message::Lane(0, Lane::Resized(-30.0)));
+        let _ = rows.update(Message::Lane(0, Lane::Released));
+        let mut filtered = with_two_features();
+        let keep = field_rule("Column 13", Test::Keep("keep".to_owned()));
+        let _ = filtered.update(Message::Filter(0, Filtering::Add(keep)));
+        for (genie, words) in [(&rows, "+2 rows"), (&filtered, "1 of 2")] {
+            let room = room(genie, words);
+            assert!(
+                room >= genie_render::scene::LABEL_INSET - 0.5,
+                "{words}: {room}"
+            );
+        }
+    }
+
+    #[test]
     fn filtered_tracks_show_a_count_chip() {
         let mut genie = with_two_features();
         assert!(!shows(&genie, "1 of 2"));

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use genie_core::signal::{Bin, Summary, slice};
 use genie_core::{Region, Viewport};
 
-use crate::scene::{Hue, Paint, Primitive};
+use crate::scene::{Hue, LABEL_INSET, Paint, Primitive};
 
 pub const HEIGHT: f32 = 48.0;
 
@@ -251,7 +251,7 @@ fn line(
 
 fn range_label(scale: Scale, width: f32) -> Primitive {
     Primitive::Label {
-        x: width - 4.0,
+        x: width - LABEL_INSET,
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(label(scale)),
         size: RANGE_SIZE,
@@ -459,7 +459,7 @@ mod tests {
                 ([0.0, 0.0, 1.0, 2.0], Paint::Hue(Hue::Green)),
             ]
         );
-        assert_eq!(labels(&shown), [("0-4".to_owned(), 96.0)]);
+        assert_eq!(labels(&shown), [("0-4".to_owned(), 88.0)]);
     }
 
     #[test]
@@ -499,21 +499,21 @@ mod tests {
                 min: 0.0,
                 max: 12.5
             }),
-            [("0-12.5".to_owned(), 96.0)]
+            [("0-12.5".to_owned(), 88.0)]
         );
         assert_eq!(
             label(Scale {
                 min: -3.25,
                 max: 1250.0
             }),
-            [("-3.25 to 1250".to_owned(), 96.0)]
+            [("-3.25 to 1250".to_owned(), 88.0)]
         );
         assert_eq!(
             label(Scale {
                 min: 0.0,
                 max: 0.0312
             }),
-            [("0-0.031".to_owned(), 96.0)]
+            [("0-0.031".to_owned(), 88.0)]
         );
     }
 

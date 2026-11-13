@@ -163,6 +163,7 @@ impl Primitive {
 }
 
 const ARC_STEPS: usize = 24;
+pub const LABEL_INSET: f32 = 12.0;
 
 #[cfg(test)]
 mod tests {

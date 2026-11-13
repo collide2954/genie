@@ -3,7 +3,7 @@ use genie_render::{alignments, ruler, sequence, translation};
 use iced::Color;
 use iced::theme::Base;
 
-use crate::scene::CHIP;
+use crate::scene::{CHIP, CHIP_EDGE};
 use crate::svg::{self, Face, Svg};
 use crate::theme::{DataColors, Tokens, data, tokens};
 use crate::track::Track;
@@ -167,7 +167,7 @@ impl Page<'_> {
             };
             let width = svg::width(&words, LABEL_SIZE, Face::Ui) + 8.0;
             let at = (
-                self.width - 4.0 - width,
+                self.width - CHIP_EDGE - width,
                 bottom - 1.0 - LABEL_SIZE * LINE_HEIGHT,
             );
             self.chip(at, &[(&words, tokens.muted)]);

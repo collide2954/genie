@@ -682,7 +682,7 @@ fn track_body<'a>(
             container(chip)
                 .width(Length::Fill)
                 .align_right(Length::Fill)
-                .padding([1, 4]),
+                .padding(edge_padding()),
         ]
         .into(),
         None => content,
@@ -941,7 +941,7 @@ fn track_view<'a>(
                 .height(Length::Fill)
                 .align_right(Length::Fill)
                 .align_bottom(Length::Fill)
-                .padding([1, 4]),
+                .padding(edge_padding()),
         );
     }
     container(Context::new(layers, move |at| Message::TrackMenu(id, at)))
@@ -1158,6 +1158,15 @@ fn drop_line<'a>() -> Element<'a, Message> {
         .height(2)
         .style(|theme| container::background(tokens(theme).text))
         .into()
+}
+
+const fn edge_padding() -> Padding {
+    Padding {
+        top: 1.0,
+        right: scene::CHIP_EDGE,
+        bottom: 1.0,
+        left: 4.0,
+    }
 }
 
 fn note<'a>(hidden: usize) -> Element<'a, Message> {

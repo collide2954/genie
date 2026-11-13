@@ -5,7 +5,7 @@ use genie_core::pileup::{Coverage, Junction, Read};
 use genie_core::{Region, Strand, Viewport};
 
 use crate::features::Mode;
-use crate::scene::{Align, Base, Font, Hue, Paint, Primitive, Shade};
+use crate::scene::{Align, Base, Font, Hue, LABEL_INSET, Paint, Primitive, Shade};
 
 pub const COVERAGE_HEIGHT: f32 = 36.0;
 pub const JUNCTION_HEIGHT: f32 = 32.0;
@@ -128,7 +128,7 @@ pub fn coverage(
         }
     }
     primitives.push(Primitive::Label {
-        x: viewport.width() as f32 - 4.0,
+        x: viewport.width() as f32 - LABEL_INSET,
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(format!("0-{max}")),
         size: RANGE_SIZE,
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(bars.len(), 20);
         assert_eq!(bars[0], ([10.0, 21.0, 1.0, 20.0], Paint::Coverage));
         assert_eq!(bars[10], ([30.0, 1.0, 1.0, 40.0], Paint::Coverage));
-        assert_eq!(labels(&primitives), [("0-4".to_owned(), 96.0)]);
+        assert_eq!(labels(&primitives), [("0-4".to_owned(), 88.0)]);
         assert_eq!(texts(&primitives), []);
     }
 

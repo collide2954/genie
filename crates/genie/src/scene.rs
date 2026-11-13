@@ -25,6 +25,7 @@ const PAIR: f32 = 0.85;
 const PLAIN: f32 = 0.6;
 const MARK_FLOOR: f32 = 0.25;
 pub const CHIP_PADDING: f32 = 4.0;
+pub const CHIP_EDGE: f32 = genie_render::scene::LABEL_INSET - CHIP_PADDING;
 pub const CHIP_LINE: f32 = 1.3;
 
 type Handler<'a, Message> = Box<dyn Fn(f32) -> Message + 'a>;
