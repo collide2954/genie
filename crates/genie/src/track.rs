@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
+use genie_core::methylation::{Methylation, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::signal::Summary;
 use genie_core::variant::Variant;
@@ -241,17 +242,24 @@ pub struct Pile {
     pub offset: u64,
     pub reads: Vec<Read>,
     pub junctions: Vec<Junction>,
+    pub methylation: Methylation<GroupKey>,
     pub rows: Vec<usize>,
     pub count: usize,
     pub groups: Vec<(usize, String)>,
     pub grouping: Grouping,
 }
 
-fn group_key(read: &Read, grouping: Grouping) -> (u8, i64) {
+pub type GroupKey = (u8, i64);
+
+fn group_key(read: &Read, grouping: Grouping) -> GroupKey {
+    alignment_group(&read.alignment, grouping)
+}
+
+fn alignment_group(alignment: &Alignment, grouping: Grouping) -> GroupKey {
     match grouping {
         Grouping::None => (0, 0),
-        Grouping::Phase => read.alignment.tags.phase.map_or((1, 0), |phase| (0, phase)),
-        Grouping::Strand => (u8::from(read.alignment.has(REVERSE)), 0),
+        Grouping::Phase => alignment.tags.phase.map_or((1, 0), |phase| (0, phase)),
+        Grouping::Strand => (u8::from(alignment.has(REVERSE)), 0),
     }
 }
 
@@ -365,6 +373,7 @@ pub struct Gather {
     coverage: Coverage,
     inserts: Inserts,
     junctions: Junctions,
+    methylation: Tally<GroupKey>,
     sampler: Sampler,
 }
 
@@ -381,6 +390,7 @@ impl Gather {
             coverage: Coverage::new(region),
             inserts: Inserts::new(contig),
             junctions: Junctions::default(),
+            methylation: Tally::default(),
             sampler: Sampler::new(WINDOW, limit),
         }
     }
@@ -389,6 +399,8 @@ impl Gather {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
+        let group = alignment_group(&alignment, self.options.group);
+        self.methylation.add(&alignment, group);
         self.sampler.push(alignment);
     }
 }
@@ -422,8 +434,13 @@ impl Loaded {
             coverage,
             inserts,
             junctions,
+            methylation,
             sampler,
         } = gather;
+        let methylation = methylation.finish(|position| {
+            let index = usize::try_from(position.checked_sub(offset)?).ok()?;
+            reference.get(index).copied()
+        });
         let region = coverage.region();
         let range = inserts.expected();
         let reads: Vec<Read> = sampler
@@ -457,6 +474,7 @@ impl Loaded {
                 offset,
                 reads,
                 junctions,
+                methylation,
                 rows,
                 count,
                 groups,
@@ -1427,6 +1445,46 @@ mod tests {
             .map(|junction| (junction.span, junction.count))
             .collect();
         assert_eq!(found, [(region(20, 70), 150)]);
+    }
+
+    #[test]
+    fn loaded_reads_tally_methylation_of_all_reads_per_group() {
+        use genie_core::methylation::Site;
+        use genie_core::modification::{Call, Code, Modifications};
+        let methylated = |phase: i64, chance: u8| {
+            let mut read = alignment(10, vec![(Op::Match, 10)]);
+            read.tags.phase = Some(phase);
+            read.tags.mods = Modifications {
+                codes: vec![Code {
+                    base: b'C',
+                    code: "m".to_owned(),
+                }],
+                calls: vec![Call {
+                    at: 2,
+                    code: 0,
+                    chance,
+                }],
+            };
+            read
+        };
+        let mut alignments: Vec<Alignment> = (0..150).map(|_| methylated(1, 200)).collect();
+        alignments.extend((0..30).map(|_| methylated(2, 10)));
+        let options = Options {
+            group: Grouping::Phase,
+            ..Options::default()
+        };
+        let loaded = piled(region(0, 1_000), alignments, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert!(pile.reads.len() < 180, "{}", pile.reads.len());
+        let site = |modified, total| Site {
+            position: 12,
+            modified,
+            total,
+        };
+        assert_eq!(pile.methylation.sites("5mC", (0, 1)), [site(150, 150)]);
+        assert_eq!(pile.methylation.sites("5mC", (0, 2)), [site(0, 30)]);
     }
 
     #[test]
