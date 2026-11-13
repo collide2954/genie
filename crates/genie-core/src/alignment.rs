@@ -180,6 +180,7 @@ pub struct Parts {
     pub insertions: Vec<(u64, u32)>,
     pub mismatches: Vec<Mismatch>,
     pub clips: Vec<Mismatch>,
+    pub modified: Vec<(u64, u8)>,
 }
 
 impl Alignment {
@@ -272,7 +273,43 @@ impl Alignment {
                 Op::HardClip | Op::Padding => {}
             }
         }
+        parts.modified = self.modified();
         parts
+    }
+
+    fn modified(&self) -> Vec<(u64, u8)> {
+        let calls = &self.tags.mods.calls;
+        let mut found: Vec<(u64, u8)> = Vec::new();
+        let (mut position, mut index, mut next) = (self.start, 0_u64, 0);
+        for &(op, length) in &self.cigar {
+            let size = u64::from(length);
+            if matches!(op, Op::Match | Op::Equal | Op::Diff) {
+                while let Some(call) = calls.get(next) {
+                    let at = u64::from(call.at);
+                    if at >= index + size {
+                        break;
+                    }
+                    next += 1;
+                    if at < index {
+                        continue;
+                    }
+                    let place = position + (at - index);
+                    match found.last_mut() {
+                        Some((last, chance)) if *last == place => {
+                            *chance = chance.saturating_add(call.chance);
+                        }
+                        _ => found.push((place, call.chance)),
+                    }
+                }
+            }
+            if op.consumes_reference() {
+                position += size;
+            }
+            if op.consumes_read() {
+                index += size;
+            }
+        }
+        found
     }
 }
 
@@ -401,7 +438,7 @@ impl Inserts {
 mod tests {
     use super::{
         Alignment, DUPLICATE, Filter, Gap, Inserts, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch,
-        Op, PAIRED, PROPER, Pairing, Part, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY,
+        Op, PAIRED, PROPER, Pairing, Part, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, Tags,
         UNMAPPED, parts,
     };
     use crate::{Region, Strand};
@@ -544,7 +581,51 @@ mod tests {
                         quality: 1
                     },
                 ],
+                modified: Vec::new(),
             }
+        );
+    }
+
+    #[test]
+    fn parts_place_modifications_on_the_reference() {
+        use crate::modification::{Call, Modifications};
+        let call = |at, code, chance| Call { at, code, chance };
+        let calls = vec![
+            call(0, 0, 90),
+            call(3, 0, 100),
+            call(3, 1, 50),
+            call(4, 0, 200),
+            call(4, 1, 100),
+            call(8, 0, 255),
+            call(10, 0, 7),
+            call(16, 0, 1),
+        ];
+        let read = Alignment {
+            bases: b"TTACGTAGGACGCGTTA".to_vec(),
+            tags: Tags {
+                mods: Modifications {
+                    codes: Vec::new(),
+                    calls,
+                },
+                ..Tags::default()
+            },
+            ..alignment(
+                0,
+                vec![
+                    (Op::SoftClip, 2),
+                    (Op::Match, 5),
+                    (Op::Insertion, 2),
+                    (Op::Match, 3),
+                    (Op::Deletion, 2),
+                    (Op::Equal, 3),
+                    (Op::Skip, 100),
+                    (Op::Diff, 2),
+                ],
+            )
+        };
+        assert_eq!(
+            read.parts(b"", 100).modified,
+            [(101, 150), (102, 255), (106, 7), (214, 1)]
         );
     }
 
