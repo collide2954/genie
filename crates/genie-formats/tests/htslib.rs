@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 
 use genie_core::alignment::{Alignment, Op};
+use genie_core::methylation::Tally;
+use genie_core::modification;
 use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::fai::{self, FaiRecord};
@@ -252,6 +255,53 @@ fn bam_modifications_match_samtools() {
     }
     expected.sort_unstable();
     assert!(expected.len() > 50, "{}", expected.len());
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn methylation_sites_match_samtools() {
+    let index = bai::Index::read(File::open(data("mods.bam.bai")).unwrap()).unwrap();
+    let mut reader = reader("mods.bam");
+    bam::header(&mut reader).unwrap();
+    let mut tally = Tally::default();
+    let whole = Region::new(0, WHOLE).unwrap();
+    bam::query(&index, &mut reader, 0, whole, |alignment| {
+        tally.add(&alignment, 0);
+        Ok(())
+    })
+    .unwrap();
+    let methylation = tally.finish(|_| None);
+    let mut expected: BTreeMap<(String, u64), (u32, u32)> = BTreeMap::new();
+    for line in fs::read_to_string(data("mods.bam.expected"))
+        .unwrap()
+        .lines()
+    {
+        let (position, column) = line.split_once('\t').unwrap();
+        let position: u64 = position.parse::<u64>().unwrap() - 1;
+        for group in column.split('[').skip(1) {
+            let group = group.split(']').next().unwrap();
+            let code = group.chars().find(char::is_ascii_alphabetic).unwrap();
+            let name = modification::name(&code.to_string());
+            let value: u8 = group
+                .chars()
+                .filter(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap();
+            let entry = expected.entry((name, position)).or_default();
+            entry.1 += 1;
+            if value >= modification::MODIFIED_FROM {
+                entry.0 += 1;
+            }
+        }
+    }
+    let mut found = BTreeMap::new();
+    for name in methylation.names() {
+        for site in methylation.sites(name, 0) {
+            found.insert((name.clone(), site.position), (site.modified, site.total));
+        }
+    }
+    assert!(expected.len() > 40, "{}", expected.len());
     assert_eq!(found, expected);
 }
 
