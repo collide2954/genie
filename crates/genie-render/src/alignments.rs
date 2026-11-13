@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use genie_core::alignment::{Alignment, Gap, Op, Pairing};
+use genie_core::methylation::Site;
 use genie_core::pileup::{Coverage, Junction, Read};
 use genie_core::{Region, Strand, Viewport};
 
@@ -145,6 +146,123 @@ fn pair_hue(pairing: Pairing) -> Option<Hue> {
         Pairing::Outward => Some(Hue::Purple),
         Pairing::Elsewhere => Some(Hue::Orange),
     }
+}
+
+pub const METHYLATION_HEIGHT: f32 = 20.0;
+const PERCENT_RANGE: &str = "0-100 %";
+
+pub type MethylationLane = (Option<String>, Vec<Site>);
+
+pub fn methylation_height(lanes: usize) -> f32 {
+    lanes as f32 * (METHYLATION_HEIGHT + 1.0)
+}
+
+pub fn methylation(viewport: Viewport, lanes: &[MethylationLane]) -> Vec<Primitive> {
+    let pixels = 1.0 / viewport.scale();
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let mut primitives = Vec::new();
+    for (index, (label, sites)) in lanes.iter().enumerate() {
+        let top = index as f32 * (METHYLATION_HEIGHT + 1.0);
+        let shown = sites.iter().filter(|site| shows(viewport, site.position));
+        if pixels >= 1.0 {
+            let width = cell(pixels);
+            for site in shown {
+                share_bar(&mut primitives, top, px(site.position), width, site.share());
+            }
+        } else {
+            let mut column: Option<(i64, f32, f32)> = None;
+            for site in shown {
+                let here = px(site.position).floor() as i64;
+                match &mut column {
+                    Some((at, sum, count)) if *at == here => {
+                        *sum += site.share();
+                        *count += 1.0;
+                    }
+                    _ => {
+                        if let Some((at, sum, count)) = column {
+                            share_bar(&mut primitives, top, at as f32, 1.0, sum / count);
+                        }
+                        column = Some((here, site.share(), 1.0));
+                    }
+                }
+            }
+            if let Some((at, sum, count)) = column {
+                share_bar(&mut primitives, top, at as f32, 1.0, sum / count);
+            }
+        }
+        if let Some(label) = label {
+            primitives.push(Primitive::Text {
+                x: 4.0,
+                y: top + GROUP_SIZE / 2.0 + 1.0,
+                content: Cow::Owned(label.clone()),
+                size: GROUP_SIZE,
+                paint: Paint::Muted,
+                font: Font::Ui,
+                align: Align::Start,
+            });
+        }
+    }
+    if !lanes.is_empty() {
+        primitives.push(Primitive::Label {
+            x: viewport.width() as f32 - LABEL_INSET,
+            y: RANGE_SIZE / 2.0 + 1.0,
+            content: Cow::Borrowed(PERCENT_RANGE),
+            size: RANGE_SIZE,
+        });
+    }
+    primitives
+}
+
+fn shows(viewport: Viewport, position: u64) -> bool {
+    let visible = viewport.visible();
+    position >= visible.start() && position < visible.end()
+}
+
+fn share_bar(primitives: &mut Vec<Primitive>, top: f32, x: f32, width: f32, share: f32) {
+    let usable = METHYLATION_HEIGHT - 1.0;
+    let modified = share * usable;
+    let rest = usable - modified;
+    if rest > 0.0 {
+        primitives.push(Primitive::Rect {
+            x,
+            y: top + 1.0,
+            width,
+            height: rest,
+            paint: Paint::Plain(Shade::Half),
+        });
+    }
+    if modified > 0.0 {
+        primitives.push(Primitive::Rect {
+            x,
+            y: top + 1.0 + rest,
+            width,
+            height: modified,
+            paint: Paint::Modified(u8::MAX),
+        });
+    }
+}
+
+pub fn methylation_hit(
+    viewport: Viewport,
+    lanes: &[MethylationLane],
+    x: f32,
+    y: f32,
+) -> Option<(usize, Site)> {
+    if y < 0.0 {
+        return None;
+    }
+    let index = (y / (METHYLATION_HEIGHT + 1.0)) as usize;
+    let (_, sites) = lanes.get(index)?;
+    let found = if 1.0 / viewport.scale() >= 1.0 {
+        let at = viewport.to_bp(f64::from(x)).floor().max(0.0) as u64;
+        sites.iter().find(|site| site.position == at)
+    } else {
+        let column = x.floor() as i64;
+        sites
+            .iter()
+            .find(|site| viewport.to_px(site.position as f64).floor() as i64 == column)
+    };
+    found.map(|site| (index, *site))
 }
 
 pub fn height(count: usize, groups: &[(usize, String)], mode: Mode) -> f32 {
@@ -513,9 +631,79 @@ mod tests {
     use genie_core::pileup::{Coverage, Junction, Read};
     use genie_core::{Region, Strand, Viewport};
 
-    use super::{LIMIT, Look, arc_hit, arcs, coverage, fit, hit, reads};
+    use genie_core::methylation::Site;
+
+    use super::{
+        LIMIT, Look, arc_hit, arcs, coverage, fit, hit, methylation, methylation_height,
+        methylation_hit, reads,
+    };
     use crate::features::Mode;
     use crate::scene::{Base, Hue, Paint, Primitive, Shade};
+
+    fn site(position: u64, modified: u32, total: u32) -> Site {
+        Site {
+            position,
+            modified,
+            total,
+        }
+    }
+
+    fn lanes() -> Vec<(Option<String>, Vec<Site>)> {
+        vec![
+            (
+                Some("Haplotype 1".to_owned()),
+                vec![site(10, 3, 4), site(20, 0, 2)],
+            ),
+            (Some("Haplotype 2".to_owned()), vec![site(10, 1, 1)]),
+        ]
+    }
+
+    #[test]
+    fn methylation_lanes_show_the_modified_share_of_each_site() {
+        let primitives = methylation(view(0, 100), &lanes());
+        assert_eq!(
+            rects(&primitives),
+            [
+                ([10.0, 1.0, 1.0, 4.75], Paint::Plain(Shade::Half)),
+                ([10.0, 5.75, 1.0, 14.25], Paint::Modified(255)),
+                ([20.0, 1.0, 1.0, 19.0], Paint::Plain(Shade::Half)),
+                ([10.0, 22.0, 1.0, 19.0], Paint::Modified(255)),
+            ]
+        );
+        assert_eq!(
+            texts(&primitives),
+            [
+                ("Haplotype 1".to_owned(), 4.0),
+                ("Haplotype 2".to_owned(), 4.0)
+            ]
+        );
+        assert_eq!(labels(&primitives), [("0-100 %".to_owned(), 88.0)]);
+        assert!((methylation_height(2) - 42.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn methylation_lanes_average_the_sites_of_each_pixel() {
+        let lanes = vec![(None, vec![site(10, 3, 4), site(15, 1, 4)])];
+        let primitives = methylation(view(0, 1_000), &lanes);
+        assert_eq!(
+            rects(&primitives),
+            [
+                ([1.0, 1.0, 1.0, 9.5], Paint::Plain(Shade::Half)),
+                ([1.0, 10.5, 1.0, 9.5], Paint::Modified(255)),
+            ]
+        );
+        assert_eq!(texts(&primitives), []);
+    }
+
+    #[test]
+    fn methylation_sites_are_found_under_the_pointer() {
+        let lanes = lanes();
+        let at = |x, y| methylation_hit(view(0, 100), &lanes, x, y);
+        assert_eq!(at(10.5, 5.0), Some((0, site(10, 3, 4))));
+        assert_eq!(at(10.5, 25.0), Some((1, site(10, 1, 1))));
+        assert_eq!(at(50.0, 5.0), None);
+        assert_eq!(at(10.5, 50.0), None);
+    }
 
     const PAIRS: Look = Look {
         pairs: true,
