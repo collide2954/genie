@@ -212,6 +212,49 @@ fn bam_queries_match_samtools() {
     }
 }
 
+#[test]
+fn bam_modifications_match_samtools() {
+    let index = bai::Index::read(File::open(data("mods.bam.bai")).unwrap()).unwrap();
+    let mut reader = reader("mods.bam");
+    bam::header(&mut reader).unwrap();
+    let mut found = Vec::new();
+    let whole = Region::new(0, WHOLE).unwrap();
+    bam::query(&index, &mut reader, 0, whole, |alignment| {
+        found.extend(alignment.parts(&[], 0).modified);
+        Ok(())
+    })
+    .unwrap();
+    found.sort_unstable();
+    let mut expected = Vec::new();
+    for line in fs::read_to_string(data("mods.bam.expected"))
+        .unwrap()
+        .lines()
+    {
+        let (position, column) = line.split_once('\t').unwrap();
+        let position: u64 = position.parse().unwrap();
+        let mut letters = column.chars();
+        while let Some(letter) = letters.next() {
+            match letter {
+                '^' => {
+                    letters.next();
+                }
+                '[' => {
+                    let group: String = letters
+                        .by_ref()
+                        .take_while(|&letter| letter != ']')
+                        .collect();
+                    let value: String = group.chars().filter(char::is_ascii_digit).collect();
+                    expected.push((position - 1, value.parse::<u8>().unwrap()));
+                }
+                _ => {}
+            }
+        }
+    }
+    expected.sort_unstable();
+    assert!(expected.len() > 50, "{}", expected.len());
+    assert_eq!(found, expected);
+}
+
 fn tag(fields: &[&str], name: &str) -> String {
     fields
         .iter()

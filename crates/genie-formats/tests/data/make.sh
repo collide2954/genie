@@ -323,6 +323,57 @@ samtools sort -o pairs.bam pairs.sam 2> /dev/null
 samtools index pairs.bam
 rm pairs.sam
 
+awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function bases(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text substr("ACGT", draw(4) + 1, 1)
+    return text
+}
+function revcomp(text,    out, i, b) {
+    out = ""
+    for (i = length(text); i >= 1; i--) {
+        b = substr(text, i, 1)
+        out = out (b == "A" ? "T" : b == "C" ? "G" : b == "G" ? "C" : "A")
+    }
+    return out
+}
+function tags(original, base, code, every,    i, count, skipped, mm, ml) {
+    mm = base "+" code "?"
+    ml = ""
+    count = 0
+    skipped = 0
+    for (i = 1; i <= length(original); i++) {
+        if (substr(original, i, 1) != base) continue
+        if (count % every == 0) {
+            mm = mm "," skipped
+            ml = ml "," draw(256)
+            skipped = 0
+        } else skipped++
+        count++
+    }
+    return "MM:Z:" mm ";\tML:B:C" ml
+}
+function read(name, flag, start, cigar, text, base, code, every, extra) {
+    original = flag == 16 ? revcomp(text) : text
+    print name, flag, "chr1", start, 60, cigar, "*", 0, 0, text, "*", tags(original, base, code, every) extra
+}
+BEGIN {
+    seed = 31
+    print "@HD", "VN:1.6", "SO:unsorted"
+    print "@SQ", "SN:chr1", "LN:100000"
+    read("forward", 0, 101, "60M", bases(60), "C", "m", 1, "")
+    read("reverse", 16, 131, "60M", bases(60), "C", "m", 2, "")
+    read("indels", 0, 161, "5S30M2I20M3D10M5S", bases(35) "TT" bases(35), "C", "m", 1, "")
+    read("adenine", 16, 201, "4S50M", bases(54), "A", "a", 3, "")
+    read("clipped", 0, 241, "10H40M", bases(40), "C", "h", 1, "\tMN:i:40")
+    read("spliced", 0, 271, "30M10N30M", bases(60), "C", "m", 1, "")
+}' > mods.sam
+samtools sort -o mods.bam mods.sam 2> /dev/null
+samtools index mods.bam
+samtools mpileup -B -Q 0 -M mods.bam 2> /dev/null | cut -f 2,5 > mods.bam.expected
+rm mods.sam
+
 awk '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
 BEGIN {
