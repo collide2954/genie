@@ -55,7 +55,7 @@ jobs:
         run: cargo install cargo-packager --locked --version "$PACKAGER"
       - name: Build
         if: runner.os != 'macOS'
-        run: cargo build --release --locked -p genie
+        run: cargo build --release --locked -p genie -p genie-cli
       - name: Build a universal binary
         if: runner.os == 'macOS'
         env:
@@ -71,14 +71,17 @@ jobs:
           lipo -info target/release/genie
       - name: Linux tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfuse2
+        run: sudo apt-get update && sudo apt-get install -y libfuse2 shared-mime-info
       - name: Package
         working-directory: crates/genie
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -n 1)
           filter=".version = \"$version\""
           case "$RUNNER_OS" in
-            Windows) formats=nsis ;;
+            Windows)
+              formats=nsis
+              filter="$filter | .binaries += [{path: \"genie-cli\", main: false}]"
+              ;;
             macOS)
               formats=app,dmg
               filter="$filter | del(.fileAssociations)"
@@ -122,6 +125,62 @@ jobs:
               ;;
           esac
           ls -la dist
+      - name: Prepare the smoke test
+        run: |
+          mkdir smoke
+          data=crates/genie-formats/tests/data
+          cp $data/reference.fa.gz* $data/genes.bed.gz* $data/variants.vcf.gz $data/variants.vcf.gz.tbi \
+            $data/reads.bam $data/reads.bam.bai $data/signal.bw smoke/
+          printf '[session]\nreference = reference.fa.gz\nlocus = chr1:5001-8000\n' > smoke/smoke.genie
+          for track in genes.bed.gz variants.vcf.gz reads.bam signal.bw; do
+            printf '[track]\nfile = %s\n' "$track" >> smoke/smoke.genie
+          done
+          printf 'chr1\t5000\t8000\treads\nchr1\t0\t2000\tvariants\n' > smoke/regions.bed
+      - name: Smoke test the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $folder = Join-Path $env:LOCALAPPDATA 'genie'
+          Get-ChildItem $folder | Format-Table Name, Length
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          foreach ($name in 'genie.exe', 'genie-cli.exe') {
+            $dependents = & $dumpbin -nologo -dependents (Join-Path $folder $name)
+            $dependents | Where-Object { $_ -match '\.dll' } | ForEach-Object { "$name uses $($_.Trim())" }
+            if ($dependents -match '(?i)vcruntime|msvcp|api-ms-win-crt') { throw "$name needs the Visual C++ runtime" }
+          }
+          $headers = & $dumpbin -nologo -headers (Join-Path $folder 'genie.exe')
+          if (-not ($headers -match 'subsystem \(Windows GUI\)')) { throw 'genie.exe opens a console window' }
+          Add-Type -Namespace Win32 -Name Resources -MemberDefinition @'
+          [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+          public static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+          [DllImport("kernel32.dll", SetLastError = true)]
+          public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);
+          '@
+          $module = [Win32.Resources]::LoadLibraryEx((Join-Path $folder 'genie.exe'), [IntPtr]::Zero, 2)
+          if ([Win32.Resources]::FindResource($module, [IntPtr]1, [IntPtr]14) -eq [IntPtr]::Zero) { throw 'genie.exe has no icon' }
+          Get-ItemProperty 'HKCU:\Software\Classes\.genie'
+          & (Join-Path $folder 'genie-cli.exe') snapshot smoke\smoke.genie smoke\regions.bed smoke\out
+          if ($LASTEXITCODE -ne 0) { throw "The snapshot command ended with $LASTEXITCODE" }
+          Get-ChildItem smoke\out | Format-Table Name, Length
+      - name: Smoke test the disk image
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/genie dist/*.dmg
+          /tmp/genie/genie.app/Contents/MacOS/genie snapshot smoke/smoke.genie smoke/regions.bed smoke/out
+          hdiutil detach /tmp/genie
+          ls -la smoke/out
+      - name: Smoke test the Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./dist/genie_*_amd64.deb
+          genie snapshot smoke/smoke.genie smoke/regions.bed smoke/deb
+          grep 'application/x-genie-session:\*\.genie' /usr/share/mime/globs2
+          chmod +x dist/*.AppImage
+          ./dist/genie-*-linux-x86_64.AppImage snapshot smoke/smoke.genie smoke/regions.bed smoke/appimage
+          ls -la smoke/deb smoke/appimage
       - uses: actions/upload-artifact@v7
         with:
           name: packages-${{ runner.os }}
