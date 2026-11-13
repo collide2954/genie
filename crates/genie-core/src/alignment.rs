@@ -278,8 +278,21 @@ impl Alignment {
     }
 
     fn modified(&self) -> Vec<(u64, u8)> {
-        let calls = &self.tags.mods.calls;
         let mut found: Vec<(u64, u8)> = Vec::new();
+        for placed in self.placed_calls() {
+            match found.last_mut() {
+                Some((last, chance)) if *last == placed.position => {
+                    *chance = chance.saturating_add(placed.chance);
+                }
+                _ => found.push((placed.position, placed.chance)),
+            }
+        }
+        found
+    }
+
+    pub fn placed_calls(&self) -> Vec<Placed> {
+        let calls = &self.tags.mods.calls;
+        let mut found = Vec::new();
         let (mut position, mut index, mut next) = (self.start, 0_u64, 0);
         for &(op, length) in &self.cigar {
             let size = u64::from(length);
@@ -290,15 +303,12 @@ impl Alignment {
                         break;
                     }
                     next += 1;
-                    if at < index {
-                        continue;
-                    }
-                    let place = position + (at - index);
-                    match found.last_mut() {
-                        Some((last, chance)) if *last == place => {
-                            *chance = chance.saturating_add(call.chance);
-                        }
-                        _ => found.push((place, call.chance)),
+                    if at >= index {
+                        found.push(Placed {
+                            position: position + (at - index),
+                            code: call.code,
+                            chance: call.chance,
+                        });
                     }
                 }
             }
@@ -311,6 +321,13 @@ impl Alignment {
         }
         found
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placed {
+    pub position: u64,
+    pub code: u8,
+    pub chance: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,8 +455,8 @@ impl Inserts {
 mod tests {
     use super::{
         Alignment, DUPLICATE, Filter, Gap, Inserts, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch,
-        Op, PAIRED, PROPER, Pairing, Part, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, Tags,
-        UNMAPPED, parts,
+        Op, PAIRED, PROPER, Pairing, Part, Parts, Placed, QC_FAIL, REVERSE, SECONDARY,
+        SUPPLEMENTARY, Tags, UNMAPPED, parts,
     };
     use crate::{Region, Strand};
 
@@ -626,6 +643,22 @@ mod tests {
         assert_eq!(
             read.parts(b"", 100).modified,
             [(101, 150), (102, 255), (106, 7), (214, 1)]
+        );
+        let placed = |position, code, chance| Placed {
+            position,
+            code,
+            chance,
+        };
+        assert_eq!(
+            read.placed_calls(),
+            [
+                placed(101, 0, 100),
+                placed(101, 1, 50),
+                placed(102, 0, 200),
+                placed(102, 1, 100),
+                placed(106, 0, 7),
+                placed(214, 0, 1),
+            ]
         );
     }
 
