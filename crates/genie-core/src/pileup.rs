@@ -247,9 +247,27 @@ impl Junctions {
     }
 }
 
+pub fn motif_strand(reference: &[u8], offset: u64, intron: Region) -> Strand {
+    let pair = |at: u64| -> Option<[u8; 2]> {
+        let index = usize::try_from(at.checked_sub(offset)?).ok()?;
+        let bases = reference.get(index..index.checked_add(2)?)?;
+        Some([bases[0].to_ascii_uppercase(), bases[1].to_ascii_uppercase()])
+    };
+    let donor = pair(intron.start());
+    let acceptor = intron.end().checked_sub(2).and_then(pair);
+    match (donor, acceptor) {
+        (Some(donor), Some(acceptor)) => match (&donor, &acceptor) {
+            (b"GT" | b"GC", b"AG") | (b"AT", b"AC") => Strand::Forward,
+            (b"CT", b"AC" | b"GC") | (b"GT", b"AT") => Strand::Reverse,
+            _ => Strand::Unknown,
+        },
+        _ => Strand::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Coverage, Junction, Junctions, Read, Sampler, sort_rows};
+    use super::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
     use crate::alignment::{Alignment, Op, REVERSE};
     use crate::{Region, Strand};
 
@@ -297,6 +315,33 @@ mod tests {
                 junction(360, 380, 1, Strand::Reverse),
             ]
         );
+    }
+
+    #[test]
+    fn splice_motifs_give_the_strand() {
+        let mut reference = vec![b'A'; 80];
+        for (at, text) in [
+            (5, &b"gt"[..]),
+            (13, b"ag"),
+            (20, b"CT"),
+            (28, b"AC"),
+            (35, b"GC"),
+            (43, b"AG"),
+            (50, b"GT"),
+            (58, b"AT"),
+            (65, b"GG"),
+            (73, b"CC"),
+        ] {
+            reference[at..at + 2].copy_from_slice(text);
+        }
+        let strand = |start, end| motif_strand(&reference, 100, Region::between(start, end));
+        assert_eq!(strand(105, 115), Strand::Forward);
+        assert_eq!(strand(120, 130), Strand::Reverse);
+        assert_eq!(strand(135, 145), Strand::Forward);
+        assert_eq!(strand(150, 160), Strand::Reverse);
+        assert_eq!(strand(165, 175), Strand::Unknown);
+        assert_eq!(strand(170, 190), Strand::Unknown);
+        assert_eq!(strand(90, 110), Strand::Unknown);
     }
 
     #[test]

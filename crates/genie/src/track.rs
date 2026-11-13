@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
-use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, sort_rows};
+use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::signal::Summary;
 use genie_core::variant::Variant;
-use genie_core::{Assembly, Feature, Named, Names, Region};
+use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
 use genie_formats::{bbi, bed, gff, tabix, vcf};
@@ -427,6 +427,16 @@ impl Loaded {
         let members: Vec<usize> = (0..reads.len()).collect();
         let (rows, groups) = pack(&reads, &members, options.group);
         let count = count(&rows);
+        let junctions = junctions
+            .finish()
+            .into_iter()
+            .map(|mut junction| {
+                if junction.strand == Strand::Unknown {
+                    junction.strand = motif_strand(&reference, offset, junction.span);
+                }
+                junction
+            })
+            .collect();
         Self {
             region,
             options,
@@ -435,7 +445,7 @@ impl Loaded {
                 reference,
                 offset,
                 reads,
-                junctions: junctions.finish(),
+                junctions,
                 rows,
                 count,
                 groups,
@@ -1383,6 +1393,37 @@ mod tests {
             .map(|junction| (junction.span, junction.count))
             .collect();
         assert_eq!(found, [(region(20, 70), 150)]);
+    }
+
+    #[test]
+    fn untagged_junctions_take_the_strand_of_their_motif() {
+        use genie_core::Strand;
+        let wide = region(0, 200);
+        let mut reference = vec![b'A'; 200];
+        for (at, text) in [(20, b"GT"), (68, b"AG"), (100, b"GT"), (148, b"AG")] {
+            reference[at..at + 2].copy_from_slice(text);
+        }
+        let spliced = |start| {
+            alignment(
+                start,
+                vec![(Op::Match, 10), (Op::Skip, 50), (Op::Match, 10)],
+            )
+        };
+        let mut tagged = spliced(90);
+        tagged.tags.xs = Some(Strand::Reverse);
+        let mut gather = Gather::new(wide, 0, Options::default());
+        gather.add(spliced(10));
+        gather.add(tagged);
+        let loaded = Loaded::reads(gather, reference, 0);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let strands: Vec<Strand> = pile
+            .junctions
+            .iter()
+            .map(|junction| junction.strand)
+            .collect();
+        assert_eq!(strands, [Strand::Forward, Strand::Reverse]);
     }
 
     fn piled(region: Region, alignments: Vec<Alignment>, options: Options) -> Loaded {
