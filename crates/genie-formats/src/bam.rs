@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind, Read, Seek};
 
-use genie_core::alignment::{Alignment, Mate, Op, Tags, parts};
-use genie_core::{Region, Strand};
+use genie_core::alignment::{Alignment, Mate, Op, REVERSE, Tags, parts};
+use genie_core::{Region, Strand, modification};
 
 use crate::bai::Index;
 use crate::bgzf::Bgzf;
@@ -142,7 +142,7 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
         .collect::<Result<_, Error>>()?;
     let cigar = long_cigar(cigar, length, || &bytes[fields.at..]);
     let packed = fields.take(length.div_ceil(2))?;
-    let bases = (0..length)
+    let bases: Vec<u8> = (0..length)
         .map(|index| {
             let byte = packed[index / 2];
             let nibble = if index % 2 == 0 {
@@ -167,16 +167,19 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
             start,
             insert: i64::from(int(28)),
         });
+    let flags = short(14);
+    let clipped = cigar.iter().any(|(op, _)| *op == Op::HardClip);
+    let tags = tags(&bytes[fields.at..], &bases, flags & REVERSE != 0, clipped);
     let alignment = Alignment {
         name,
         start: u64::try_from(int(4)).unwrap_or(0),
-        flags: short(14),
+        flags,
         mapq: bytes[9],
         cigar,
         bases,
         qualities,
         mate,
-        tags: tags(&bytes[fields.at..]),
+        tags,
     };
     Ok((int(0), alignment))
 }
@@ -228,8 +231,9 @@ fn long_cigar<'a>(
     real.unwrap_or(cigar)
 }
 
-fn tags(aux: &[u8]) -> Tags {
+fn tags(aux: &[u8], bases: &[u8], reverse: bool, clipped: bool) -> Tags {
     let mut tags = Tags::default();
+    let (mut mm, mut ml, mut mn) = (None, None, None);
     walk(aux, |key, kind, value| match key {
         [b'H', b'P'] => tags.phase = integer(kind, value),
         [b'R', b'G'] if kind == b'Z' => {
@@ -242,8 +246,21 @@ fn tags(aux: &[u8]) -> Tags {
         }
         [b'X', b'S'] if kind == b'A' => tags.xs = strand(value),
         [b't', b's'] if kind == b'A' => tags.ts = strand(value),
+        [b'M', b'M' | b'm'] if kind == b'Z' => mm = Some(value.strip_suffix(&[0]).unwrap_or(value)),
+        [b'M', b'L' | b'l'] if kind == b'B' => {
+            if let [b'C', _, _, _, _, chances @ ..] = value {
+                ml = Some(chances);
+            }
+        }
+        [b'M', b'N'] => mn = integer(kind, value),
         _ => {}
     });
+    let fits = mn.map_or(!clipped, |length| {
+        usize::try_from(length).ok() == Some(bases.len())
+    });
+    if let (Some(mm), Some(ml), true) = (mm, ml, fits) {
+        tags.mods = modification::parse(&String::from_utf8_lossy(mm), ml, bases, reverse);
+    }
     tags
 }
 
@@ -255,7 +272,7 @@ fn strand(value: &[u8]) -> Option<Strand> {
     }
 }
 
-fn walk(mut aux: &[u8], mut each: impl FnMut([u8; 2], u8, &[u8])) {
+fn walk<'a>(mut aux: &'a [u8], mut each: impl FnMut([u8; 2], u8, &'a [u8])) {
     while let [first, second, kind, rest @ ..] = aux {
         let size = match kind {
             b'A' | b'c' | b'C' => 1,
@@ -467,6 +484,33 @@ mod tests {
             (read.tags.xs, read.tags.ts),
             (Some(Strand::Reverse), Some(Strand::Forward))
         );
+    }
+
+    #[test]
+    fn base_modifications_come_from_the_mm_and_ml_tags() {
+        let bases = "ACGTCGACCG";
+        let tagged = |flags: u16, cigar: &[(u32, u32)], extra: &[u8]| {
+            let mut bytes = body(40, "mods", flags, cigar, bases);
+            bytes.extend(bases.bytes().map(|_| 30));
+            bytes.extend(b"MMZC+m?,0,1;\0MLBC");
+            bytes.extend(2_u32.to_le_bytes());
+            bytes.extend([200, 30]);
+            bytes.extend(extra);
+            let mut reader = Cursor::new(sized(bytes));
+            let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
+            read.tags
+                .mods
+                .calls
+                .iter()
+                .map(|call| (call.at, call.chance))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tagged(0, &[(10, 0)], b""), [(1, 200), (7, 30)]);
+        assert_eq!(tagged(0x10, &[(10, 0)], b""), [(2, 30), (9, 200)]);
+        assert_eq!(tagged(0, &[(5, 5), (10, 0)], b""), []);
+        let length = b"MNi\x0a\0\0\0";
+        assert_eq!(tagged(0, &[(5, 5), (10, 0)], length), [(1, 200), (7, 30)]);
+        assert_eq!(tagged(0, &[(10, 0)], b"MNi\x0c\0\0\0"), []);
     }
 
     #[test]

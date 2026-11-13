@@ -1,3 +1,4 @@
+use crate::modification::Modifications;
 use crate::{Region, Strand};
 
 pub const PAIRED: u16 = 0x1;
@@ -72,6 +73,7 @@ pub struct Tags {
     pub parts: Vec<Part>,
     pub xs: Option<Strand>,
     pub ts: Option<Strand>,
+    pub mods: Modifications,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
