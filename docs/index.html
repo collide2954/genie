@@ -296,6 +296,28 @@ footer p { margin: 0 0 4px; }
     </div>
   </section>
 
+  <section id="reads">
+    <div class="wrap">
+      <h2>Long reads and RNA-seq</h2>
+      <p>Turn on <b>Color by modification</b> in the menu of a read track to show the 5mC and 5hmC calls of nanopore and PacBio reads: vermillion for modified, blue for not modified. Group the reads by haplotype to compare the two copies of a chromosome. Split reads list their other parts, and a click goes to them.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/snrpn-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/snrpn-light.png" width="1280" height="412" loading="lazy" alt="Nanopore reads of HG002 at the SNRPN imprinting center on chromosome 15, grouped by haplotype. At the SNURF and SNRPN promoter, the reads of haplotype 1 are methylated (vermillion) and the reads of haplotype 2 are not (blue).">
+        </picture>
+      </figure>
+      <p class="caption">HG002 nanopore reads at the SNRPN imprinting center: one copy is methylated, the other is not. Data: the JBrowse methylation demo.</p>
+      <p>In RNA-seq tracks, an arc joins the two ends of each splice junction. Higher and thicker arcs have more reads, and the color shows the strand. Put the pointer on an arc to see its reads and its intron length.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/ewsr1-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/ewsr1-light.png" width="1280" height="184" loading="lazy" alt="RNA-seq coverage at EWSR1 on chromosome 22 with splice junction arcs above the reads, labeled with their read counts, for example 2266 and 2027.">
+        </picture>
+      </figure>
+      <p class="caption">Splice junctions of EWSR1 in HG005 RNA-seq. Data: Google brain-genomics-public.</p>
+    </div>
+  </section>
+
   <section id="automation">
     <div class="wrap">
       <h2>Automation</h2>
