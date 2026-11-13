@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use iced::widget::{button, column, container, mouse_area, row, space, text, text_input, tooltip};
-use iced::{Alignment, Border, Element, Length, Padding, Size, Task, mouse, window};
+use iced::{Alignment, Element, Length, Padding, Size, Task, mouse, window};
 
 use crate::app::{Message, Regions};
 use crate::icon::{self, Icon};
 use crate::shortcuts::Command;
 use crate::theme::tokens;
-use crate::{font, style};
+use crate::{brand, font, style};
 
 pub const BAR_HEIGHT: f32 = 32.0;
 pub const LOCUS_WIDTH: f32 = 240.0;
@@ -22,6 +22,7 @@ const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const WINDOW_ICON: f32 = 16.0;
 const GRIP: f32 = 6.0;
 const BRAND_WIDTH: f32 = 60.0;
+const LOGO: f32 = 14.0;
 const BRAND_GAP: f32 = 12.0;
 const NAVIGATION_GAP: f32 = 6.0;
 const END_GAP: f32 = 6.0;
@@ -194,14 +195,7 @@ pub fn title_bar<'a>(
     appearance: Icon,
     locus: Option<LocusField>,
 ) -> Element<'a, Message> {
-    let logo = container(space())
-        .width(14)
-        .height(14)
-        .style(|theme| container::Style {
-            background: Some(tokens(theme).accent.into()),
-            border: Border::default().rounded(4),
-            ..container::Style::default()
-        });
+    let logo = brand::view(LOGO, None);
     let brand = container(
         row![logo, text("genie").font(font::UI_STRONG).size(12)]
             .spacing(6)

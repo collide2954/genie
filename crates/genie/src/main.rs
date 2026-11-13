@@ -1,4 +1,5 @@
 mod app;
+mod brand;
 mod card;
 mod catalog;
 mod chrome;

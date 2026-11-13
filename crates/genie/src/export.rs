@@ -9,7 +9,7 @@ use iced::advanced::widget::Tree;
 use iced::advanced::{Layout, Renderer as _, layout};
 use iced::futures::executor::block_on;
 use iced::theme::Base;
-use iced::{Element, Pixels, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Element, Pixels, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::font;
 
@@ -24,10 +24,33 @@ pub struct Image {
     pub cut: bool,
 }
 
-pub fn render<Message>(
+pub fn render<Message>(element: Element<'_, Message>, width: f32, theme: &Theme) -> Option<Image> {
+    let limits = Size::new(width, LIMIT + 1.0);
+    shoot(element, limits, theme, SCALE, theme.base().background_color)
+}
+
+#[cfg(test)]
+pub fn picture<Message>(
+    element: Element<'_, Message>,
+    size: f32,
+    scale: f32,
+    background: Color,
+) -> Option<Image> {
+    shoot(
+        element,
+        Size::new(size, size),
+        &Theme::Light,
+        scale,
+        background,
+    )
+}
+
+fn shoot<Message>(
     mut element: Element<'_, Message>,
-    width: f32,
+    limits: Size,
     theme: &Theme,
+    scale: f32,
+    background: Color,
 ) -> Option<Image> {
     let mut renderer = block_on(<Renderer as Headless>::new(
         font::UI,
@@ -35,33 +58,32 @@ pub fn render<Message>(
         Some("tiny-skia"),
     ))?;
     let mut tree = Tree::new(element.as_widget());
-    let limits = layout::Limits::new(Size::ZERO, Size::new(width, LIMIT + 1.0));
+    let limits = layout::Limits::new(Size::ZERO, limits);
     let node = element
         .as_widget_mut()
         .layout(&mut tree, &renderer, &limits);
     let cut = node.size().height > LIMIT;
     let bounds = Rectangle::with_size(Size::new(node.size().width, node.size().height.min(LIMIT)));
     let size = Size::new(
-        (bounds.width * SCALE).round() as u32,
-        (bounds.height * SCALE).round() as u32,
+        (bounds.width * scale).round() as u32,
+        (bounds.height * scale).round() as u32,
     );
     if size.width == 0 || size.height == 0 {
         return None;
     }
-    let base = theme.base();
     renderer.reset(bounds);
     element.as_widget().draw(
         &tree,
         &mut renderer,
         theme,
         &Style {
-            text_color: base.text_color,
+            text_color: theme.base().text_color,
         },
         Layout::new(&node),
         mouse::Cursor::Unavailable,
         &bounds,
     );
-    let rgba = renderer.screenshot(size, SCALE, base.background_color);
+    let rgba = renderer.screenshot(size, scale, background);
     Some(Image {
         width: size.width,
         height: size.height,
