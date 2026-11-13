@@ -601,6 +601,20 @@ impl Track {
         }
     }
 
+    pub fn modification_names(&self) -> Vec<String> {
+        match self.slot.loaded.as_ref().map(|(_, data)| &data.content) {
+            Some(Content::Reads(pile)) => pile.methylation.names().to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn shown_modification(&self) -> Option<String> {
+        match self.slot.loaded.as_ref().map(|(_, data)| &data.content) {
+            Some(Content::Reads(pile)) => self.methylation_name(pile),
+            _ => None,
+        }
+    }
+
     pub fn methylation_name(&self, pile: &Pile) -> Option<String> {
         let names = pile.methylation.names();
         self.modification
@@ -790,6 +804,7 @@ pub enum Change {
     Link,
     Pairs,
     Mods,
+    Modification(usize),
     Colors,
     Sort(usize, u64),
     Group(Grouping),
@@ -822,6 +837,12 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Mods => {
             let look = &mut tracks[position].plot.look;
             look.mods = !look.mods;
+        }
+        Change::Modification(index) => {
+            let track = &mut tracks[position];
+            if let Some(name) = track.modification_names().get(index) {
+                track.modification = Some(name.clone());
+            }
         }
         Change::Colors => {
             let plot = &mut tracks[position].plot;

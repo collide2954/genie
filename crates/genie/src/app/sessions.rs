@@ -119,6 +119,7 @@ impl Genie {
                     options: track.options,
                     plot: track.plot,
                     filter: track.filter.clone(),
+                    modification: track.modification.clone(),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

@@ -56,6 +56,7 @@ pub struct SavedTrack {
     pub options: Options,
     pub plot: Plot,
     pub filter: Filter,
+    pub modification: Option<String>,
 }
 
 impl SavedTrack {
@@ -70,6 +71,7 @@ impl SavedTrack {
             options: Options::default(),
             plot: Plot::default(),
             filter: Filter::default(),
+            modification: None,
         }
     }
 }
@@ -138,6 +140,7 @@ impl Saved {
                             .collect(),
                         label: section.value("label").map(str::to_owned),
                     },
+                    modification: section.value("methylation").map(str::to_owned),
                 })
             })
             .collect();
@@ -218,6 +221,9 @@ impl Saved {
             }
             if track.plot.look.mods {
                 entries.push(("modifications", "on".to_owned()));
+            }
+            if let Some(name) = &track.modification {
+                entries.push(("methylation", name.clone()));
             }
             if !track.plot.colors {
                 entries.push(("colors", "off".to_owned()));
@@ -421,6 +427,7 @@ mod tests {
                         ..Plot::default()
                     },
                     filter: Filter::default(),
+                    modification: Some("5hmC".to_owned()),
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
@@ -440,6 +447,7 @@ mod tests {
                         ],
                         label: Some("Gene symbol".to_owned()),
                     },
+                    modification: None,
                 },
                 SavedTrack {
                     location: Location::File(base().join("coverage.bw")),
@@ -460,6 +468,7 @@ mod tests {
                         ..Plot::default()
                     },
                     filter: Filter::default(),
+                    modification: None,
                 },
             ],
             regions: vec![

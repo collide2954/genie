@@ -3183,6 +3183,7 @@ mod tests {
             options: crate::track::Options::default(),
             plot: crate::track::Plot::default(),
             filter: crate::track::Filter::default(),
+            modification: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -3266,6 +3267,7 @@ mod tests {
                 options: crate::track::Options::default(),
                 plot: crate::track::Plot::default(),
                 filter: crate::track::Filter::default(),
+                modification: None,
             }],
             regions: Vec::new(),
         };
@@ -3859,6 +3861,34 @@ mod tests {
         assert_eq!(marks, [Paint::Modified(253), Paint::Modified(20)]);
     }
 
+    fn with_methylation() -> Genie {
+        let mut genie = opened();
+        add_reads(&mut genie, vec![methylated("meth1"), methylated("meth2")]);
+        let _ = genie.update(Message::TrackChanged(0, Change::Mods));
+        genie
+    }
+
+    #[test]
+    fn the_read_menu_picks_the_modification_of_the_lane() {
+        let mut genie = with_methylation();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for item in ["Show 5mC", "Show 5hmC"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+        let _ = genie.update(Message::TrackChanged(0, Change::Modification(1)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.modification.as_deref(), Some("5hmC"));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[0].modification.as_deref(), Some("5hmC"));
+        let mut restored = opened();
+        restored.restoring = Some(saved);
+        restored.waiting = 1;
+        add_reads(&mut restored, vec![methylated("meth1")]);
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.modification.as_deref(), Some("5hmC"));
+        assert!(track.plot.look.mods);
+    }
+
     #[test]
     fn methylation_lanes_sit_above_the_reads_and_give_site_cards() {
         use genie_render::alignments::methylation_height;
@@ -3963,6 +3993,7 @@ mod tests {
             with_track(),
             with_gff(),
             with_reads(),
+            with_methylation(),
             with_variants(),
             with_signal(),
             with_two_signals(),

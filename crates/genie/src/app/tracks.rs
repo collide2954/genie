@@ -797,6 +797,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) {
     track.options = found.options;
     track.plot = found.plot;
     track.filter = found.filter.clone();
+    track.modification.clone_from(&found.modification);
 }
 
 pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {

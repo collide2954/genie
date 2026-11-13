@@ -125,9 +125,18 @@ fn link<'a>(label: String, message: Message) -> Element<'a, Message> {
         .into()
 }
 
+fn modification_choices(track: &Track) -> Vec<String> {
+    let names = track.modification_names();
+    if track.plot.look.mods && names.len() > 1 {
+        names
+    } else {
+        Vec::new()
+    }
+}
+
 fn kind_height(track: &Track) -> f32 {
     if track.source.has_reads() {
-        READS_HEIGHT
+        READS_HEIGHT + modification_choices(track).len() as f32 * LINK_HEIGHT
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
     } else if track.source.has_signal() {
@@ -245,6 +254,16 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
         .collect();
     items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
     items.push(item("Color by modification", Change::Mods, look.mods));
+    let shown = track.shown_modification();
+    for (index, name) in modification_choices(track).into_iter().enumerate() {
+        let chosen = shown.as_ref() == Some(&name);
+        items.push(self::item(
+            format!("Show {name}"),
+            Message::TrackChanged(id, Change::Modification(index)),
+            chosen,
+            true,
+        ));
+    }
     items.push(separator());
     items.push(self::item(
         format!("Sort by base at {}", grouped(place.base + 1)),
