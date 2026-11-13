@@ -1,5 +1,6 @@
-use std::io::{self, BufRead, ErrorKind, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, ErrorKind, Read, Seek, SeekFrom, Write};
 
+use miniz_oxide::deflate::compress_to_vec;
 use miniz_oxide::inflate::{
     TINFLStatus,
     core::{
@@ -7,12 +8,90 @@ use miniz_oxide::inflate::{
     },
 };
 
+use crate::png::crc;
 use crate::{Error, Reason};
 
 const MAGIC: [u8; 4] = [31, 139, 8, 4];
 const HEADER: usize = 12;
 const FOOTER: usize = 8;
 const MAX_LENGTH: usize = 1 << 16;
+const BLOCK_DATA: usize = 0xFF00;
+const BLOCK_HEADER: [u8; 18] = [
+    31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, b'B', b'C', 2, 0, 0, 0,
+];
+const LEVEL: u8 = 6;
+const STORED: u8 = 0;
+
+pub struct Writer<W: Write> {
+    inner: W,
+    block: Vec<u8>,
+    offset: u64,
+}
+
+impl<W: Write> Writer<W> {
+    pub fn new(inner: W) -> Self {
+        Self {
+            inner,
+            block: Vec::with_capacity(BLOCK_DATA),
+            offset: 0,
+        }
+    }
+
+    pub fn virtual_offset(&self) -> u64 {
+        self.offset << 16 | self.block.len() as u64
+    }
+
+    pub fn finish(mut self) -> io::Result<W> {
+        self.end_block()?;
+        self.write_block(&[])?;
+        self.inner.flush()?;
+        Ok(self.inner)
+    }
+
+    pub fn end_block(&mut self) -> io::Result<()> {
+        if self.block.is_empty() {
+            return Ok(());
+        }
+        let block = std::mem::take(&mut self.block);
+        self.write_block(&block)?;
+        self.block = block;
+        self.block.clear();
+        Ok(())
+    }
+
+    fn write_block(&mut self, data: &[u8]) -> io::Result<()> {
+        let mut compressed = compress_to_vec(data, LEVEL);
+        if BLOCK_HEADER.len() + compressed.len() + FOOTER > MAX_LENGTH {
+            compressed = compress_to_vec(data, STORED);
+        }
+        let size = BLOCK_HEADER.len() + compressed.len() + FOOTER;
+        let mut header = BLOCK_HEADER;
+        let last = u16::try_from(size - 1).map_err(|_| invalid(Reason::BadBlock))?;
+        header[16..].copy_from_slice(&last.to_le_bytes());
+        self.inner.write_all(&header)?;
+        self.inner.write_all(&compressed)?;
+        self.inner.write_all(&crc(&[data]).to_le_bytes())?;
+        self.inner.write_all(&(data.len() as u32).to_le_bytes())?;
+        self.offset += size as u64;
+        Ok(())
+    }
+}
+
+impl<W: Write> Write for Writer<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let count = (BLOCK_DATA - self.block.len()).min(data.len());
+        self.block.extend_from_slice(&data[..count]);
+        if self.block.len() == BLOCK_DATA {
+            self.end_block()?;
+        }
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.end_block()?;
+        self.inner.flush()
+    }
+}
 
 pub struct Bgzf<R> {
     inner: R,
@@ -176,9 +255,16 @@ fn invalid(reason: Reason) -> io::Error {
 pub mod tests {
     use std::io::{BufRead, Cursor, ErrorKind, Read};
 
+    use std::io::Write;
+
     use miniz_oxide::deflate::compress_to_vec;
 
-    use super::Bgzf;
+    use super::{Bgzf, Writer};
+
+    const END: [u8; 28] = [
+        31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, b'B', b'C', 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0,
+        0, 0,
+    ];
 
     pub fn block(data: &[u8]) -> Vec<u8> {
         let compressed = compress_to_vec(data, 6);
@@ -229,6 +315,53 @@ pub mod tests {
         line.clear();
         reader.read_line(&mut line).unwrap();
         assert_eq!(line, "c\n");
+    }
+
+    #[test]
+    fn written_text_reads_back_from_its_virtual_offsets() {
+        let mut writer = Writer::new(Vec::new());
+        writer.write_all(b"hello ").unwrap();
+        let world = writer.virtual_offset();
+        assert_eq!(world, 6);
+        writer.write_all(b"world\n").unwrap();
+        let bytes = writer.finish().unwrap();
+        assert!(bytes.ends_with(&END));
+        let mut text = String::new();
+        let mut reader = Bgzf::new(Cursor::new(bytes));
+        reader.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "hello world\n");
+        reader.seek(world).unwrap();
+        text.clear();
+        reader.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "world\n");
+    }
+
+    #[test]
+    fn written_blocks_hold_at_most_65280_bytes() {
+        let data: Vec<u8> = (0..70_000_u32)
+            .map(|value| (value * 7 % 251) as u8)
+            .collect();
+        let mut writer = Writer::new(Vec::new());
+        writer.write_all(&data[..65_280]).unwrap();
+        let second = writer.virtual_offset();
+        assert_eq!(second & 0xFFFF, 0);
+        writer.write_all(&data[65_280..]).unwrap();
+        let bytes = writer.finish().unwrap();
+        let first = usize::from(u16::from_le_bytes([bytes[16], bytes[17]])) + 1;
+        assert_eq!(second >> 16, first as u64);
+        let mut reader = Bgzf::new(Cursor::new(&bytes));
+        let mut back = Vec::new();
+        reader.read_to_end(&mut back).unwrap();
+        assert_eq!(back, data);
+        reader.seek(second).unwrap();
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, &data[65_280..]);
+    }
+
+    #[test]
+    fn empty_written_files_hold_only_the_end_block() {
+        assert_eq!(Writer::new(Vec::new()).finish().unwrap(), END);
     }
 
     #[test]
