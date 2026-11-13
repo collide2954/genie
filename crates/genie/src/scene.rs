@@ -300,28 +300,10 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
             let mut marks: Option<Frame> = None;
             for primitive in &self.primitives {
                 match primitive {
-                    Primitive::Chevron {
-                        x,
-                        y,
-                        size,
-                        forward,
-                        paint,
-                    } => {
+                    Primitive::Chevron { .. } | Primitive::Arc { .. } => {
                         let frame =
                             marks.get_or_insert_with(|| Frame::with_bounds(renderer, bounds));
-                        let reach = if *forward { size / 2.0 } else { -size / 2.0 };
-                        let (x, y) = (bounds.x + x, bounds.y + y);
-                        let path = Path::new(|builder| {
-                            builder.move_to(Point::new(x - reach, y - size));
-                            builder.line_to(Point::new(x + reach, y));
-                            builder.line_to(Point::new(x - reach, y + size));
-                        });
-                        let stroke = Stroke::default()
-                            .with_color(color(*paint, tokens, data))
-                            .with_width(1.0)
-                            .with_line_cap(LineCap::Round)
-                            .with_line_join(LineJoin::Round);
-                        frame.stroke(&path, stroke);
+                        stroke_mark(frame, primitive, bounds, (tokens, data));
                     }
                     Primitive::Rect {
                         x,
@@ -382,6 +364,57 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
             }
         });
     }
+}
+
+fn stroke_mark(
+    frame: &mut Frame,
+    primitive: &Primitive,
+    bounds: Rectangle,
+    (tokens, data): (&Tokens, &DataColors),
+) {
+    let (path, width, paint) = match primitive {
+        Primitive::Chevron {
+            x,
+            y,
+            size,
+            forward,
+            paint,
+        } => {
+            let reach = if *forward { size / 2.0 } else { -size / 2.0 };
+            let (x, y) = (bounds.x + x, bounds.y + y);
+            let path = Path::new(|builder| {
+                builder.move_to(Point::new(x - reach, y - size));
+                builder.line_to(Point::new(x + reach, y));
+                builder.line_to(Point::new(x - reach, y + size));
+            });
+            (path, 1.0, *paint)
+        }
+        Primitive::Arc {
+            from,
+            to,
+            base,
+            rise,
+            width,
+            paint,
+        } => {
+            let (from, to, base) = (bounds.x + from, bounds.x + to, bounds.y + base);
+            let path = Path::new(|builder| {
+                builder.move_to(Point::new(from, base));
+                builder.quadratic_curve_to(
+                    Point::new(f32::midpoint(from, to), base - 2.0 * rise),
+                    Point::new(to, base),
+                );
+            });
+            (path, *width, *paint)
+        }
+        _ => return,
+    };
+    let stroke = Stroke::default()
+        .with_color(color(paint, tokens, data))
+        .with_width(width)
+        .with_line_cap(LineCap::Round)
+        .with_line_join(LineJoin::Round);
+    frame.stroke(&path, stroke);
 }
 
 fn text_clip(bounds: Rectangle, x: f32, ems: f32, align: Align) -> Rectangle {

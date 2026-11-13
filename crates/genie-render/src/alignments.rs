@@ -1,13 +1,15 @@
 use std::borrow::Cow;
 
 use genie_core::alignment::{Alignment, Gap, Op, Pairing};
-use genie_core::pileup::{Coverage, Read};
-use genie_core::{Region, Viewport};
+use genie_core::pileup::{Coverage, Junction, Read};
+use genie_core::{Region, Strand, Viewport};
 
 use crate::features::Mode;
 use crate::scene::{Align, Base, Font, Hue, Paint, Primitive};
 
 pub const COVERAGE_HEIGHT: f32 = 36.0;
+pub const JUNCTION_HEIGHT: f32 = 32.0;
+const COUNT_SIZE: f32 = 9.0;
 pub const LIMIT: usize = 100;
 pub const GROUP_GAP: f32 = 14.0;
 
@@ -165,6 +167,76 @@ fn row_at(y: f32, row_height: f32, groups: &[(usize, String)]) -> Option<usize> 
     let row = groups[index].0 + ((y - top(index)) / row_height) as usize;
     let end = groups.get(index + 1).map_or(usize::MAX, |(next, _)| *next);
     (row < end).then_some(row)
+}
+
+fn arc_rise(from: f32, to: f32) -> f32 {
+    ((to - from) / 2.0).clamp(4.0, JUNCTION_HEIGHT - 6.0)
+}
+
+fn arc_width(count: u32) -> f32 {
+    (1.0 + (count as f32).log2()).clamp(1.0, 5.0)
+}
+
+pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
+    let visible = viewport.visible();
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let base = JUNCTION_HEIGHT - 2.0;
+    let mut primitives = Vec::new();
+    let mut labels = Vec::new();
+    for junction in junctions {
+        if junction.span.end() < visible.start() || junction.span.start() > visible.end() {
+            continue;
+        }
+        let (from, to) = (px(junction.span.start()), px(junction.span.end()));
+        let rise = arc_rise(from, to);
+        let paint = match junction.strand {
+            Strand::Unknown => Paint::Muted,
+            strand => Paint::Strand(strand),
+        };
+        primitives.push(Primitive::Arc {
+            from,
+            to,
+            base,
+            rise,
+            width: arc_width(junction.count),
+            paint,
+        });
+        let words = junction.count.to_string();
+        let room = words.len() as f32 * COUNT_SIZE * 0.6 + 4.0;
+        if to - from >= room && rise >= 14.0 {
+            labels.push(Primitive::Text {
+                x: f32::midpoint(from, to),
+                y: base - rise + 6.0,
+                content: Cow::Owned(words),
+                size: COUNT_SIZE,
+                paint: Paint::Text,
+                font: Font::Ui,
+                align: Align::Center,
+            });
+        }
+    }
+    primitives.extend(labels);
+    primitives
+}
+
+pub fn arc_hit(viewport: Viewport, junctions: &[Junction], x: f32, y: f32) -> Option<usize> {
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let base = JUNCTION_HEIGHT - 2.0;
+    junctions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, junction)| {
+            let (from, to) = (px(junction.span.start()), px(junction.span.end()));
+            if to <= from || x < from || x > to {
+                return None;
+            }
+            let t = (x - from) / (to - from);
+            let curve = base - 4.0 * arc_rise(from, to) * t * (1.0 - t);
+            let distance = (curve - y).abs();
+            (distance <= REACH.max(arc_width(junction.count))).then_some((index, distance))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(index, _)| index)
 }
 
 fn clipped_end(alignment: &Alignment) -> Option<u64> {
@@ -348,10 +420,10 @@ fn bucket(base: u8) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use genie_core::alignment::{Alignment, Op, Pairing, Part, REVERSE};
-    use genie_core::pileup::{Coverage, Read};
+    use genie_core::pileup::{Coverage, Junction, Read};
     use genie_core::{Region, Strand, Viewport};
 
-    use super::{LIMIT, coverage, fit, hit, reads};
+    use super::{LIMIT, arc_hit, arcs, coverage, fit, hit, reads};
     use crate::features::Mode;
     use crate::scene::{Base, Hue, Paint, Primitive};
 
@@ -551,6 +623,48 @@ mod tests {
         let plain = paints(false);
         assert_eq!(plain[0], Paint::Strand(Strand::Forward));
         assert_eq!(plain[5], Paint::Strand(Strand::Reverse));
+    }
+
+    #[test]
+    fn junctions_draw_arcs_with_their_counts() {
+        let junction = |start, end, count, strand| Junction {
+            span: region(start, end),
+            count,
+            strand,
+        };
+        let junctions = [
+            junction(10, 60, 4, Strand::Forward),
+            junction(70, 72, 1, Strand::Unknown),
+            junction(500, 600, 9, Strand::Reverse),
+        ];
+        let primitives = arcs(view(0, 100), &junctions);
+        let found: Vec<(f32, f32, f32, f32, f32, Paint)> = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Arc {
+                    from,
+                    to,
+                    base,
+                    rise,
+                    width,
+                    paint,
+                } => Some((*from, *to, *base, *rise, *width, *paint)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (10.0, 60.0, 30.0, 25.0, 3.0, Paint::Strand(Strand::Forward)),
+                (70.0, 72.0, 30.0, 4.0, 1.0, Paint::Muted),
+            ]
+        );
+        assert_eq!(texts(&primitives), [("4".to_owned(), 35.0)]);
+        let at = |x, y| arc_hit(view(0, 100), &junctions, x, y);
+        assert_eq!(at(35.0, 5.0), Some(0));
+        assert_eq!(at(71.0, 26.0), Some(1));
+        assert_eq!(at(35.0, 30.0), None);
+        assert_eq!(at(5.0, 29.0), None);
     }
 
     #[test]

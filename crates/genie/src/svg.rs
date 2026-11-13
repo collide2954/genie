@@ -277,6 +277,20 @@ pub fn draw(
                 svg.rounded(chip, 3.0, tokens.canvas.scale_alpha(CHIP));
                 svg.text((x, y), content, *size, Face::Ui, tokens.muted, Align::End);
             }
+            Primitive::Arc {
+                from,
+                to,
+                base,
+                rise,
+                width,
+                paint,
+            } => {
+                let points: Vec<(f32, f32)> = Primitive::arc_points(*from, *to, *base, *rise)
+                    .into_iter()
+                    .map(|(x, y)| (left + x, top + y))
+                    .collect();
+                svg.stroke(&points, color(*paint, tokens, data), *width);
+            }
         }
     }
 }
@@ -421,5 +435,24 @@ mod tests {
         );
         assert!(text.contains(">0-9</text>"), "{text}");
         assert!(text.contains("text-anchor=\"end\""), "{text}");
+    }
+
+    #[test]
+    fn arcs_become_curved_lines() {
+        let mut svg = Svg::new(100.0);
+        let primitives = [Primitive::Arc {
+            from: 10.0,
+            to: 50.0,
+            base: 30.0,
+            rise: 20.0,
+            width: 2.0,
+            paint: Paint::Muted,
+        }];
+        draw(&mut svg, &primitives, (0.0, 10.0), (&LIGHT, &LIGHT_DATA));
+        let text = svg.finish(50.0, Color::WHITE);
+        assert!(text.contains("<polyline points=\"10,40 "), "{text}");
+        assert!(text.contains(" 30,20 "), "{text}");
+        assert!(text.contains(" 50,40\""), "{text}");
+        assert!(text.contains("stroke-width=\"2\""), "{text}");
     }
 }

@@ -127,4 +127,25 @@ pub enum Primitive {
         content: Cow<'static, str>,
         size: f32,
     },
+    Arc {
+        from: f32,
+        to: f32,
+        base: f32,
+        rise: f32,
+        width: f32,
+        paint: Paint,
+    },
 }
+
+impl Primitive {
+    pub fn arc_points(from: f32, to: f32, base: f32, rise: f32) -> Vec<(f32, f32)> {
+        (0..=ARC_STEPS)
+            .map(|step| {
+                let t = step as f32 / ARC_STEPS as f32;
+                (from + (to - from) * t, base - 4.0 * rise * t * (1.0 - t))
+            })
+            .collect()
+    }
+}
+
+const ARC_STEPS: usize = 24;
