@@ -79,13 +79,13 @@ Click the tracks button (the layers icon) in the title bar to add a public track
 | Kind | Formats |
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
-| Feature track | BED, GFF3 and GTF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix; bigBed (`.bb`) |
-| Alignment track | BAM, sorted by position and indexed with samtools |
-| Variant track | VCF: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix. genie does not read BCF. |
-| Signal track | bigWig (`.bw`); bedGraph: plain files up to 50 MB, or files compressed with bgzip and indexed with tabix |
+| Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
+| Alignment track | BAM |
+| Variant track | VCF (plain, gzip or bgzip). genie does not read BCF. |
+| Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip) |
 | Session | genie session (`.genie`) |
 
-Open a genome or a reference sequence first. Then open tracks or drop them on the window. The index (`.tbi`, `.csi` or `.bai`) must be next to the track file.
+Open a genome or a reference sequence first. Then open tracks or drop them on the window.
 
 If a FASTA file has no index (`.fai`, and `.gzi` for bgzip), genie makes the index and keeps it in its cache folder. For a large file, this can take some seconds. To make the indexes before you open the file:
 
@@ -93,7 +93,19 @@ If a FASTA file has no index (`.fai`, and `.gzi` for bgzip), genie makes the ind
 bgzip genome.fa && samtools faidx genome.fa.gz
 ```
 
-To prepare a large BED track:
+### Files without an index
+
+If a track file has an index next to it (`.tbi`, `.csi` or `.bai`), genie uses that index. If the file has no index, genie prepares the file in its cache folder:
+
+- A sorted BAM file or a sorted bgzip file gets an index. genie does not copy the file.
+- A plain or gzip file gets a copy compressed with bgzip, and an index. Plain files up to 50 MB open directly, without a copy.
+- A file that is not sorted by position gets a sorted copy, for example a GTF file from GENCODE or Ensembl, or a BAM file from an aligner. genie sorts on disk, so the size of the file is not limited by memory.
+
+While genie prepares a file, the track shows the step and the progress, for example "Sorting genes.gtf.gz… 45 %". The track shows its data when the work is complete. To stop the work, click × on the track.
+
+genie keeps the copies and indexes until you clear them. The settings panel shows the space that they use. Click **Clear** to remove them. genie keeps the files of open tracks. If a track file changes, genie prepares it again.
+
+You can also prepare files yourself, for example to use them in other programs. To prepare a BED track:
 
 ```bash
 sort -k1,1 -k2,2n genes.bed | bgzip > genes.bed.gz && tabix -p bed genes.bed.gz
@@ -146,10 +158,11 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 ```
 
 - genie reads only the parts of a file that the view needs. The server must send parts of files (HTTP range requests). If the server sends only full files, genie opens only files of 4 MB or less.
-- The indexes must be on the same server. The address of an index is the address of the file with the index extension, for example `reads.bam.bai`. genie does not make indexes for FASTA files from the web.
-- genie reads plain BED, GFF3, GTF, VCF and bedGraph files completely. The limit is 50 MB.
-- For files from the web, the locus box finds names only in bigBed files that have a name index.
-- genie keeps up to 64 MB of data from the web in memory. It does not write this data to disk.
+- genie looks for the index on the same server. The address of an index is the address of the file with the index extension, for example `reads.bam.bai`.
+- If a track file on the web has no index, genie downloads the file into its cache folder and prepares it there, as for files on your computer. The limit is 1 GB. If you stop a download, it continues from where it stopped the next time that you open the file. genie does not make indexes for FASTA files from the web.
+- genie reads plain BED, GFF3, GTF, VCF and bedGraph files up to 50 MB completely.
+- For files that genie reads from the web in parts, the locus box finds names only in bigBed files that have a name index.
+- genie keeps up to 64 MB of data from the web in memory. It writes a file from the web to disk only when it must make an index for the file.
 - genie uses the certificates of the operating system for HTTPS. A connection to an `http://` address is not secure. genie does not send user names, passwords or cookies.
 - Sessions and the recent list keep the addresses of files from the web. genie cannot open a session file from the web.
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Files without an index
+
+- genie opens track files that have no index. It makes the index in its cache folder for BAM files, and for VCF, BED, GFF3, GTF and bedGraph files compressed with bgzip.
+- Plain and gzip track files of any size open. genie makes a copy compressed with bgzip, and it sorts files that are not sorted by position, for example GTF files from GENCODE or Ensembl.
+- Track files on the web that have no index download into the cache folder, up to 1 GB. A stopped download continues from where it stopped.
+- While genie prepares a file, the track shows the progress. Click × on the track to stop.
+- The settings panel shows the space that the copies and indexes use. **Clear** removes them.
+
 ## 0.1.1
 
 Fixes for Windows and the Linux AppImage.
