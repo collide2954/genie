@@ -10,4 +10,5 @@
 *.png binary
 *.ico binary
 *.icns binary
+*.res binary
 *.rgba binary

@@ -202,7 +202,9 @@ mod tests {
             .iter()
             .map(|(size, bytes)| (*size, bytes.as_slice()))
             .collect();
-        fs::write(folder.join("icon.ico"), icon::ico(&entries)).unwrap();
+        let ico = icon::ico(&entries);
+        fs::write(folder.join("icon.res"), icon::res(&ico).unwrap()).unwrap();
+        fs::write(folder.join("icon.ico"), ico).unwrap();
         let images: Vec<([u8; 4], Vec<u8>)> = ICNS
             .iter()
             .map(|(kind, size)| (**kind, encoded(*size, MAC_MARGIN)))
@@ -225,6 +227,8 @@ mod tests {
         }
         let ico = fs::read(folder.join("icon.ico")).unwrap();
         assert_eq!(ico[..6], [0, 0, 1, 0, ICO.len() as u8, 0]);
+        let res = fs::read(folder.join("icon.res")).unwrap();
+        assert_eq!(Some(res), icon::res(&ico));
         let icns = fs::read(folder.join("icon.icns")).unwrap();
         assert_eq!(&icns[..4], b"icns");
         assert_eq!(
