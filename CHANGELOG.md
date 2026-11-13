@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+genie opens track files as they come, also when they have no index or are not sorted.
 
 ### Files without an index
 
