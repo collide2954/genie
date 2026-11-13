@@ -2674,6 +2674,14 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_panel_names_the_version() {
+        let mut genie = opened();
+        let _ = genie.update(Message::ToggleSettings);
+        let version = format!("genie {} · Apache-2.0", env!("CARGO_PKG_VERSION"));
+        assert!(shows(&genie, &version), "{version}");
+    }
+
+    #[test]
     fn settings_panel_sits_under_the_gear() {
         let mut genie = opened();
         let _ = genie.update(Message::ToggleSettings);

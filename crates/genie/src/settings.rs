@@ -15,6 +15,7 @@ use crate::{font, style};
 pub const FILE: &str = "settings.ini";
 const SECTION: &str = "settings";
 pub const SCALES: [u16; 5] = [90, 100, 110, 125, 150];
+const VERSION: &str = concat!("genie ", env!("CARGO_PKG_VERSION"), " · Apache-2.0");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
@@ -204,6 +205,7 @@ pub fn panel<'a>(settings: Settings, inset: f32) -> Element<'a, Message> {
         line("Density", density.into()),
         line("Motion", switch(Setting::Motion, settings.motion).into()),
         line("Commands", switch(Setting::Port, settings.port).into()),
+        text(VERSION).size(11).style(style::muted),
     ]
     .spacing(8);
     let card = container(content)
