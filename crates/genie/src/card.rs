@@ -32,6 +32,7 @@ const HOVER_FIELDS: usize = 6;
 const VALUE_LIMIT: usize = 160;
 const CHARACTER: f32 = 6.0;
 const PART: &str = "Other part";
+const CIGAR_LIMIT: usize = 30;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detail {
@@ -106,12 +107,15 @@ pub fn read_facts(read: &Alignment) -> String {
 }
 
 pub fn cigar(read: &Alignment) -> String {
-    let mut text = String::from("CIGAR ");
+    let mut ops = String::new();
     for (op, length) in &read.cigar {
-        text.push_str(&length.to_string());
-        text.push(op.letter());
+        let part = format!("{length}{}", op.letter());
+        if ops.len() + part.len() > CIGAR_LIMIT {
+            return format!("CIGAR {ops}…");
+        }
+        ops.push_str(&part);
     }
-    text
+    format!("CIGAR {ops}")
 }
 
 fn mate_line(read: &Alignment, mate: Option<&str>, same: bool) -> Option<String> {
@@ -749,5 +753,36 @@ mod tests {
             read_facts(&repeat),
             "100 bp · reverse strand · MAPQ 0 · placed in more than one spot"
         );
+    }
+
+    #[test]
+    fn long_cigars_end_with_an_ellipsis() {
+        let ops = [
+            (Op::SoftClip, 30),
+            (Op::Match, 221),
+            (Op::Insertion, 1),
+            (Op::Match, 388),
+            (Op::Deletion, 1),
+            (Op::Match, 20),
+            (Op::Deletion, 1),
+            (Op::Match, 85),
+            (Op::Insertion, 1),
+            (Op::Match, 3),
+            (Op::Insertion, 1),
+            (Op::Match, 140),
+            (Op::SoftClip, 26_637),
+        ];
+        let read = Alignment {
+            name: "long".to_owned(),
+            start: 100,
+            flags: 0,
+            mapq: 60,
+            cigar: ops.to_vec(),
+            bases: Vec::new(),
+            qualities: Vec::new(),
+            mate: None,
+            tags: genie_core::alignment::Tags::default(),
+        };
+        assert_eq!(cigar(&read), "CIGAR 30S221M1I388M1D20M1D85M1I3M1I…");
     }
 }
