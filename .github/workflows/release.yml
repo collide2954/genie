@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  PACKAGER: 0.11.8
+
+jobs:
+  draft:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag against the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test "v$version" = "$GITHUB_REF_NAME"
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v version="$version" '
+            $0 ~ "^## " version { keep = 1; next }
+            /^## / { keep = 0 }
+            keep
+          ' CHANGELOG.md > notes.md
+          test -s notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --title "genie $version" --notes-file notes.md
+
+  package:
+    name: package (${{ matrix.os }})
+    needs: draft
+    if: ${{ !cancelled() && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked --version "$PACKAGER"
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --release --locked -p genie
+      - name: Build a universal binary
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked -p genie --target aarch64-apple-darwin
+          cargo build --release --locked -p genie --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/genie \
+            target/aarch64-apple-darwin/release/genie \
+            target/x86_64-apple-darwin/release/genie
+          lipo -info target/release/genie
+      - name: Linux tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+      - name: Package
+        working-directory: crates/genie
+        run: |
+          config=packager.json
+          case "$RUNNER_OS" in
+            Windows) formats=nsis ;;
+            macOS)
+              formats=app,dmg
+              jq 'del(.fileAssociations)' packager.json > packager.macos.json
+              config=packager.macos.json
+              ;;
+            Linux) formats=deb,appimage ;;
+          esac
+          cargo packager --release --config "$config" --formats "$formats"
+      - name: Name the packages
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          mkdir dist
+          ls -la target/packages
+          case "$RUNNER_OS" in
+            Windows) cp target/packages/*-setup.exe "dist/genie-$version-windows-x64-setup.exe" ;;
+            macOS) cp target/packages/*.dmg "dist/genie-$version-macos-universal.dmg" ;;
+            Linux)
+              cp target/packages/*.deb "dist/genie_${version}_amd64.deb"
+              cp target/packages/*.AppImage "dist/genie-$version-linux-x86_64.AppImage"
+              ;;
+          esac
+          ls -la dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload to the draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber

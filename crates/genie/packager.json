@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/crabnebula-dev/cargo-packager/main/crates/packager/schema.json",
+  "name": "genie",
+  "productName": "genie",
+  "identifier": "io.github.collide2954.genie",
+  "description": "A genome browser for sequences, genes, reads, variants and signal",
+  "homepage": "https://collide2954.github.io/genie/",
+  "publisher": "collide2954",
+  "copyright": "Copyright 2026 the genie authors",
+  "licenseFile": "../../LICENSE",
+  "category": "Education",
+  "binariesDir": "../../target/release",
+  "outDir": "../../target/packages",
+  "binaries": [{ "path": "genie", "main": true }],
+  "icons": [
+    "assets/icon/32x32.png",
+    "assets/icon/128x128.png",
+    "assets/icon/256x256.png",
+    "assets/icon/512x512.png",
+    "assets/icon/icon.icns",
+    "assets/icon/icon.ico"
+  ],
+  "fileAssociations": [
+    {
+      "extensions": ["genie"],
+      "name": "genie session",
+      "description": "genie session",
+      "mimeType": "application/x-genie-session",
+      "role": "editor"
+    }
+  ],
+  "nsis": { "installMode": "currentUser" },
+  "macos": { "minimumSystemVersion": "11.0", "signingIdentity": "-" }
+}
