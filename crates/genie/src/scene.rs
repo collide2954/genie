@@ -1,5 +1,5 @@
 use genie_core::Strand;
-use genie_render::scene::{Align, Allele, Font, Paint, Primitive, Shade};
+use genie_render::scene::{Align, Allele, Font, Hue, Paint, Primitive, Shade};
 use iced::advanced::graphics::geometry::Renderer as _;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
@@ -22,6 +22,8 @@ const CLICK_SLOP: f32 = 3.0;
 const FADED: f32 = 0.35;
 const HALF: f32 = 0.5;
 const PAIR: f32 = 0.85;
+const PLAIN: f32 = 0.6;
+const MARK_FLOOR: f32 = 0.25;
 pub const CHIP_PADDING: f32 = 4.0;
 pub const CHIP_LINE: f32 = 1.3;
 
@@ -167,6 +169,21 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
         Paint::Faint(Strand::Reverse) => data.strands[1].scale_alpha(FADED),
         Paint::Faint(Strand::Forward | Strand::Unknown) => data.strands[0].scale_alpha(FADED),
+        Paint::Plain(shade) => data.coverage.scale_alpha(match shade {
+            Shade::Full => PLAIN,
+            Shade::Half => PLAIN * HALF,
+            Shade::Faded => PLAIN * FADED,
+        }),
+        Paint::Modified(chance) => {
+            let share = (f32::from(chance) + 0.5) / 256.0;
+            let hue = if share >= 0.5 {
+                Hue::Vermillion
+            } else {
+                Hue::Blue
+            };
+            let strength = (2.0 * share - 1.0).abs();
+            data.hues[hue as usize].scale_alpha(MARK_FLOOR + (1.0 - MARK_FLOOR) * strength)
+        }
         Paint::Coverage => data.coverage,
         Paint::Insertion => data.insertion,
         Paint::Codon(even) => data.codons[usize::from(!even)],
@@ -481,7 +498,7 @@ fn label(
 #[cfg(test)]
 mod tests {
     use genie_core::Strand;
-    use genie_render::scene::{Base, Hue, Paint};
+    use genie_render::scene::{Base, Hue, Paint, Shade};
     use iced::widget::container;
     use iced::{Element, Event, Point, Settings, mouse};
     use iced_test::{Simulator, selector, simulator};
@@ -522,6 +539,22 @@ mod tests {
             color(Paint::OnBase(Base::T), &DARK, &DARK_DATA),
             DARK_DATA.on_bases[3]
         );
+    }
+
+    #[test]
+    fn modification_paints_fade_near_one_half() {
+        let paint = |chance| color(Paint::Modified(chance), &LIGHT, &LIGHT_DATA);
+        let (sure, unsure, not) = (paint(255), paint(128), paint(0));
+        let rgb = |color: iced::Color| (color.r, color.g, color.b);
+        assert_eq!(rgb(sure), rgb(LIGHT_DATA.hues[Hue::Vermillion as usize]));
+        assert_eq!(rgb(not), rgb(LIGHT_DATA.hues[Hue::Blue as usize]));
+        assert!(sure.a > 0.99 && not.a > 0.99, "{sure:?} {not:?}");
+        assert_eq!(rgb(unsure), rgb(LIGHT_DATA.hues[Hue::Vermillion as usize]));
+        assert!(unsure.a < 0.3, "{unsure:?}");
+        let plain = color(Paint::Plain(Shade::Full), &DARK, &DARK_DATA);
+        let faded = color(Paint::Plain(Shade::Faded), &DARK, &DARK_DATA);
+        assert_eq!(rgb(plain), rgb(DARK_DATA.coverage));
+        assert!(faded.a < plain.a, "{faded:?} {plain:?}");
     }
 
     #[test]

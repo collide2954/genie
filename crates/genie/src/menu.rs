@@ -15,7 +15,7 @@ use crate::track::{Change, Grouping, Toggle, Track};
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
 const COLORED_HEIGHT: f32 = 290.5;
-const READS_HEIGHT: f32 = 363.5;
+const READS_HEIGHT: f32 = 386.5;
 const VARIANTS_HEIGHT: f32 = 234.5;
 const SIGNAL_HEIGHT: f32 = 271.5;
 const HEADING_HEIGHT: f32 = 21.0;
@@ -234,6 +234,34 @@ fn signal_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'
         .push(separator())
 }
 
+fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
+    let (id, options, look) = (track.id, track.options, track.plot.look);
+    let item = |label: &'a str, change: Change, chosen: bool| {
+        item(label, Message::TrackChanged(id, change), chosen, true)
+    };
+    let mut items: Vec<Element<'a, Message>> = TOGGLES
+        .map(|(label, toggle)| item(label, Change::Toggle(toggle), options.is_on(toggle)))
+        .into_iter()
+        .collect();
+    items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
+    items.push(item("Color by modification", Change::Mods, look.mods));
+    items.push(separator());
+    items.push(self::item(
+        format!("Sort by base at {}", grouped(place.base + 1)),
+        Message::TrackChanged(id, Change::Sort(place.panel, place.base)),
+        false,
+        true,
+    ));
+    items.push(separator());
+    items.extend(
+        GROUPS.map(|(label, grouping)| {
+            item(label, Change::Group(grouping), options.group == grouping)
+        }),
+    );
+    items.push(separator());
+    items
+}
+
 pub fn view<'a>(
     track: &Track,
     mode: Mode,
@@ -264,34 +292,7 @@ pub fn view<'a>(
         column![column(modes).spacing(1), separator()].spacing(1)
     };
     if track.source.has_reads() {
-        let options = track.options;
-        content = content
-            .extend(TOGGLES.map(|(label, toggle)| {
-                item(label, Change::Toggle(toggle), options.is_on(toggle), true)
-            }))
-            .push(item(
-                "Color unusual pairs",
-                Change::Pairs,
-                track.plot.pairs,
-                true,
-            ))
-            .push(separator())
-            .push(self::item(
-                format!("Sort by base at {}", grouped(place.base + 1)),
-                Message::TrackChanged(id, Change::Sort(place.panel, place.base)),
-                false,
-                true,
-            ))
-            .push(separator())
-            .extend(GROUPS.map(|(label, grouping)| {
-                item(
-                    label,
-                    Change::Group(grouping),
-                    options.group == grouping,
-                    true,
-                )
-            }))
-            .push(separator());
+        content = content.extend(read_items(track, place));
     } else if !track.source.has_variants() {
         if track.source.has_colors() {
             content = content.push(item(

@@ -5,7 +5,7 @@ use genie_core::pileup::{Coverage, Junction, Read};
 use genie_core::{Region, Strand, Viewport};
 
 use crate::features::Mode;
-use crate::scene::{Align, Base, Font, Hue, Paint, Primitive};
+use crate::scene::{Align, Base, Font, Hue, Paint, Primitive, Shade};
 
 pub const COVERAGE_HEIGHT: f32 = 36.0;
 pub const JUNCTION_HEIGHT: f32 = 32.0;
@@ -300,12 +300,58 @@ pub struct Look {
 
 fn tint(read: &Read, look: Look) -> Paint {
     let strand = read.alignment.strand();
-    if read.alignment.mapq == 0 {
+    let faint = read.alignment.mapq == 0;
+    if look.mods {
+        return Paint::Plain(if faint { Shade::Faded } else { Shade::Full });
+    }
+    if faint {
         return Paint::Faint(strand);
     }
     pair_hue(read.pairing)
         .filter(|_| look.pairs)
         .map_or(Paint::Strand(strand), Paint::Pair)
+}
+
+fn modified(viewport: Viewport, read: &Read, (top, size): (f32, f32)) -> Vec<Primitive> {
+    let visible = viewport.visible();
+    let pixels = 1.0 / viewport.scale();
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let shown = read
+        .parts
+        .modified
+        .iter()
+        .filter(|(position, _)| *position >= visible.start() && *position < visible.end());
+    let mark = |x: f32, width: f32, chance: u8| Primitive::Rect {
+        x,
+        y: top,
+        width,
+        height: size,
+        paint: Paint::Modified(chance),
+    };
+    if pixels >= 1.0 {
+        let width = cell(pixels).max(1.0);
+        return shown
+            .map(|&(position, chance)| mark(px(position), width, chance))
+            .collect();
+    }
+    let mut columns: Vec<(i64, u32, u32)> = Vec::new();
+    for &(position, chance) in shown {
+        let column = px(position).floor() as i64;
+        match columns.last_mut() {
+            Some((at, sum, count)) if *at == column => {
+                *sum += u32::from(chance);
+                *count += 1;
+            }
+            _ => columns.push((column, u32::from(chance), 1)),
+        }
+    }
+    columns
+        .into_iter()
+        .map(|(column, sum, count)| {
+            let chance = u8::try_from((sum + count / 2) / count).unwrap_or(u8::MAX);
+            mark(column as f32, 1.0, chance)
+        })
+        .collect()
 }
 
 pub fn reads(
@@ -359,6 +405,9 @@ pub fn reads(
                 Gap::Skip => Paint::Muted,
             };
             primitives.push(bar(*gap, top + size / 2.0 - 0.5, 1.0, paint));
+        }
+        if look.mods {
+            primitives.extend(modified(viewport, read, (top, size)));
         }
         for mismatch in read.parts.mismatches.iter().chain(&read.parts.clips) {
             let base = Base::from_byte(mismatch.base);
@@ -466,7 +515,7 @@ mod tests {
 
     use super::{LIMIT, Look, arc_hit, arcs, coverage, fit, hit, reads};
     use crate::features::Mode;
-    use crate::scene::{Base, Hue, Paint, Primitive};
+    use crate::scene::{Base, Hue, Paint, Primitive, Shade};
 
     const PAIRS: Look = Look {
         pairs: true,
@@ -774,6 +823,78 @@ mod tests {
             .map(|(rect, _)| *rect)
             .collect();
         assert_eq!(marks, [[19.0, 1.0, 2.0, 8.0], [49.0, 1.0, 2.0, 8.0]]);
+    }
+
+    #[test]
+    fn modifications_color_plain_reads() {
+        let mut marked = read(10, 0, vec![(Op::Match, 10)], b"ACGTACGTAC");
+        marked.parts.modified = vec![(11, 250), (15, 5), (19, 128)];
+        let mut repeat = read(30, 0, vec![(Op::Match, 10)], &[b'A'; 10]);
+        repeat.alignment.mapq = 0;
+        let shown = [marked, repeat];
+        let mods = Look {
+            pairs: true,
+            mods: true,
+        };
+        let found = rects(&reads(
+            view(0, 100),
+            &shown,
+            &[0, 1],
+            &[],
+            Mode::Expanded,
+            mods,
+        ));
+        assert_eq!(
+            found[0],
+            ([10.0, 1.0, 10.0, 8.0], Paint::Plain(Shade::Full))
+        );
+        assert!(found.contains(&([30.0, 11.0, 10.0, 8.0], Paint::Plain(Shade::Faded))));
+        let marks: Vec<([f32; 4], Paint)> = found
+            .iter()
+            .filter(|(_, paint)| matches!(paint, Paint::Modified(_)))
+            .copied()
+            .collect();
+        assert_eq!(
+            marks,
+            [
+                ([11.0, 1.0, 1.0, 8.0], Paint::Modified(250)),
+                ([15.0, 1.0, 1.0, 8.0], Paint::Modified(5)),
+                ([19.0, 1.0, 1.0, 8.0], Paint::Modified(128)),
+            ]
+        );
+        let at_11: Vec<Paint> = found
+            .iter()
+            .filter(|(rect, _)| (rect[0] - 11.0).abs() < f32::EPSILON)
+            .map(|(_, paint)| *paint)
+            .collect();
+        assert_eq!(at_11, [Paint::Modified(250), Paint::Base(Base::C)]);
+        let zoomed = rects(&reads(
+            view(0, 1_000),
+            &shown,
+            &[0, 1],
+            &[],
+            Mode::Expanded,
+            mods,
+        ));
+        let merged: Vec<([f32; 4], Paint)> = zoomed
+            .into_iter()
+            .filter(|(_, paint)| matches!(paint, Paint::Modified(_)))
+            .collect();
+        assert_eq!(merged, [([1.0, 1.0, 1.0, 8.0], Paint::Modified(128))]);
+        let plain = rects(&reads(
+            view(0, 100),
+            &shown,
+            &[0, 1],
+            &[],
+            Mode::Expanded,
+            PAIRS,
+        ));
+        assert!(
+            plain
+                .iter()
+                .all(|(_, paint)| !matches!(paint, Paint::Modified(_)))
+        );
+        assert_eq!(plain[0].1, Paint::Strand(Strand::Forward));
     }
 
     #[test]

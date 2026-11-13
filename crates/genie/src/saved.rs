@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use genie_formats::fields::{self, Rule, Test};
 use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
+use genie_render::alignments::Look;
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::{Scale, Style};
@@ -106,7 +107,10 @@ impl Saved {
                             Style::Bars
                         },
                         linked: section.value("scale") == Some("shared"),
-                        pairs: section.value("pairs") != Some("off"),
+                        look: Look {
+                            pairs: section.value("pairs") != Some("off"),
+                            mods: section.value("modifications") == Some("on"),
+                        },
                         colors: section.value("colors") != Some("off"),
                         range: section.value("range").and_then(range),
                     },
@@ -193,8 +197,11 @@ impl Saved {
             if let Some(range) = track.plot.range {
                 entries.push(("range", format!("{} {}", range.min, range.max)));
             }
-            if !track.plot.pairs {
+            if !track.plot.look.pairs {
                 entries.push(("pairs", "off".to_owned()));
+            }
+            if track.plot.look.mods {
+                entries.push(("modifications", "on".to_owned()));
             }
             if !track.plot.colors {
                 entries.push(("colors", "off".to_owned()));
@@ -329,6 +336,7 @@ fn range(text: &str) -> Option<Scale> {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use genie_render::alignments::Look;
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
     use genie_render::signal::{Scale, Style};
@@ -390,7 +398,10 @@ mod tests {
                         group: Grouping::Phase,
                     },
                     plot: Plot {
-                        pairs: false,
+                        look: Look {
+                            pairs: false,
+                            mods: true,
+                        },
                         ..Plot::default()
                     },
                     filter: Filter::default(),
@@ -505,6 +516,7 @@ mod tests {
         assert!(text.contains("overlay = 1"), "{text}");
         assert_eq!(text.matches("style =").count(), 1, "{text}");
         assert_eq!(text.matches("pairs = off").count(), 1, "{text}");
+        assert_eq!(text.matches("modifications = on").count(), 1, "{text}");
         assert_eq!(text.matches("group = phase").count(), 1, "{text}");
         assert_eq!(text.matches("colors = off").count(), 1, "{text}");
     }

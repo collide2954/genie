@@ -870,12 +870,8 @@ fn read_lane(
     } else {
         (slot.rows(pile), pile.groups.as_slice())
     };
-    let look = alignments::Look {
-        pairs: track.plot.pairs,
-        mods: false,
-    };
     let top = pile.arc_height();
-    let reads = alignments::reads(viewport, &pile.reads, rows, groups, mode, look);
+    let reads = alignments::reads(viewport, &pile.reads, rows, groups, mode, track.plot.look);
     lane.extend(reads.into_iter().map(|primitive| primitive.lowered(top)));
     lane
 }

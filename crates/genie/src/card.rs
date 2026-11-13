@@ -162,6 +162,24 @@ pub fn pair_lines(read: &Alignment, mate: Option<&str>, same: bool) -> Vec<Strin
     lines
 }
 
+fn modification_line(read: &Alignment) -> Option<String> {
+    let counts = read.tags.mods.counts();
+    if counts.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = counts
+        .into_iter()
+        .map(|(name, modified, total)| {
+            format!(
+                "{name} {} of {}",
+                grouped(modified as u64),
+                grouped(total as u64)
+            )
+        })
+        .collect();
+    Some(format!("Modified {}", parts.join(" · ")))
+}
+
 fn allele(text: &str) -> String {
     if text.len() <= ALLELE_LIMIT {
         return text.to_owned();
@@ -238,6 +256,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
         Detail::Read { read, mate, same } => {
             let mut lines = vec![read_facts(read), cigar(read)];
             lines.extend(pair_lines(read, mate.as_deref(), *same));
+            lines.extend(modification_line(read));
             (read.name.clone(), read.span(), lines)
         }
         Detail::Junction(junction) => {

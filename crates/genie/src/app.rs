@@ -3753,6 +3753,55 @@ mod tests {
         }
     }
 
+    fn methylated(name: &str) -> genie_core::alignment::Alignment {
+        use genie_core::modification::{Call, Code, Modifications};
+        let code = |code: &str| Code {
+            base: b'C',
+            code: code.to_owned(),
+        };
+        let call = |at, code, chance| Call { at, code, chance };
+        let mut read = read(name, 10);
+        read.tags.mods = Modifications {
+            codes: vec![code("m"), code("h")],
+            calls: vec![call(5, 0, 250), call(5, 1, 3), call(9, 0, 20)],
+        };
+        read
+    }
+
+    #[test]
+    fn reads_show_modification_counts_and_colors() {
+        use genie_render::scene::{Paint, Primitive};
+        let mut genie = opened();
+        add_reads(&mut genie, vec![methylated("meth1")]);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, 5.0))));
+        assert!(shows(&genie, "Modified 5mC 1 of 2 · 5hmC 0 of 1"));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Color by modification"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Mods));
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[0];
+        assert!(track.plot.look.mods);
+        let (shapes, _) = super::view::shapes(session, track, false);
+        let super::view::Body::Reads {
+            reads: Some((primitives, _)),
+            ..
+        } = super::view::body(session, track, 0, shapes[0], false)
+        else {
+            panic!("expected reads");
+        };
+        let marks: Vec<Paint> = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Rect {
+                    paint: paint @ Paint::Modified(_),
+                    ..
+                } => Some(*paint),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(marks, [Paint::Modified(253), Paint::Modified(20)]);
+    }
+
     #[test]
     fn read_menus_group_by_phase_or_strand() {
         let mut genie = with_reads();
@@ -3801,7 +3850,7 @@ mod tests {
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(shows(&genie, "Color unusual pairs"));
         let _ = genie.update(Message::TrackChanged(0, Change::Pairs));
-        assert!(!genie.session.as_ref().unwrap().tracks[0].plot.pairs);
+        assert!(!genie.session.as_ref().unwrap().tracks[0].plot.look.pairs);
     }
 
     #[test]

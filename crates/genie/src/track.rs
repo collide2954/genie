@@ -10,10 +10,11 @@ use genie_core::{Assembly, Feature, Named, Names, Region};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
 use genie_formats::{bbi, bed, gff, tabix, vcf};
+use genie_render::alignments::{self, Look};
 use genie_render::features::Mode;
+use genie_render::rows;
 use genie_render::scene::Hue;
 use genie_render::signal::{Scale, Style};
-use genie_render::{alignments, rows};
 
 use crate::location::{Location, Reader};
 
@@ -166,7 +167,7 @@ impl Default for Options {
 pub struct Plot {
     pub style: Style,
     pub linked: bool,
-    pub pairs: bool,
+    pub look: Look,
     pub colors: bool,
     pub range: Option<Scale>,
 }
@@ -176,7 +177,10 @@ impl Default for Plot {
         Self {
             style: Style::default(),
             linked: false,
-            pairs: true,
+            look: Look {
+                pairs: true,
+                mods: false,
+            },
             colors: true,
             range: None,
         }
@@ -719,6 +723,7 @@ pub enum Change {
     Style(Style),
     Link,
     Pairs,
+    Mods,
     Colors,
     Sort(usize, u64),
     Group(Grouping),
@@ -745,8 +750,12 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             }
         }
         Change::Pairs => {
-            let plot = &mut tracks[position].plot;
-            plot.pairs = !plot.pairs;
+            let look = &mut tracks[position].plot.look;
+            look.pairs = !look.pairs;
+        }
+        Change::Mods => {
+            let look = &mut tracks[position].plot.look;
+            look.mods = !look.mods;
         }
         Change::Colors => {
             let plot = &mut tracks[position].plot;
@@ -1233,11 +1242,21 @@ mod tests {
     #[test]
     fn changes_toggle_the_pair_colors() {
         let mut tracks = three();
-        assert!(tracks[1].plot.pairs);
+        assert!(tracks[1].plot.look.pairs);
         tracks[1].slot.wanted = Some((0, region(0, 10)));
         change(&mut tracks, 1, Change::Pairs);
-        assert!(!tracks[1].plot.pairs);
+        assert!(!tracks[1].plot.look.pairs);
         assert_eq!(tracks[1].slot.wanted, Some((0, region(0, 10))));
+    }
+
+    #[test]
+    fn changes_toggle_the_modification_colors() {
+        let mut tracks = three();
+        assert!(!tracks[1].plot.look.mods);
+        change(&mut tracks, 1, Change::Mods);
+        assert!(tracks[1].plot.look.mods);
+        change(&mut tracks, 1, Change::Mods);
+        assert!(!tracks[1].plot.look.mods);
     }
 
     #[test]
