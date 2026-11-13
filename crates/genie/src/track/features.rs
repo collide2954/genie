@@ -26,18 +26,18 @@ pub enum FeatureFile {
 }
 
 impl FeatureFile {
-    pub fn open(location: &Location, name: &str) -> Result<Self, String> {
+    pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
         let kind = Kind::of(name).ok_or_else(|| {
             format!(
                 "The file {name} is not a BED, GFF3, GTF, VCF, BAM, bigWig, bigBed or bedGraph file."
             )
         })?;
-        if !is_compressed(name) {
+        if index.is_none() && !is_compressed(name) {
             let (table, names) = features::read_table(kind, plain(location, name)?)
                 .map_err(|error| format!("The file {name} is not valid. {error}"))?;
             return Ok(Self::Table { kind, table, names });
         }
-        let index = tabix_index(location, name)?;
+        let index = tabix_index(location, name, index)?;
         Ok(Self::Indexed { kind, index })
     }
 

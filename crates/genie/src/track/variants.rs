@@ -27,8 +27,8 @@ pub enum VariantFile {
 impl VariantFile {
     pub const SPAN: u64 = 1_000_000;
 
-    pub fn open(location: &Location, name: &str) -> Result<Self, String> {
-        if !is_compressed(name) {
+    pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
+        if index.is_none() && !is_compressed(name) {
             let (header, table) = vcf::read_table(plain(location, name)?)
                 .map_err(|error| format!("The file {name} is not valid. {error}"))?;
             return Ok(Self::Table {
@@ -37,7 +37,7 @@ impl VariantFile {
                 infos: header.infos,
             });
         }
-        let index = tabix_index(location, name)?;
+        let index = tabix_index(location, name, index)?;
         let header = vcf::header(Bgzf::new(location.open()?)).map_err(|error| error.to_string())?;
         Ok(Self::Indexed {
             index,

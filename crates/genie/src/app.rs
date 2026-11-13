@@ -1158,6 +1158,7 @@ mod tests {
         Arc::new(Source {
             location: PathBuf::from(format!("/data/{name}")).into(),
             name: name.to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
@@ -1237,6 +1238,7 @@ mod tests {
         let genes = Source {
             location: Location::File(folder.join("RefSeq Select.bed")),
             name: "RefSeq Select.bed".to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
@@ -2065,6 +2067,7 @@ mod tests {
         let source = Arc::new(Source {
             location: Location::Url(url),
             name: "clinvarMain.bb".to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
@@ -3376,6 +3379,7 @@ mod tests {
         let source = Arc::new(Source {
             location: folder.join("genes.bed.gz").into(),
             name: "genes.bed.gz".to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: Index::default(),
@@ -3552,6 +3556,7 @@ mod tests {
         let source = Arc::new(Source {
             location: PathBuf::from("/data/reads.bam").into(),
             name: "reads.bam".to_owned(),
+            data: None,
             format: Format::Reads(ReadFile {
                 index: genie_formats::bai::Index::default(),
                 contigs: vec!["chr1".to_owned()],
@@ -3875,6 +3880,7 @@ mod tests {
         let source = Arc::new(Source {
             location: PathBuf::from("/data/genes.gff3.gz").into(),
             name: "genes.gff3.gz".to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Gff,
                 index: Index::default(),
@@ -3932,6 +3938,7 @@ mod tests {
         Arc::new(Source {
             location: PathBuf::from("/data/calls.vcf").into(),
             name: "calls.vcf".to_owned(),
+            data: None,
             format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples: vec!["NA1".to_owned(), "NA2".to_owned()],
@@ -3956,6 +3963,7 @@ mod tests {
         Arc::new(Source {
             location: PathBuf::from("/data/coverage.bedGraph").into(),
             name: "coverage.bedGraph".to_owned(),
+            data: None,
             format,
         })
     }
@@ -4042,6 +4050,7 @@ mod tests {
         Arc::new(Source {
             location: PathBuf::from("/data/other.bedGraph").into(),
             name: "other.bedGraph".to_owned(),
+            data: None,
             format: signal_table(),
         })
     }
@@ -4237,6 +4246,7 @@ mod tests {
         let other = Arc::new(Source {
             location: PathBuf::from("/data/other.bedGraph").into(),
             name: "other.bedGraph".to_owned(),
+            data: None,
             format: signal_table(),
         });
         let _ = genie.update(Message::TrackOpened(Ok(other)));
@@ -4278,6 +4288,7 @@ mod tests {
         let source = Arc::new(Source {
             location: PathBuf::from("/data/cohort.vcf").into(),
             name: "cohort.vcf".to_owned(),
+            data: None,
             format: Format::Variants(VariantFile::Table {
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples,

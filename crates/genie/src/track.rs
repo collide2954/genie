@@ -43,9 +43,16 @@ pub enum Format {
     Signal(SignalFile),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prepared {
+    pub data: Location,
+    pub index: Location,
+}
+
 #[derive(Debug)]
 pub struct Source {
     pub location: Location,
+    pub data: Option<Location>,
     pub name: String,
     pub format: Format,
 }
@@ -57,6 +64,10 @@ impl PartialEq for Source {
 }
 
 impl Source {
+    pub fn data(&self) -> &Location {
+        self.data.as_ref().unwrap_or(&self.location)
+    }
+
     pub fn contigs(&self) -> &[String] {
         match &self.format {
             Format::Features(file) => file.contigs(),
@@ -917,35 +928,56 @@ fn plain(location: &Location, name: &str) -> Result<BufReader<Reader>, String> {
     location.open().map(BufReader::new)
 }
 
-fn tabix_index(location: &Location, name: &str) -> Result<tabix::Index, String> {
-    let (file, suffix) = [".tbi", ".csi"]
-        .into_iter()
-        .find_map(|suffix| Some((location.with_suffix(suffix).open().ok()?, suffix)))
-        .ok_or_else(|| format!("There is no index {name}.tbi. Index the file with tabix."))?;
-    tabix::Index::read(file)
-        .map_err(|error| format!("The index {name}{suffix} is not valid. {error}"))
+fn tabix_index(
+    location: &Location,
+    name: &str,
+    index: Option<&Location>,
+) -> Result<tabix::Index, String> {
+    let (file, label) = match index {
+        Some(index) => (index.open()?, index.name()),
+        None => [".tbi", ".csi"]
+            .into_iter()
+            .find_map(|suffix| {
+                Some((
+                    location.with_suffix(suffix).open().ok()?,
+                    format!("{name}{suffix}"),
+                ))
+            })
+            .ok_or_else(|| format!("There is no index {name}.tbi. Index the file with tabix."))?,
+    };
+    tabix::Index::read(file).map_err(|error| format!("The index {label} is not valid. {error}"))
 }
 
 pub fn open(location: impl Into<Location>) -> Result<Source, String> {
+    open_with(location, None)
+}
+
+pub fn open_with(
+    location: impl Into<Location>,
+    prepared: Option<Prepared>,
+) -> Result<Source, String> {
     let location = location.into();
     let name = location.name();
+    let (data, index) = match prepared {
+        Some(Prepared { data, index }) => (Some(data), Some(index)),
+        None => (None, None),
+    };
+    let reading = data.as_ref().unwrap_or(&location);
+    let index = index.as_ref();
     let format = if is_bam(&name) {
-        Format::Reads(ReadFile::open(&location, &name)?)
+        Format::Reads(ReadFile::open(reading, &name, index)?)
     } else if is_vcf(&name) {
-        Format::Variants(VariantFile::open(&location, &name)?)
+        Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
-        open_bbi(
-            &location,
-            &name,
-            crate::catalog::label(&location.to_string()),
-        )?
+        open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
     } else if is_signal(&name) {
-        Format::Signal(SignalFile::open(&location, &name)?)
+        Format::Signal(SignalFile::open(reading, &name, index)?)
     } else {
-        Format::Features(FeatureFile::open(&location, &name)?)
+        Format::Features(FeatureFile::open(reading, &name, index)?)
     };
     Ok(Source {
         location,
+        data,
         name,
         format,
     })
@@ -1017,7 +1049,7 @@ pub fn load(
     detail: bool,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
-    let location = &source.location;
+    let location = source.data();
     match &source.format {
         Format::Features(file) => file.load(location, contig, region, step, detail),
         Format::Variants(file) => file.load(location, contig, region),
@@ -1097,8 +1129,8 @@ fn nearest(
 
 fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, String> {
     match &source.format {
-        Format::Features(file) => file.spans(&source.location, contig, region),
-        Format::Variants(file) => file.spans(&source.location, contig, region),
+        Format::Features(file) => file.spans(source.data(), contig, region),
+        Format::Variants(file) => file.spans(source.data(), contig, region),
         Format::Reads(_) | Format::Signal(_) => Ok(Vec::new()),
     }
 }
@@ -1109,7 +1141,7 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
         let Format::Features(file) = &source.format else {
             return None;
         };
-        file.find(&source.location, name)
+        file.find(source.data(), name)
             .into_iter()
             .find_map(|(contig, feature)| {
                 Some(Named {
@@ -1122,12 +1154,12 @@ pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Optio
 }
 
 pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
-    if source.location.is_remote() {
+    if source.data().is_remote() {
         return Ok(Names::default());
     }
     let entries = match &source.format {
-        Format::Features(file) => file.names(&source.location)?,
-        Format::Variants(file) => file.names(&source.location)?,
+        Format::Features(file) => file.names(source.data())?,
+        Format::Variants(file) => file.names(source.data())?,
         Format::Reads(_) | Format::Signal(_) => return Ok(Names::default()),
     };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
@@ -1141,6 +1173,7 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1156,9 +1189,9 @@ mod tests {
     use genie_render::signal::Style;
 
     use super::{
-        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, SignalFile,
-        Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load, lookup,
-        names, neighbor, open, open_bbi, spans, step,
+        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, Prepared,
+        SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load,
+        lookup, names, neighbor, open, open_bbi, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -1183,6 +1216,7 @@ mod tests {
         let source = Source {
             location: PathBuf::from("/data/genes.bed.gz").into(),
             name: "genes.bed.gz".to_owned(),
+            data: None,
             format: Format::Features(FeatureFile::Indexed {
                 kind: Kind::Bed,
                 index: tabix::Index::default(),
@@ -1540,6 +1574,7 @@ mod tests {
             let source = Source {
                 location: location.clone(),
                 name: "genes.pred.bb".to_owned(),
+                data: None,
                 format: open_bbi(&location, "genes.pred.bb", label).unwrap(),
             };
             let window = region(0, 10_000);
@@ -1947,6 +1982,7 @@ mod tests {
         let source = Source {
             location: PathBuf::from("/data/coverage.bedGraph").into(),
             name: "coverage.bedGraph".to_owned(),
+            data: None,
             format: Format::Signal(SignalFile::BedGraphTable {
                 table: genie_formats::table::Table::new(Vec::new()),
             }),
@@ -2039,6 +2075,69 @@ mod tests {
             error,
             "The file genes.bed is not valid. Line 1: a number is not valid."
         );
+    }
+
+    #[test]
+    fn prepared_files_open_from_their_copy_and_their_index() {
+        let scratch = Scratch::new("prepared-copy");
+        let copy = scratch.file("copy.gff3.gz", fs::read(fixture("genes.gff3.gz")).unwrap());
+        let index = scratch.file("copy.tbi", fs::read(fixture("genes.gff3.gz.tbi")).unwrap());
+        let prepared = Prepared {
+            data: Location::File(copy),
+            index: Location::File(index),
+        };
+        let source = open_with(PathBuf::from("/data/genes.gff3"), Some(prepared)).unwrap();
+        assert_eq!(source.location, PathBuf::from("/data/genes.gff3").into());
+        assert_eq!(source.name, "genes.gff3");
+        let window = region(50_000, 51_000);
+        let loaded = load(
+            &source,
+            "chr1",
+            window,
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        );
+        let Content::Features(annotation) = &loaded.unwrap().content else {
+            panic!("expected features");
+        };
+        assert!(
+            annotation
+                .features
+                .iter()
+                .any(|feature| feature.name() == "GENE1003")
+        );
+        let names = names(&source, &assembly()).unwrap();
+        assert!(names.find("gene1003").is_some());
+    }
+
+    #[test]
+    fn prepared_indexes_can_sit_away_from_the_reads() {
+        let scratch = Scratch::new("prepared-index");
+        let reads = scratch.file("reads.bam", fs::read(fixture("reads.bam")).unwrap());
+        let index = scratch.file("cached.bai", fs::read(fixture("reads.bam.bai")).unwrap());
+        assert!(open(reads.clone()).is_err());
+        let prepared = Prepared {
+            data: Location::File(reads.clone()),
+            index: Location::File(index),
+        };
+        let source = open_with(reads, Some(prepared)).unwrap();
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let window = region(5_000, 8_000);
+        let loaded = load(
+            &source,
+            "chr1",
+            window,
+            Options::default(),
+            1,
+            true,
+            reference,
+        );
+        let Content::Reads(pile) = &loaded.unwrap().content else {
+            panic!("expected reads");
+        };
+        assert!(pile.reads.len() >= 10, "{}", pile.reads.len());
     }
 
     #[test]

@@ -17,10 +17,10 @@ pub enum SignalFile {
 }
 
 impl SignalFile {
-    pub fn open(location: &Location, name: &str) -> Result<Self, String> {
-        if is_compressed(name) {
+    pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
+        if index.is_some() || is_compressed(name) {
             return Ok(Self::BedGraph {
-                index: tabix_index(location, name)?,
+                index: tabix_index(location, name, index)?,
             });
         }
         let table = bedgraph::read_table(plain(location, name)?)

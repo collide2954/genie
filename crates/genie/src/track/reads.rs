@@ -17,17 +17,21 @@ pub struct ReadFile {
 impl ReadFile {
     pub const SPAN: u64 = 30_000;
 
-    pub fn open(location: &Location, name: &str) -> Result<Self, String> {
-        let file = [
-            location.with_suffix(".bai"),
-            location.with_extension("bai"),
-            location.with_suffix(".csi"),
-        ]
-        .into_iter()
-        .find_map(|candidate| candidate.open().ok())
-        .ok_or_else(|| {
-            format!("There is no index {name}.bai. Index the file with samtools index.")
-        })?;
+    pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
+        let candidates = match index {
+            Some(index) => vec![index.clone()],
+            None => vec![
+                location.with_suffix(".bai"),
+                location.with_extension("bai"),
+                location.with_suffix(".csi"),
+            ],
+        };
+        let file = candidates
+            .into_iter()
+            .find_map(|candidate| candidate.open().ok())
+            .ok_or_else(|| {
+                format!("There is no index {name}.bai. Index the file with samtools index.")
+            })?;
         let index = bai::Index::read(file)
             .map_err(|error| format!("The index {name}.bai is not valid. {error}"))?;
         let header =
