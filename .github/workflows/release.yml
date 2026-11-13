@@ -75,17 +75,39 @@ jobs:
       - name: Package
         working-directory: crates/genie
         run: |
-          config=packager.json
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -n 1)
+          filter=".version = \"$version\""
           case "$RUNNER_OS" in
             Windows) formats=nsis ;;
             macOS)
               formats=app,dmg
-              jq 'del(.fileAssociations)' packager.json > packager.macos.json
-              config=packager.macos.json
+              filter="$filter | del(.fileAssociations)"
               ;;
             Linux) formats=deb,appimage ;;
           esac
-          cargo packager --release --config "$config" --formats "$formats"
+          jq "$filter" packager.json > packager.run.json
+          cargo packager --release --config packager.run.json --formats "$formats"
+      - name: Check the packages
+        run: |
+          case "$RUNNER_OS" in
+            Windows) ls -la target/packages ;;
+            macOS)
+              plutil -p target/packages/genie.app/Contents/Info.plist
+              codesign -dv --verbose=2 target/packages/genie.app 2>&1
+              lipo -info target/packages/genie.app/Contents/MacOS/genie
+              ;;
+            Linux)
+              deb=$(ls target/packages/*.deb)
+              dpkg-deb -I "$deb"
+              dpkg-deb -c "$deb"
+              dpkg-deb --fsys-tarfile "$deb" | tar -xO --wildcards '*.desktop'
+              image=$(realpath target/packages/*.AppImage)
+              cd "$(mktemp -d)"
+              "$image" --appimage-extract > /dev/null
+              cat squashfs-root/*.desktop
+              ls squashfs-root
+              ;;
+          esac
       - name: Name the packages
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
