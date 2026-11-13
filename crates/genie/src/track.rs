@@ -1,4 +1,4 @@
-use std::io::BufReader;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
-use genie_formats::{bbi, bed, gff, tabix, vcf};
+use genie_formats::{bbi, bed, bedmethyl, gff, gzip, tabix, vcf};
 use genie_render::alignments::{self, Look, MethylationLane};
 use genie_render::features::Mode;
 use genie_render::rows;
@@ -35,6 +35,7 @@ const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
 pub const PLAIN_LIMIT: u64 = 50 << 20;
 const SEARCH: u64 = 1 << 20;
+const SNIFF_LINES: usize = 50;
 
 #[derive(Debug)]
 pub enum Format {
@@ -92,6 +93,17 @@ impl Source {
 
     pub fn has_signal(&self) -> bool {
         matches!(self.format, Format::Signal(_))
+    }
+
+    pub fn is_bedmethyl(&self) -> bool {
+        matches!(&self.format, Format::Signal(file) if file.is_bedmethyl())
+    }
+
+    pub fn modifications(&self) -> &[String] {
+        match &self.format {
+            Format::Signal(file) => file.codes(),
+            _ => &[],
+        }
     }
 
     pub fn has_reads(&self) -> bool {
@@ -162,6 +174,13 @@ pub struct Options {
     pub clips: bool,
     pub downsample: bool,
     pub group: Grouping,
+    pub methyl: Methyl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Methyl {
+    pub code: u8,
+    pub separate: bool,
 }
 
 impl Default for Options {
@@ -171,6 +190,7 @@ impl Default for Options {
             clips: false,
             downsample: true,
             group: Grouping::None,
+            methyl: Methyl::default(),
         }
     }
 }
@@ -204,6 +224,7 @@ pub enum Toggle {
     Duplicates,
     Clips,
     Downsample,
+    Join,
 }
 
 impl Options {
@@ -214,6 +235,7 @@ impl Options {
             Toggle::Duplicates => &mut options.duplicates,
             Toggle::Clips => &mut options.clips,
             Toggle::Downsample => &mut options.downsample,
+            Toggle::Join => &mut options.methyl.separate,
         };
         *flag = !*flag;
         options
@@ -224,6 +246,7 @@ impl Options {
             Toggle::Duplicates => self.duplicates,
             Toggle::Clips => self.clips,
             Toggle::Downsample => self.downsample,
+            Toggle::Join => !self.methyl.separate,
         }
     }
 }
@@ -582,6 +605,10 @@ pub struct Track {
 impl Track {
     pub fn new(id: u64, source: Arc<Source>, assembly: &Assembly) -> Self {
         let contigs = contig_names(source.contigs(), assembly);
+        let range = source.is_bedmethyl().then_some(Scale {
+            min: 0.0,
+            max: 100.0,
+        });
         Self {
             id,
             name: source.name.clone(),
@@ -592,7 +619,10 @@ impl Track {
             hue: Hue::default(),
             mode: None,
             options: Options::default(),
-            plot: Plot::default(),
+            plot: Plot {
+                range,
+                ..Plot::default()
+            },
             height: None,
             filter: Filter::default(),
             modification: None,
@@ -602,6 +632,9 @@ impl Track {
     }
 
     pub fn modification_names(&self) -> Vec<String> {
+        if self.source.is_bedmethyl() {
+            return self.source.modifications().to_vec();
+        }
         match self.slot.loaded.as_ref().map(|(_, data)| &data.content) {
             Some(Content::Reads(pile)) => pile.methylation.names().to_vec(),
             _ => Vec::new(),
@@ -609,10 +642,29 @@ impl Track {
     }
 
     pub fn shown_modification(&self) -> Option<String> {
+        if self.source.is_bedmethyl() {
+            let codes = self.source.modifications();
+            return codes
+                .get(usize::from(self.options.methyl.code))
+                .or_else(|| codes.first())
+                .cloned();
+        }
         match self.slot.loaded.as_ref().map(|(_, data)| &data.content) {
             Some(Content::Reads(pile)) => self.methylation_name(pile),
             _ => None,
         }
+    }
+
+    pub fn set_modification(&mut self, name: Option<String>) {
+        let codes = self.source.modifications();
+        let code = name
+            .as_ref()
+            .and_then(|name| codes.iter().position(|code| code == name))
+            .and_then(|code| u8::try_from(code).ok());
+        if let Some(code) = code {
+            self.options.methyl.code = code;
+        }
+        self.modification = name;
     }
 
     pub fn methylation_name(&self, pile: &Pile) -> Option<String> {
@@ -840,8 +892,9 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         }
         Change::Modification(index) => {
             let track = &mut tracks[position];
-            if let Some(name) = track.modification_names().get(index) {
-                track.modification = Some(name.clone());
+            if let Some(name) = track.modification_names().get(index).cloned() {
+                track.set_modification(Some(name));
+                track.forget();
             }
         }
         Change::Colors => {
@@ -935,6 +988,7 @@ pub fn is_track(location: &Location) -> bool {
     is_bam(&name)
         || is_vcf(&name)
         || is_signal(&name)
+        || is_bedmethyl(&name)
         || is_bigbed(&name)
         || Kind::of(&name).is_some()
 }
@@ -973,6 +1027,33 @@ pub fn is_bigbed(name: &str) -> bool {
     Path::new(name).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("bb") || extension.eq_ignore_ascii_case("bigbed")
     })
+}
+
+pub fn is_bedmethyl(name: &str) -> bool {
+    inner_extension(name, &["bedmethyl"])
+}
+
+fn is_bed(name: &str) -> bool {
+    Kind::of(name) == Some(Kind::Bed)
+}
+
+fn sniffs_methyl(location: &Location) -> bool {
+    let Ok(file) = location.open() else {
+        return false;
+    };
+    let reader: Box<dyn BufRead> = if is_compressed(&location.name()) {
+        Box::new(BufReader::new(gzip::Reader::new(BufReader::new(file))))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    for line in reader.lines().take(SNIFF_LINES).map_while(Result::ok) {
+        match bedmethyl::parse(&line) {
+            Ok(None) => {}
+            Ok(Some(_)) => return true,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 pub fn is_bedgraph(name: &str) -> bool {
@@ -1036,6 +1117,8 @@ pub fn open_with(
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
+    } else if is_bedmethyl(&name) || (is_bed(&name) && sniffs_methyl(reading)) {
+        Format::Signal(SignalFile::open_methyl(reading, &name, index)?)
     } else if is_signal(&name) {
         Format::Signal(SignalFile::open(reading, &name, index)?)
     } else {
@@ -1120,7 +1203,10 @@ pub fn load(
         Format::Features(file) => file.load(location, contig, region, step, detail),
         Format::Variants(file) => file.load(location, contig, region),
         Format::Reads(file) => file.load(location, contig, region, options, reference),
-        Format::Signal(file) => file.load(location, contig, region, step),
+        Format::Signal(file) => {
+            let loaded = file.load(location, contig, region, step, options.methyl)?;
+            Ok(Loaded { options, ..loaded })
+        }
     }
 }
 
@@ -1252,12 +1338,12 @@ mod tests {
     use genie_formats::tabix;
     use genie_render::features::Mode;
     use genie_render::scene::Hue;
-    use genie_render::signal::Style;
+    use genie_render::signal::{Scale, Style};
 
     use super::{
-        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Options, Plot, Prepared,
-        SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits, is_track, load,
-        lookup, names, neighbor, open, open_bbi, open_with, spans, step,
+        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Methyl, Options, Plot,
+        Prepared, SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits,
+        is_track, load, lookup, names, neighbor, open, open_bbi, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2244,6 +2330,96 @@ mod tests {
             panic!("expected reads");
         };
         assert!(pile.reads.len() >= 10, "{}", pile.reads.len());
+    }
+
+    const METHYL: &str = "chr1\t100\t101\tm\t20\t+\t100\t101\t255,0,0\t20\t75.00\t15\t5\t0\t0\t0\t0\t0\n\
+                          chr1\t101\t102\tm\t10\t-\t101\t102\t255,0,0\t10\t50.00\t5\t5\t0\t0\t0\t0\t0\n\
+                          chr1\t100\t101\th\t20\t+\t100\t101\t255,0,0\t20\t10.00\t2\t18\t0\t0\t0\t0\t0\n";
+
+    fn methyl_values(source: &Source, options: Options) -> Vec<(u64, f64)> {
+        let loaded = load(
+            source,
+            "chr1",
+            region(0, 1_000),
+            options,
+            1,
+            true,
+            no_reference,
+        );
+        let Content::Signal(signal) = &loaded.unwrap().content else {
+            panic!("expected signal");
+        };
+        signal
+            .summaries
+            .iter()
+            .map(|summary| (summary.span.start(), (summary.sum * 10.0).round() / 10.0))
+            .collect()
+    }
+
+    #[test]
+    fn bedmethyl_files_open_as_percent_signal() {
+        let scratch = Scratch::new("bedmethyl");
+        let source = open(scratch.file("calls.bedMethyl", METHYL)).unwrap();
+        assert!(source.is_bedmethyl());
+        assert_eq!(source.modifications(), ["5mC", "5hmC"]);
+        assert_eq!(methyl_values(&source, Options::default()), [(100, 66.7)]);
+        let separate = Options {
+            methyl: Methyl {
+                code: 0,
+                separate: true,
+            },
+            ..Options::default()
+        };
+        assert_eq!(methyl_values(&source, separate), [(100, 75.0), (101, 50.0)]);
+        let hydroxy = Options {
+            methyl: Methyl {
+                code: 1,
+                separate: false,
+            },
+            ..Options::default()
+        };
+        assert_eq!(methyl_values(&source, hydroxy), [(100, 10.0)]);
+        let track = Track::new(1, Arc::new(source), &assembly());
+        assert_eq!(
+            track.plot.range,
+            Some(Scale {
+                min: 0.0,
+                max: 100.0
+            })
+        );
+        let named_bed = open(scratch.file("calls.bed", METHYL)).unwrap();
+        assert!(named_bed.is_bedmethyl());
+        let plain_bed = open(scratch.file("genes.bed", "chr1\t10\t20\tgeneA\n")).unwrap();
+        assert!(!plain_bed.is_bedmethyl());
+        assert!(is_track(&PathBuf::from("/data/calls.bedMethyl.gz").into()));
+    }
+
+    #[test]
+    fn bedmethyl_tracks_pick_the_modification_and_the_strands() {
+        let scratch = Scratch::new("bedmethyl-change");
+        let source = Arc::new(open(scratch.file("calls.bedMethyl", METHYL)).unwrap());
+        let mut tracks = vec![Track::new(1, source.clone(), &assembly())];
+        assert_eq!(tracks[0].modification_names(), ["5mC", "5hmC"]);
+        assert_eq!(tracks[0].shown_modification().as_deref(), Some("5mC"));
+        change(&mut tracks, 1, Change::Modification(1));
+        assert_eq!(tracks[0].options.methyl.code, 1);
+        assert_eq!(tracks[0].modification.as_deref(), Some("5hmC"));
+        assert_eq!(tracks[0].shown_modification().as_deref(), Some("5hmC"));
+        assert!(tracks[0].options.is_on(Toggle::Join));
+        change(&mut tracks, 1, Change::Toggle(Toggle::Join));
+        assert!(tracks[0].options.methyl.separate);
+        assert!(!tracks[0].options.is_on(Toggle::Join));
+        let options = tracks[0].options;
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 1_000),
+            options,
+            1,
+            true,
+            no_reference,
+        );
+        assert_eq!(loaded.unwrap().options, options);
     }
 
     #[test]

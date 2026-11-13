@@ -797,7 +797,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) {
     track.options = found.options;
     track.plot = found.plot;
     track.filter = found.filter.clone();
-    track.modification.clone_from(&found.modification);
+    track.set_modification(found.modification.clone());
 }
 
 pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {
@@ -819,8 +819,21 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
             .add_filter(
                 "Tracks",
                 &[
-                    "gz", "bgz", "bed", "gff", "gff3", "gtf", "vcf", "bam", "bw", "bigwig", "bb",
-                    "bigbed", "bedgraph", "bdg",
+                    "gz",
+                    "bgz",
+                    "bed",
+                    "gff",
+                    "gff3",
+                    "gtf",
+                    "vcf",
+                    "bam",
+                    "bw",
+                    "bigwig",
+                    "bb",
+                    "bigbed",
+                    "bedgraph",
+                    "bdg",
+                    "bedmethyl",
                 ],
             )
             .add_filter("Reference sequences", &references)

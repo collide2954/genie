@@ -127,18 +127,51 @@ fn link<'a>(label: String, message: Message) -> Element<'a, Message> {
 
 fn modification_choices(track: &Track) -> Vec<String> {
     let names = track.modification_names();
-    if track.plot.look.mods && names.len() > 1 {
+    let wanted = track.source.is_bedmethyl() || track.plot.look.mods;
+    if wanted && names.len() > 1 {
         names
     } else {
         Vec::new()
     }
 }
 
+fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let shown = track.shown_modification();
+    modification_choices(track)
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let chosen = shown.as_ref() == Some(&name);
+            item(
+                format!("Show {name}"),
+                Message::TrackChanged(track.id, Change::Modification(index)),
+                chosen,
+                true,
+            )
+        })
+        .collect()
+}
+
+fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let mut items = modification_items(track);
+    items.push(item(
+        "Join CpG strands",
+        Message::TrackChanged(track.id, Change::Toggle(Toggle::Join)),
+        track.options.is_on(Toggle::Join),
+        true,
+    ));
+    items.push(separator());
+    items
+}
+
 fn kind_height(track: &Track) -> f32 {
+    let choices = modification_choices(track).len() as f32 * LINK_HEIGHT;
     if track.source.has_reads() {
-        READS_HEIGHT + modification_choices(track).len() as f32 * LINK_HEIGHT
+        READS_HEIGHT + choices
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
+    } else if track.source.is_bedmethyl() {
+        SIGNAL_HEIGHT + choices + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_signal() {
         SIGNAL_HEIGHT
     } else if track.source.has_colors() {
@@ -254,16 +287,7 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
         .collect();
     items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
     items.push(item("Color by modification", Change::Mods, look.mods));
-    let shown = track.shown_modification();
-    for (index, name) in modification_choices(track).into_iter().enumerate() {
-        let chosen = shown.as_ref() == Some(&name);
-        items.push(self::item(
-            format!("Show {name}"),
-            Message::TrackChanged(id, Change::Modification(index)),
-            chosen,
-            true,
-        ));
-    }
+    items.extend(modification_items(track));
     items.push(separator());
     items.push(self::item(
         format!("Sort by base at {}", grouped(place.base + 1)),
@@ -305,7 +329,9 @@ pub fn view<'a>(
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let mut content = if track.source.has_signal() {
+    let mut content = if track.source.is_bedmethyl() {
+        signal_items(track, range).extend(methyl_items(track))
+    } else if track.source.has_signal() {
         signal_items(track, range)
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)

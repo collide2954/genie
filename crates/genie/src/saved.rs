@@ -12,7 +12,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Filter, Grouping, Options, Plot};
+use crate::track::{Filter, Grouping, Methyl, Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -117,6 +117,10 @@ impl Saved {
                             .value("group")
                             .and_then(|name| find(&GROUPS, name))
                             .unwrap_or_default(),
+                        methyl: Methyl {
+                            code: 0,
+                            separate: section.value("strands") == Some("separate"),
+                        },
                     },
                     plot: Plot {
                         style: if section.value("style") == Some("line") {
@@ -206,6 +210,9 @@ impl Saved {
             }
             if track.options.group != Grouping::None {
                 entries.push(("group", name(&GROUPS, track.options.group).to_owned()));
+            }
+            if track.options.methyl.separate {
+                entries.push(("strands", "separate".to_owned()));
             }
             if track.plot.style == Style::Line {
                 entries.push(("style", "line".to_owned()));
@@ -368,7 +375,7 @@ mod tests {
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Filter, Grouping, Options, Plot};
+    use crate::track::{Filter, Grouping, Methyl, Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -418,6 +425,10 @@ mod tests {
                         clips: true,
                         downsample: false,
                         group: Grouping::Phase,
+                        methyl: Methyl {
+                            code: 0,
+                            separate: true,
+                        },
                     },
                     plot: Plot {
                         look: Look {

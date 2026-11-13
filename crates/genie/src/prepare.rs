@@ -116,7 +116,7 @@ fn kind(name: &str) -> Option<Kind> {
     if track::is_bigbed(name) || track::is_bigwig(name) {
         return None;
     }
-    if track::is_bedgraph(name) {
+    if track::is_bedgraph(name) || track::is_bedmethyl(name) {
         return Some(Kind::Text(Layout::BED));
     }
     Some(Kind::Text(match features::Kind::of(name)? {
@@ -687,6 +687,20 @@ mod tests {
             panic!("expected a local copy");
         };
         assert_eq!(fs::read(data).unwrap(), bytes);
+    }
+
+    #[test]
+    fn bedmethyl_files_are_prepared_like_bed() {
+        let scratch = Scratch::new("prepare-bedmethyl");
+        let cache = folder(&scratch).join("cache");
+        let text = "chr1\t300\t301\tm\t4\t+\t300\t301\t0\t4\t50.00\t2\t2\t0\t0\t0\t0\t0\n\
+                    chr1\t100\t101\tm\t2\t+\t100\t101\t0\t2\t100.00\t2\t0\t0\t0\t0\t0\t0\n";
+        let file: Location = scratch.file("calls.bedMethyl", text).into();
+        let (prepared, steps) = prepare(&file, &cache);
+        assert!(steps.contains(&Step::Sorting), "{steps:?}");
+        let source = track::open_with(file, Some(prepared)).unwrap();
+        assert!(source.is_bedmethyl());
+        assert_eq!(source.modifications(), ["5mC"]);
     }
 
     #[test]

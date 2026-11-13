@@ -3987,6 +3987,51 @@ mod tests {
         genie
     }
 
+    fn methyl_source() -> Arc<Source> {
+        Arc::new(Source {
+            location: PathBuf::from("/data/calls.bedMethyl").into(),
+            name: "calls.bedMethyl".to_owned(),
+            data: None,
+            format: Format::Signal(SignalFile::BedMethylTable {
+                table: genie_formats::table::Table::new(Vec::new()),
+                codes: vec!["5mC".to_owned(), "5hmC".to_owned()],
+            }),
+        })
+    }
+
+    fn with_bedmethyl() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(methyl_source())));
+        genie
+    }
+
+    #[test]
+    fn bedmethyl_menus_pick_the_modification_and_join_strands() {
+        let mut genie = with_bedmethyl();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for item in ["Show 5mC", "Show 5hmC", "Join CpG strands"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+        let _ = genie.update(Message::TrackChanged(0, Change::Modification(1)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Toggle(Toggle::Join)));
+        let methyl = genie.session.as_ref().unwrap().tracks[0].options.methyl;
+        assert_eq!(
+            methyl,
+            crate::track::Methyl {
+                code: 1,
+                separate: true
+            }
+        );
+        let saved = genie.saved().unwrap();
+        let mut restored = opened();
+        restored.restoring = Some(saved);
+        restored.waiting = 1;
+        let _ = restored.update(Message::TrackOpened(Ok(methyl_source())));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.options.methyl, methyl);
+        assert_eq!(track.shown_modification().as_deref(), Some("5hmC"));
+    }
+
     #[test]
     fn menus_know_their_height() {
         let tracks = vec![
@@ -3997,6 +4042,7 @@ mod tests {
             with_variants(),
             with_signal(),
             with_two_signals(),
+            with_bedmethyl(),
             with_filtered(),
         ];
         for mut genie in tracks {
