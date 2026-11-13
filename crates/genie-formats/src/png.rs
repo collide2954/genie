@@ -41,8 +41,14 @@ fn chunk(writer: &mut impl Write, kind: [u8; 4], data: &[u8]) -> io::Result<()> 
 }
 
 pub(crate) fn crc(parts: &[&[u8]]) -> u32 {
-    let mut crc = !0;
-    for byte in parts.iter().flat_map(|part| part.iter()) {
+    parts
+        .iter()
+        .fold(0, |check, part| crc_continue(check, part))
+}
+
+pub(crate) fn crc_continue(previous: u32, data: &[u8]) -> u32 {
+    let mut crc = !previous;
+    for byte in data {
         crc = TABLE[((crc ^ u32::from(*byte)) & 0xFF) as usize] ^ (crc >> 8);
     }
     !crc

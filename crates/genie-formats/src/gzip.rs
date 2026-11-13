@@ -1,9 +1,13 @@
+use std::io::{self, BufRead, ErrorKind, Read};
+
 use miniz_oxide::deflate::compress_to_vec;
 use miniz_oxide::inflate::TINFLStatus;
 use miniz_oxide::inflate::core::inflate_flags::TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
 use miniz_oxide::inflate::core::{DecompressorOxide, decompress};
+use miniz_oxide::inflate::stream::{self, InflateState};
+use miniz_oxide::{DataFormat, MZFlush, MZStatus};
 
-use crate::png::crc;
+use crate::png::{crc, crc_continue};
 use crate::{Error, Reason};
 
 const MAGIC: [u8; 3] = [31, 139, 8];
@@ -14,6 +18,157 @@ const FEXTRA: u8 = 4;
 const FNAME: u8 = 8;
 const FCOMMENT: u8 = 16;
 const LEVEL: u8 = 6;
+const BUFFER: usize = 1 << 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Start,
+    Body,
+    Done,
+}
+
+pub struct Reader<R> {
+    inner: R,
+    state: Box<InflateState>,
+    output: Vec<u8>,
+    filled: usize,
+    position: usize,
+    check: u32,
+    size: u32,
+    phase: Phase,
+}
+
+impl<R: BufRead> Reader<R> {
+    pub fn new(inner: R) -> Self {
+        Self {
+            inner,
+            state: InflateState::new_boxed(DataFormat::Raw),
+            output: vec![0; BUFFER],
+            filled: 0,
+            position: 0,
+            check: 0,
+            size: 0,
+            phase: Phase::Start,
+        }
+    }
+
+    fn refill(&mut self) -> io::Result<()> {
+        self.position = 0;
+        self.filled = 0;
+        while self.filled == 0 {
+            match self.phase {
+                Phase::Done => break,
+                Phase::Start => self.start()?,
+                Phase::Body => self.inflate()?,
+            }
+        }
+        Ok(())
+    }
+
+    fn start(&mut self) -> io::Result<()> {
+        let input = self.inner.fill_buf()?;
+        if input.is_empty() {
+            self.phase = Phase::Done;
+            return Ok(());
+        }
+        if input.iter().all(|byte| *byte == 0) {
+            let count = input.len();
+            self.inner.consume(count);
+            return Ok(());
+        }
+        read_header(&mut self.inner)?;
+        self.state.reset(DataFormat::Raw);
+        self.check = 0;
+        self.size = 0;
+        self.phase = Phase::Body;
+        Ok(())
+    }
+
+    fn inflate(&mut self) -> io::Result<()> {
+        let input = self.inner.fill_buf()?;
+        if input.is_empty() {
+            return Err(io::Error::from(ErrorKind::UnexpectedEof));
+        }
+        let result = stream::inflate(&mut self.state, input, &mut self.output, MZFlush::None);
+        self.inner.consume(result.bytes_consumed);
+        let written = result.bytes_written;
+        self.check = crc_continue(self.check, &self.output[..written]);
+        self.size = self.size.wrapping_add(written as u32);
+        self.filled = written;
+        match result.status {
+            Ok(MZStatus::StreamEnd) => {
+                let mut trailer = [0; TRAILER];
+                self.inner.read_exact(&mut trailer)?;
+                let [check, size] = [&trailer[..4], &trailer[4..]]
+                    .map(|part| u32::from_le_bytes([part[0], part[1], part[2], part[3]]));
+                if check != self.check || size != self.size {
+                    return Err(broken(damaged()));
+                }
+                self.phase = Phase::Start;
+                Ok(())
+            }
+            Ok(_) => Ok(()),
+            Err(_) => Err(broken(damaged())),
+        }
+    }
+}
+
+impl<R: BufRead> Read for Reader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let count = available.len().min(buffer.len());
+        buffer[..count].copy_from_slice(&available[..count]);
+        self.consume(count);
+        Ok(count)
+    }
+}
+
+impl<R: BufRead> BufRead for Reader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.position == self.filled {
+            self.refill()?;
+        }
+        Ok(&self.output[self.position..self.filled])
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.position = (self.position + amount).min(self.filled);
+    }
+}
+
+fn read_header(reader: &mut impl BufRead) -> io::Result<()> {
+    let mut fixed = [0; HEADER];
+    reader.read_exact(&mut fixed)?;
+    if !fixed.starts_with(&MAGIC) {
+        return Err(broken(Error::Invalid(Reason::NotGzip)));
+    }
+    let flags = fixed[3];
+    if flags & FEXTRA != 0 {
+        let mut length = [0; 2];
+        reader.read_exact(&mut length)?;
+        let length = u64::from(u16::from_le_bytes(length));
+        if io::copy(&mut reader.take(length), &mut io::sink())? != length {
+            return Err(io::Error::from(ErrorKind::UnexpectedEof));
+        }
+    }
+    for flag in [FNAME, FCOMMENT] {
+        if flags & flag != 0 {
+            let mut text = Vec::new();
+            reader.read_until(0, &mut text)?;
+            if text.last() != Some(&0) {
+                return Err(io::Error::from(ErrorKind::UnexpectedEof));
+            }
+        }
+    }
+    if flags & FHCRC != 0 {
+        reader.read_exact(&mut [0; 2])?;
+    }
+    Ok(())
+}
+
+fn broken(error: Error) -> io::Error {
+    io::Error::new(ErrorKind::InvalidData, error)
+}
 
 pub fn compress(data: &[u8]) -> Vec<u8> {
     let mut bytes = MAGIC.to_vec();
@@ -102,9 +257,18 @@ fn damaged() -> Error {
 mod tests {
     use miniz_oxide::deflate::compress_to_vec;
 
-    use super::{compress, inflate};
+    use std::io::{Cursor, ErrorKind, Read, Write};
+
+    use super::{Reader, compress, inflate};
+    use crate::bgzf::Writer;
     use crate::png::crc;
     use crate::{Error, Reason};
+
+    fn stream(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+        let mut text = Vec::new();
+        Reader::new(Cursor::new(bytes)).read_to_end(&mut text)?;
+        Ok(text)
+    }
 
     fn member(data: &[u8], name: Option<&str>, extra: bool) -> Vec<u8> {
         let flags = if name.is_some() { 8 } else { 0 } | if extra { 4 } else { 0 };
@@ -166,5 +330,38 @@ mod tests {
             inflate(&wrong).unwrap_err(),
             Error::Invalid(Reason::BadBlock)
         ));
+    }
+
+    #[test]
+    fn streams_members_one_after_another() {
+        let mut bytes = member(b"hello ", Some("a.txt"), true);
+        bytes.extend(member(b"", None, false));
+        bytes.extend(member(b"world\n", None, false));
+        assert_eq!(stream(&bytes).unwrap(), b"hello world\n");
+        bytes.extend([0; 16]);
+        assert_eq!(stream(&bytes).unwrap(), b"hello world\n");
+    }
+
+    #[test]
+    fn streams_text_larger_than_one_buffer_and_bgzip_files() {
+        let text: Vec<u8> = (0..60_000_u32)
+            .flat_map(|line| format!("chr1\t{line}\t{}\n", line * 7 % 1_000).into_bytes())
+            .collect();
+        assert_eq!(stream(&compress(&text)).unwrap(), text);
+        let mut writer = Writer::new(Vec::new());
+        writer.write_all(&text).unwrap();
+        assert_eq!(stream(&writer.finish().unwrap()).unwrap(), text);
+    }
+
+    #[test]
+    fn streaming_rejects_other_and_damaged_data() {
+        let error = stream(b"chr1\t0\t10\n").unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
+        let good = member(b"some text that compresses", None, false);
+        assert!(stream(&good[..good.len() - 12]).is_err());
+        let mut wrong = good.clone();
+        let at = wrong.len() - 8;
+        wrong[at] ^= 1;
+        assert_eq!(stream(&wrong).unwrap_err().kind(), ErrorKind::InvalidData);
     }
 }
