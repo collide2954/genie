@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind, Read, Seek};
 
-use genie_core::Region;
 use genie_core::alignment::{Alignment, Mate, Op, Tags, parts};
+use genie_core::{Region, Strand};
 
 use crate::bai::Index;
 use crate::bgzf::Bgzf;
@@ -240,9 +240,19 @@ fn tags(aux: &[u8]) -> Tags {
             let text = value.strip_suffix(&[0]).unwrap_or(value);
             tags.parts = parts(&String::from_utf8_lossy(text));
         }
+        [b'X', b'S'] if kind == b'A' => tags.xs = strand(value),
+        [b't', b's'] if kind == b'A' => tags.ts = strand(value),
         _ => {}
     });
     tags
+}
+
+fn strand(value: &[u8]) -> Option<Strand> {
+    match value.first() {
+        Some(b'+') => Some(Strand::Forward),
+        Some(b'-') => Some(Strand::Reverse),
+        _ => None,
+    }
 }
 
 fn walk(mut aux: &[u8], mut each: impl FnMut([u8; 2], u8, &[u8])) {
@@ -295,8 +305,8 @@ fn bad() -> Error {
 mod tests {
     use std::io::Cursor;
 
-    use genie_core::Region;
     use genie_core::alignment::{Alignment, Op};
+    use genie_core::{Region, Strand};
 
     use super::{header, query, record};
     use crate::{
@@ -443,6 +453,20 @@ mod tests {
             .map(|part| (part.contig.as_str(), part.start))
             .collect();
         assert_eq!(parts, [("chr2", 1233)]);
+    }
+
+    #[test]
+    fn splice_strands_come_from_the_xs_and_ts_tags() {
+        let bases = "ACGTACGTAC";
+        let mut spliced = body(40, "xs", 0, &[(5, 0), (100, 3), (5, 0)], bases);
+        spliced.extend(bases.bytes().map(|_| 30));
+        spliced.extend(b"XSA-tsA+");
+        let mut reader = Cursor::new(sized(spliced));
+        let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
+        assert_eq!(
+            (read.tags.xs, read.tags.ts),
+            (Some(Strand::Reverse), Some(Strand::Forward))
+        );
     }
 
     #[test]

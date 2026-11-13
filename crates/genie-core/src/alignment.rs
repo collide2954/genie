@@ -70,6 +70,8 @@ pub struct Tags {
     pub phase: Option<i64>,
     pub group: Option<String>,
     pub parts: Vec<Part>,
+    pub xs: Option<Strand>,
+    pub ts: Option<Strand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +143,18 @@ impl Alignment {
 
     pub fn has(&self, flag: u16) -> bool {
         self.flags & flag != 0
+    }
+
+    pub fn splice_strand(&self) -> Strand {
+        match (self.tags.xs, self.tags.ts) {
+            (Some(strand), _) if strand != Strand::Unknown => strand,
+            (_, Some(Strand::Forward)) => self.strand(),
+            (_, Some(Strand::Reverse)) => match self.strand() {
+                Strand::Forward => Strand::Reverse,
+                _ => Strand::Forward,
+            },
+            _ => Strand::Unknown,
+        }
     }
 }
 

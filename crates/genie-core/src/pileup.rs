@@ -1,5 +1,7 @@
-use crate::Region;
+use std::collections::HashMap;
+
 use crate::alignment::{Alignment, Gap, Op, Pairing, Parts};
+use crate::{Region, Strand};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
@@ -195,11 +197,107 @@ pub fn sort_rows(reads: &[Read], rows: &[usize], starts: &[usize], position: u64
     rows.iter().map(|&row| placed[row]).collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Junction {
+    pub span: Region,
+    pub count: u32,
+    pub strand: Strand,
+}
+
+#[derive(Debug, Default)]
+pub struct Junctions {
+    found: HashMap<(u64, u64), (u32, Strand)>,
+}
+
+impl Junctions {
+    pub fn add(&mut self, alignment: &Alignment) {
+        let mut position = alignment.start;
+        let mut splice = None;
+        for &(op, length) in &alignment.cigar {
+            let length = u64::from(length);
+            if op == Op::Skip {
+                let strand = *splice.get_or_insert_with(|| alignment.splice_strand());
+                let entry = self
+                    .found
+                    .entry((position, position + length))
+                    .or_insert((0, Strand::Unknown));
+                entry.0 += 1;
+                if entry.1 == Strand::Unknown {
+                    entry.1 = strand;
+                }
+            }
+            if op.consumes_reference() {
+                position += length;
+            }
+        }
+    }
+
+    pub fn finish(self) -> Vec<Junction> {
+        let mut found: Vec<Junction> = self
+            .found
+            .into_iter()
+            .map(|((start, end), (count, strand))| Junction {
+                span: Region::between(start, end),
+                count,
+                strand,
+            })
+            .collect();
+        found.sort_unstable_by_key(|junction| (junction.span.start(), junction.span.end()));
+        found
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Coverage, Read, Sampler, sort_rows};
-    use crate::Region;
-    use crate::alignment::{Alignment, Op};
+    use super::{Coverage, Junction, Junctions, Read, Sampler, sort_rows};
+    use crate::alignment::{Alignment, Op, REVERSE};
+    use crate::{Region, Strand};
+
+    #[test]
+    fn junctions_count_every_read_that_skips() {
+        let spliced = |start: u64, xs: Option<Strand>| {
+            let mut alignment = read(
+                start,
+                vec![(Op::Match, 10), (Op::Skip, 100), (Op::Match, 10)],
+                &[b'A'; 20],
+            );
+            alignment.tags.xs = xs;
+            alignment
+        };
+        let mut junctions = Junctions::default();
+        junctions.add(&spliced(0, None));
+        junctions.add(&spliced(0, Some(Strand::Reverse)));
+        junctions.add(&spliced(5, Some(Strand::Forward)));
+        let mut minimap = read(
+            300,
+            vec![
+                (Op::Match, 5),
+                (Op::Skip, 50),
+                (Op::Match, 5),
+                (Op::Skip, 20),
+                (Op::Match, 5),
+            ],
+            &[b'A'; 15],
+        );
+        minimap.flags = REVERSE;
+        minimap.tags.ts = Some(Strand::Forward);
+        junctions.add(&minimap);
+        junctions.add(&read(500, vec![(Op::Match, 10)], &[b'A'; 10]));
+        let junction = |start, end, count, strand| Junction {
+            span: Region::between(start, end),
+            count,
+            strand,
+        };
+        assert_eq!(
+            junctions.finish(),
+            [
+                junction(10, 110, 2, Strand::Reverse),
+                junction(15, 115, 1, Strand::Forward),
+                junction(305, 355, 1, Strand::Reverse),
+                junction(360, 380, 1, Strand::Reverse),
+            ]
+        );
+    }
 
     #[test]
     fn sorting_puts_mismatches_first_then_deletions_then_reference() {
