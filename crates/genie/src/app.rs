@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use genie_core::{History, Locus, Marks, Named, Names, Region, Span, Target, Viewport, Visit};
@@ -20,16 +20,17 @@ use crate::chrome::{self, Action};
 use crate::location::Location;
 use crate::motion::{self, Transition};
 use crate::port::{Order, Reply};
+use crate::prepare::{Step, Work};
 use crate::reading::{self, Reading};
 use crate::recent::{self, Recent};
 use crate::reference::Reference;
-use crate::saved::Saved;
+use crate::saved::{Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::settings::{Setting, Settings};
 use crate::shortcuts::{self, Command};
 use crate::theme;
 use crate::tiles::{Key, Tiles};
-use crate::track::{self, Change, Loaded, Source, Track};
+use crate::track::{self, Change, Loaded, Prepared, Source, Track};
 use crate::{font, paths, timer};
 
 mod address;
@@ -231,6 +232,25 @@ struct Session {
     history: History,
     marks: Marks,
     panels: Vec<Panel>,
+    preparing: Vec<Preparing>,
+}
+
+#[derive(Debug)]
+struct Preparing {
+    id: u64,
+    location: Location,
+    name: String,
+    step: Step,
+    share: f32,
+    stop: Arc<AtomicBool>,
+    saved: Option<SavedTrack>,
+    reply: Option<(Reply, Option<String>)>,
+}
+
+impl Drop for Preparing {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 fn panel_width(width: f32, count: usize) -> f32 {
@@ -260,6 +280,7 @@ impl Session {
             history: History::default(),
             marks: Marks::default(),
             panels: Vec::new(),
+            preparing: Vec::new(),
         }
     }
 
@@ -562,6 +583,8 @@ pub enum Message {
     FileDropped(PathBuf),
     SuggestionChosen(usize),
     TrackOpened(Result<Arc<Source>, String>),
+    Prepare(Work),
+    Preparing(u64, Preparation),
     TrackLoaded(u64, usize, usize, Region, Result<Arc<Loaded>, String>),
     NoticeDismissed,
     TrackMenu(u64, Point),
@@ -649,7 +672,16 @@ pub enum Renaming {
 pub enum Port {
     Order(Order, Reply),
     Loaded(Result<Arc<Source>, String>, Option<String>, Reply),
+    Prepare(Work, Option<String>, Reply),
     Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Preparation {
+    Progress(Step, f32),
+    Done(Result<Prepared, String>),
+    Opened(Result<Arc<Source>, String>),
+    Stop,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -850,6 +882,8 @@ impl Genie {
             Message::Opened(result) => return self.opened(result),
             Message::Indexing(name, percent) => self.indexing = Some((name, percent)),
             Message::TrackOpened(result) => return self.track_opened(result),
+            Message::Prepare(work) => return self.prepare(work, None),
+            Message::Preparing(id, event) => return self.preparing(id, event),
             Message::TrackLoaded(id, panel, contig, region, result) => {
                 self.on_session(|session| session.accept((id, panel), contig, region, result));
             }
@@ -1114,6 +1148,7 @@ pub fn run() -> iced::Result {
 mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use genie_core::signal::Summary;
     use genie_core::variant::{Call, Variant};
@@ -1134,16 +1169,19 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port, Ranging,
-        Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
+        Address, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port, Preparation,
+        Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
     use crate::menu;
+    use crate::prepare::{self, Check, Step, Work};
     use crate::reading::{self, Frames};
     use crate::recent::Entry;
     use crate::reference::Reference;
+    use crate::saved::SavedTrack;
     use crate::scene::Pointer;
+    use crate::scratch::Scratch;
     use crate::settings::{Density, Setting};
     use crate::shortcuts::Command;
     use crate::theme::Appearance;
@@ -4872,6 +4910,85 @@ mod tests {
         assert!(shows(
             &genie,
             "Saved chr1_1-1000.png. The view is too tall. The image shows only the top part."
+        ));
+    }
+
+    fn preparing_genie(name: &str) -> (Genie, Scratch, Work) {
+        let scratch = Scratch::new(name);
+        let cache = scratch.file("marker", "").parent().unwrap().join("cache");
+        let data =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../genie-formats/tests/data/reads.bam");
+        let reads = scratch.file("reads.bam", std::fs::read(data).unwrap());
+        let Ok(Check::Needs(work)) = prepare::check(&reads.into(), Some(&cache)) else {
+            panic!("expected work");
+        };
+        let mut genie = opened();
+        genie.cache = Some(cache);
+        (genie, scratch, work)
+    }
+
+    fn preparing_id(genie: &Genie) -> u64 {
+        genie.session.as_ref().unwrap().preparing[0].id
+    }
+
+    #[test]
+    fn files_that_need_an_index_show_progress_until_stopped() {
+        let (mut genie, _scratch, work) = preparing_genie("app-prepare-stop");
+        let _ = genie.update(Message::Prepare(work));
+        let id = preparing_id(&genie);
+        let stop = Arc::clone(&genie.session.as_ref().unwrap().preparing[0].stop);
+        let progress = Preparation::Progress(Step::Indexing, 0.45);
+        let _ = genie.update(Message::Preparing(id, progress));
+        assert!(shows(&genie, "Indexing reads.bam… 45 %"));
+        let _ = genie.update(Message::Preparing(id, Preparation::Stop));
+        assert!(genie.session.as_ref().unwrap().preparing.is_empty());
+        assert!(stop.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn prepared_files_become_tracks_with_their_saved_settings() {
+        let (mut genie, _scratch, work) = preparing_genie("app-prepare-done");
+        let location = work.location.clone();
+        let cache = genie.cache.clone().unwrap();
+        let prepared = prepare::run(&work, &cache, &mut |_, _| {}, &AtomicBool::new(false));
+        let mut saved = genie.saved().unwrap();
+        let mut track = SavedTrack::plain(location.clone());
+        track.name = Some("Tumor".to_owned());
+        saved.tracks = vec![track];
+        genie.restoring = Some(saved);
+        genie.waiting = 1;
+        let _ = genie.update(Message::Prepare(work));
+        assert!(genie.restoring.is_none());
+        let id = preparing_id(&genie);
+        let source = crate::track::open_with(location, Some(prepared.unwrap())).map(Arc::new);
+        let _ = genie.update(Message::Preparing(id, Preparation::Opened(source)));
+        let session = genie.session.as_ref().unwrap();
+        assert!(session.preparing.is_empty());
+        assert_eq!(session.tracks.len(), 1);
+        assert_eq!(session.tracks[0].name, "Tumor");
+    }
+
+    #[test]
+    fn sessions_keep_files_that_are_being_prepared() {
+        let (mut genie, _scratch, work) = preparing_genie("app-prepare-saved");
+        let location = work.location.clone();
+        let _ = genie.update(Message::Prepare(work));
+        let saved = genie.saved().unwrap();
+        let locations: Vec<&Location> = saved.tracks.iter().map(|track| &track.location).collect();
+        assert_eq!(locations, [&location]);
+    }
+
+    #[test]
+    fn failed_preparation_says_why() {
+        let (mut genie, _scratch, work) = preparing_genie("app-prepare-fail");
+        let _ = genie.update(Message::Prepare(work));
+        let id = preparing_id(&genie);
+        let error = "genie cannot prepare reads.bam. The disk is full.".to_owned();
+        let _ = genie.update(Message::Preparing(id, Preparation::Done(Err(error))));
+        assert!(genie.session.as_ref().unwrap().preparing.is_empty());
+        assert!(shows(
+            &genie,
+            "genie cannot prepare reads.bam. The disk is full."
         ));
     }
 }

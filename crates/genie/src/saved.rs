@@ -58,6 +58,22 @@ pub struct SavedTrack {
     pub filter: Filter,
 }
 
+impl SavedTrack {
+    pub fn plain(location: Location) -> Self {
+        Self {
+            location,
+            name: None,
+            over: None,
+            mode: None,
+            hue: Hue::default(),
+            height: None,
+            options: Options::default(),
+            plot: Plot::default(),
+            filter: Filter::default(),
+        }
+    }
+}
+
 impl Saved {
     pub fn parse(text: &str, base: &Path) -> Result<Self, String> {
         let document =

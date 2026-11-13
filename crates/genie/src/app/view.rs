@@ -33,7 +33,8 @@ use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
 use super::{
-    Genie, Lane, Message, PANEL_GAP, Paneling, Popup, Renaming, Session, Status, Suggestion, Sweep,
+    Genie, Lane, Message, PANEL_GAP, Paneling, Popup, Preparation, Preparing, Renaming, Session,
+    Status, Suggestion, Sweep,
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -514,6 +515,11 @@ impl Genie {
             data = data
                 .push(track_view(session, track, repack, padding, draft))
                 .push(line(index + 1));
+        }
+        if !repack {
+            for item in &session.preparing {
+                data = data.push(preparing_lane(item)).push(hairline());
+            }
         }
         data.into()
     }
@@ -1215,6 +1221,25 @@ fn hint<'a>(message: String) -> Element<'a, Message> {
 
 fn indexing(name: &str, percent: u8) -> String {
     format!("Indexing {name}… {percent} %")
+}
+
+fn preparing_lane(item: &Preparing) -> Element<'_, Message> {
+    let percent = (item.share * 100.0) as u8;
+    let words = format!("{} {}… {percent} %", item.step.verb(), item.name);
+    let stop = button(icon::view(Icon::Close, 10.0))
+        .width(16)
+        .height(16)
+        .padding(0)
+        .style(style::ghost)
+        .on_press(Message::Preparing(item.id, Preparation::Stop));
+    let stop = chrome::tip(stop, "Stop and remove the track", tooltip::Position::Left);
+    stack![
+        hint(words),
+        row![label(item.name.as_str()), space().width(Length::Fill), stop]
+            .padding([2, 4])
+            .align_y(Alignment::Start),
+    ]
+    .into()
 }
 
 fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, Message> {

@@ -6,6 +6,7 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use genie_core::{Locus, Region, Span, Target};
@@ -17,6 +18,7 @@ use crate::font;
 use crate::genome;
 use crate::location::Location;
 use crate::paths::{self, file_name};
+use crate::prepare::{self, Check, Step};
 use crate::reference;
 use crate::saved::Saved;
 use crate::theme::Appearance;
@@ -205,13 +207,36 @@ impl Genie {
         let _ = self.update(Message::Opened(Ok(Arc::new(reference))));
         for location in tracks {
             let name = location.name();
-            let result = track::open(location).map(Arc::new);
+            let result = self.open_track_now(location, report).map(Arc::new);
             if let Err(error) = &result {
                 report(super::cannot_open(&format!("the track {name}"), error));
             }
             let _ = self.update(Message::TrackOpened(result));
         }
         Ok(())
+    }
+
+    fn open_track_now(
+        &self,
+        location: Location,
+        report: &mut dyn FnMut(String),
+    ) -> Result<track::Source, String> {
+        match prepare::check(&location, self.cache.as_deref())? {
+            Check::Ready => track::open(location),
+            Check::Prepared(prepared) => track::open_with(location, Some(prepared)),
+            Check::Needs(work) => {
+                let cache = self.cache.as_deref().ok_or(prepare::NO_CACHE)?;
+                let mut last = None;
+                let mut progress = |step: Step, _| {
+                    if last != Some(step) {
+                        last = Some(step);
+                        report(format!("{} {}…", step.verb(), work.name));
+                    }
+                };
+                let prepared = prepare::run(&work, cache, &mut progress, &AtomicBool::new(false))?;
+                track::open_with(location, Some(prepared))
+            }
+        }
     }
 
     fn visit(&mut self, entry: &Entry) -> Result<(), String> {

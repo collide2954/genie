@@ -19,6 +19,7 @@ mod motion;
 mod navigator;
 mod paths;
 mod port;
+mod prepare;
 mod reading;
 mod recent;
 mod reference;

@@ -33,6 +33,7 @@ impl Genie {
         match event {
             Port::Order(order, reply) => self.order(order, reply),
             Port::Loaded(result, name, reply) => self.loaded(result, name, reply),
+            Port::Prepare(work, name, reply) => self.prepare(work, Some((reply, name))),
             Port::Failed(error) => {
                 self.warn(format!(
                     "genie cannot take commands on port {}. {error}",
@@ -104,9 +105,18 @@ impl Genie {
             return Task::none();
         }
         self.busy += 1;
+        let cache = self.cache.clone();
         Task::perform(
-            async move { track::open(location).map(Arc::new) },
-            move |result| Message::Port(Port::Loaded(result, name.clone(), reply.clone())),
+            async move { super::tracks::opening(location, cache.as_deref()) },
+            move |message| match message {
+                Message::Prepare(work) => {
+                    Message::Port(Port::Prepare(work, name.clone(), reply.clone()))
+                }
+                Message::TrackOpened(result) => {
+                    Message::Port(Port::Loaded(result, name.clone(), reply.clone()))
+                }
+                other => other,
+            },
         )
     }
 
@@ -225,6 +235,7 @@ impl Genie {
             && self.tiles.waiting().is_empty()
             && self.session.as_ref().is_none_or(|session| {
                 !session.is_moving()
+                    && session.preparing.is_empty()
                     && session.tracks.iter().all(|track| {
                         track.slot.wanted.is_none()
                             && track.extra.iter().all(|slot| slot.wanted.is_none())

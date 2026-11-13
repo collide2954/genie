@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::SystemTime;
 
 use genie_core::{Region, Viewport};
 use genie_render::{alignments, features, signal, variants};
 use iced::futures::channel::mpsc;
+use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
 use iced::widget::operation;
 use iced::{Point, Task};
@@ -14,15 +16,20 @@ use crate::card::{Card, Detail};
 use crate::genome;
 use crate::location::Location;
 use crate::paths;
+use crate::port::Reply;
+use crate::prepare::{self, Check, Step, Work};
 use crate::reading;
 use crate::reference;
-use crate::saved::{self, Saved};
+use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Source, Track};
 
+use super::orders::Answer;
 use super::view::{body_height, signal_columns, signal_scale};
-use super::{Filtering, Genie, Lane, Message, Opening, Ranging, Renaming, Status};
+use super::{
+    Filtering, Genie, Lane, Message, Opening, Preparation, Preparing, Ranging, Renaming, Status,
+};
 
 pub(super) const TRACK_NAME: &str = "track-name";
 const BAD_RANGE: &str = "Type two numbers. The maximum must be larger than the minimum.";
@@ -43,13 +50,140 @@ impl Genie {
                 Task::none()
             }
         };
+        self.track_settled();
+        task
+    }
+
+    fn track_settled(&mut self) {
         if self.restoring.is_some() {
             self.waiting = self.waiting.saturating_sub(1);
             if self.waiting == 0 {
                 self.restoring = None;
             }
         }
-        task
+    }
+
+    pub(super) fn prepare(
+        &mut self,
+        work: Work,
+        reply: Option<(Reply, Option<String>)>,
+    ) -> Task<Message> {
+        self.busy = self.busy.saturating_sub(1);
+        let saved = self.restoring.as_ref().and_then(|saved| {
+            saved
+                .tracks
+                .iter()
+                .find(|track| track.location == work.location)
+                .cloned()
+        });
+        self.track_settled();
+        let (Some(session), Some(cache)) = (&mut self.session, self.cache.clone()) else {
+            if let Some((reply, _)) = reply {
+                reply.send(NO_REFERENCE);
+            }
+            return Task::none();
+        };
+        if session
+            .preparing
+            .iter()
+            .any(|item| item.location == work.location)
+        {
+            let text = format!("genie is already preparing {}.", work.name);
+            if let Some((reply, _)) = reply {
+                reply.send(text.clone());
+            }
+            return self.inform(text);
+        }
+        let id = self.next_track;
+        self.next_track += 1;
+        let stop = Arc::new(AtomicBool::new(false));
+        session.preparing.push(Preparing {
+            id,
+            location: work.location.clone(),
+            name: work.name.clone(),
+            step: Step::Indexing,
+            share: 0.0,
+            stop: Arc::clone(&stop),
+            saved,
+            reply,
+        });
+        let events = iced::stream::channel(16, async move |mut output| {
+            let (sender, mut receiver) = mpsc::unbounded();
+            thread::spawn(move || {
+                let progress = sender.clone();
+                let mut report = move |step, share| {
+                    let _ = progress.unbounded_send(Preparation::Progress(step, share));
+                };
+                let result = prepare::run(&work, &cache, &mut report, &stop);
+                let _ = sender.unbounded_send(Preparation::Done(result));
+            });
+            while let Some(event) = receiver.next().await {
+                let _ = output.send(event).await;
+            }
+        });
+        Task::run(events, move |event| Message::Preparing(id, event))
+    }
+
+    pub(super) fn preparing(&mut self, id: u64, event: Preparation) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let Some(at) = session.preparing.iter().position(|item| item.id == id) else {
+            return Task::none();
+        };
+        match event {
+            Preparation::Progress(step, share) => {
+                let item = &mut session.preparing[at];
+                (item.step, item.share) = (step, share);
+                Task::none()
+            }
+            Preparation::Done(Ok(prepared)) => {
+                let location = session.preparing[at].location.clone();
+                Task::perform(
+                    async move { track::open_with(location, Some(prepared)).map(Arc::new) },
+                    move |result| Message::Preparing(id, Preparation::Opened(result)),
+                )
+            }
+            Preparation::Opened(Ok(source)) => {
+                let item = session.preparing.remove(at);
+                let task = self.add_track(Arc::clone(&source));
+                let track = self.session.as_mut().and_then(|session| {
+                    session
+                        .tracks
+                        .iter_mut()
+                        .find(|track| track.source == source)
+                });
+                if let Some(track) = track {
+                    if let Some(found) = &item.saved {
+                        apply_saved(track, found);
+                    }
+                    if let Some((_, Some(name))) = &item.reply {
+                        track.name.clone_from(name);
+                    }
+                }
+                if let Some((reply, _)) = &item.reply {
+                    self.answers.push((Answer::Done, reply.clone()));
+                }
+                task
+            }
+            Preparation::Done(Err(error)) | Preparation::Opened(Err(error)) => {
+                let item = session.preparing.remove(at);
+                if let Some((reply, _)) = &item.reply {
+                    reply.send(error.clone());
+                }
+                if error != prepare::STOPPED {
+                    self.fail(error);
+                }
+                Task::none()
+            }
+            Preparation::Stop => {
+                let item = session.preparing.remove(at);
+                if let Some((reply, _)) = &item.reply {
+                    reply.send(prepare::STOPPED);
+                }
+                Task::none()
+            }
+        }
     }
 
     pub(super) fn tile_loaded(
@@ -467,9 +601,10 @@ impl Genie {
                 return Task::none();
             }
             self.busy += 1;
+            let cache = self.cache.clone();
             return Task::perform(
-                async move { track::open(location).map(Arc::new) },
-                Message::TrackOpened,
+                async move { opening(location, cache.as_deref()) },
+                std::convert::identity,
             );
         }
         let name = location.name();
@@ -585,15 +720,7 @@ impl Genie {
                     .position(|known| known.location == *location)
             };
             if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
-                if let Some(name) = &found.name {
-                    track.name.clone_from(name);
-                }
-                track.mode = found.mode;
-                track.hue = found.hue;
-                track.height = found.height;
-                track.options = found.options;
-                track.plot = found.plot;
-                track.filter = found.filter.clone();
+                apply_saved(&mut track, found);
             }
             session.tracks.push(track);
             session
@@ -628,6 +755,29 @@ impl Genie {
             move |result| Message::NamesLoaded(id, result),
         );
         Task::batch([self.fetch_features(), names])
+    }
+}
+
+fn apply_saved(track: &mut Track, found: &SavedTrack) {
+    if let Some(name) = &found.name {
+        track.name.clone_from(name);
+    }
+    track.mode = found.mode;
+    track.hue = found.hue;
+    track.height = found.height;
+    track.options = found.options;
+    track.plot = found.plot;
+    track.filter = found.filter.clone();
+}
+
+pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {
+    match prepare::check(&location, cache) {
+        Ok(Check::Ready) => Message::TrackOpened(track::open(location).map(Arc::new)),
+        Ok(Check::Prepared(prepared)) => {
+            Message::TrackOpened(track::open_with(location, Some(prepared)).map(Arc::new))
+        }
+        Ok(Check::Needs(work)) => Message::Prepare(work),
+        Err(error) => Message::TrackOpened(Err(error)),
     }
 }
 

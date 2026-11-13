@@ -120,6 +120,11 @@ impl Genie {
                     plot: track.plot,
                     filter: track.filter.clone(),
                 })
+                .chain(session.preparing.iter().map(|item| {
+                    item.saved
+                        .clone()
+                        .unwrap_or_else(|| SavedTrack::plain(item.location.clone()))
+                }))
                 .collect(),
             regions: session
                 .marks

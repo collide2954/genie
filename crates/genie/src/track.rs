@@ -32,7 +32,7 @@ const FEATURE_SPAN: u64 = 10_000_000;
 const WINDOW: u64 = 50;
 const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
-const PLAIN_LIMIT: u64 = 50 << 20;
+pub const PLAIN_LIMIT: u64 = 50 << 20;
 const SEARCH: u64 = 1 << 20;
 
 #[derive(Debug)]
@@ -873,7 +873,7 @@ pub fn is_track(location: &Location) -> bool {
         || Kind::of(&name).is_some()
 }
 
-fn is_bam(name: &str) -> bool {
+pub fn is_bam(name: &str) -> bool {
     Path::new(name)
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
@@ -893,23 +893,23 @@ fn inner_extension(name: &str, wanted: &[&str]) -> bool {
     })
 }
 
-fn is_vcf(name: &str) -> bool {
+pub fn is_vcf(name: &str) -> bool {
     inner_extension(name, &["vcf"])
 }
 
-fn is_bigwig(name: &str) -> bool {
+pub fn is_bigwig(name: &str) -> bool {
     Path::new(name).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("bw") || extension.eq_ignore_ascii_case("bigwig")
     })
 }
 
-fn is_bigbed(name: &str) -> bool {
+pub fn is_bigbed(name: &str) -> bool {
     Path::new(name).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("bb") || extension.eq_ignore_ascii_case("bigbed")
     })
 }
 
-fn is_bedgraph(name: &str) -> bool {
+pub fn is_bedgraph(name: &str) -> bool {
     inner_extension(name, &["bedgraph", "bdg"])
 }
 
@@ -917,7 +917,7 @@ fn is_signal(name: &str) -> bool {
     is_bigwig(name) || is_bedgraph(name)
 }
 
-fn is_compressed(name: &str) -> bool {
+pub fn is_compressed(name: &str) -> bool {
     Path::new(name).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("gz") || extension.eq_ignore_ascii_case("bgz")
     })
