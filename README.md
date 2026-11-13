@@ -2,9 +2,25 @@
 
 genie is a genome browser for Windows, macOS and Linux. It uses the [iced](https://iced.rs) GUI library. The project page is at [collide2954.github.io/genie](https://collide2954.github.io/genie/).
 
-genie is not complete. There is no release. Each push to `main` makes a test build for each operating system. The builds are in the artifacts of the CI runs for 30 days.
+## Install
 
-## Run
+Download the package for your system from the [latest release](https://github.com/collide2954/genie/releases/latest).
+
+| System | Package |
+| --- | --- |
+| Windows 10 or 11 (x64) | `genie-0.1.0-windows-x64-setup.exe` |
+| macOS 11 or later (Apple silicon and Intel) | `genie-0.1.0-macos-universal.dmg` |
+| Linux (x86_64) | `genie-0.1.0-linux-x86_64.AppImage` or `genie_0.1.0_amd64.deb` |
+
+The packages are not signed yet, so the system asks before genie opens the first time:
+
+- Windows: if SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**. The installer needs no administrator rights. It adds genie to the Start menu and opens `.genie` session files in genie.
+- macOS: open the disk image and drag genie to Applications. Open genie. If macOS stops it, open **System Settings > Privacy & Security** and click **Open Anyway**.
+- Linux: make the AppImage executable (`chmod +x genie-0.1.0-linux-x86_64.AppImage`) and run it. Some systems need FUSE 2 (the `libfuse2` package). Or install the .deb with `sudo apt install ./genie_0.1.0_amd64.deb`.
+
+Each push to `main` also makes a test build for each operating system. The builds are in the artifacts of the CI runs for 30 days.
+
+## Build from source
 
 Install [rustup](https://rustup.rs). rustup installs the toolchain version in `rust-toolchain.toml`.
 
