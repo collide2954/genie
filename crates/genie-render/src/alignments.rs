@@ -201,9 +201,14 @@ pub fn reads(
             continue;
         }
         let top = row as f32 * row_height + offset + bands(row, groups);
-        let tint = pair_hue(read.pairing)
-            .filter(|_| pairs)
-            .map_or(Paint::Strand(read.alignment.strand()), Paint::Pair);
+        let strand = read.alignment.strand();
+        let tint = if read.alignment.mapq == 0 {
+            Paint::Faint(strand)
+        } else {
+            pair_hue(read.pairing)
+                .filter(|_| pairs)
+                .map_or(Paint::Strand(strand), Paint::Pair)
+        };
         for block in &read.parts.blocks {
             primitives.push(bar(*block, top, size, tint));
         }
@@ -518,6 +523,18 @@ mod tests {
         let plain = paints(false);
         assert_eq!(plain[0], Paint::Strand(Strand::Forward));
         assert_eq!(plain[5], Paint::Strand(Strand::Reverse));
+    }
+
+    #[test]
+    fn reads_placed_in_more_than_one_spot_are_faint() {
+        let mut repeat = read(10, REVERSE, vec![(Op::Match, 10)], &[b'A'; 10]);
+        repeat.alignment.mapq = 0;
+        repeat.pairing = Pairing::Large;
+        let primitives = reads(view(0, 100), &[repeat], &[0], &[], Mode::Expanded, true);
+        assert_eq!(
+            rects(&primitives),
+            [([10.0, 1.0, 10.0, 8.0], Paint::Faint(Strand::Reverse))]
+        );
     }
 
     #[test]

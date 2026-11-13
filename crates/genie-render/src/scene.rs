@@ -70,6 +70,7 @@ pub enum Paint {
     Pair(Hue),
     Rgb([u8; 3]),
     Strand(Strand),
+    Faint(Strand),
     Coverage,
     Insertion,
     Codon(bool),

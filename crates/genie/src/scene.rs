@@ -165,6 +165,8 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Rgb([red, green, blue]) => Color::from_rgb8(red, green, blue),
         Paint::Strand(Strand::Reverse) => data.strands[1],
         Paint::Strand(Strand::Forward | Strand::Unknown) => data.strands[0],
+        Paint::Faint(Strand::Reverse) => data.strands[1].scale_alpha(FADED),
+        Paint::Faint(Strand::Forward | Strand::Unknown) => data.strands[0].scale_alpha(FADED),
         Paint::Coverage => data.coverage,
         Paint::Insertion => data.insertion,
         Paint::Codon(even) => data.codons[usize::from(!even)],

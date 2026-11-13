@@ -96,6 +96,9 @@ pub fn read_facts(read: &Alignment) -> String {
     let mut facts = vec![format!("{} bp", grouped(length))];
     facts.extend(strand(read.strand()).map(str::to_owned));
     facts.push(format!("MAPQ {}", read.mapq));
+    if read.mapq == 0 {
+        facts.push("placed in more than one spot".to_owned());
+    }
     facts.join(" · ")
 }
 
@@ -649,5 +652,10 @@ mod tests {
         };
         assert_eq!(read_facts(&read), "100 bp · reverse strand · MAPQ 42");
         assert_eq!(cigar(&read), "CIGAR 40M3D60M");
+        let repeat = Alignment { mapq: 0, ..read };
+        assert_eq!(
+            read_facts(&repeat),
+            "100 bp · reverse strand · MAPQ 0 · placed in more than one spot"
+        );
     }
 }
