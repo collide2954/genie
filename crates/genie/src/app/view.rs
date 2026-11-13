@@ -1236,7 +1236,10 @@ fn preparing_lane(item: &Preparing) -> Element<'_, Message> {
     stack![
         hint(words),
         row![label(item.name.as_str()), space().width(Length::Fill), stop]
-            .padding([2, 4])
+            .padding(Padding {
+                right: scene::CHIP_EDGE,
+                ..Padding::ZERO
+            })
             .align_y(Alignment::Start),
     ]
     .into()
