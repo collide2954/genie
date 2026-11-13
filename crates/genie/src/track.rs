@@ -11,7 +11,7 @@ use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
 use genie_formats::{bbi, bed, gff, tabix, vcf};
-use genie_render::alignments::{self, Look};
+use genie_render::alignments::{self, Look, MethylationLane};
 use genie_render::features::Mode;
 use genie_render::rows;
 use genie_render::scene::Hue;
@@ -574,6 +574,7 @@ pub struct Track {
     pub plot: Plot,
     pub height: Option<f32>,
     pub filter: Filter,
+    pub modification: Option<String>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -594,9 +595,35 @@ impl Track {
             plot: Plot::default(),
             height: None,
             filter: Filter::default(),
+            modification: None,
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    pub fn methylation_name(&self, pile: &Pile) -> Option<String> {
+        let names = pile.methylation.names();
+        self.modification
+            .clone()
+            .filter(|name| names.contains(name))
+            .or_else(|| pile.methylation.busiest().map(str::to_owned))
+    }
+
+    pub fn methylation_lanes(&self, pile: &Pile) -> (Vec<GroupKey>, Vec<MethylationLane>) {
+        let name = self.methylation_name(pile).filter(|_| self.plot.look.mods);
+        let Some(name) = name else {
+            return (Vec::new(), Vec::new());
+        };
+        pile.methylation
+            .groups()
+            .into_iter()
+            .map(|key| {
+                let label =
+                    (pile.grouping != Grouping::None).then(|| group_label(pile.grouping, key));
+                (key, (label, pile.methylation.sites(&name, key)))
+            })
+            .filter(|(_, (_, sites))| !sites.is_empty())
+            .unzip()
     }
 
     pub fn refilter(&mut self) {

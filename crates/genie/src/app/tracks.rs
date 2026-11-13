@@ -5,6 +5,7 @@ use std::thread;
 use std::time::SystemTime;
 
 use genie_core::{Region, Viewport};
+use genie_render::features::Mode;
 use genie_render::{alignments, features, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
@@ -23,7 +24,7 @@ use crate::reference;
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Change, Content, Source, Track};
+use crate::track::{self, Change, Content, Pile, Source, Track};
 
 use super::orders::Answer;
 use super::view::{body_height, signal_columns, signal_scale};
@@ -383,21 +384,8 @@ impl Genie {
                     features::hit(viewport, &annotation.features, &annotation.rows, mode, x, y)?;
                 Detail::Feature(annotation.features[index].clone())
             }
-            Content::Reads(pile) if y < pile.arc_height() => {
-                let index = alignments::arc_hit(viewport, &pile.junctions, x, y)?;
-                Detail::Junction(pile.junctions[index])
-            }
             Content::Reads(pile) => {
-                let (rows, groups, y) = (slot.rows(pile), &pile.groups, y - pile.arc_height());
-                let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
-                let read = pile.reads[index].alignment.clone();
-                let names = track.source.contigs();
-                let own = track.contigs[contig]
-                    .as_ref()
-                    .and_then(|name| names.iter().position(|known| known == name));
-                let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
-                let same = read.mate.is_some_and(|mate| Some(mate.contig) == own);
-                Detail::Read { read, mate, same }
+                read_detail(track, panel, contig, pile, viewport, mode, (x, y))?
             }
             Content::Variants(calls) => {
                 let (index, line) = variants::hit(viewport, &calls.variants, mode, x, y)?;
@@ -429,7 +417,10 @@ impl Genie {
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
             Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
-            Detail::Read { .. } | Detail::Junction(_) | Detail::Signal { .. } => Vec::new(),
+            Detail::Read { .. }
+            | Detail::Junction(_)
+            | Detail::Methylation { .. }
+            | Detail::Signal { .. } => Vec::new(),
         };
         Some(Card {
             track: id,
@@ -756,6 +747,44 @@ impl Genie {
         );
         Task::batch([self.fetch_features(), names])
     }
+}
+
+fn read_detail(
+    track: &Track,
+    panel: usize,
+    contig: usize,
+    pile: &Pile,
+    viewport: Viewport,
+    mode: Mode,
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    let (keys, lanes) = track.methylation_lanes(pile);
+    let above = alignments::methylation_height(lanes.len());
+    if y < above {
+        let (index, site) = alignments::methylation_hit(viewport, &lanes, x, y)?;
+        return Some(Detail::Methylation {
+            name: track.methylation_name(pile)?,
+            position: site.position,
+            group: lanes[index].0.clone(),
+            counts: pile.methylation.at(keys[index], site.position),
+        });
+    }
+    let y = y - above;
+    if y < pile.arc_height() {
+        let index = alignments::arc_hit(viewport, &pile.junctions, x, y)?;
+        return Some(Detail::Junction(pile.junctions[index]));
+    }
+    let slot = track.slot(panel);
+    let (rows, groups, y) = (slot.rows(pile), &pile.groups, y - pile.arc_height());
+    let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
+    let read = pile.reads[index].alignment.clone();
+    let names = track.source.contigs();
+    let own = track.contigs[contig]
+        .as_ref()
+        .and_then(|name| names.iter().position(|known| known == name));
+    let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
+    let same = read.mate.is_some_and(|mate| Some(mate.contig) == own);
+    Some(Detail::Read { read, mate, same })
 }
 
 fn apply_saved(track: &mut Track, found: &SavedTrack) {

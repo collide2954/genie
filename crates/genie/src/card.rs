@@ -43,6 +43,12 @@ pub enum Detail {
         same: bool,
     },
     Junction(Junction),
+    Methylation {
+        name: String,
+        position: u64,
+        group: Option<String>,
+        counts: Vec<(String, u32, u32)>,
+    },
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -270,6 +276,36 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             ];
             ("Splice junction".to_owned(), junction.span, lines)
         }
+        Detail::Methylation {
+            name,
+            position,
+            group,
+            counts,
+        } => {
+            let mut lines: Vec<String> = group.iter().cloned().collect();
+            for (other, modified, total) in counts {
+                let reads = format!("{modified} of {total} {}", plural(*total, "read"));
+                if other == name {
+                    let percent = (modified * 100 + total / 2) / (*total).max(1);
+                    lines.insert(0, format!("Modified {reads} · {percent} %"));
+                } else {
+                    lines.push(format!("{other} {reads}"));
+                }
+            }
+            (
+                name.clone(),
+                Region::between(*position, position + 1),
+                lines,
+            )
+        }
+    }
+}
+
+fn plural(count: u32, word: &str) -> String {
+    if count == 1 {
+        word.to_owned()
+    } else {
+        format!("{word}s")
     }
 }
 

@@ -839,7 +839,9 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
                 alignments::COVERAGE_HEIGHT,
             );
             let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
-            let shown = mode != features::Mode::Collapsed || !pile.junctions.is_empty();
+            let shown = mode != features::Mode::Collapsed
+                || !pile.junctions.is_empty()
+                || lanes_height(track, pile) > 0.0;
             let reads = shown.then(|| {
                 (
                     read_lane(track, panel, pile, viewport, mode, repack),
@@ -860,7 +862,11 @@ fn read_lane(
     mode: features::Mode,
     repack: bool,
 ) -> Vec<Primitive> {
-    let mut lane = alignments::arcs(viewport, &pile.junctions);
+    let (_, lanes) = track.methylation_lanes(pile);
+    let above = alignments::methylation_height(lanes.len());
+    let mut lane = alignments::methylation(viewport, &lanes);
+    let arcs = alignments::arcs(viewport, &pile.junctions);
+    lane.extend(arcs.into_iter().map(|primitive| primitive.lowered(above)));
     if mode == features::Mode::Collapsed {
         return lane;
     }
@@ -878,10 +884,14 @@ fn read_lane(
     } else {
         (slot.rows(pile), pile.groups.as_slice())
     };
-    let top = pile.arc_height();
+    let top = above + pile.arc_height();
     let reads = alignments::reads(viewport, &pile.reads, rows, groups, mode, track.plot.look);
     lane.extend(reads.into_iter().map(|primitive| primitive.lowered(top)));
     lane
+}
+
+pub(super) fn lanes_height(track: &Track, pile: &Pile) -> f32 {
+    alignments::methylation_height(track.methylation_lanes(pile).1.len())
 }
 
 fn track_view<'a>(
@@ -1035,10 +1045,11 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
-            if pile.junctions.is_empty() {
-                Shape::plain(alignments::COVERAGE_HEIGHT)
+            let above = lanes_height(track, pile) + pile.arc_height();
+            if above > 0.0 {
+                Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + above)
             } else {
-                Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + pile.arc_height())
+                Shape::plain(alignments::COVERAGE_HEIGHT)
             }
         }
         Some(Content::Reads(pile)) => {
@@ -1052,6 +1063,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             let row_height = alignments::row_height(mode);
             let fixed = alignments::COVERAGE_HEIGHT
                 + 1.0
+                + lanes_height(track, pile)
                 + pile.arc_height()
                 + groups as f32 * alignments::GROUP_GAP;
             Shape {

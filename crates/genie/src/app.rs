@@ -3844,17 +3844,42 @@ mod tests {
         else {
             panic!("expected reads");
         };
+        let lanes = genie_render::alignments::methylation_height(1);
         let marks: Vec<Paint> = primitives
             .iter()
             .filter_map(|primitive| match primitive {
                 Primitive::Rect {
                     paint: paint @ Paint::Modified(_),
+                    y,
                     ..
-                } => Some(*paint),
+                } if *y >= lanes => Some(*paint),
                 _ => None,
             })
             .collect();
         assert_eq!(marks, [Paint::Modified(253), Paint::Modified(20)]);
+    }
+
+    #[test]
+    fn methylation_lanes_sit_above_the_reads_and_give_site_cards() {
+        use genie_render::alignments::methylation_height;
+        let mut genie = opened();
+        add_reads(&mut genie, vec![methylated("meth1"), methylated("meth2")]);
+        let height = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            super::view::shapes(session, &session.tracks[0], false)
+                .1
+                .height
+        };
+        let plain = height(&genie);
+        let _ = genie.update(Message::TrackChanged(0, Change::Mods));
+        assert!((height(&genie) - plain - methylation_height(1)).abs() < 0.01);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.5, 5.0))));
+        for line in ["5mC", "Modified 2 of 2 reads · 100 %", "5hmC 0 of 2 reads"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let below = methylation_height(1) + 5.0;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, below))));
+        assert!(shows(&genie, "CIGAR 40M"));
     }
 
     #[test]
