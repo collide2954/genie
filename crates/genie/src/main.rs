@@ -42,6 +42,14 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     logger::install();
+    if let Some(folder) = paths::appimage_folder()
+        && let Err(error) = std::env::set_current_dir(&folder)
+    {
+        log::warn!(
+            "genie cannot go to the folder {}. {error}",
+            folder.display()
+        );
+    }
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.first().is_some_and(|first| first == "snapshot") {
         return app::snapshot::command(&arguments[1..]);

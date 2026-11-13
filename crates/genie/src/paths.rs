@@ -21,6 +21,15 @@ pub fn config_dir() -> Option<PathBuf> {
     folder(Kind::Config, env::consts::OS, |key: &str| env::var_os(key))
 }
 
+pub fn appimage_folder() -> Option<PathBuf> {
+    launched_from(|key: &str| env::var_os(key))
+}
+
+fn launched_from(var: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    var("APPIMAGE")?;
+    var("OWD").map(PathBuf::from)
+}
+
 pub fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -73,7 +82,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use super::{Kind, folder, replace};
+    use super::{Kind, folder, launched_from, replace};
     use crate::scratch::Scratch;
 
     fn names(folder: &Path) -> Vec<OsString> {
@@ -186,5 +195,19 @@ mod tests {
     fn missing_variables_give_no_folder() {
         assert_eq!(cache_dir_for("windows", lookup(&[])), None);
         assert_eq!(cache_dir_for("linux", lookup(&[])), None);
+    }
+
+    #[test]
+    fn appimages_go_back_to_the_folder_they_were_run_from() {
+        let appimage = lookup(&[
+            ("APPIMAGE", "/apps/genie.AppImage"),
+            ("OWD", "/home/a/data"),
+        ]);
+        assert_eq!(launched_from(appimage), Some(PathBuf::from("/home/a/data")));
+        assert_eq!(launched_from(lookup(&[("OWD", "/home/a/data")])), None);
+        assert_eq!(
+            launched_from(lookup(&[("APPIMAGE", "/apps/genie.AppImage")])),
+            None
+        );
     }
 }
