@@ -194,6 +194,10 @@ pub fn sniff(head: &[u8]) -> bool {
     head.starts_with(&MAGIC[..2])
 }
 
+pub fn is_bgzf(head: &[u8]) -> bool {
+    head.starts_with(&MAGIC) && head.get(12..14) == Some(b"BC")
+}
+
 pub(crate) fn read_block(
     reader: &mut impl Read,
     compressed: &mut Vec<u8>,
@@ -259,7 +263,7 @@ pub mod tests {
 
     use miniz_oxide::deflate::compress_to_vec;
 
-    use super::{Bgzf, Writer};
+    use super::{Bgzf, Writer, is_bgzf};
 
     const END: [u8; 28] = [
         31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, b'B', b'C', 2, 0, 27, 0, 3, 0, 0, 0, 0, 0, 0, 0,
@@ -357,6 +361,16 @@ pub mod tests {
         let mut rest = Vec::new();
         reader.read_to_end(&mut rest).unwrap();
         assert_eq!(rest, &data[65_280..]);
+    }
+
+    #[test]
+    fn tells_bgzip_from_plain_gzip() {
+        assert!(is_bgzf(&block(b"chr1\t1\t2\n")));
+        assert!(is_bgzf(&END));
+        let plain = crate::gzip::compress(b"chr1\t1\t2\n");
+        assert!(!is_bgzf(&plain));
+        assert!(!is_bgzf(b"chr1\t1\t2\n"));
+        assert!(!is_bgzf(&END[..10]));
     }
 
     #[test]
