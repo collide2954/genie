@@ -4,7 +4,9 @@
   "productName": "genie",
   "identifier": "io.github.collide2954.genie",
   "description": "A genome browser for sequences, genes, reads, variants and signal",
+  "longDescription": "genie shows sequences, genes, reads, variants and signal. It opens files on your computer and files on the web, and it reads only the parts of a file that the view needs.",
   "homepage": "https://collide2954.github.io/genie/",
+  "authors": ["collide2954"],
   "publisher": "collide2954",
   "copyright": "Copyright 2026 the genie authors",
   "licenseFile": "../../LICENSE",
@@ -30,5 +32,6 @@
     }
   ],
   "nsis": { "installMode": "currentUser" },
+  "deb": { "files": { "assets/linux/genie.xml": "/usr/share/mime/packages/genie.xml" } },
   "macos": { "minimumSystemVersion": "11.0", "signingIdentity": "-" }
 }
