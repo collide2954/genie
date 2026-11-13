@@ -18,6 +18,7 @@ pub mod gtf;
 pub mod gzi;
 pub mod gzip;
 pub mod http;
+pub mod icon;
 pub mod ini;
 pub mod png;
 pub mod remote;
