@@ -128,9 +128,120 @@ impl<Message> canvas::Program<Message> for Program {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use genie_formats::{icon, png};
     use iced::Color;
 
-    use super::{GRID, ICON, rungs, strand, view};
+    use super::{GRID, ICON, Look, rungs, strand, view};
+
+    const PNGS: [u32; 4] = [32, 128, 256, 512];
+    const ICO: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
+    const ICNS: [(&[u8; 4], u32); 11] = [
+        (b"icp4", 16),
+        (b"icp5", 32),
+        (b"icp6", 64),
+        (b"ic07", 128),
+        (b"ic08", 256),
+        (b"ic09", 512),
+        (b"ic10", 1024),
+        (b"ic11", 32),
+        (b"ic12", 64),
+        (b"ic13", 256),
+        (b"ic14", 512),
+    ];
+    const WINDOW: u32 = 64;
+    const MAC_MARGIN: f32 = 100.0 / 1024.0;
+
+    fn folder() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("icon")
+    }
+
+    fn rgba(size: u32, margin: f32) -> Vec<u8> {
+        let look = if size >= 32 {
+            ICON
+        } else {
+            Look {
+                rungs: false,
+                ..ICON
+            }
+        };
+        let scale = size as f32 / GRID;
+        let inset = GRID * margin;
+        let mark =
+            iced::widget::container(view::<()>(GRID - 2.0 * inset, Some(look))).padding(inset);
+        let image = crate::export::picture(mark.into(), GRID, scale, Color::TRANSPARENT).unwrap();
+        assert_eq!((image.width, image.height), (size, size));
+        image.rgba
+    }
+
+    fn encoded(size: u32, margin: f32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        png::write(&mut bytes, size, size, &rgba(size, margin)).unwrap();
+        bytes
+    }
+
+    #[test]
+    #[ignore = "run to write the icon files"]
+    fn writes_the_icon_files() {
+        let folder = folder();
+        fs::create_dir_all(&folder).unwrap();
+        for size in PNGS {
+            fs::write(
+                folder.join(format!("{size}x{size}.png")),
+                encoded(size, 0.0),
+            )
+            .unwrap();
+        }
+        let images: Vec<(u32, Vec<u8>)> =
+            ICO.iter().map(|&size| (size, encoded(size, 0.0))).collect();
+        let entries: Vec<(u32, &[u8])> = images
+            .iter()
+            .map(|(size, bytes)| (*size, bytes.as_slice()))
+            .collect();
+        fs::write(folder.join("icon.ico"), icon::ico(&entries)).unwrap();
+        let images: Vec<([u8; 4], Vec<u8>)> = ICNS
+            .iter()
+            .map(|(kind, size)| (**kind, encoded(*size, MAC_MARGIN)))
+            .collect();
+        let entries: Vec<([u8; 4], &[u8])> = images
+            .iter()
+            .map(|(kind, bytes)| (*kind, bytes.as_slice()))
+            .collect();
+        fs::write(folder.join("icon.icns"), icon::icns(&entries)).unwrap();
+        fs::write(folder.join("window.rgba"), rgba(WINDOW, 0.0)).unwrap();
+    }
+
+    #[test]
+    fn icon_files_match_the_mark() {
+        let folder = folder();
+        for size in PNGS {
+            let bytes = fs::read(folder.join(format!("{size}x{size}.png"))).unwrap();
+            let side = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap());
+            assert_eq!((side(16), side(20)), (size, size));
+        }
+        let ico = fs::read(folder.join("icon.ico")).unwrap();
+        assert_eq!(ico[..6], [0, 0, 1, 0, ICO.len() as u8, 0]);
+        let icns = fs::read(folder.join("icon.icns")).unwrap();
+        assert_eq!(&icns[..4], b"icns");
+        assert_eq!(
+            u32::from_be_bytes(icns[4..8].try_into().unwrap()) as usize,
+            icns.len()
+        );
+        let stored = fs::read(folder.join("window.rgba")).unwrap();
+        let fresh = rgba(WINDOW, 0.0);
+        assert_eq!(stored.len(), fresh.len());
+        let worst = stored
+            .iter()
+            .zip(&fresh)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        assert!(worst <= 16, "{worst}");
+    }
 
     #[test]
     fn strands_twist_with_open_ends_and_rungs_between_them() {

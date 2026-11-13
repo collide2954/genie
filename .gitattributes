@@ -7,3 +7,7 @@
 *.bam binary
 *.bai binary
 *.bw binary
+*.png binary
+*.ico binary
+*.icns binary
+*.rgba binary

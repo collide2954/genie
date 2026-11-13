@@ -127,6 +127,8 @@ pub fn perform(action: Action) -> Task<Message> {
 }
 
 pub const WINDOW: Size = Size::new(1280.0, 800.0);
+const ICON: &[u8] = include_bytes!("../assets/icon/window.rgba");
+const ICON_SIZE: u32 = 64;
 
 pub fn settings() -> window::Settings {
     window::Settings {
@@ -134,6 +136,7 @@ pub fn settings() -> window::Settings {
         min_size: Some(Size::new(720.0, 480.0)),
         decorations: Controls::CURRENT == Controls::Native,
         exit_on_close_request: false,
+        icon: window::icon::from_rgba(ICON.to_vec(), ICON_SIZE, ICON_SIZE).ok(),
         platform_specific: platform(),
         ..window::Settings::default()
     }
@@ -732,6 +735,11 @@ mod tests {
         );
         let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
         assert!(ui.find(selector::id("regions")).is_err());
+    }
+
+    #[test]
+    fn the_window_has_the_app_icon() {
+        assert!(super::settings().icon.is_some());
     }
 
     #[test]
