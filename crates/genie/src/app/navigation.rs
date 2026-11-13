@@ -151,6 +151,11 @@ impl Genie {
         self.highlight = None;
     }
 
+    pub(super) fn show_locus(&mut self, locus: String) -> Task<Message> {
+        self.draft = Some(locus);
+        self.submit()
+    }
+
     pub(super) fn submit_locus(&mut self) -> Task<Message> {
         match self.highlight {
             Some(position) => self.choose(position),

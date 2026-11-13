@@ -4,7 +4,7 @@ use iced::{Element, Length};
 
 use crate::{menu, style};
 
-use super::{Filtering, Genie, Message};
+use super::{Choice, Filtering, Genie, Message};
 
 const WIDTH: f32 = 240.0;
 const HEADING: f32 = 21.0;
@@ -23,6 +23,11 @@ fn choice<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Mess
 }
 
 impl Genie {
+    pub(super) fn choose_field(&mut self, choice: Choice) {
+        self.close_menus();
+        self.field = Some(choice);
+    }
+
     pub(super) fn field_menu(&self) -> Option<Element<'_, Message>> {
         let picked = self.field.as_ref()?;
         let session = self.session.as_ref()?;

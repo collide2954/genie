@@ -605,6 +605,7 @@ pub enum Message {
     Panel(usize, Paneling),
     Filter(u64, Filtering),
     Field(Choice),
+    Visit(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -866,10 +867,8 @@ impl Genie {
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
             Message::Filter(id, filtering) => self.filter(id, filtering),
-            Message::Field(choice) => {
-                self.close_menus();
-                self.field = Some(choice);
-            }
+            Message::Field(choice) => self.choose_field(choice),
+            Message::Visit(locus) => return self.show_locus(locus),
             Message::MenuDismissed => self.close_menus(),
             Message::Scrolled(offset) => {
                 self.scroll = offset;
@@ -4214,6 +4213,34 @@ mod tests {
         assert!(shows(&genie, "read7"));
         assert!(shows(&genie, "CIGAR 40M"));
         assert!(shows(&genie, "40 bp · forward strand · MAPQ 60"));
+    }
+
+    #[test]
+    fn split_read_cards_list_the_other_parts_and_go_there() {
+        let mut genie = opened();
+        let mut split = read("split7", 10);
+        split.cigar = vec![
+            (genie_core::alignment::Op::Match, 30),
+            (genie_core::alignment::Op::SoftClip, 10),
+        ];
+        split.tags.parts = vec![genie_core::alignment::Part {
+            contig: "chr2".to_owned(),
+            start: 99,
+            reverse: true,
+            mapq: 60,
+        }];
+        add_reads(&mut genie, vec![split]);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, 5.0))));
+        assert!(shows(&genie, "Other part"));
+        assert!(shows(&genie, "chr2:100 - · MAPQ 60"));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(20.0, 5.0)));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let text = genie.copy_text().unwrap();
+        assert!(text.ends_with("Other part: chr2:100 - · MAPQ 60"), "{text}");
+        press(&mut genie, "chr2:100 - · MAPQ 60");
+        settle(&mut genie);
+        let locus = genie.session.as_ref().unwrap().locus();
+        assert!(locus.starts_with("chr2:"), "{locus}");
     }
 
     #[test]

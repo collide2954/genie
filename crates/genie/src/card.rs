@@ -1,5 +1,5 @@
 use genie_core::alignment::{
-    Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, REVERSE, SECOND,
+    Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, Part, REVERSE, SECOND,
 };
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
@@ -30,6 +30,7 @@ const FIELD_GAP: f32 = 6.0;
 const HOVER_FIELDS: usize = 6;
 const VALUE_LIMIT: usize = 160;
 const CHARACTER: f32 = 6.0;
+const PART: &str = "Other part";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Detail {
@@ -253,10 +254,14 @@ pub fn plain(card: &Card) -> String {
         .fields
         .iter()
         .map(|field| format!("{}: {}", field.label, field.value));
+    let parts = other_parts(&card.detail)
+        .iter()
+        .map(|part| format!("{PART}: {}", part_words(part)));
     [title, locus(card, span).to_string()]
         .into_iter()
         .chain(lines)
         .chain(fields)
+        .chain(parts)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -305,6 +310,39 @@ fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
     cell.wrap().vertical_spacing(2).into()
 }
 
+fn other_parts(detail: &Detail) -> &[Part] {
+    match detail {
+        Detail::Read { read, .. } => &read.tags.parts,
+        _ => &[],
+    }
+}
+
+fn part_words(part: &Part) -> String {
+    let strand = if part.reverse { '-' } else { '+' };
+    format!(
+        "{}:{} {strand} · MAPQ {}",
+        part.contig,
+        grouped(part.start + 1),
+        part.mapq
+    )
+}
+
+fn part_row<'a>(part: &Part, pinned: bool) -> Element<'a, Message> {
+    let words = part_words(part);
+    let cell: Element<'a, Message> = if pinned {
+        let locus = format!("{}:{}", part.contig, part.start + 1);
+        Context::left(text(words).size(11), move |_| Message::Visit(locus.clone())).into()
+    } else {
+        text(words).size(11).into()
+    };
+    row![
+        text(PART).size(11).style(style::muted).width(LABEL_WIDTH),
+        cell,
+    ]
+    .spacing(FIELD_GAP)
+    .into()
+}
+
 fn field_row<'a>(track: Option<u64>, label: String, value: String) -> Element<'a, Message> {
     let cell = match track {
         Some(track) => items(track, &label, &value),
@@ -318,9 +356,49 @@ fn field_row<'a>(track: Option<u64>, label: String, value: String) -> Element<'a
     .into()
 }
 
+fn heading<'a>(title: String, pinned: bool) -> Element<'a, Message> {
+    let mut heading = row![
+        text(title)
+            .font(font::UI_STRONG)
+            .size(12)
+            .width(Length::Fill)
+    ]
+    .align_y(Align::Center);
+    if pinned {
+        heading = heading.push(
+            button(icon::view(Icon::Close, 10.0))
+                .width(16)
+                .height(16)
+                .padding(0)
+                .style(style::ghost)
+                .on_press(Message::CardClosed),
+        );
+    }
+    heading.into()
+}
+
+fn scrolled(body: Element<'_, Message>, height: f32) -> Element<'_, Message> {
+    scrollable(body)
+        .direction(Direction::Vertical(
+            Scrollbar::new()
+                .width(4)
+                .scroller_width(4)
+                .margin(0)
+                .spacing(2),
+        ))
+        .style(style::scrollbar)
+        .height(height)
+        .into()
+}
+
 pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
     let (title, span, lines) = content(&card.detail);
-    let width = if card.fields.is_empty() { WIDTH } else { WIDE };
+    let parts = other_parts(&card.detail);
+    let width = if card.fields.is_empty() && parts.is_empty() {
+        WIDTH
+    } else {
+        WIDE
+    };
     let shown = if pinned {
         card.fields.len()
     } else {
@@ -340,6 +418,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         })
         .collect();
     let count = lines.len()
+        + parts.len()
         + usize::from(hidden > 0)
         + rows
             .iter()
@@ -348,25 +427,8 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     let room = (window.height - 2.0 * EDGE).max(BASE_HEIGHT);
     let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
     let locus = locus(card, span);
-    let mut heading = row![
-        text(title)
-            .font(font::UI_STRONG)
-            .size(12)
-            .width(Length::Fill)
-    ]
-    .align_y(Align::Center);
-    if pinned {
-        heading = heading.push(
-            button(icon::view(Icon::Close, 10.0))
-                .width(16)
-                .height(16)
-                .padding(0)
-                .style(style::ghost)
-                .on_press(Message::CardClosed),
-        );
-    }
     let mut body = column![
-        heading,
+        heading(title, pinned),
         text(locus.to_string())
             .font(font::MONO)
             .size(11)
@@ -381,22 +443,13 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         rows.into_iter()
             .map(|(label, value)| field_row(pinned.then_some(card.track), label, value)),
     )
+    .extend(parts.iter().map(|part| part_row(part, pinned)))
     .spacing(2);
     if hidden > 0 {
         body = body.push(text(more(hidden)).size(11).style(style::muted));
     }
     let body: Element<'a, Message> = if height > room {
-        scrollable(body)
-            .direction(Direction::Vertical(
-                Scrollbar::new()
-                    .width(4)
-                    .scroller_width(4)
-                    .margin(0)
-                    .spacing(2),
-            ))
-            .style(style::scrollbar)
-            .height(room - 12.0)
-            .into()
+        scrolled(body.into(), room - 12.0)
     } else {
         body.into()
     };
