@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use genie_core::alignment::{Gap, Pairing};
+use genie_core::alignment::{Alignment, Gap, Op, Pairing};
 use genie_core::pileup::{Coverage, Read};
 use genie_core::{Region, Viewport};
 
@@ -167,6 +167,34 @@ fn row_at(y: f32, row_height: f32, groups: &[(usize, String)]) -> Option<usize> 
     (row < end).then_some(row)
 }
 
+fn clipped_end(alignment: &Alignment) -> Option<u64> {
+    if alignment.tags.parts.is_empty() {
+        return None;
+    }
+    let clip = |ops: &mut dyn Iterator<Item = &(Op, u32)>| -> u32 {
+        ops.take_while(|(op, _)| matches!(op, Op::SoftClip | Op::HardClip))
+            .map(|(_, length)| *length)
+            .sum()
+    };
+    let left = clip(&mut alignment.cigar.iter());
+    let right = clip(&mut alignment.cigar.iter().rev());
+    match (left, right) {
+        (0, 0) => None,
+        (left, right) if right >= left => Some(alignment.end()),
+        _ => Some(alignment.start),
+    }
+}
+
+fn tint(read: &Read, pairs: bool) -> Paint {
+    let strand = read.alignment.strand();
+    if read.alignment.mapq == 0 {
+        return Paint::Faint(strand);
+    }
+    pair_hue(read.pairing)
+        .filter(|_| pairs)
+        .map_or(Paint::Strand(strand), Paint::Pair)
+}
+
 pub fn reads(
     viewport: Viewport,
     reads: &[Read],
@@ -201,17 +229,17 @@ pub fn reads(
             continue;
         }
         let top = row as f32 * row_height + offset + bands(row, groups);
-        let strand = read.alignment.strand();
-        let tint = if read.alignment.mapq == 0 {
-            Paint::Faint(strand)
-        } else {
-            pair_hue(read.pairing)
-                .filter(|_| pairs)
-                .map_or(Paint::Strand(strand), Paint::Pair)
-        };
+        let tint = tint(read, pairs);
         for block in &read.parts.blocks {
             primitives.push(bar(*block, top, size, tint));
         }
+        marks.extend(clipped_end(&read.alignment).map(|edge| Primitive::Rect {
+            x: px(edge) - 1.0,
+            y: top,
+            width: 2.0,
+            height: size,
+            paint: Paint::Text,
+        }));
         for (gap, kind) in &read.parts.gaps {
             let paint = match kind {
                 Gap::Deletion => Paint::Text,
@@ -319,7 +347,7 @@ fn bucket(base: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use genie_core::alignment::{Alignment, Op, Pairing, REVERSE};
+    use genie_core::alignment::{Alignment, Op, Pairing, Part, REVERSE};
     use genie_core::pileup::{Coverage, Read};
     use genie_core::{Region, Strand, Viewport};
 
@@ -523,6 +551,50 @@ mod tests {
         let plain = paints(false);
         assert_eq!(plain[0], Paint::Strand(Strand::Forward));
         assert_eq!(plain[5], Paint::Strand(Strand::Reverse));
+    }
+
+    #[test]
+    fn split_reads_mark_their_clipped_end() {
+        let part = Part {
+            contig: "chr2".to_owned(),
+            start: 99,
+            reverse: false,
+            mapq: 60,
+        };
+        let mut right = read(
+            10,
+            0,
+            vec![(Op::Match, 10), (Op::SoftClip, 30)],
+            &[b'A'; 40],
+        );
+        right.alignment.tags.parts = vec![part.clone()];
+        let mut left = read(
+            50,
+            0,
+            vec![(Op::HardClip, 30), (Op::Match, 10)],
+            &[b'A'; 10],
+        );
+        left.alignment.tags.parts = vec![part];
+        let plain = read(
+            70,
+            0,
+            vec![(Op::Match, 10), (Op::SoftClip, 30)],
+            &[b'A'; 40],
+        );
+        let found = rects(&reads(
+            view(0, 100),
+            &[right, left, plain],
+            &[0, 0, 0],
+            &[],
+            Mode::Expanded,
+            true,
+        ));
+        let marks: Vec<[f32; 4]> = found
+            .iter()
+            .filter(|(_, paint)| *paint == Paint::Text)
+            .map(|(rect, _)| *rect)
+            .collect();
+        assert_eq!(marks, [[19.0, 1.0, 2.0, 8.0], [49.0, 1.0, 2.0, 8.0]]);
     }
 
     #[test]
