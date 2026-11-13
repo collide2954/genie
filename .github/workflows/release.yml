@@ -77,14 +77,15 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' ../../Cargo.toml | head -n 1)
           filter=".version = \"$version\""
+          license="del(.licenseFile) | .resources = [{src: \"../../LICENSE\", target: \"LICENSE.txt\"}]"
           case "$RUNNER_OS" in
             Windows)
               formats=nsis
-              filter="$filter | .binaries += [{path: \"genie-cli\", main: false}]"
+              filter="$filter | .binaries += [{path: \"genie-cli\", main: false}] | $license"
               ;;
             macOS)
               formats=app,dmg
-              filter="$filter | del(.fileAssociations)"
+              filter="$filter | del(.fileAssociations) | $license"
               ;;
             Linux) formats=deb,appimage ;;
           esac
@@ -161,6 +162,7 @@ jobs:
           '@
           $module = [Win32.Resources]::LoadLibraryEx((Join-Path $folder 'genie.exe'), [IntPtr]::Zero, 2)
           if ([Win32.Resources]::FindResource($module, [IntPtr]1, [IntPtr]14) -eq [IntPtr]::Zero) { throw 'genie.exe has no icon' }
+          if (-not (Test-Path (Join-Path $folder 'LICENSE.txt'))) { throw 'The installer has no LICENSE.txt' }
           Get-ItemProperty 'HKCU:\Software\Classes\.genie'
           & (Join-Path $folder 'genie-cli.exe') snapshot smoke\smoke.genie smoke\regions.bed smoke\out
           if ($LASTEXITCODE -ne 0) { throw "The snapshot command ended with $LASTEXITCODE" }
@@ -168,7 +170,8 @@ jobs:
       - name: Smoke test the disk image
         if: runner.os == 'macOS'
         run: |
-          (yes Y || true) | PAGER=cat hdiutil attach -nobrowse -readonly -mountpoint /tmp/genie dist/*.dmg
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/genie dist/*.dmg < /dev/null
+          test -f /tmp/genie/genie.app/Contents/Resources/LICENSE.txt
           /tmp/genie/genie.app/Contents/MacOS/genie snapshot smoke/smoke.genie smoke/regions.bed smoke/out
           hdiutil detach /tmp/genie
           ls -la smoke/out
