@@ -365,7 +365,7 @@ fn bad() -> Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::io::Cursor;
 
     use genie_core::alignment::{Alignment, Op};
@@ -388,7 +388,7 @@ mod tests {
         i32::try_from(value).unwrap().to_le_bytes()
     }
 
-    fn head(references: &[(&str, u32)]) -> Vec<u8> {
+    pub fn head(references: &[(&str, u32)]) -> Vec<u8> {
         let text = b"@HD\tVN:1.6\tSO:coordinate\n";
         let mut bytes = b"BAM\x01".to_vec();
         bytes.extend(int(text.len()));
@@ -435,7 +435,7 @@ mod tests {
         bytes
     }
 
-    fn read(start: i32, name: &str, flags: u16, cigar: &[(u32, u32)], bases: &str) -> Vec<u8> {
+    pub fn read(start: i32, name: &str, flags: u16, cigar: &[(u32, u32)], bases: &str) -> Vec<u8> {
         let mut body = body(start, name, flags, cigar, bases);
         body.extend(bases.bytes().map(|_| 30));
         sized(body)

@@ -23,6 +23,7 @@ pub mod ini;
 pub mod png;
 pub mod remote;
 mod sidecar;
+pub mod sort;
 pub mod tabix;
 pub mod table;
 mod text;
