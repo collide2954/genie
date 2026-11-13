@@ -6,6 +6,7 @@ mod feature;
 mod history;
 mod locus;
 mod marks;
+pub mod modification;
 mod names;
 mod number;
 mod order;
