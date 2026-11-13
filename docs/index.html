@@ -240,7 +240,7 @@ footer p { margin: 0 0 4px; }
     <div class="actions">
       <a class="button primary" href="#install">Download</a>
       <a class="button" href="https://github.com/collide2954/genie">Source on GitHub</a>
-      <span class="status">Version 0.1.0 for Windows, macOS and Linux.</span>
+      <span class="status">Version 0.1.1 for Windows, macOS and Linux.</span>
     </div>
     <figure class="shot">
       <picture>
@@ -323,7 +323,8 @@ footer p { margin: 0 0 4px; }
     <div class="wrap">
       <h2>Automation</h2>
       <p>Make one image for each region in a BED file, without a window:</p>
-<pre><code>cargo run -p genie -- snapshot work.genie regions.bed pictures</code></pre>
+<pre><code>genie snapshot work.genie regions.bed pictures</code></pre>
+      <p>On Windows, use <code>genie-cli.exe</code> from the genie folder in a terminal, because <code>genie.exe</code> has no console.</p>
       <p>While genie runs, programs on the same computer, for example R, Python or Jupyter, can control it through port 60151. genie takes the batch commands of IGV, for example <code>goto</code>, <code>load</code> and <code>snapshot</code>. It answers each command when the work is complete.</p>
 <pre><code>import socket
 
