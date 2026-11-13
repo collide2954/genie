@@ -292,13 +292,19 @@ fn clipped_end(alignment: &Alignment) -> Option<u64> {
     }
 }
 
-fn tint(read: &Read, pairs: bool) -> Paint {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Look {
+    pub pairs: bool,
+    pub mods: bool,
+}
+
+fn tint(read: &Read, look: Look) -> Paint {
     let strand = read.alignment.strand();
     if read.alignment.mapq == 0 {
         return Paint::Faint(strand);
     }
     pair_hue(read.pairing)
-        .filter(|_| pairs)
+        .filter(|_| look.pairs)
         .map_or(Paint::Strand(strand), Paint::Pair)
 }
 
@@ -308,7 +314,7 @@ pub fn reads(
     rows: &[usize],
     groups: &[(usize, String)],
     mode: Mode,
-    pairs: bool,
+    look: Look,
 ) -> Vec<Primitive> {
     let (row_height, offset, size) = shape(mode);
     let visible = viewport.visible();
@@ -336,7 +342,7 @@ pub fn reads(
             continue;
         }
         let top = row as f32 * row_height + offset + bands(row, groups);
-        let tint = tint(read, pairs);
+        let tint = tint(read, look);
         for block in &read.parts.blocks {
             primitives.push(bar(*block, top, size, tint));
         }
@@ -458,9 +464,14 @@ mod tests {
     use genie_core::pileup::{Coverage, Junction, Read};
     use genie_core::{Region, Strand, Viewport};
 
-    use super::{LIMIT, arc_hit, arcs, coverage, fit, hit, reads};
+    use super::{LIMIT, Look, arc_hit, arcs, coverage, fit, hit, reads};
     use crate::features::Mode;
     use crate::scene::{Base, Hue, Paint, Primitive};
+
+    const PAIRS: Look = Look {
+        pairs: true,
+        mods: false,
+    };
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -581,7 +592,7 @@ mod tests {
         ];
         let rows = [0, 1];
         let groups = [(0, "Haplotype 1".to_owned()), (1, "Haplotype 2".to_owned())];
-        let primitives = reads(view(0, 100), &shown, &rows, &groups, Mode::Expanded, true);
+        let primitives = reads(view(0, 100), &shown, &rows, &groups, Mode::Expanded, PAIRS);
         let tops: Vec<f32> = rects(&primitives).iter().map(|(rect, _)| rect[1]).collect();
         assert_eq!(tops, [15.0, 39.0]);
         let labels: Vec<(String, f32, f32)> = primitives
@@ -638,7 +649,7 @@ mod tests {
                 &rows,
                 &[],
                 Mode::Expanded,
-                pairs,
+                Look { pairs, mods: false },
             ))
             .into_iter()
             .map(|(_, paint)| paint)
@@ -755,7 +766,7 @@ mod tests {
             &[0, 0, 0],
             &[],
             Mode::Expanded,
-            true,
+            PAIRS,
         ));
         let marks: Vec<[f32; 4]> = found
             .iter()
@@ -770,7 +781,7 @@ mod tests {
         let mut repeat = read(10, REVERSE, vec![(Op::Match, 10)], &[b'A'; 10]);
         repeat.alignment.mapq = 0;
         repeat.pairing = Pairing::Large;
-        let primitives = reads(view(0, 100), &[repeat], &[0], &[], Mode::Expanded, true);
+        let primitives = reads(view(0, 100), &[repeat], &[0], &[], Mode::Expanded, PAIRS);
         assert_eq!(
             rects(&primitives),
             [([10.0, 1.0, 10.0, 8.0], Paint::Faint(Strand::Reverse))]
@@ -787,7 +798,7 @@ mod tests {
             &[0, 1],
             &[],
             Mode::Expanded,
-            true,
+            PAIRS,
         );
         assert_eq!(
             rects(&primitives),
@@ -810,7 +821,7 @@ mod tests {
             (Op::Match, 5),
         ];
         let spliced = read(10, 0, cigar, &[b'A'; 22]);
-        let primitives = reads(view(0, 100), &[spliced], &[0], &[], Mode::Expanded, true);
+        let primitives = reads(view(0, 100), &[spliced], &[0], &[], Mode::Expanded, PAIRS);
         let found = rects(&primitives);
         assert!(found.contains(&([20.0, 4.5, 4.0, 1.0], Paint::Text)));
         assert!(found.contains(&([29.0, 4.5, 20.0, 1.0], Paint::Muted)));
@@ -827,7 +838,7 @@ mod tests {
             &[0],
             &[],
             Mode::Expanded,
-            true,
+            PAIRS,
         );
         let found = rects(&primitives);
         assert!(found.contains(&([11.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
@@ -838,7 +849,7 @@ mod tests {
     #[test]
     fn mismatch_letters_appear_when_zoomed_in() {
         let mismatch = read(2, 0, vec![(Op::Match, 4)], b"AGAA");
-        let primitives = reads(view(0, 10), &[mismatch], &[0], &[], Mode::Expanded, true);
+        let primitives = reads(view(0, 10), &[mismatch], &[0], &[], Mode::Expanded, PAIRS);
         assert_eq!(texts(&primitives), [("G".to_owned(), 34.5)]);
     }
 
@@ -854,7 +865,7 @@ mod tests {
             &[0, 1],
             &[],
             Mode::Squished,
-            true,
+            PAIRS,
         ))
         .iter()
         .map(|(rect, _)| rect[1])
@@ -902,7 +913,7 @@ mod tests {
             &[0],
             &[],
             Mode::Expanded,
-            true,
+            PAIRS,
         ));
         assert!(found.contains(&([8.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
         assert!(found.contains(&([9.0, 1.0, 1.0, 8.0], Paint::Base(Base::T))));
@@ -917,7 +928,7 @@ mod tests {
             &[0],
             &[],
             Mode::Expanded,
-            true,
+            PAIRS,
         ));
         assert!(found.contains(&([97.0, 1.0, 1.0, 8.0], Paint::Base(Base::G))));
         let read = clipped(50, vec![(Op::SoftClip, 10), (Op::Match, 4)], &[b'C'; 14]);
