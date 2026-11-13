@@ -3,6 +3,7 @@ pub mod bam;
 pub mod bbi;
 pub mod bed;
 pub mod bedgraph;
+pub mod bedmethyl;
 pub mod bgzf;
 mod binning;
 pub mod contigs;
