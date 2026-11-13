@@ -245,6 +245,7 @@ pub fn text(
         }
         Ok(())
     })?;
+    writer.end_block()?;
     let end = writer.virtual_offset();
     writer.finish()?;
     indexer.finish(end)
@@ -279,6 +280,7 @@ pub fn copy_text(
         writer.write_all(&line)?;
         indexer.add(&text, writer.virtual_offset())?;
     }
+    writer.end_block()?;
     let end = writer.virtual_offset();
     writer.finish()?;
     indexer.finish(end)
@@ -340,6 +342,7 @@ pub fn bam(
         }
         Ok(())
     })?;
+    writer.end_block()?;
     let end = writer.virtual_offset();
     writer.finish()?;
     indexer.finish(end)
@@ -466,6 +469,49 @@ mod tests {
                 reason: Reason::Unsorted
             }
         ));
+    }
+
+    #[test]
+    fn indexes_made_while_writing_equal_indexes_made_from_the_file() {
+        let input = "#chrom\tstart\tend\nchr1\t10\t20\nchr1\t30\t40\nchr2\t5\t9\n";
+        let mut output = Vec::new();
+        let written = copy_text(
+            input.as_bytes(),
+            Layout::BED,
+            false,
+            &mut output,
+            &mut |_| true,
+        );
+        let from_file = crate::tabix::build(Cursor::new(&output), Layout::BED, false).unwrap();
+        let index = |bytes: &[u8]| Index::read(Cursor::new(bytes.to_vec())).unwrap();
+        assert_eq!(index(&written.unwrap()), index(&from_file));
+        let folder = folder("same");
+        let budget = Budget {
+            folder: &folder,
+            memory: 1 << 20,
+        };
+        let mut sorted = Vec::new();
+        let written = text(
+            input.as_bytes(),
+            Layout::BED,
+            &mut sorted,
+            &budget,
+            &mut |_| true,
+        );
+        let from_file = crate::tabix::build(Cursor::new(&sorted), Layout::BED, false).unwrap();
+        assert_eq!(index(&written.unwrap()), index(&from_file));
+        let mut reads = head(&[("chr1", 100_000)]);
+        reads.extend(read(100, "first", 0, &[(4, 0)], "ACGT"));
+        let mut copy = Vec::new();
+        let written = bam(
+            Cursor::new(file(&[&reads])),
+            &mut copy,
+            &budget,
+            &mut |_| true,
+        );
+        let from_file = bai::build(Cursor::new(&copy)).unwrap();
+        let bai = |bytes: &[u8]| bai::Index::read(Cursor::new(bytes.to_vec())).unwrap();
+        assert_eq!(bai(&written.unwrap()), bai(&from_file));
     }
 
     #[test]
