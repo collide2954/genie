@@ -378,6 +378,16 @@ fn built(file: &str, layout: Layout, csi: bool) -> Index {
 }
 
 #[test]
+fn built_bam_indexes_match_samtools() {
+    for file in ["reads.bam", "pairs.bam", "mods.bam"] {
+        let bytes = bai::build(File::open(data(file)).unwrap()).unwrap();
+        let ours = bai::Index::read(Cursor::new(bytes)).unwrap();
+        let theirs = bai::Index::read(File::open(data(&format!("{file}.bai"))).unwrap()).unwrap();
+        assert_eq!(ours, theirs, "{file}");
+    }
+}
+
+#[test]
 fn built_text_indexes_match_tabix() {
     for (file, layout) in [
         ("genes.bed.gz", Layout::BED),

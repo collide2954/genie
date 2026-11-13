@@ -1,15 +1,97 @@
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader, Read, Write};
 
 use genie_core::Region;
 
+use crate::bam::{self, Header};
 use crate::bgzf::{self, Bgzf};
-use crate::binning::{Bins, Chunk, Scheme, read_count, read_u32};
+use crate::binning::{Bins, Builder, Chunk, Scheme, put, read_count, read_u32};
 use crate::{Error, Reason};
 
 const MAGIC: &[u8; 4] = b"BAI\x01";
 const CSI: &[u8; 4] = b"CSI\x01";
+const SHIFT: u32 = 14;
+const LONGEST: u64 = 1 << 29;
+const LENGTH_MARGIN: u64 = 256;
 
-#[derive(Debug, Default)]
+pub struct Indexer {
+    builder: Builder,
+    scheme: Scheme,
+    count: usize,
+}
+
+impl Indexer {
+    pub fn new(header: &Header, start: u64) -> Self {
+        let longest = header
+            .references
+            .iter()
+            .map(|(_, length)| *length)
+            .max()
+            .unwrap_or(0);
+        let scheme = if longest <= LONGEST {
+            Scheme::BAI
+        } else {
+            Scheme::reaching(SHIFT, 0, longest + LENGTH_MARGIN)
+        };
+        Self {
+            builder: Builder::new(scheme, scheme != Scheme::BAI, start),
+            scheme,
+            count: header.references.len(),
+        }
+    }
+
+    pub fn add(&mut self, record: &[u8], end: u64) -> Result<(), Error> {
+        let place = bam::place(record)?;
+        let at = place
+            .reference
+            .map(|reference| (reference, place.start, place.end));
+        self.builder
+            .push(at, end, place.mapped)
+            .map_err(|disorder| Error::Invalid(disorder.reason()))
+    }
+
+    pub fn finish(self, end: u64) -> Result<Vec<u8>, Error> {
+        let csi = self.scheme != Scheme::BAI;
+        let (mut references, unplaced) = self.builder.finish(end);
+        if references.len() < self.count {
+            references.resize_with(self.count, || Bins::empty(self.scheme, csi));
+        }
+        let mut bytes = Vec::new();
+        if csi {
+            bytes.extend(CSI);
+            bytes.extend(self.scheme.shift().to_le_bytes());
+            bytes.extend(self.scheme.depth().to_le_bytes());
+            put(&mut bytes, 0);
+        } else {
+            bytes.extend(MAGIC);
+        }
+        put(&mut bytes, references.len());
+        for bins in &references {
+            bins.write(&mut bytes);
+        }
+        bytes.extend(unplaced.to_le_bytes());
+        if !csi {
+            return Ok(bytes);
+        }
+        let mut writer = bgzf::Writer::new(Vec::new());
+        writer.write_all(&bytes)?;
+        Ok(writer.finish()?)
+    }
+}
+
+pub fn build(reader: impl Read) -> Result<Vec<u8>, Error> {
+    let mut reader = Bgzf::new(reader);
+    let header = bam::header(&mut reader)?;
+    let mut end = reader.virtual_offset();
+    let mut indexer = Indexer::new(&header, end);
+    let mut buffer = Vec::new();
+    while bam::raw(&mut reader, &mut buffer)? {
+        end = reader.virtual_offset();
+        indexer.add(&buffer, end)?;
+    }
+    indexer.finish(end)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Index {
     references: Vec<Bins>,
 }

@@ -243,7 +243,7 @@ impl Builder {
             .into_iter()
             .map(|reference| {
                 reference.map_or_else(
-                    || Bins::new(scheme, Vec::new(), (!csi).then(Vec::new)),
+                    || Bins::empty(scheme, csi),
                     |reference| reference.finish(scheme, csi),
                 )
             })
@@ -399,6 +399,10 @@ impl Bins {
             })
             .collect::<Result<_, Error>>()?;
         Ok(Self::new(scheme, bins, None))
+    }
+
+    pub fn empty(scheme: Scheme, csi: bool) -> Self {
+        Self::new(scheme, Vec::new(), (!csi).then(Vec::new))
     }
 
     fn new(scheme: Scheme, mut entries: Vec<Bin>, intervals: Option<Vec<u64>>) -> Self {

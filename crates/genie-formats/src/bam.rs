@@ -21,6 +21,7 @@ const OPS: [Op; 9] = [
     Op::Diff,
 ];
 const FIXED: usize = 32;
+const UNMAPPED: u16 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
@@ -52,10 +53,25 @@ pub fn header(reader: &mut impl Read) -> Result<Header, Error> {
     Ok(Header { references })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    pub reference: Option<usize>,
+    pub start: u64,
+    pub end: u64,
+    pub mapped: bool,
+}
+
 pub fn record(
     reader: &mut impl Read,
     buffer: &mut Vec<u8>,
 ) -> Result<Option<(i32, Alignment)>, Error> {
+    if !raw(reader, buffer)? {
+        return Ok(None);
+    }
+    decode(buffer).map(Some)
+}
+
+pub fn raw(reader: &mut impl Read, buffer: &mut Vec<u8>) -> Result<bool, Error> {
     let mut size = [0; 4];
     let mut filled = 0;
     while filled < size.len() {
@@ -67,7 +83,7 @@ pub fn record(
         }
     }
     match filled {
-        0 => return Ok(None),
+        0 => return Ok(false),
         4 => {}
         _ => return Err(bad()),
     }
@@ -80,7 +96,37 @@ pub fn record(
     if buffer.len() != size {
         return Err(bad());
     }
-    decode(buffer).map(Some)
+    Ok(true)
+}
+
+pub fn place(record: &[u8]) -> Result<Place, Error> {
+    let fixed = record.get(..FIXED).ok_or_else(bad)?;
+    let int =
+        |at: usize| i32::from_le_bytes([fixed[at], fixed[at + 1], fixed[at + 2], fixed[at + 3]]);
+    let short = |at: usize| u16::from_le_bytes([fixed[at], fixed[at + 1]]);
+    let mapped = short(14) & UNMAPPED == 0;
+    let operations = usize::from(short(12));
+    let from = FIXED + usize::from(fixed[8]);
+    let cigar = record.get(from..from + operations * 4).ok_or_else(bad)?;
+    let length = if mapped && operations > 0 {
+        cigar
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|operation| u32::from_le_bytes(*operation))
+            .filter(|value| matches!(value & 0xF, 0 | 2 | 3 | 7 | 8))
+            .map(|value| u64::from(value >> 4))
+            .sum()
+    } else {
+        1
+    };
+    let start = u64::try_from(int(4)).unwrap_or(0);
+    Ok(Place {
+        reference: usize::try_from(int(0)).ok(),
+        start,
+        end: start + length,
+        mapped,
+    })
 }
 
 pub fn query<R: Read + Seek>(
@@ -325,7 +371,7 @@ mod tests {
     use genie_core::alignment::{Alignment, Op};
     use genie_core::{Region, Strand};
 
-    use super::{header, query, record};
+    use super::{Place, header, place, query, raw, record};
     use crate::{
         Error, Reason,
         bai::{Index, tests::index},
@@ -413,6 +459,38 @@ mod tests {
             mate: None,
             tags: genie_core::alignment::Tags::default(),
         }
+    }
+
+    #[test]
+    fn places_records_like_samtools() {
+        let cigar = [
+            (5, 4),
+            (10, 0),
+            (3, 2),
+            (2, 1),
+            (4, 3),
+            (6, 7),
+            (1, 8),
+            (7, 5),
+        ];
+        let bases = "ACGTACGTACGTACGTACGTACGT";
+        let mut bytes = Cursor::new(read(100, "a", 0, &cigar, bases));
+        let mut buffer = Vec::new();
+        assert!(raw(&mut bytes, &mut buffer).unwrap());
+        let mapped = Place {
+            reference: Some(0),
+            start: 100,
+            end: 124,
+            mapped: true,
+        };
+        assert_eq!(place(&buffer).unwrap(), mapped);
+        assert!(!raw(&mut bytes, &mut buffer).unwrap());
+        let unmapped = read(100, "b", 4, &cigar, bases);
+        let found = place(&unmapped[4..]).unwrap();
+        assert_eq!((found.end, found.mapped), (101, false));
+        let mut unplaced = read(-1, "c", 4, &[], "AC");
+        unplaced[4..8].copy_from_slice(&(-1_i32).to_le_bytes());
+        assert_eq!(place(&unplaced[4..]).unwrap().reference, None);
     }
 
     #[test]
