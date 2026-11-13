@@ -228,7 +228,7 @@ pub fn panel<'a>(settings: Settings, inset: f32, store: Store) -> Element<'a, Me
         text(store.size.map_or_else(|| "…".to_owned(), size_text))
             .size(12)
             .font(font::MONO)
-            .width(64),
+            .width(56),
         button(text("Clear").size(12))
             .padding([3, 8])
             .style(style::ghost)
