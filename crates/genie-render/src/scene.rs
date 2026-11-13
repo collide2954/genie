@@ -146,6 +146,79 @@ impl Primitive {
             })
             .collect()
     }
+
+    #[must_use]
+    pub fn lowered(mut self, by: f32) -> Self {
+        match &mut self {
+            Self::Rect { y, .. }
+            | Self::Text { y, .. }
+            | Self::Chevron { y, .. }
+            | Self::Label { y, .. } => *y += by,
+            Self::Arc { base, .. } => *base += by,
+        }
+        self
+    }
 }
 
 const ARC_STEPS: usize = 24;
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use super::{Align, Font, Paint, Primitive};
+
+    #[test]
+    fn lowered_primitives_move_down() {
+        let primitives = [
+            Primitive::Rect {
+                x: 1.0,
+                y: 2.0,
+                width: 3.0,
+                height: 4.0,
+                paint: Paint::Muted,
+            },
+            Primitive::Text {
+                x: 1.0,
+                y: 2.0,
+                content: Cow::Borrowed("a"),
+                size: 9.0,
+                paint: Paint::Text,
+                font: Font::Ui,
+                align: Align::Start,
+            },
+            Primitive::Chevron {
+                x: 1.0,
+                y: 2.0,
+                size: 2.0,
+                forward: true,
+                paint: Paint::Muted,
+            },
+            Primitive::Label {
+                x: 1.0,
+                y: 2.0,
+                content: Cow::Borrowed("b"),
+                size: 9.0,
+            },
+            Primitive::Arc {
+                from: 1.0,
+                to: 9.0,
+                base: 2.0,
+                rise: 2.0,
+                width: 1.0,
+                paint: Paint::Muted,
+            },
+        ];
+        let tops: Vec<f32> = primitives
+            .into_iter()
+            .map(|primitive| match primitive.lowered(10.0) {
+                Primitive::Rect { y, .. }
+                | Primitive::Text { y, .. }
+                | Primitive::Chevron { y, .. }
+                | Primitive::Label { y, .. } => y,
+                Primitive::Arc { base, .. } => base,
+            })
+            .collect();
+        assert_eq!(tops, [12.0; 5]);
+    }
+}

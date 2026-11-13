@@ -28,7 +28,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{Change, Content, Loaded, Track};
+use crate::track::{Change, Content, Loaded, Pile, Track};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -830,31 +830,51 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
                 |at| pile.base(at),
                 alignments::COVERAGE_HEIGHT,
             );
-            let mut reads = None;
-            if mode != features::Mode::Collapsed {
-                let (packed, bands);
-                let (rows, groups) = if repack {
-                    let (rows, _, groups) = pile.packed(viewport.visible());
-                    let starts: Vec<usize> = groups.iter().map(|(first, _)| *first).collect();
-                    packed = match &slot.order {
-                        Some((at, _)) => sort_rows(&pile.reads, &rows, &starts, *at),
-                        None => rows,
-                    };
-                    bands = groups;
-                    (packed.as_slice(), bands.as_slice())
-                } else {
-                    (slot.rows(pile), pile.groups.as_slice())
-                };
-                let pairs = track.plot.pairs;
-                let primitives =
-                    alignments::reads(viewport, &pile.reads, rows, groups, mode, pairs);
-                let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
-                reads = Some((primitives, height));
-            }
+            let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
+            let shown = mode != features::Mode::Collapsed || !pile.junctions.is_empty();
+            let reads = shown.then(|| {
+                (
+                    read_lane(track, panel, pile, viewport, mode, repack),
+                    height,
+                )
+            });
             Body::Reads { coverage, reads }
         }
         None => Body::Space(EMPTY_HEIGHT),
     }
+}
+
+fn read_lane(
+    track: &Track,
+    panel: usize,
+    pile: &Pile,
+    viewport: Viewport,
+    mode: features::Mode,
+    repack: bool,
+) -> Vec<Primitive> {
+    let mut lane = alignments::arcs(viewport, &pile.junctions);
+    if mode == features::Mode::Collapsed {
+        return lane;
+    }
+    let slot = track.slot(panel);
+    let (packed, bands);
+    let (rows, groups) = if repack {
+        let (rows, _, groups) = pile.packed(viewport.visible());
+        let starts: Vec<usize> = groups.iter().map(|(first, _)| *first).collect();
+        packed = match &slot.order {
+            Some((at, _)) => sort_rows(&pile.reads, &rows, &starts, *at),
+            None => rows,
+        };
+        bands = groups;
+        (packed.as_slice(), bands.as_slice())
+    } else {
+        (slot.rows(pile), pile.groups.as_slice())
+    };
+    let pairs = track.plot.pairs;
+    let top = pile.arc_height();
+    let reads = alignments::reads(viewport, &pile.reads, rows, groups, mode, pairs);
+    lane.extend(reads.into_iter().map(|primitive| primitive.lowered(top)));
+    lane
 }
 
 fn track_view<'a>(
@@ -1007,8 +1027,12 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 row_height,
             }
         }
-        Some(Content::Reads(_)) if mode == features::Mode::Collapsed => {
-            Shape::plain(alignments::COVERAGE_HEIGHT)
+        Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
+            if pile.junctions.is_empty() {
+                Shape::plain(alignments::COVERAGE_HEIGHT)
+            } else {
+                Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + pile.arc_height())
+            }
         }
         Some(Content::Reads(pile)) => {
             let (count, groups) = if repack {
@@ -1019,7 +1043,10 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             };
             let count = count.max(1);
             let row_height = alignments::row_height(mode);
-            let fixed = alignments::COVERAGE_HEIGHT + 1.0 + groups as f32 * alignments::GROUP_GAP;
+            let fixed = alignments::COVERAGE_HEIGHT
+                + 1.0
+                + pile.arc_height()
+                + groups as f32 * alignments::GROUP_GAP;
             Shape {
                 height: fixed + count as f32 * row_height,
                 rows: count,

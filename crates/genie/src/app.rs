@@ -3678,6 +3678,81 @@ mod tests {
         assert!(shows(&genie, "Mate chr1:301 · insert 330 · FR · first"));
     }
 
+    fn spliced(name: &str) -> genie_core::alignment::Alignment {
+        use genie_core::alignment::{Op, Tags};
+        genie_core::alignment::Alignment {
+            cigar: vec![(Op::Match, 10), (Op::Skip, 50), (Op::Match, 10)],
+            bases: vec![b'A'; 20],
+            tags: Tags {
+                xs: Some(Strand::Forward),
+                ..Tags::default()
+            },
+            ..read(name, 10)
+        }
+    }
+
+    fn with_spliced() -> Genie {
+        let mut genie = opened();
+        add_reads(&mut genie, vec![spliced("one"), spliced("two")]);
+        genie
+    }
+
+    #[test]
+    fn hovering_a_junction_shows_its_reads() {
+        let mut genie = with_spliced();
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(45.0, 5.0))));
+        for line in [
+            "Splice junction",
+            "chr1:21-70",
+            "2 reads · forward strand",
+            "Intron 50 bp",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, 5.0))));
+        assert!(!shows(&genie, "Splice junction"));
+        assert!(!shows(&genie, "CIGAR 10M50N10M"));
+        let below = genie_render::alignments::JUNCTION_HEIGHT + 5.0;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, below))));
+        assert!(shows(&genie, "CIGAR 10M50N10M"));
+    }
+
+    #[test]
+    fn junction_arcs_sit_above_the_reads() {
+        use genie_render::alignments::{COVERAGE_HEIGHT, JUNCTION_HEIGHT};
+        use genie_render::scene::Primitive;
+        let mut genie = with_spliced();
+        for (mode, rows) in [(Rows::Expanded, 2.0), (Rows::Collapsed, 0.0)] {
+            genie.session.as_mut().unwrap().tracks[0].mode = Some(mode);
+            let session = genie.session.as_ref().unwrap();
+            let track = &session.tracks[0];
+            let (shapes, _) = super::view::shapes(session, track, false);
+            let lane = JUNCTION_HEIGHT + rows * 10.0;
+            assert_eq!(shapes[0].height, COVERAGE_HEIGHT + 1.0 + lane, "{mode:?}");
+            let super::view::Body::Reads {
+                reads: Some((primitives, height)),
+                ..
+            } = super::view::body(session, track, 0, shapes[0], false)
+            else {
+                panic!("expected reads in {mode:?}");
+            };
+            assert_eq!(height, lane, "{mode:?}");
+            let arcs = primitives
+                .iter()
+                .filter(|primitive| matches!(primitive, Primitive::Arc { .. }))
+                .count();
+            assert_eq!(arcs, 1, "{mode:?}");
+            let top = primitives
+                .iter()
+                .filter_map(|primitive| match primitive {
+                    Primitive::Rect { y, .. } => Some(*y),
+                    _ => None,
+                })
+                .fold(f32::MAX, f32::min);
+            assert!(top >= JUNCTION_HEIGHT, "{mode:?} {top}");
+        }
+    }
+
     #[test]
     fn read_menus_group_by_phase_or_strand() {
         let mut genie = with_reads();

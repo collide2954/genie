@@ -1,6 +1,7 @@
 use genie_core::alignment::{
     Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, Part, REVERSE, SECOND,
 };
+use genie_core::pileup::Junction;
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
@@ -40,6 +41,7 @@ pub enum Detail {
         mate: Option<String>,
         same: bool,
     },
+    Junction(Junction),
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -238,7 +240,24 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             lines.extend(pair_lines(read, mate.as_deref(), *same));
             (read.name.clone(), read.span(), lines)
         }
+        Detail::Junction(junction) => {
+            let lines = vec![
+                junction_facts(junction),
+                format!("Intron {} bp", grouped(junction.span.len())),
+            ];
+            ("Splice junction".to_owned(), junction.span, lines)
+        }
     }
+}
+
+fn junction_facts(junction: &Junction) -> String {
+    let mut facts = vec![if junction.count == 1 {
+        "1 read".to_owned()
+    } else {
+        format!("{} reads", grouped(u64::from(junction.count)))
+    }];
+    facts.extend(strand(junction.strand).map(str::to_owned));
+    facts.join(" · ")
 }
 
 fn locus(card: &Card, span: Region) -> Locus {

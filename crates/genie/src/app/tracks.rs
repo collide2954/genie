@@ -249,9 +249,12 @@ impl Genie {
                     features::hit(viewport, &annotation.features, &annotation.rows, mode, x, y)?;
                 Detail::Feature(annotation.features[index].clone())
             }
+            Content::Reads(pile) if y < pile.arc_height() => {
+                let index = alignments::arc_hit(viewport, &pile.junctions, x, y)?;
+                Detail::Junction(pile.junctions[index])
+            }
             Content::Reads(pile) => {
-                let rows = slot.rows(pile);
-                let groups = &pile.groups;
+                let (rows, groups, y) = (slot.rows(pile), &pile.groups, y - pile.arc_height());
                 let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
                 let read = pile.reads[index].alignment.clone();
                 let names = track.source.contigs();
@@ -292,7 +295,7 @@ impl Genie {
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
             Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
-            Detail::Read { .. } | Detail::Signal { .. } => Vec::new(),
+            Detail::Read { .. } | Detail::Junction(_) | Detail::Signal { .. } => Vec::new(),
         };
         Some(Card {
             track: id,

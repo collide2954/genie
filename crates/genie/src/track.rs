@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
-use genie_core::pileup::{Coverage, Read, Sampler, sort_rows};
+use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, sort_rows};
 use genie_core::signal::Summary;
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region};
@@ -225,6 +225,7 @@ pub struct Pile {
     pub reference: Vec<u8>,
     pub offset: u64,
     pub reads: Vec<Read>,
+    pub junctions: Vec<Junction>,
     pub rows: Vec<usize>,
     pub count: usize,
     pub groups: Vec<(usize, String)>,
@@ -320,6 +321,14 @@ impl Pile {
         self.groups.iter().map(|(first, _)| *first).collect()
     }
 
+    pub fn arc_height(&self) -> f32 {
+        if self.junctions.is_empty() {
+            0.0
+        } else {
+            alignments::JUNCTION_HEIGHT
+        }
+    }
+
     pub fn base(&self, position: u64) -> Option<u8> {
         let index = usize::try_from(position.checked_sub(self.offset)?).ok()?;
         self.reference.get(index).copied()
@@ -340,6 +349,7 @@ pub struct Gather {
     options: Options,
     coverage: Coverage,
     inserts: Inserts,
+    junctions: Junctions,
     sampler: Sampler,
 }
 
@@ -355,6 +365,7 @@ impl Gather {
             options,
             coverage: Coverage::new(region),
             inserts: Inserts::new(contig),
+            junctions: Junctions::default(),
             sampler: Sampler::new(WINDOW, limit),
         }
     }
@@ -362,6 +373,7 @@ impl Gather {
     pub fn add(&mut self, alignment: Alignment) {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
+        self.junctions.add(&alignment);
         self.sampler.push(alignment);
     }
 }
@@ -394,6 +406,7 @@ impl Loaded {
             options,
             coverage,
             inserts,
+            junctions,
             sampler,
         } = gather;
         let region = coverage.region();
@@ -418,6 +431,7 @@ impl Loaded {
                 reference,
                 offset,
                 reads,
+                junctions: junctions.finish(),
                 rows,
                 count,
                 groups,
@@ -1327,6 +1341,29 @@ mod tests {
     fn loaded_reads(wide: Region) -> Arc<Loaded> {
         let reads = vec![alignment(30, vec![(Op::Match, 10)])];
         Arc::new(piled(wide, reads, Options::default()))
+    }
+
+    #[test]
+    fn loaded_reads_count_junctions_of_all_reads() {
+        let spliced = |start| {
+            alignment(
+                start,
+                vec![(Op::Match, 10), (Op::Skip, 50), (Op::Match, 10)],
+            )
+        };
+        let mut alignments: Vec<Alignment> = (0..150).map(|_| spliced(10)).collect();
+        alignments.push(alignment(30, vec![(Op::Match, 10)]));
+        let loaded = piled(region(0, 1_000), alignments, Options::default());
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert!(pile.reads.len() < 150, "{}", pile.reads.len());
+        let found: Vec<(Region, u32)> = pile
+            .junctions
+            .iter()
+            .map(|junction| (junction.span, junction.count))
+            .collect();
+        assert_eq!(found, [(region(20, 70), 150)]);
     }
 
     fn piled(region: Region, alignments: Vec<Alignment>, options: Options) -> Loaded {
