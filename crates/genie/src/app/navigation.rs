@@ -482,6 +482,18 @@ impl Genie {
         self.fetch()
     }
 
+    pub(super) fn pan(&mut self, panel: usize, dx: f32) -> Task<Message> {
+        self.drop_draft();
+        self.navigate(panel, |viewport| viewport.pan(f64::from(dx)))
+    }
+
+    pub(super) fn zoom(&mut self, panel: usize, factor: f32, anchor: f32) -> Task<Message> {
+        self.drop_draft();
+        self.navigate(panel, |viewport| {
+            viewport.zoom(f64::from(factor), f64::from(anchor))
+        })
+    }
+
     fn glide(&mut self, change: impl Fn(Viewport) -> Viewport) -> Task<Message> {
         self.hover = None;
         let motion = self.settings.motion;

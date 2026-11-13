@@ -205,8 +205,10 @@ impl Genie {
             layers = layers.push(toasts(progress, notice));
         }
         let panel = || {
-            (self.popup == Some(Popup::Settings))
-                .then(|| settings::panel(self.settings, chrome::settings_inset(Controls::CURRENT)))
+            (self.popup == Some(Popup::Settings)).then(|| {
+                let inset = chrome::settings_inset(Controls::CURRENT);
+                settings::panel(self.settings, inset, self.store())
+            })
         };
         if let Some(menu) = self
             .track_menu()

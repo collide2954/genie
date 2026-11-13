@@ -34,6 +34,7 @@ use crate::track::{self, Change, Loaded, Prepared, Source, Track};
 use crate::{font, paths, timer};
 
 mod address;
+mod caching;
 mod copy;
 mod export;
 mod figure;
@@ -100,6 +101,7 @@ pub struct Genie {
     address: Option<AddressField>,
     strip: Option<Pointer>,
     cache: Option<PathBuf>,
+    cache_size: Option<u64>,
     download: Option<Download>,
     busy: usize,
     answers: Vec<(Answer, Reply)>,
@@ -168,6 +170,7 @@ impl Default for Genie {
             address: None,
             strip: None,
             cache: paths::cache_dir(),
+            cache_size: None,
             download: None,
             busy: 0,
             answers: Vec::new(),
@@ -629,6 +632,14 @@ pub enum Message {
     Filter(u64, Filtering),
     Field(Choice),
     Visit(String),
+    Cache(Caching),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caching {
+    Measured(u64),
+    Clear,
+    Cleared(u64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -912,7 +923,8 @@ impl Genie {
                 self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
             }
             Message::SequenceChanged(change) => self.change_reading(change),
-            Message::ToggleSettings => self.toggle(Popup::Settings),
+            Message::ToggleSettings => return self.toggle_settings(),
+            Message::Cache(event) => return self.caching(event),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,
@@ -930,16 +942,8 @@ impl Genie {
             Message::Panel(panel, paneling) => return self.panel(panel, paneling),
             Message::SettingChanged(setting) => return self.change_setting(setting),
             Message::WindowResized(size) => self.window = size,
-            Message::Pan(panel, dx) => {
-                self.drop_draft();
-                return self.navigate(panel, |viewport| viewport.pan(f64::from(dx)));
-            }
-            Message::Zoom(panel, factor, anchor) => {
-                self.drop_draft();
-                return self.navigate(panel, |viewport| {
-                    viewport.zoom(f64::from(factor), f64::from(anchor))
-                });
-            }
+            Message::Pan(panel, dx) => return self.pan(panel, dx),
+            Message::Zoom(panel, factor, anchor) => return self.zoom(panel, factor, anchor),
             Message::Resized(width) => return self.resize(width),
             Message::TileLoaded(generation, key, result) => {
                 self.tile_loaded(generation, key, result);
@@ -1169,8 +1173,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port, Preparation,
-        Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
+        Address, Caching, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port,
+        Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -4976,6 +4980,20 @@ mod tests {
         let saved = genie.saved().unwrap();
         let locations: Vec<&Location> = saved.tracks.iter().map(|track| &track.location).collect();
         assert_eq!(locations, [&location]);
+    }
+
+    #[test]
+    fn the_settings_show_the_cache_and_clear_it() {
+        let (mut genie, _scratch, work) = preparing_genie("app-cache");
+        let _ = genie.update(Message::ToggleSettings);
+        let _ = genie.update(Message::Cache(Caching::Measured(2_048)));
+        assert!(shows(&genie, "2 KB"));
+        let _ = genie.update(Message::Cache(Caching::Cleared(2_048)));
+        assert!(shows(&genie, "Removed 2 KB of indexes and copies."));
+        let _ = genie.update(Message::Cache(Caching::Measured(0)));
+        let _ = genie.update(Message::Prepare(work));
+        let _ = genie.update(Message::Cache(Caching::Clear));
+        assert_eq!(genie.cache_size, Some(0));
     }
 
     #[test]

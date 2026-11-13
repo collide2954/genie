@@ -7,7 +7,7 @@ use genie_formats::ini::{self, Section};
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length, Padding};
 
-use crate::app::Message;
+use crate::app::{Caching, Message};
 use crate::chrome::BAR_HEIGHT;
 use crate::theme::Appearance;
 use crate::{font, style};
@@ -16,6 +16,31 @@ pub const FILE: &str = "settings.ini";
 const SECTION: &str = "settings";
 pub const SCALES: [u16; 5] = [90, 100, 110, 125, 150];
 const VERSION: &str = concat!("genie ", env!("CARGO_PKG_VERSION"), " · Apache-2.0");
+const KILO: u64 = 1 << 10;
+const MEGA: u64 = 1 << 20;
+const GIGA: u64 = 1 << 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Store {
+    pub size: Option<u64>,
+    pub can_clear: bool,
+}
+
+pub fn size_text(bytes: u64) -> String {
+    let decimal = |unit: u64, name: &str| {
+        let value = bytes as f64 / unit as f64;
+        if value < 10.0 {
+            format!("{value:.1} {name}")
+        } else {
+            format!("{value:.0} {name}")
+        }
+    };
+    match bytes {
+        _ if bytes >= GIGA => decimal(GIGA, "GB"),
+        _ if bytes >= MEGA => decimal(MEGA, "MB"),
+        _ => format!("{} KB", bytes.div_ceil(KILO)),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Density {
@@ -150,7 +175,7 @@ impl Settings {
     }
 }
 
-pub fn panel<'a>(settings: Settings, inset: f32) -> Element<'a, Message> {
+pub fn panel<'a>(settings: Settings, inset: f32, store: Store) -> Element<'a, Message> {
     let choice = |label: &'a str, setting: Setting, chosen: bool| -> Element<'a, Message> {
         button(text(label).size(12))
             .padding([3, 8])
@@ -199,12 +224,25 @@ pub fn panel<'a>(settings: Settings, inset: f32) -> Element<'a, Message> {
         ]
         .spacing(2)
     };
+    let cache = row![
+        text(store.size.map_or_else(|| "…".to_owned(), size_text))
+            .size(12)
+            .font(font::MONO)
+            .width(64),
+        button(text("Clear").size(12))
+            .padding([3, 8])
+            .style(style::ghost)
+            .on_press_maybe(store.can_clear.then_some(Message::Cache(Caching::Clear))),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
     let content = column![
         text("Settings").font(font::UI_STRONG).size(12),
         line("UI scale", scale.into()),
         line("Density", density.into()),
         line("Motion", switch(Setting::Motion, settings.motion).into()),
         line("Commands", switch(Setting::Port, settings.port).into()),
+        line("Cache", cache.into()),
         text(VERSION).size(11).style(style::muted),
     ]
     .spacing(8);
@@ -243,7 +281,7 @@ mod tests {
 
     use genie_formats::ini::{self, Document};
 
-    use super::{Density, Settings};
+    use super::{Density, Settings, size_text};
     use crate::recent::Recent;
     use crate::scratch::Scratch;
     use crate::theme::Appearance;
@@ -272,6 +310,16 @@ mod tests {
         assert_eq!(Settings::parse("not ini"), Settings::default());
         let settings = Settings::parse("[settings]\nscale = 300\ntheme = pink\n");
         assert_eq!(settings, Settings::default());
+    }
+
+    #[test]
+    fn sizes_read_in_the_largest_whole_unit() {
+        assert_eq!(size_text(0), "0 KB");
+        assert_eq!(size_text(1_500), "2 KB");
+        assert_eq!(size_text(5 << 20), "5.0 MB");
+        assert_eq!(size_text(250 << 20), "250 MB");
+        assert_eq!(size_text((3 << 30) / 2), "1.5 GB");
+        assert_eq!(size_text(12 << 30), "12 GB");
     }
 
     #[test]

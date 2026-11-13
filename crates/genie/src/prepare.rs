@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, ErrorKind, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
@@ -178,6 +178,42 @@ fn done(folder: &Path, location: &Location) -> Option<Prepared> {
         data,
         index: Location::File(index),
     })
+}
+
+pub fn usage(cache: &Path) -> u64 {
+    size(&cache.join(ROOT))
+}
+
+pub fn clear(cache: &Path, keep: &[PathBuf]) -> u64 {
+    let Ok(entries) = fs::read_dir(cache.join(ROOT)) else {
+        return 0;
+    };
+    let mut freed = 0;
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if keep.iter().any(|kept| kept.starts_with(&path)) {
+            continue;
+        }
+        let bytes = size(&path);
+        let removed = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        if removed.is_ok() {
+            freed += bytes;
+        }
+    }
+    freed
+}
+
+fn size(path: &Path) -> u64 {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::read_dir(path).map_or(0, |entries| {
+            entries.flatten().map(|entry| size(&entry.path())).sum()
+        }),
+        Ok(metadata) => metadata.len(),
+        Err(_) => 0,
+    }
 }
 
 pub fn run(
@@ -480,7 +516,7 @@ mod tests {
 
     use genie_core::Region;
 
-    use super::{Check, STOPPED, Step, check_with, run};
+    use super::{Check, STOPPED, Step, check_with, clear, run, usage};
     use crate::location::Location;
     use crate::scratch::Scratch;
     use crate::track::{self, Content, Options};
@@ -651,6 +687,24 @@ mod tests {
             panic!("expected a local copy");
         };
         assert_eq!(fs::read(data).unwrap(), bytes);
+    }
+
+    #[test]
+    fn clearing_keeps_only_the_files_in_use() {
+        let scratch = Scratch::new("prepare-clear");
+        let cache = folder(&scratch).join("cache");
+        let root = cache.join("prepared");
+        for (name, size) in [("a/x.gz", 10), ("b/y.gz", 20), ("c.download", 5)] {
+            let path = root.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, vec![0; size]).unwrap();
+        }
+        assert_eq!(usage(&cache), 35);
+        assert_eq!(clear(&cache, &[root.join("b").join("y.gz")]), 15);
+        assert_eq!(usage(&cache), 20);
+        assert!(root.join("b").join("y.gz").is_file());
+        assert_eq!(usage(&folder(&scratch).join("none")), 0);
+        assert_eq!(clear(&folder(&scratch).join("none"), &[]), 0);
     }
 
     #[test]
