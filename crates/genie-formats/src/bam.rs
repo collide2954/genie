@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind, Read, Seek};
 
 use genie_core::Region;
-use genie_core::alignment::{Alignment, Mate, Op, Tags};
+use genie_core::alignment::{Alignment, Mate, Op, Tags, parts};
 
 use crate::bai::Index;
 use crate::bgzf::Bgzf;
@@ -236,6 +236,10 @@ fn tags(aux: &[u8]) -> Tags {
             let text = value.strip_suffix(&[0]).unwrap_or(value);
             tags.group = Some(String::from_utf8_lossy(text).into_owned());
         }
+        [b'S', b'A'] if kind == b'Z' => {
+            let text = value.strip_suffix(&[0]).unwrap_or(value);
+            tags.parts = parts(&String::from_utf8_lossy(text));
+        }
         _ => {}
     });
     tags
@@ -422,6 +426,23 @@ mod tests {
         let mut reader = Cursor::new(sized(short));
         let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
         assert_eq!(read.cigar, [(Op::Match, 17)]);
+    }
+
+    #[test]
+    fn split_parts_come_from_the_sa_tag() {
+        let bases = "ACGTACGTAC";
+        let mut split = body(40, "split", 0, &[(6, 0), (4, 4)], bases);
+        split.extend(bases.bytes().map(|_| 30));
+        split.extend(b"SAZchr2,1234,+,6S4M,60,0;\0");
+        let mut reader = Cursor::new(sized(split));
+        let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
+        let parts: Vec<(&str, u64)> = read
+            .tags
+            .parts
+            .iter()
+            .map(|part| (part.contig.as_str(), part.start))
+            .collect();
+        assert_eq!(parts, [("chr2", 1233)]);
     }
 
     #[test]

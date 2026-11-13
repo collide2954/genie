@@ -69,6 +69,38 @@ pub struct Mate {
 pub struct Tags {
     pub phase: Option<i64>,
     pub group: Option<String>,
+    pub parts: Vec<Part>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Part {
+    pub contig: String,
+    pub start: u64,
+    pub reverse: bool,
+    pub mapq: u8,
+}
+
+pub fn parts(text: &str) -> Vec<Part> {
+    text.split(';')
+        .filter_map(|entry| {
+            let mut fields = entry.split(',');
+            let contig = fields.next()?.trim();
+            let position: u64 = fields.next()?.parse().ok()?;
+            let reverse = match fields.next()? {
+                "+" => false,
+                "-" => true,
+                _ => return None,
+            };
+            let _cigar = fields.next()?;
+            let mapq: u8 = fields.next()?.parse().ok()?;
+            (!contig.is_empty()).then(|| Part {
+                contig: contig.to_owned(),
+                start: position.saturating_sub(1),
+                reverse,
+                mapq,
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,12 +385,29 @@ impl Inserts {
 mod tests {
     use super::{
         Alignment, DUPLICATE, Filter, Gap, Inserts, MATE_REVERSE, MATE_UNMAPPED, Mate, Mismatch,
-        Op, PAIRED, PROPER, Pairing, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY, UNMAPPED,
+        Op, PAIRED, PROPER, Pairing, Part, Parts, QC_FAIL, REVERSE, SECONDARY, SUPPLEMENTARY,
+        UNMAPPED, parts,
     };
     use crate::{Region, Strand};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
+    }
+
+    #[test]
+    fn split_parts_come_from_the_sa_tag() {
+        let found = parts("chr2,1234,+,60M40S,60,0;chr5,99,-,40S60M,7,1;bad;chr1,x,+,1M,1,0;");
+        let part = |contig: &str, start, reverse, mapq| Part {
+            contig: contig.to_owned(),
+            start,
+            reverse,
+            mapq,
+        };
+        assert_eq!(
+            found,
+            [part("chr2", 1233, false, 60), part("chr5", 98, true, 7)]
+        );
+        assert_eq!(parts(""), []);
     }
 
     fn pair(flags: u16, start: u64, contig: usize, mate_start: u64, insert: i64) -> Alignment {

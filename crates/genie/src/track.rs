@@ -1229,7 +1229,10 @@ mod tests {
     #[test]
     fn grouping_packs_each_group_under_its_label() {
         let phased = |start: u64, phase: Option<i64>| Alignment {
-            tags: Tags { phase, group: None },
+            tags: Tags {
+                phase,
+                ..Tags::default()
+            },
             ..alignment(start, vec![(Op::Match, 10)])
         };
         let reads = vec![

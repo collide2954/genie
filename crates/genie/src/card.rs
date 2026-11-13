@@ -545,6 +545,7 @@ mod tests {
             tags: Tags {
                 phase: Some(1),
                 group: Some("groupA".to_owned()),
+                ..Tags::default()
             },
         };
         assert_eq!(
