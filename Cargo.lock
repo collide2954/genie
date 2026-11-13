@@ -843,6 +843,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "genie-cli"
+version = "0.1.0"
+
+[[package]]
 name = "genie-core"
 version = "0.1.0"
 
