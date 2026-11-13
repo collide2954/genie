@@ -36,6 +36,9 @@ pub enum Reason {
     BadRecord,
     NotBigWig,
     NotGzip,
+    Unsorted,
+    Scattered,
+    TooLong,
 }
 
 impl fmt::Display for Error {
@@ -85,6 +88,9 @@ impl fmt::Display for Reason {
             Self::BadRecord => "a BAM record is not valid",
             Self::NotBigWig => "the file is not a bigWig or bigBed file",
             Self::NotGzip => "the file is not compressed with gzip",
+            Self::Unsorted => "the records are not sorted by position",
+            Self::Scattered => "the records of one contig are not together",
+            Self::TooLong => "a position is too large for this kind of index",
         })
     }
 }

@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 
 use genie_core::alignment::{Alignment, Op};
@@ -7,8 +7,8 @@ use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::features::{self, Kind};
-use genie_formats::tabix::Index;
-use genie_formats::{bai, bam, fasta, gzi, vcf};
+use genie_formats::tabix::{Index, Layout};
+use genie_formats::{bai, bam, fasta, gzi, tabix, vcf};
 
 const WHOLE: u64 = 1 << 29;
 
@@ -370,6 +370,28 @@ fn built_fasta_indexes_match_samtools() {
 
 fn variant_index(suffix: &str) -> Index {
     Index::read(File::open(data(&format!("variants.vcf.gz.{suffix}"))).unwrap()).unwrap()
+}
+
+fn built(file: &str, layout: Layout, csi: bool) -> Index {
+    let bytes = tabix::build(File::open(data(file)).unwrap(), layout, csi).unwrap();
+    Index::read(Cursor::new(bytes)).unwrap()
+}
+
+#[test]
+fn built_text_indexes_match_tabix() {
+    for (file, layout) in [
+        ("genes.bed.gz", Layout::BED),
+        ("genes.gff3.gz", Layout::GFF),
+        ("genes.gtf.gz", Layout::GFF),
+        ("variants.vcf.gz", Layout::VCF),
+        ("plain.bedGraph.gz", Layout::BED),
+    ] {
+        assert_eq!(built(file, layout, false), index(file), "{file}");
+    }
+    assert_eq!(
+        built("variants.vcf.gz", Layout::VCF, true),
+        variant_index("csi")
+    );
 }
 
 #[test]

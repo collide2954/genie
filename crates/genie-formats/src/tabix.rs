@@ -1,17 +1,279 @@
-use std::io::{BufRead, Read, Seek};
+use std::collections::HashMap;
+use std::io::{BufRead, Read, Seek, Write};
 
 use genie_core::Region;
 
 pub use crate::binning::Chunk;
-use crate::binning::{Bins, Scheme, read_count, read_u32};
-use crate::{Error, Reason, bgzf::Bgzf, vcf};
+use crate::binning::{Bins, Builder, Scheme, put, read_count, read_u32};
+use crate::{
+    Error, Reason,
+    bgzf::{self, Bgzf},
+    vcf,
+};
 
 const MAGIC: &[u8; 4] = b"TBI\x01";
 const CSI: &[u8; 4] = b"CSI\x01";
 const ZERO_BASED: u32 = 0x10000;
+const GENERIC: u32 = 0;
 const VCF: u32 = 2;
+const META: u8 = b'#';
+const SHIFT: u32 = 14;
+const CSI_DEPTH: u32 = 6;
+const UNKNOWN_LENGTH: u64 = 100 << 30;
+const LENGTH_MARGIN: u64 = 256;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Layout {
+    format: u32,
+    columns: [usize; 3],
+}
+
+impl Layout {
+    pub const BED: Self = Self {
+        format: ZERO_BASED,
+        columns: [1, 2, 3],
+    };
+    pub const GFF: Self = Self {
+        format: GENERIC,
+        columns: [1, 4, 5],
+    };
+    pub const VCF: Self = Self {
+        format: VCF,
+        columns: [1, 2, 0],
+    };
+
+    pub fn place(self, line: &str) -> Option<(&str, u64, u64)> {
+        let line = line.trim_end_matches(['\n', '\r']);
+        let [name_at, start_at, end_at] = self.columns;
+        let preset = self.format & 0xFFFF;
+        let (mut name, mut start, mut end) = (None, -1_i64, -1_i64);
+        for (index, field) in line.split('\t').enumerate() {
+            let id = index + 1;
+            if id == name_at {
+                name = Some(field);
+            } else if id == start_at {
+                start = number(field)?;
+                if start_at <= end_at {
+                    end = start;
+                }
+                if self.format & ZERO_BASED == 0 {
+                    start -= 1;
+                } else {
+                    end += 1;
+                }
+                start = start.max(0);
+                end = end.max(1);
+            } else if preset == GENERIC && id == end_at {
+                end = number(field)?;
+            } else if preset == VCF && id == 4 && !field.is_empty() {
+                end = start + i64::try_from(field.len()).unwrap_or(i64::MAX);
+            } else if preset == VCF
+                && id == 8
+                && let Some(value) = info_end(field)
+                && value > start
+            {
+                end = value;
+            }
+        }
+        let start = u64::try_from(start).ok()?;
+        Some((name?, start, u64::try_from(end).ok()?))
+    }
+
+    fn settings(self, names: &[String]) -> Vec<u8> {
+        let text: Vec<u8> = names
+            .iter()
+            .flat_map(|name| name.bytes().chain([0]))
+            .collect();
+        let mut bytes = self.format.to_le_bytes().to_vec();
+        for column in self.columns {
+            put(&mut bytes, column);
+        }
+        for value in [usize::from(META), 0, text.len()] {
+            put(&mut bytes, value);
+        }
+        bytes.extend(text);
+        bytes
+    }
+}
+
+fn number(text: &str) -> Option<i64> {
+    let text = text.trim_start();
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let end = digits
+        .bytes()
+        .position(|byte| !byte.is_ascii_digit())
+        .unwrap_or(digits.len());
+    let value: i64 = digits
+        .get(..end)
+        .filter(|part| !part.is_empty())?
+        .parse()
+        .ok()?;
+    Some(if negative { -value } else { value })
+}
+
+fn info_end(info: &str) -> Option<i64> {
+    let value = match info.strip_prefix("END=") {
+        Some(rest) => rest,
+        None => &info[info.find(";END=")? + 5..],
+    };
+    if value.starts_with('.') {
+        return None;
+    }
+    Some(number(value).unwrap_or(0))
+}
+
+fn contig_length(line: &str) -> u64 {
+    let Some(rest) = line.strip_prefix("##contig") else {
+        return 0;
+    };
+    let Some(at) = rest.find("length") else {
+        return 0;
+    };
+    let value = rest[at + 6..].trim_start_matches([' ', '=']);
+    number(value)
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or(0)
+}
+
+pub struct Indexer {
+    layout: Layout,
+    csi: bool,
+    builder: Option<Builder>,
+    scheme: Scheme,
+    start: u64,
+    longest: u64,
+    names: Vec<String>,
+    ids: HashMap<String, usize>,
+    line: u64,
+}
+
+impl Indexer {
+    pub fn new(layout: Layout, csi: bool) -> Self {
+        Self {
+            layout,
+            csi,
+            builder: None,
+            scheme: Scheme::BAI,
+            start: 0,
+            longest: 0,
+            names: Vec::new(),
+            ids: HashMap::new(),
+            line: 0,
+        }
+    }
+
+    pub fn add(&mut self, line: &str, end: u64) -> Result<(), Error> {
+        self.line += 1;
+        let text = line.trim_end_matches(['\n', '\r']);
+        let header = text.is_empty() || text.as_bytes().first() == Some(&META);
+        if header && self.csi && self.layout == Layout::VCF {
+            self.longest = self.longest.max(contig_length(text));
+        }
+        let place = if header {
+            None
+        } else {
+            self.layout.place(text)
+        };
+        let Some((name, first, last)) = place else {
+            if self.builder.is_none() {
+                self.start = end;
+                return Ok(());
+            }
+            if header {
+                return Ok(());
+            }
+            return Err(self.problem(Reason::BadLine));
+        };
+        let id = if let Some(id) = self.ids.get(name) {
+            *id
+        } else {
+            self.names.push(name.to_owned());
+            self.ids.insert(name.to_owned(), self.names.len() - 1);
+            self.names.len() - 1
+        };
+        if self.builder.is_none() {
+            self.scheme = self.scheme();
+        }
+        let (scheme, csi, start) = (self.scheme, self.csi, self.start);
+        let builder = self
+            .builder
+            .get_or_insert_with(|| Builder::new(scheme, csi, start));
+        let pushed = builder.push(Some((id, first, last)), end, true);
+        pushed.map_err(|disorder| self.problem(disorder.reason()))
+    }
+
+    pub fn finish(self, end: u64) -> Result<Vec<u8>, Error> {
+        let scheme = if self.builder.is_some() {
+            self.scheme
+        } else {
+            self.scheme()
+        };
+        let builder = self
+            .builder
+            .unwrap_or_else(|| Builder::new(scheme, self.csi, self.start));
+        let (references, unplaced) = builder.finish(end);
+        let settings = self.layout.settings(&self.names);
+        let mut bytes = Vec::new();
+        if self.csi {
+            bytes.extend(CSI);
+            bytes.extend(scheme.shift().to_le_bytes());
+            bytes.extend(scheme.depth().to_le_bytes());
+            put(&mut bytes, settings.len());
+            bytes.extend(settings);
+            put(&mut bytes, references.len());
+        } else {
+            bytes.extend(MAGIC);
+            put(&mut bytes, references.len());
+            bytes.extend(settings);
+        }
+        for bins in &references {
+            bins.write(&mut bytes);
+        }
+        bytes.extend(unplaced.to_le_bytes());
+        let mut writer = bgzf::Writer::new(Vec::new());
+        writer.write_all(&bytes)?;
+        Ok(writer.finish()?)
+    }
+
+    fn scheme(&self) -> Scheme {
+        if !self.csi {
+            return Scheme::BAI;
+        }
+        let longest = if self.longest == 0 {
+            UNKNOWN_LENGTH
+        } else {
+            self.longest
+        };
+        Scheme::reaching(SHIFT, CSI_DEPTH, longest + LENGTH_MARGIN)
+    }
+
+    fn problem(&self, reason: Reason) -> Error {
+        Error::Format {
+            line: self.line,
+            reason,
+        }
+    }
+}
+
+pub fn build(reader: impl Read, layout: Layout, csi: bool) -> Result<Vec<u8>, Error> {
+    let mut reader = Bgzf::new(reader);
+    let mut indexer = Indexer::new(layout, csi);
+    let (mut bytes, mut end) = (Vec::new(), 0);
+    loop {
+        bytes.clear();
+        if reader.read_until(b'\n', &mut bytes)? == 0 {
+            break;
+        }
+        end = reader.virtual_offset();
+        indexer.add(&String::from_utf8_lossy(&bytes), end)?;
+    }
+    indexer.finish(end)
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Index {
     zero_based: bool,
     vcf: bool,
@@ -187,14 +449,93 @@ pub mod tests {
 
     use genie_core::Region;
 
-    use super::{Chunk, Index};
+    use super::{Chunk, Index, Indexer, Layout};
     use crate::{
         Error, Reason,
         bgzf::{
-            Bgzf,
+            Bgzf, Writer,
             tests::{block, file},
         },
     };
+
+    #[test]
+    fn places_lines_like_tabix() {
+        assert_eq!(Layout::BED.place("chr1\t10\t20\tx"), Some(("chr1", 10, 20)));
+        assert_eq!(Layout::BED.place("chr1\t10"), Some(("chr1", 10, 11)));
+        assert_eq!(
+            Layout::GFF.place("chr1\t.\tgene\t11\t20\t.\t+\t.\tID=a"),
+            Some(("chr1", 10, 20))
+        );
+        let vcf = |pos: &str, reference: &str, info: &str| {
+            let line = format!("chr2\t{pos}\t.\t{reference}\tA\t.\t.\t{info}");
+            Layout::VCF.place(&line).map(|(_, start, end)| (start, end))
+        };
+        assert_eq!(vcf("10", "ACGT", "."), Some((9, 13)));
+        assert_eq!(vcf("30", "A", "SVTYPE=DEL;END=80"), Some((29, 80)));
+        assert_eq!(vcf("30", "A", "END=80;DP=4"), Some((29, 80)));
+        assert_eq!(vcf("30", "AC", "END=5"), Some((29, 31)));
+        assert_eq!(vcf("30", "AC", "END=."), Some((29, 31)));
+        assert_eq!(vcf("30", "AC", "SVEND=90"), Some((29, 31)));
+        assert_eq!(vcf("0", "A", "."), Some((0, 1)));
+        assert_eq!(Layout::BED.place("chr1\tx\t5"), None);
+        assert_eq!(Layout::BED.place(""), None);
+    }
+
+    #[test]
+    fn indexed_text_answers_queries() {
+        let mut writer = Writer::new(Vec::new());
+        let mut indexer = Indexer::new(Layout::BED, false);
+        let lines = [
+            "#chrom\tstart\tend",
+            "chr1\t10\t20\ta",
+            "chr1\t30\t40\tb",
+            "chr2\t5\t15\tc",
+        ];
+        for line in lines {
+            std::io::Write::write_all(&mut writer, format!("{line}\n").as_bytes()).unwrap();
+            indexer.add(line, writer.virtual_offset()).unwrap();
+        }
+        let end = writer.virtual_offset();
+        let bytes = writer.finish().unwrap();
+        let index = Index::read(Cursor::new(indexer.finish(end).unwrap())).unwrap();
+        assert_eq!(index.names(), ["chr1", "chr2"]);
+        let mut reader = Bgzf::new(Cursor::new(bytes));
+        let mut found = Vec::new();
+        index
+            .query(&mut reader, "chr1", region(25, 100), |line| {
+                found.push(line.to_owned());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(found, ["chr1\t30\t40\tb"]);
+    }
+
+    #[test]
+    fn indexing_stops_at_lines_out_of_order() {
+        let mut indexer = Indexer::new(Layout::BED, false);
+        indexer.add("chr1\t50\t60", 10).unwrap();
+        let error = indexer.add("chr1\t10\t20", 20).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Format {
+                    line: 2,
+                    reason: Reason::Unsorted
+                }
+            ),
+            "{error:?}"
+        );
+        let mut indexer = Indexer::new(Layout::BED, false);
+        indexer.add("chr1\t50\t60", 10).unwrap();
+        let error = indexer.add("chr1\tnone\t60", 20).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::Format {
+                line: 2,
+                reason: Reason::BadLine
+            }
+        ));
+    }
 
     pub const BED: [usize; 4] = [0x10000, 1, 2, 3];
     pub const GFF: [usize; 4] = [0, 1, 4, 5];
