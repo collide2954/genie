@@ -163,6 +163,7 @@ section h2 {
   letter-spacing: -0.01em;
 }
 section > .wrap > p { max-width: 70ch; margin: 0 0 10px; }
+section > .wrap > h3 { margin: 20px 0 8px; font-size: 15px; font-weight: 600; }
 
 .grid {
   display: grid;
@@ -225,7 +226,7 @@ footer p { margin: 0 0 4px; }
       <a href="#features">Features</a>
       <a class="wide" href="#loci">Several loci</a>
       <a class="wide" href="#automation">Automation</a>
-      <a href="#run">Run</a>
+      <a href="#install">Install</a>
       <a href="https://github.com/collide2954/genie">GitHub</a>
     </nav>
   </div>
@@ -237,9 +238,9 @@ footer p { margin: 0 0 4px; }
     <p class="lead">A genome browser for Windows, macOS and Linux.</p>
     <p class="about">genie shows sequences, genes, reads, variants and signal. It opens files on your computer and files on the web, and it reads only the parts of a file that the view needs. genie uses Rust and the <a href="https://iced.rs">iced</a> GUI library.</p>
     <div class="actions">
-      <a class="button primary" href="https://github.com/collide2954/genie">Source on GitHub</a>
-      <a class="button" href="#run">Run genie</a>
-      <span class="status">genie is not complete. There is no release yet.</span>
+      <a class="button primary" href="#install">Download</a>
+      <a class="button" href="https://github.com/collide2954/genie">Source on GitHub</a>
+      <span class="status">Version 0.1.0 for Windows, macOS and Linux.</span>
     </div>
     <figure class="shot">
       <picture>
@@ -334,9 +335,12 @@ with socket.create_connection(("127.0.0.1", 60151)) as connection:
     </div>
   </section>
 
-  <section id="run">
+  <section id="install">
     <div class="wrap">
-      <h2>Run genie</h2>
+      <h2>Install</h2>
+      <p>Download the package for your system from the <a href="https://github.com/collide2954/genie/releases/latest">latest release</a>: the installer for Windows 10 or 11, the disk image for macOS 11 or later (Apple silicon and Intel), or the AppImage or .deb package for Linux.</p>
+      <p>The packages are not signed yet, so the system asks before genie opens the first time. On Windows, click <b>More info</b>, then <b>Run anyway</b>. On macOS, open <b>System Settings &gt; Privacy &amp; Security</b> and click <b>Open Anyway</b>. On Linux, make the AppImage executable before you run it.</p>
+      <h3>Build from source</h3>
       <ol class="steps">
         <li>Install <a href="https://rustup.rs">rustup</a>. rustup installs the Rust toolchain that genie needs.</li>
         <li>Get the source and start genie:</li>
