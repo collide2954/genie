@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader, BufWriter, ErrorKind, Read};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufRead, BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
+use genie_formats::http::{self, Url};
 use genie_formats::sort::{self, Budget, Stage};
 use genie_formats::tabix::{self, Layout};
 use genie_formats::{Error, Reason, bai, bgzf, features, gzip};
@@ -18,6 +19,7 @@ const ROOT: &str = "prepared";
 const MARKER: &str = "prepared.txt";
 const MEMORY: usize = 256 << 20;
 const DOWNLOAD_LIMIT: u64 = 1 << 30;
+const DOWNLOADED: &str = "downloaded";
 pub const NO_CACHE: &str = "genie cannot find a cache folder for the indexes it makes.";
 const HEAD: usize = 18;
 
@@ -29,6 +31,7 @@ enum Kind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
+    Downloading,
     Indexing,
     Compressing,
     Sorting,
@@ -37,6 +40,7 @@ pub enum Step {
 impl Step {
     pub fn verb(self) -> &'static str {
         match self {
+            Self::Downloading => "Downloading",
             Self::Indexing => "Indexing",
             Self::Compressing => "Compressing",
             Self::Sorting => "Sorting",
@@ -214,13 +218,14 @@ fn make(
     progress: &RefCell<Progress<'_>>,
     stop: &AtomicBool,
 ) -> Result<Made, Error> {
-    let source = match &work.location {
-        Location::File(path) => path.clone(),
-        Location::Url(_) => {
-            return Err(Error::Remote(format!(
-                "genie cannot index {} on the web yet.",
-                work.name
-            )));
+    let (source, downloaded) = match &work.location {
+        Location::File(path) => (path.clone(), false),
+        Location::Url(url) => {
+            let part = partial.with_extension("download");
+            fetch(url, &part, work.size, progress, stop)?;
+            let target = partial.join(DOWNLOADED);
+            fs::rename(&part, &target)?;
+            (target, true)
         }
     };
     let job = Job {
@@ -231,10 +236,52 @@ fn make(
         progress,
         stop,
     };
-    match work.kind {
+    let (data, index) = match work.kind {
         Kind::Reads => job.reads(),
         Kind::Text(layout) => job.text(layout),
+    }?;
+    if !downloaded {
+        return Ok((data, index));
     }
+    match data {
+        None => Ok((Some(DOWNLOADED.to_owned()), index)),
+        Some(copy) => {
+            fs::remove_file(&source)?;
+            Ok((Some(copy), index))
+        }
+    }
+}
+
+fn fetch(
+    url: &Url,
+    part: &Path,
+    size: u64,
+    progress: &RefCell<Progress<'_>>,
+    stop: &AtomicBool,
+) -> Result<(), Error> {
+    let mut file = OpenOptions::new().create(true).append(true).open(part)?;
+    let from = file.metadata()?.len();
+    let share = |done: u64, total: u64| done as f32 / total.max(1) as f32;
+    progress
+        .borrow_mut()
+        .send(Step::Downloading, share(from, size));
+    http::download(
+        url,
+        from,
+        |bytes| {
+            if stop.load(Ordering::Relaxed) {
+                return Err(io::Error::other(Halted));
+            }
+            file.write_all(bytes)
+        },
+        |done, total| {
+            progress
+                .borrow_mut()
+                .send(Step::Downloading, share(done, total));
+        },
+    )?;
+    file.sync_all()?;
+    Ok(())
 }
 
 struct Progress<'a> {
@@ -555,6 +602,55 @@ mod tests {
                 .unwrap()
                 .has_variants()
         );
+    }
+
+    #[test]
+    fn web_files_without_an_index_are_downloaded_then_indexed() {
+        let scratch = Scratch::new("prepare-web");
+        let cache = folder(&scratch).join("cache");
+        let bytes = fs::read(fixture("reads.bam")).unwrap();
+        let server = crate::server::serve(vec![("/reads.bam".to_owned(), bytes)]);
+        let location = Location::parse(&server.url("/reads.bam")).unwrap();
+        let (prepared, mut steps) = prepare(&location, &cache);
+        steps.dedup();
+        assert_eq!(steps, [Step::Downloading, Step::Indexing]);
+        assert!(!prepared.data.is_remote());
+        assert_eq!(
+            check_with(&location, Some(&cache), 0).unwrap(),
+            Check::Prepared(prepared.clone())
+        );
+        let source = track::open_with(location, Some(prepared)).unwrap();
+        assert!(source.has_reads());
+        assert!(!source.data().is_remote());
+    }
+
+    #[test]
+    fn stopped_downloads_go_on_from_where_they_stopped() {
+        let scratch = Scratch::new("prepare-resume");
+        let cache = folder(&scratch).join("cache");
+        let bytes = fs::read(fixture("reads.bam")).unwrap();
+        let half = bytes.len() / 2;
+        let server = crate::server::serve(vec![("/reads.bam".to_owned(), bytes.clone())]);
+        let location = Location::parse(&server.url("/reads.bam")).unwrap();
+        let Check::Needs(work) = check_with(&location, Some(&cache), 0).unwrap() else {
+            panic!("expected work");
+        };
+        let root = cache.join("prepared");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(format!("{}.download", work.key)), &bytes[..half]).unwrap();
+        let mut shares = Vec::new();
+        let stop = AtomicBool::new(false);
+        let mut report = |step, share| {
+            if step == Step::Downloading {
+                shares.push(share);
+            }
+        };
+        let prepared = run(&work, &cache, &mut report, &stop).unwrap();
+        assert!(shares[0] >= 0.49, "{shares:?}");
+        let Location::File(data) = &prepared.data else {
+            panic!("expected a local copy");
+        };
+        assert_eq!(fs::read(data).unwrap(), bytes);
     }
 
     #[test]
