@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+Fixes for Windows and the Linux AppImage.
+
+- Windows: genie starts on computers that do not have the Visual C++ Redistributable. genie.exe now contains the C runtime.
+- Windows: genie opens without a console window.
+- Windows: the Start menu entry, the desktop shortcut and `.genie` files show the genie icon.
+- Windows: `genie-cli.exe`, in the same folder as genie.exe, runs commands in a terminal, for example `genie-cli snapshot work.genie regions.bed pictures`.
+- Linux: the AppImage finds files from the folder that you run it in, for example in `./genie-0.1.1-linux-x86_64.AppImage snapshot work.genie regions.bed pictures`.
+- Before each release, the release workflow installs or opens each package and makes images with it.
+
 ## 0.1.0
 
 The first release of genie, a genome browser for Windows, macOS and Linux.

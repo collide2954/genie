@@ -8,15 +8,15 @@ Download the package for your system from the [latest release](https://github.co
 
 | System | Package |
 | --- | --- |
-| Windows 10 or 11 (x64) | `genie-0.1.0-windows-x64-setup.exe` |
-| macOS 11 or later (Apple silicon and Intel) | `genie-0.1.0-macos-universal.dmg` |
-| Linux (x86_64) | `genie-0.1.0-linux-x86_64.AppImage` or `genie_0.1.0_amd64.deb` |
+| Windows 10 or 11 (x64) | `genie-0.1.1-windows-x64-setup.exe` |
+| macOS 11 or later (Apple silicon and Intel) | `genie-0.1.1-macos-universal.dmg` |
+| Linux (x86_64) | `genie-0.1.1-linux-x86_64.AppImage` or `genie_0.1.1_amd64.deb` |
 
 The packages are not signed yet, so the system asks before genie opens the first time:
 
 - Windows: if SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**. The installer needs no administrator rights. It adds genie to the Start menu and opens `.genie` session files in genie.
 - macOS: open the disk image and drag genie to Applications. Open genie. If macOS stops it, open **System Settings > Privacy & Security** and click **Open Anyway**.
-- Linux: make the AppImage executable (`chmod +x genie-0.1.0-linux-x86_64.AppImage`) and run it. Some systems need FUSE 2 (the `libfuse2` package). Or install the .deb with `sudo apt install ./genie_0.1.0_amd64.deb`.
+- Linux: make the AppImage executable (`chmod +x genie-0.1.1-linux-x86_64.AppImage`) and run it. Some systems need FUSE 2 (the `libfuse2` package). Or install the .deb with `sudo apt install ./genie_0.1.1_amd64.deb`.
 
 Each push to `main` also makes a test build for each operating system. The builds are in the artifacts of the CI runs for 30 days.
 
@@ -243,7 +243,7 @@ The command to use depends on how you got genie:
 
 - Windows: genie.exe has no console. In a terminal, use `genie-cli.exe` from the same folder, for example `& "$env:LOCALAPPDATA\genie\genie-cli.exe" snapshot work.genie regions.bed pictures` in PowerShell.
 - macOS: `/Applications/genie.app/Contents/MacOS/genie snapshot work.genie regions.bed pictures`.
-- Linux: `genie snapshot work.genie regions.bed pictures` after you install the .deb, or `./genie-0.1.0-linux-x86_64.AppImage snapshot work.genie regions.bed pictures`.
+- Linux: `genie snapshot work.genie regions.bed pictures` after you install the .deb, or `./genie-0.1.1-linux-x86_64.AppImage snapshot work.genie regions.bed pictures`.
 - Source code: `cargo run -p genie -- snapshot work.genie regions.bed pictures`.
 
 - genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.

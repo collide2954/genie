@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "genie"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fontdb",
  "genie-core",
@@ -844,15 +844,15 @@ dependencies = [
 
 [[package]]
 name = "genie-cli"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "genie-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "genie-formats"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "genie-core",
  "miniz_oxide 0.9.1",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "genie-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "genie-core",
 ]
