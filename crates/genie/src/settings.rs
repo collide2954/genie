@@ -15,7 +15,7 @@ use crate::{font, style};
 pub const FILE: &str = "settings.ini";
 const SECTION: &str = "settings";
 pub const SCALES: [u16; 5] = [90, 100, 110, 125, 150];
-const VERSION: &str = concat!("genie ", env!("CARGO_PKG_VERSION"), " · Apache-2.0");
+const VERSION: &str = concat!("genie ", env!("CARGO_PKG_VERSION"));
 const KILO: u64 = 1 << 10;
 const MEGA: u64 = 1 << 20;
 const GIGA: u64 = 1 << 30;
