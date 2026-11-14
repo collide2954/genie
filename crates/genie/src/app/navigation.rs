@@ -8,7 +8,7 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, MAX_PANELS, Message, Paneling, Regions, Session, Suggestion, Sweep};
+use super::{Genie, MAX_PANELS, Message, Paneling, Popup, Regions, Session, Suggestion, Sweep};
 
 const SUGGESTIONS: usize = 8;
 const MIN_SWEEP: f64 = 3.0;
@@ -47,6 +47,10 @@ impl Genie {
                     contig,
                     span: Span::Whole,
                 })
+            }
+            Command::Help => {
+                self.toggle(Popup::Help);
+                Task::none()
             }
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),

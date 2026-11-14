@@ -11,6 +11,7 @@ mod export;
 mod font;
 mod genome;
 mod grip;
+mod help;
 mod icon;
 mod location;
 mod logger;

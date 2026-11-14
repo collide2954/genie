@@ -254,6 +254,12 @@ pub fn title_bar<'a>(
         regions,
         save,
         export,
+        tool(
+            Icon::Help,
+            "help",
+            "Keys and mouse (F1)",
+            Message::Command(Command::Help)
+        ),
         tool(Icon::Gear, "settings", "Settings", Message::ToggleSettings),
         tool(appearance, "appearance", theme, Message::CycleAppearance)
     ]
@@ -374,13 +380,16 @@ fn zoom<'a>() -> Element<'a, Message> {
     .into()
 }
 
-pub fn keys(letter: char) -> String {
-    let modifier = if cfg!(target_os = "macos") {
+pub fn modifier() -> &'static str {
+    if cfg!(target_os = "macos") {
         "Cmd"
     } else {
         "Ctrl"
-    };
-    format!("{modifier}+{letter}")
+    }
+}
+
+pub fn keys(letter: char) -> String {
+    format!("{}+{letter}", modifier())
 }
 
 pub fn tip<'a>(
@@ -632,6 +641,18 @@ mod tests {
     }
 
     #[test]
+    fn the_help_button_shows_the_keys_and_mouse_list() {
+        for locus in [None, Some(field("chr1:1-4", None))] {
+            let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, locus));
+            ui.click(selector::id("help")).unwrap();
+            assert_eq!(
+                ui.into_messages().collect::<Vec<_>>(),
+                [Message::Command(Command::Help)]
+            );
+        }
+    }
+
+    #[test]
     fn zoom_buttons_zoom_and_show_the_whole_chromosome() {
         for (id, command) in [
             ("zoom-out", Command::Zoom(0.5)),
@@ -825,7 +846,7 @@ mod tests {
     fn pressing_empty_bar_space_drags_the_window() {
         let messages = press_at(
             title_bar(Controls::Custom, Icon::Monitor, None),
-            Point::new(180.0, 20.0),
+            Point::new(164.0, 20.0),
         );
         assert!(messages.contains(&Message::Window(Action::Drag)));
     }

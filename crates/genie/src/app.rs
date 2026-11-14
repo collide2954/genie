@@ -117,6 +117,7 @@ enum Popup {
     Settings,
     Genomes,
     Catalog,
+    Help,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -2295,6 +2296,33 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn the_help_dialog_lists_keys_and_mouse_actions() {
+        use crate::chrome::keys;
+        let mut genie = opened();
+        assert!(!shows(&genie, "Keys and mouse"));
+        let _ = genie.update(Message::Command(Command::Help));
+        for line in [
+            "Keys and mouse",
+            "Drag on the ruler",
+            "Zoom to a range",
+            "Shift+drag on the ruler",
+            &keys('D'),
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!shows(&genie, "Keys and mouse"));
+        let _ = genie.update(Message::Command(Command::Help));
+        let closed = click_id(&genie, "help-close");
+        assert!(
+            closed.contains(&Message::Command(Command::Help)),
+            "{closed:?}"
+        );
+        let inside = click_id(&genie, "help-dialog");
+        assert!(!inside.contains(&Message::MenuDismissed), "{inside:?}");
     }
 
     #[test]

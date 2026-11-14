@@ -30,6 +30,7 @@ pub enum Icon {
     Minus,
     Plus,
     Whole,
+    Help,
 }
 
 enum Shape {
@@ -125,25 +126,39 @@ impl Icon {
                 Shape::Polyline(&[[3.0, 12.5], [12.0, 17.5], [21.0, 12.5]]),
                 Shape::Polyline(&[[3.0, 16.5], [12.0, 21.5], [21.0, 16.5]]),
             ],
-            Self::More => &[
-                Shape::Circle([5.0, 12.0], 1.0),
-                Shape::Circle([12.0, 12.0], 1.0),
-                Shape::Circle([19.0, 12.0], 1.0),
-            ],
-            Self::Plus => &[
-                Shape::Line([5.0, 12.0], [19.0, 12.0]),
-                Shape::Line([12.0, 5.0], [12.0, 19.0]),
-            ],
-            Self::Whole => &[
-                Shape::Line([3.0, 7.0], [3.0, 17.0]),
-                Shape::Line([21.0, 7.0], [21.0, 17.0]),
-                Shape::Line([6.0, 12.0], [18.0, 12.0]),
-                Shape::Polyline(&[[9.0, 9.0], [6.0, 12.0], [9.0, 15.0]]),
-                Shape::Polyline(&[[15.0, 9.0], [18.0, 12.0], [15.0, 15.0]]),
-            ],
+            Self::More => MORE,
+            Self::Plus => PLUS,
+            Self::Help => HELP,
+            Self::Whole => WHOLE,
         }
     }
 }
+
+const MORE: &[Shape] = &[
+    Shape::Circle([5.0, 12.0], 1.0),
+    Shape::Circle([12.0, 12.0], 1.0),
+    Shape::Circle([19.0, 12.0], 1.0),
+];
+
+const PLUS: &[Shape] = &[
+    Shape::Line([5.0, 12.0], [19.0, 12.0]),
+    Shape::Line([12.0, 5.0], [12.0, 19.0]),
+];
+
+const HELP: &[Shape] = &[
+    Shape::Circle([12.0, 12.0], 10.0),
+    Shape::Arc([12.0, 9.5], 3.0, 180.0, 450.0),
+    Shape::Line([12.0, 12.5], [12.0, 14.0]),
+    Shape::Circle([12.0, 17.5], 0.5),
+];
+
+const WHOLE: &[Shape] = &[
+    Shape::Line([3.0, 7.0], [3.0, 17.0]),
+    Shape::Line([21.0, 7.0], [21.0, 17.0]),
+    Shape::Line([6.0, 12.0], [18.0, 12.0]),
+    Shape::Polyline(&[[9.0, 9.0], [6.0, 12.0], [9.0, 15.0]]),
+    Shape::Polyline(&[[15.0, 9.0], [18.0, 12.0], [15.0, 15.0]]),
+];
 
 impl Shape {
     fn path(&self, origin: Point, scale: f32) -> Path {
@@ -265,7 +280,8 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 19] = [
+    const ICONS: [Icon; 20] = [
+        Icon::Help,
         Icon::More,
         Icon::Minus,
         Icon::Plus,

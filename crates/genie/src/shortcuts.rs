@@ -10,6 +10,7 @@ pub enum Command {
     Pan(f32),
     Zoom(f32),
     Whole,
+    Help,
     Back,
     Forward,
     NextFeature,
@@ -38,6 +39,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Named(Named::ArrowDown) => Some(Command::NextSuggestion),
         Key::Named(Named::ArrowUp) => Some(Command::PreviousSuggestion),
         Key::Named(Named::Escape) => Some(Command::Dismiss),
+        Key::Named(Named::F1) => Some(Command::Help),
         Key::Named(Named::F12) => Some(Command::Diagnostics),
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
@@ -168,6 +170,14 @@ mod tests {
         assert_eq!(
             command(&character("s"), Modifiers::COMMAND),
             Some(Command::SaveSession)
+        );
+    }
+
+    #[test]
+    fn f1_shows_the_keys_and_mouse_list() {
+        assert_eq!(
+            command(&Key::Named(Named::F1), Modifiers::empty()),
+            Some(Command::Help)
         );
     }
 
