@@ -2,7 +2,7 @@ use iced::widget::{Column, button, center, column, container, opaque, row, space
 use iced::{Alignment, Element, Length};
 
 use crate::app::Message;
-use crate::chrome::{self, keys, modifier};
+use crate::chrome::{self, keys, modifier, shift_keys};
 use crate::icon::{self, Icon};
 use crate::settings::Setting;
 use crate::shortcuts::Command;
@@ -65,6 +65,8 @@ pub fn groups() -> [Group; 6] {
                 ("Shift+Left, Shift+Right".to_owned(), "Move a full view"),
                 (format!("{back}, {forward}"), "Go back or forward"),
                 (keys('L'), "Go to a locus or a name"),
+                (shift_keys('F'), "Find a sequence"),
+                ("Enter, Shift+Enter".to_owned(), "Next or previous match"),
             ],
         ),
         group(

@@ -4,7 +4,7 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, features, overview, ruler, sequence, signal, translation, variants,
+    alignments, features, matches, overview, ruler, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -596,6 +596,14 @@ impl Genie {
         }));
         if count == 1 {
             top = top.push(self.bands(session));
+        }
+        if let Some(bar) = self.find_bar() {
+            top = top
+                .push(hairline())
+                .push(bar)
+                .push(across(count, matches::HEIGHT, |panel| {
+                    self.find_lane(session, panel)
+                }));
         }
         if self.settings.tips {
             top = top.push(hairline()).push(crate::help::strip());

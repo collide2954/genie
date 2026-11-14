@@ -21,6 +21,12 @@
 - A strip under the ruler shows tips until you close it.
 - The logo has one strand in green and purple bases.
 
+### Find a sequence
+
+- Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a find bar. Type bases, for example a primer, with IUPAC codes if necessary. A lane under the ruler shows the matches on the two strands.
+- Allow 1, 2 or 3 mismatches to also find near matches. The card of a match shows its strand and its wrong bases.
+- Enter and Shift+Enter go to the next and the previous match. Past the view, genie reads the reference 20 Mb at a time.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.

@@ -1,7 +1,7 @@
 use iced::widget::{Column, button, mouse_area, row, space, stack, text};
 use iced::{Alignment, Element, Length, Point};
 
-use crate::chrome::{self, Controls, keys};
+use crate::chrome::{self, Controls, keys, shift_keys};
 use crate::genome;
 use crate::menu;
 use crate::recent::Entry;
@@ -13,7 +13,7 @@ use super::{Genie, Message, Popup};
 const WIDTH: f32 = 200.0;
 const RECENT_WIDTH: f32 = 280.0;
 const ROW: f32 = 24.0;
-const ROWS: f32 = 7.0;
+const ROWS: f32 = 8.0;
 const SEPARATORS: f32 = 2.0;
 const SEPARATOR: f32 = 8.0;
 const PADDING: f32 = 4.0;
@@ -109,6 +109,12 @@ impl Genie {
                 "Export image…",
                 keys('E'),
                 Message::Command(Command::Export),
+                session,
+            ))
+            .push(keyed(
+                "Find a sequence…",
+                shift_keys('F'),
+                Message::Command(Command::Find),
                 session,
             ))
             .push(menu::separator())

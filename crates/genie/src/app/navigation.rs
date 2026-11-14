@@ -59,6 +59,7 @@ impl Genie {
             Command::Forward => self.step_history(true),
             Command::AddRegion => self.regions(Regions::Add),
             Command::OpenUrl => self.ask_address(),
+            Command::Find => self.open_finder(),
             Command::NextFeature | Command::PreviousFeature => {
                 let forward = command == Command::NextFeature;
                 self.pointed
@@ -78,6 +79,7 @@ impl Genie {
             }
             Command::Dismiss => {
                 self.close_menus();
+                self.close_finder();
                 self.notice = None;
                 self.pinned = None;
                 self.sweep = None;

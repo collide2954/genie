@@ -59,6 +59,13 @@ pub enum Detail {
         span: Region,
         bin: Bin,
     },
+    Match {
+        pattern: String,
+        span: Region,
+        strand: Strand,
+        bases: String,
+        wrong: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -299,6 +306,26 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
                 Region::between(*position, position + 1),
                 lines,
             )
+        }
+        Detail::Match {
+            pattern,
+            span,
+            strand,
+            bases,
+            wrong,
+        } => {
+            let strands = match strand {
+                Strand::Forward => "forward strand",
+                Strand::Reverse => "reverse strand",
+                Strand::Unknown => "both strands",
+            };
+            let fit = match wrong {
+                0 => "exact match".to_owned(),
+                1 => "1 mismatch".to_owned(),
+                count => format!("{count} mismatches"),
+            };
+            let facts = format!("{} bp · {strands} · {fit}", grouped(span.len()));
+            (pattern.clone(), *span, vec![facts, bases.clone()])
         }
     }
 }
@@ -640,6 +667,35 @@ mod tests {
             info: info.to_owned(),
             calls: Vec::new(),
         }
+    }
+
+    #[test]
+    fn match_cards_show_the_strand_the_mismatches_and_the_bases() {
+        let card = |strand, bases: &str, wrong| Card {
+            track: u64::MAX,
+            contig: "chr1".to_owned(),
+            detail: Detail::Match {
+                pattern: "GGATCC".to_owned(),
+                span: region(10, 16),
+                strand,
+                bases: bases.to_owned(),
+                wrong,
+            },
+            at: Point::ORIGIN,
+            fields: Vec::new(),
+        };
+        assert_eq!(
+            plain(&card(Strand::Forward, "GGATCC", 0)),
+            "GGATCC\nchr1:11-16\n6 bp · forward strand · exact match\nGGATCC"
+        );
+        assert_eq!(
+            plain(&card(Strand::Reverse, "GGAtCC", 1)),
+            "GGATCC\nchr1:11-16\n6 bp · reverse strand · 1 mismatch\nGGAtCC"
+        );
+        assert_eq!(
+            plain(&card(Strand::Unknown, "GcAtCC", 2)),
+            "GGATCC\nchr1:11-16\n6 bp · both strands · 2 mismatches\nGcAtCC"
+        );
     }
 
     #[test]

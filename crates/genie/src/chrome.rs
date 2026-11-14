@@ -410,6 +410,10 @@ pub fn keys(letter: char) -> String {
     format!("{}+{letter}", modifier())
 }
 
+pub fn shift_keys(letter: char) -> String {
+    format!("{}+Shift+{letter}", modifier())
+}
+
 pub fn tip<'a>(
     content: impl Into<Element<'a, Message>>,
     words: impl Into<String>,

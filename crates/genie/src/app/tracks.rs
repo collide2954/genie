@@ -447,7 +447,8 @@ impl Genie {
             Detail::Read { .. }
             | Detail::Junction(_)
             | Detail::Methylation { .. }
-            | Detail::Signal { .. } => Vec::new(),
+            | Detail::Signal { .. }
+            | Detail::Match { .. } => Vec::new(),
         };
         Some(Card {
             track: id,
@@ -477,7 +478,11 @@ impl Genie {
     }
 
     pub(super) fn fetch(&mut self) -> Task<Message> {
-        Task::batch([self.fetch_bases(), self.fetch_features()])
+        Task::batch([
+            self.fetch_bases(),
+            self.fetch_features(),
+            self.search_view(),
+        ])
     }
 
     fn fetch_features(&mut self) -> Task<Message> {

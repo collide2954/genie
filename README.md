@@ -183,6 +183,16 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.
 - genie sorts the contigs. First are the numbered chromosomes in number order (1, 2 … 22, also arms such as 2L and 2R, and Roman numbers such as I to XVI). Then come X, Y, W and Z, and then M. The other contigs follow in the order of the file. The region list and the feature search use this order.
 
+## Find a sequence
+
+- Push Ctrl+Shift+F (Cmd+Shift+F on macOS), or click **Find a sequence…** in the logo menu or the palette. A find bar opens under the ruler.
+- Type the bases, for example a primer. You can use the IUPAC codes, for example N, R and Y. genie ignores spaces, digits and the marks in `5'-…-3'`. The sequence can have 2 to 200 bases.
+- genie finds the bases on the two strands. A lane under the find bar shows a bar for each match in the view, with arrows for its strand. A sequence that is the same on the two strands, such as `GAATTC`, shows one bar without arrows.
+- Click 1, 2 or 3 next to **Mismatches** to also find near matches. Near matches have a light color, and when you zoom in, the wrong bases have a vermillion mark. Each mismatch needs 4 bases in the sequence, for example 8 bases for 2 mismatches. Unknown bases (N) in the reference do not match.
+- Push Enter to go to the next match, and Shift+Enter to go to the previous match. If there is no match near the view, genie reads 20 Mb of the reference each time that you push Enter. At the end of a chromosome, it continues on the next chromosome.
+- Put the pointer on a match to see its locus, its strand, its mismatches and its bases as they read on its strand. Wrong bases are lower case. Click to keep the card open.
+- genie finds sequences when the view is 10 Mb or less, and shows up to 100,000 matches. Push Escape or click × to close the find bar.
+
 ## Several loci
 
 - Type two to four loci in the locus box, with a space between them, for example `BRCA1 BRCA2`. genie shows the loci side by side in panels of equal width.

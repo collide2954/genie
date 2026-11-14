@@ -40,6 +40,7 @@ mod copy;
 mod export;
 mod figure;
 mod filters;
+mod find;
 mod navigation;
 mod offline;
 mod orders;
@@ -115,6 +116,7 @@ pub struct Genie {
     range_draft: Option<(String, String)>,
     track_draft: Option<crate::track_dialog::Draft>,
     palette: Option<crate::palette::State>,
+    finder: Option<find::Finder>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +194,7 @@ impl Default for Genie {
             range_draft: None,
             track_draft: None,
             palette: None,
+            finder: None,
         }
     }
 }
@@ -652,6 +655,7 @@ pub enum Message {
     Field(Choice),
     Visit(String),
     Cache(Caching),
+    Find(find::Finding),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -879,6 +883,7 @@ impl Genie {
         if let Some(sidebar) = &mut self.sidebar {
             *sidebar = Sidebar::default();
         }
+        self.forget_matches();
         self.session = Some(Session::new(reference, self.width));
         self.resume();
         let mut tasks = vec![self.fetch(), self.remember()];
@@ -959,6 +964,7 @@ impl Genie {
             Message::SequenceChanged(change) => self.change_reading(change),
             Message::ToggleSettings => return self.toggle_settings(),
             Message::Cache(event) => return self.caching(event),
+            Message::Find(finding) => return self.find(finding),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,

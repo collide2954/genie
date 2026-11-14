@@ -1,7 +1,7 @@
 use iced::widget::operation;
 use iced::{Element, Task};
 
-use crate::chrome::keys;
+use crate::chrome::{self, keys};
 use crate::genome;
 use crate::menu::{GROUPS, MODES, STYLES, TOGGLES};
 use crate::palette::{self, Action, State};
@@ -186,6 +186,11 @@ impl Genie {
                 ),
                 Action::new("Show the regions", "", Message::Regions(Regions::Toggle)),
                 Action::new("Copy the locus", keys('C'), command(Command::Copy)),
+                Action::new(
+                    "Find a sequence…",
+                    chrome::shift_keys('F'),
+                    command(Command::Find),
+                ),
             ]);
             let catalog = session
                 .reference

@@ -17,6 +17,7 @@ pub enum Command {
     Forward,
     NextFeature,
     PreviousFeature,
+    Find,
     AddRegion,
     OpenUrl,
     FocusLocus,
@@ -46,6 +47,9 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("+" | "=") => Some(Command::Zoom(ZOOM)),
         Key::Character("-" | "_") => Some(Command::Zoom(1.0 / ZOOM)),
         Key::Character("l" | "L") if modifiers.command() => Some(Command::FocusLocus),
+        Key::Character("f" | "F") if modifiers.command() && modifiers.shift() => {
+            Some(Command::Find)
+        }
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
@@ -107,6 +111,17 @@ mod tests {
             (Some(Command::NextFeature), Some(Command::PreviousFeature))
         );
         assert_eq!(command(&character("f"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_shift_f_finds_a_sequence() {
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(command(&character("F"), shift), Some(Command::Find));
+        assert_eq!(command(&character("f"), shift), Some(Command::Find));
+        assert_eq!(
+            command(&character("F"), Modifiers::COMMAND),
+            Some(Command::NextFeature)
+        );
     }
 
     #[test]
