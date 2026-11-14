@@ -38,6 +38,16 @@ impl Genie {
                 self.drop_draft();
                 self.glide(|viewport| viewport.zoom(f64::from(factor), viewport.width() / 2.0))
             }
+            Command::Whole => {
+                self.drop_draft();
+                let Some(contig) = self.session.as_ref().map(|session| session.contig) else {
+                    return Task::none();
+                };
+                self.go_to(Target {
+                    contig,
+                    span: Span::Whole,
+                })
+            }
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
             Command::AddRegion => self.regions(Regions::Add),

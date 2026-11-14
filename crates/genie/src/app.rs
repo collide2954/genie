@@ -2298,6 +2298,22 @@ mod tests {
     }
 
     #[test]
+    fn the_whole_command_shows_the_whole_chromosome() {
+        let mut genie = opened();
+        go(&mut genie, "chr2:51-150");
+        settle(&mut genie);
+        let _ = genie.update(Message::Command(Command::Whole));
+        settle(&mut genie);
+        let session = genie.session.as_ref().unwrap();
+        let length = session.reference.assembly.contigs()[session.contig].length;
+        let whole = format!("chr2:1-{}", genie_core::grouped(length));
+        assert!(shows(&genie, &whole), "{whole}");
+        let _ = genie.update(Message::Command(Command::Back));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr2:51-150"));
+    }
+
+    #[test]
     fn dragging_on_the_ruler_zooms_to_the_range() {
         let mut genie = opened();
         let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.3)));

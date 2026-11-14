@@ -338,7 +338,7 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
     let words = format!("Go to a locus, a name or a variant ID ({})", keys('L'));
-    row![tip(input, words, tooltip::Position::Bottom)]
+    row![tip(input, words, tooltip::Position::Bottom), zoom()]
         .push(
             field
                 .error
@@ -347,6 +347,31 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .spacing(8)
         .align_y(Alignment::Center)
         .into()
+}
+
+fn zoom<'a>() -> Element<'a, Message> {
+    row![
+        tool(
+            Icon::Minus,
+            "zoom-out",
+            "Zoom out (-)",
+            Message::Command(Command::Zoom(0.5))
+        ),
+        tool(
+            Icon::Plus,
+            "zoom-in",
+            "Zoom in (+)",
+            Message::Command(Command::Zoom(2.0))
+        ),
+        tool(
+            Icon::Whole,
+            "whole",
+            "Show the whole chromosome",
+            Message::Command(Command::Whole)
+        ),
+    ]
+    .spacing(TOOL_GAP)
+    .into()
 }
 
 pub fn keys(letter: char) -> String {
@@ -604,6 +629,28 @@ mod tests {
                 "{messages:?}"
             );
         }
+    }
+
+    #[test]
+    fn zoom_buttons_zoom_and_show_the_whole_chromosome() {
+        for (id, command) in [
+            ("zoom-out", Command::Zoom(0.5)),
+            ("zoom-in", Command::Zoom(2.0)),
+            ("whole", Command::Whole),
+        ] {
+            let mut ui = simulator(title_bar(
+                Controls::Custom,
+                Icon::Monitor,
+                Some(field("chr1:1-4", None)),
+            ));
+            ui.click(selector::id(id)).unwrap();
+            assert_eq!(
+                ui.into_messages().collect::<Vec<_>>(),
+                [Message::Command(command)]
+            );
+        }
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
+        assert!(ui.find(selector::id("zoom-in")).is_err());
     }
 
     #[test]

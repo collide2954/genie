@@ -27,6 +27,9 @@ pub enum Icon {
     Link,
     Layers,
     More,
+    Minus,
+    Plus,
+    Whole,
 }
 
 enum Shape {
@@ -61,7 +64,7 @@ impl Icon {
                 Shape::Line([8.0, 21.0], [16.0, 21.0]),
                 Shape::Line([12.0, 17.0], [12.0, 21.0]),
             ],
-            Self::Minimize => &[Shape::Line([5.0, 12.0], [19.0, 12.0])],
+            Self::Minimize | Self::Minus => &[Shape::Line([5.0, 12.0], [19.0, 12.0])],
             Self::Maximize => &[Shape::Rect([5.0, 5.0], [19.0, 19.0], 1.5)],
             Self::Close => &[
                 Shape::Line([6.0, 6.0], [18.0, 18.0]),
@@ -126,6 +129,17 @@ impl Icon {
                 Shape::Circle([5.0, 12.0], 1.0),
                 Shape::Circle([12.0, 12.0], 1.0),
                 Shape::Circle([19.0, 12.0], 1.0),
+            ],
+            Self::Plus => &[
+                Shape::Line([5.0, 12.0], [19.0, 12.0]),
+                Shape::Line([12.0, 5.0], [12.0, 19.0]),
+            ],
+            Self::Whole => &[
+                Shape::Line([3.0, 7.0], [3.0, 17.0]),
+                Shape::Line([21.0, 7.0], [21.0, 17.0]),
+                Shape::Line([6.0, 12.0], [18.0, 12.0]),
+                Shape::Polyline(&[[9.0, 9.0], [6.0, 12.0], [9.0, 15.0]]),
+                Shape::Polyline(&[[15.0, 9.0], [18.0, 12.0], [15.0, 15.0]]),
             ],
         }
     }
@@ -251,8 +265,11 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 16] = [
+    const ICONS: [Icon; 19] = [
         Icon::More,
+        Icon::Minus,
+        Icon::Plus,
+        Icon::Whole,
         Icon::Layers,
         Icon::Link,
         Icon::Bookmark,

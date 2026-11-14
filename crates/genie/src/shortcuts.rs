@@ -9,6 +9,7 @@ const ZOOM: f32 = 2.0;
 pub enum Command {
     Pan(f32),
     Zoom(f32),
+    Whole,
     Back,
     Forward,
     NextFeature,
