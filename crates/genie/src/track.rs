@@ -1236,6 +1236,7 @@ pub fn neighbor(
     contig: usize,
     position: u64,
     forward: bool,
+    rules: &[Rule],
 ) -> Result<Option<(usize, Region)>, String> {
     let count = assembly.contigs().len().min(names.len());
     if !source.can_jump() || contig >= count {
@@ -1252,7 +1253,7 @@ pub fn neighbor(
         };
         let length = assembly.contigs()[index].length;
         let threshold = (index == contig).then_some(position);
-        if let Some(span) = nearest(source, name, length, threshold, forward)? {
+        if let Some(span) = nearest(source, name, length, threshold, forward, rules)? {
             return Ok(Some((index, span)));
         }
     }
@@ -1265,7 +1266,9 @@ fn nearest(
     length: u64,
     threshold: Option<u64>,
     forward: bool,
+    rules: &[Rule],
 ) -> Result<Option<Region>, String> {
+    let spans = |source: &Source, name: &str, window: Region| kept(source, name, window, rules);
     let key = |span: &Region| (span.start(), span.end());
     let mut size = SEARCH;
     if forward {
@@ -1304,6 +1307,33 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         Format::Variants(file) => file.spans(source.data(), contig, region),
         Format::Reads(_) | Format::Signal(_) => Ok(Vec::new()),
     }
+}
+
+fn kept(
+    source: &Source,
+    contig: &str,
+    region: Region,
+    rules: &[Rule],
+) -> Result<Vec<Region>, String> {
+    if rules.is_empty() {
+        return spans(source, contig, region);
+    }
+    Ok(match &source.format {
+        Format::Features(file) => file
+            .features(source.data(), contig, region)?
+            .1
+            .iter()
+            .filter(|feature| fields::passes(rules, &feature_fields(source, feature)))
+            .map(Feature::span)
+            .collect(),
+        Format::Variants(file) => file
+            .variants(source.data(), contig, region)?
+            .iter()
+            .filter(|variant| fields::passes(rules, &variant_fields(source, variant)))
+            .map(|variant| variant.span)
+            .collect(),
+        Format::Reads(_) | Format::Signal(_) => Vec::new(),
+    })
 }
 
 pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
@@ -1366,6 +1396,7 @@ mod tests {
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
+    use genie_formats::fields::{Rule, Test};
 
     fn region(start: u64, end: u64) -> Region {
         Region::new(start, end).unwrap()
@@ -2022,8 +2053,9 @@ mod tests {
             for contig in 0..3 {
                 for position in [0, 1_000, 123_456, 1_500_000, 2_999_999] {
                     for forward in [true, false] {
-                        let found = neighbor(&source, &names, &assembly, contig, position, forward)
-                            .unwrap();
+                        let found =
+                            neighbor(&source, &names, &assembly, contig, position, forward, &[])
+                                .unwrap();
                         let expected = scanned(&source, &names, contig, position, forward);
                         assert_eq!(found, expected, "{file} {contig} {position} {forward}");
                     }
@@ -2033,31 +2065,67 @@ mod tests {
     }
 
     #[test]
+    fn neighbors_skip_features_that_the_filter_hides() {
+        let scratch = Scratch::new("filtered-neighbors");
+        let line = |contig: &str, start: u64, name: &str, mark: &str| {
+            let end = start + 100;
+            format!(
+                "{contig}\t{start}\t{end}\t{name}\t0\t+\t{start}\t{end}\t0\t1\t100,\t0,\t{mark}\n"
+            )
+        };
+        let text = [
+            line("chr1", 100, "a", "keep"),
+            line("chr1", 300, "b", "drop"),
+            line("chr1", 500, "c", "keep"),
+            line("chr2", 100, "d", "drop"),
+            line("chr2", 300, "e", "keep"),
+        ]
+        .concat();
+        let source = open(scratch.file("marked.bed", text)).unwrap();
+        let assembly = three_contigs();
+        let names = contig_names(source.contigs(), &assembly);
+        let keep = [Rule {
+            label: "Column 13".to_owned(),
+            test: Test::Keep("keep".to_owned()),
+        }];
+        let next = |contig, position, forward, rules: &[Rule]| {
+            neighbor(&source, &names, &assembly, contig, position, forward, rules).unwrap()
+        };
+        assert_eq!(next(0, 150, true, &[]), Some((0, region(300, 400))));
+        assert_eq!(next(0, 150, true, &keep), Some((0, region(500, 600))));
+        assert_eq!(next(0, 550, true, &keep), Some((1, region(300, 400))));
+        assert_eq!(next(1, 350, false, &keep), Some((1, region(300, 400))));
+        assert_eq!(next(1, 150, false, &keep), Some((0, region(500, 600))));
+        assert_eq!(next(1, 350, true, &keep), None);
+    }
+
+    #[test]
     fn neighbors_start_after_the_position_and_cross_contigs() {
         let assembly = three_contigs();
         let genes = open(fixture("genes.bed.gz")).unwrap();
         let names = contig_names(genes.contigs(), &assembly);
-        let next = |position, forward| neighbor(&genes, &names, &assembly, 0, position, forward);
+        let next =
+            |position, forward| neighbor(&genes, &names, &assembly, 0, position, forward, &[]);
         assert_eq!(next(0, true).unwrap(), Some((0, region(1_050, 3_208))));
         let after = next(1_050, true).unwrap().unwrap();
         assert_eq!((after.0, after.1.start()), (0, 1_415));
         assert_eq!(next(1_050, false).unwrap(), None);
         let calls = open(fixture("variants.vcf.gz")).unwrap();
         let names = contig_names(calls.contigs(), &assembly);
-        let first = neighbor(&calls, &names, &assembly, 0, 0, true).unwrap();
+        let first = neighbor(&calls, &names, &assembly, 0, 0, true, &[]).unwrap();
         assert_eq!(first, Some((0, region(1_000, 1_001))));
         assert_eq!(
-            neighbor(&calls, &names, &assembly, 2, 0, true).unwrap(),
+            neighbor(&calls, &names, &assembly, 2, 0, true, &[]).unwrap(),
             None
         );
-        let last = neighbor(&calls, &names, &assembly, 2, 0, false)
+        let last = neighbor(&calls, &names, &assembly, 2, 0, false, &[])
             .unwrap()
             .unwrap();
         assert_eq!(last.0, 1);
         let reads = open(fixture("reads.bam")).unwrap();
         let names = contig_names(reads.contigs(), &assembly);
         assert_eq!(
-            neighbor(&reads, &names, &assembly, 0, 0, true).unwrap(),
+            neighbor(&reads, &names, &assembly, 0, 0, true, &[]).unwrap(),
             None
         );
     }

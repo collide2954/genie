@@ -2612,6 +2612,15 @@ mod tests {
         let mut genie = with_variants();
         let _ = genie.update(Message::Jumped(0, false, Ok(None)));
         assert!(shows(&genie, "There is no previous variant in calls.vcf."));
+        genie.session.as_mut().unwrap().tracks[0].filter.rules = vec![Rule {
+            label: "Quality".to_owned(),
+            test: Test::AtLeast(30.0),
+        }];
+        let _ = genie.update(Message::Jumped(0, true, Ok(None)));
+        assert!(shows(
+            &genie,
+            "There is no next variant in calls.vcf that passes the filter."
+        ));
     }
 
     #[test]

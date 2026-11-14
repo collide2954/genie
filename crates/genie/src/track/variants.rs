@@ -85,7 +85,7 @@ impl VariantFile {
         Ok(variants.iter().map(|variant| variant.span).collect())
     }
 
-    fn variants(
+    pub fn variants(
         &self,
         location: &Location,
         contig: &str,

@@ -99,7 +99,7 @@ impl FeatureFile {
         Ok(features.iter().map(Feature::span).collect())
     }
 
-    fn features(
+    pub fn features(
         &self,
         location: &Location,
         contig: &str,

@@ -27,6 +27,10 @@
 - Allow 1, 2 or 3 mismatches to also find near matches. The card of a match shows its strand and its wrong bases.
 - Enter and Shift+Enter go to the next and the previous match. Past the view, genie reads the reference 20 Mb at a time.
 
+### Filters
+
+- Next feature and Previous feature (Ctrl+F and Ctrl+B) skip the features and variants that the filter hides.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.

@@ -403,7 +403,7 @@ impl Genie {
             return Task::none();
         }
         let source = Arc::clone(&track.source);
-        let names = track.contigs.clone();
+        let (names, rules) = (track.contigs.clone(), track.filter.rules.clone());
         let (reference, contig) = (Arc::clone(&session.reference), session.contig);
         Task::perform(
             async move {
@@ -414,6 +414,7 @@ impl Genie {
                     contig,
                     position,
                     forward,
+                    &rules,
                 )
             },
             move |result| Message::Jumped(id, forward, result),
@@ -457,7 +458,12 @@ impl Genie {
                     "feature"
                 };
                 let side = if forward { "next" } else { "previous" };
-                let text = format!("There is no {side} {noun} in {}.", track.name);
+                let kept = if track.filter.rules.is_empty() {
+                    ""
+                } else {
+                    " that passes the filter"
+                };
+                let text = format!("There is no {side} {noun} in {}{kept}.", track.name);
                 self.inform(text)
             }
             Err(error) => {
