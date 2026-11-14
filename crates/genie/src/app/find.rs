@@ -691,8 +691,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use genie_core::search::{Hit, Scanned};
-    use genie_core::{Region, Strand};
+    use genie_core::search::{self, Hit, Pattern, Reach, Scanned};
+    use genie_core::{Region, Strand, codon};
     use genie_formats::fai::FaiRecord;
     use iced::Point;
     use iced::keyboard::Modifiers;
@@ -947,6 +947,53 @@ mod tests {
         assert!(genie.hover.is_none());
         let _ = genie.update(Message::Find(Finding::Close));
         assert!(genie.pinned.is_none());
+    }
+
+    #[test]
+    fn matches_come_from_a_real_reference_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../genie-formats/tests/data/reference.fa.gz");
+        let reference = crate::reference::open(path, None, &mut |_| {}).unwrap();
+        let region = Region::between(70_000, 110_000);
+        let bases: Arc<[u8]> = reference.fetch(0, region).unwrap().into();
+        let primer = String::from_utf8(bases[25_000..25_020].to_vec()).unwrap();
+        assert!(
+            primer.bytes().all(|base| b"ACGTacgt".contains(&base)),
+            "{primer}"
+        );
+        let place = Region::between(95_000, 95_020);
+        let pattern = Pattern::parse(&primer).unwrap();
+        let forward = search_bases(&pattern, 0, 0, region, Arc::clone(&bases));
+        assert!(
+            forward
+                .found
+                .hits
+                .iter()
+                .any(|hit| hit.span == place && hit.strand == Strand::Forward)
+        );
+        let flipped: String = primer
+            .bytes()
+            .rev()
+            .map(|base| char::from(codon::complement(base)))
+            .collect();
+        let reverse = search_bases(&Pattern::parse(&flipped).unwrap(), 0, 0, region, bases);
+        assert!(
+            reverse
+                .found
+                .hits
+                .iter()
+                .any(|hit| hit.span == place && hit.strand == Strand::Reverse)
+        );
+        let reach = Reach {
+            from: 0,
+            forward: true,
+            length: 120_000,
+            budget: 120_000,
+            chunk: 7_000,
+        };
+        let scanned =
+            search::scan(&pattern, 0, reach, |window| reference.fetch(0, window)).unwrap();
+        assert_eq!(scanned.hit.map(|hit| hit.span), Some(place));
     }
 
     #[test]
