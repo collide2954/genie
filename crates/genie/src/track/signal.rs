@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufReader};
 
 use genie_core::Region;
+use genie_core::methylation::Site;
 use genie_core::signal::{self, Summary};
 use genie_formats::bedmethyl::{self, Record};
 use genie_formats::bgzf::Bgzf;
@@ -124,13 +125,15 @@ impl SignalFile {
                     .map_err(|error| error.to_string())?
             }
             Self::BedMethylTable { table, codes } => {
-                percents(&table.query(contig, region), codes, methyl)
+                let sites = sites(&table.query(contig, region), codes, methyl);
+                return Ok(Loaded::methylation(region, sites, step));
             }
             Self::BedMethyl { index, codes } => {
                 let mut reader = Bgzf::new(location.open()?);
                 let records = bedmethyl::query(index, &mut reader, contig, region)
                     .map_err(|error| error.to_string())?;
-                percents(&records, codes, methyl)
+                let sites = sites(&records, codes, methyl);
+                return Ok(Loaded::methylation(region, sites, step));
             }
         };
         Ok(Loaded::signal(
@@ -141,12 +144,12 @@ impl SignalFile {
     }
 }
 
-fn percents(records: &[Record], codes: &[String], methyl: Methyl) -> Vec<Summary> {
+fn sites(records: &[Record], codes: &[String], methyl: Methyl) -> Vec<Site> {
     let Some(name) = codes
         .get(usize::from(methyl.code))
         .or_else(|| codes.first())
     else {
         return Vec::new();
     };
-    bedmethyl::summaries(records, name, !methyl.separate)
+    bedmethyl::sites(records, name, !methyl.separate)
 }

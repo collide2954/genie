@@ -253,6 +253,10 @@ pub fn methylation_hit(
     }
     let index = (y / (METHYLATION_HEIGHT + 1.0)) as usize;
     let (_, sites) = lanes.get(index)?;
+    site_at(viewport, sites, x).map(|site| (index, site))
+}
+
+pub fn site_at(viewport: Viewport, sites: &[Site], x: f32) -> Option<Site> {
     let found = if 1.0 / viewport.scale() >= 1.0 {
         let at = viewport.to_bp(f64::from(x)).floor().max(0.0) as u64;
         sites.iter().find(|site| site.position == at)
@@ -262,7 +266,7 @@ pub fn methylation_hit(
             .iter()
             .find(|site| viewport.to_px(site.position as f64).floor() as i64 == column)
     };
-    found.map(|site| (index, *site))
+    found.copied()
 }
 
 pub fn height(count: usize, groups: &[(usize, String)], mode: Mode) -> f32 {

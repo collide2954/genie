@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::SystemTime;
 
+use genie_core::methylation::Site;
 use genie_core::{Region, Viewport};
 use genie_render::features::Mode;
 use genie_render::{alignments, features, signal, variants};
@@ -407,10 +408,15 @@ impl Genie {
                 Detail::Variant { variant, sample }
             }
             Content::Signal(data) => {
-                let column = signal::hit(&signal_columns(track, viewport, &data.summaries), x)?;
-                Detail::Signal {
-                    span: column.span,
-                    bin: column.bin,
+                if let Some(detail) = site_detail(track, viewport, &data.sites, x) {
+                    detail
+                } else {
+                    let columns = signal_columns(track, viewport, &data.summaries);
+                    let column = signal::hit(&columns, x)?;
+                    Detail::Signal {
+                        span: column.span,
+                        bin: column.bin,
+                    }
                 }
             }
         };
@@ -785,6 +791,17 @@ fn read_detail(
     let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
     let same = read.mate.is_some_and(|mate| Some(mate.contig) == own);
     Some(Detail::Read { read, mate, same })
+}
+
+fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Option<Detail> {
+    let site = alignments::site_at(viewport, sites, x)?;
+    let name = track.shown_modification()?;
+    Some(Detail::Methylation {
+        name: name.clone(),
+        position: site.position,
+        group: None,
+        counts: vec![(name, site.modified, site.total)],
+    })
 }
 
 fn apply_saved(track: &mut Track, found: &SavedTrack) {

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Read, Seek};
 
 use genie_core::Region;
+use genie_core::methylation::Site;
 use genie_core::modification;
 use genie_core::signal::Summary;
 
@@ -116,8 +117,8 @@ pub fn codes(records: &[Record]) -> Vec<String> {
     names
 }
 
-pub fn summaries(records: &[Record], name: &str, join: bool) -> Vec<Summary> {
-    let mut sites: BTreeMap<(u64, u64), (u32, u32)> = BTreeMap::new();
+pub fn sites(records: &[Record], name: &str, join: bool) -> Vec<Site> {
+    let mut sites: BTreeMap<u64, (u32, u32)> = BTreeMap::new();
     for record in records {
         if modification::name(&record.code) != name {
             continue;
@@ -126,21 +127,28 @@ pub fn summaries(records: &[Record], name: &str, join: bool) -> Vec<Summary> {
             && record.strand == b'-'
             && ON_CYTOSINE.contains(&record.code.as_str())
             && record.span.start() > 0;
-        let (start, end) = if shifts {
-            (record.span.start() - 1, record.span.end() - 1)
-        } else {
-            (record.span.start(), record.span.end())
-        };
-        let entry = sites.entry((start, end)).or_default();
+        let position = record.span.start() - u64::from(shifts);
+        let entry = sites.entry(position).or_default();
         entry.0 += record.modified;
         entry.1 += record.valid;
     }
     sites
         .into_iter()
         .filter(|(_, (_, valid))| *valid > 0)
-        .map(|((start, end), (modified, valid))| {
-            let percent = modified as f32 * 100.0 / valid as f32;
-            Summary::single(Region::between(start, end), percent)
+        .map(|(position, (modified, total))| Site {
+            position,
+            modified,
+            total,
+        })
+        .collect()
+}
+
+pub fn percents(sites: &[Site]) -> Vec<Summary> {
+    sites
+        .iter()
+        .map(|site| {
+            let percent = site.modified as f32 * 100.0 / site.total as f32;
+            Summary::single(Region::between(site.position, site.position + 1), percent)
         })
         .collect()
 }
@@ -148,9 +156,10 @@ pub fn summaries(records: &[Record], name: &str, join: bool) -> Vec<Summary> {
 #[cfg(test)]
 mod tests {
     use genie_core::Region;
+    use genie_core::methylation::Site;
     use genie_core::signal::Summary;
 
-    use super::{Record, codes, looks_like, parse, read_table, summaries};
+    use super::{Record, codes, looks_like, parse, percents, read_table, sites};
     use crate::{Error, Reason};
 
     const TABS: &str =
@@ -207,20 +216,29 @@ mod tests {
         ];
         let single =
             |start: u64, value: f32| Summary::single(Region::between(start, start + 1), value);
-        let joined = summaries(&records, "5mC", true);
-        assert_eq!(joined.len(), 1);
-        assert_eq!(joined[0].span, Region::between(100, 101));
+        let summaries = |name: &str, join: bool| percents(&sites(&records, name, join));
+        let joined = sites(&records, "5mC", true);
+        assert_eq!(
+            joined,
+            [Site {
+                position: 100,
+                modified: 20,
+                total: 30
+            }]
+        );
+        let percent = percents(&joined);
+        assert_eq!(percent[0].span, Region::between(100, 101));
         assert!(
-            (joined[0].sum - 66.666_67).abs() < 0.001,
+            (percent[0].sum - 66.666_67).abs() < 0.001,
             "{}",
-            joined[0].sum
+            percent[0].sum
         );
         assert_eq!(
-            summaries(&records, "5mC", false),
+            summaries("5mC", false),
             [single(100, 75.0), single(101, 50.0)]
         );
-        assert_eq!(summaries(&records, "5hmC", true), [single(100, 10.0)]);
-        assert_eq!(summaries(&records, "6mA", true), [single(200, 25.0)]);
+        assert_eq!(summaries("5hmC", true), [single(100, 10.0)]);
+        assert_eq!(summaries("6mA", true), [single(200, 25.0)]);
         assert_eq!(codes(&records), ["5mC", "5hmC", "6mA"]);
         assert_eq!(
             codes(&[record(5, "h", b'+', 1, 1), record(5, "m", b'+', 1, 1)]),

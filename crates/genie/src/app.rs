@@ -4033,6 +4033,28 @@ mod tests {
     }
 
     #[test]
+    fn bedmethyl_cards_count_the_reads_of_a_site() {
+        use genie_core::methylation::Site;
+        let mut genie = with_bedmethyl();
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let sites = vec![Site {
+            position: 20,
+            modified: 20,
+            total: 30,
+        }];
+        let loaded = Loaded::methylation(region, sites, 1);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 10.0))));
+        for line in ["5mC", "Modified 20 of 30 reads · 67 %"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(30.5, 10.0))));
+        assert!(!shows(&genie, "Modified 20 of 30 reads · 67 %"));
+    }
+
+    #[test]
     fn menus_know_their_height() {
         let tracks = vec![
             with_track(),

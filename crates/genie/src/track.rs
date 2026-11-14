@@ -3,9 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
-use genie_core::methylation::{Methylation, Tally};
+use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
-use genie_core::signal::Summary;
+use genie_core::signal::{Summary, reduce as signal_reduce};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
@@ -152,6 +152,7 @@ pub fn step(bases_per_pixel: f64) -> u64 {
 pub struct Signal {
     pub summaries: Vec<Summary>,
     pub step: u64,
+    pub sites: Vec<Site>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -518,7 +519,25 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
-            content: Content::Signal(Signal { summaries, step }),
+            content: Content::Signal(Signal {
+                summaries,
+                step,
+                sites: Vec::new(),
+            }),
+        }
+    }
+
+    pub fn methylation(region: Region, sites: Vec<Site>, step: u64) -> Self {
+        let summaries = signal_reduce(&bedmethyl::percents(&sites), step);
+        let sites = if step == 1 { sites } else { Vec::new() };
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Signal(Signal {
+                summaries,
+                step,
+                sites,
+            }),
         }
     }
 
