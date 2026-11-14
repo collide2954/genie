@@ -185,6 +185,15 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
             let strength = (2.0 * share - 1.0).abs();
             data.hues[hue as usize].scale_alpha(MARK_FLOOR + (1.0 - MARK_FLOOR) * strength)
         }
+        Paint::Change(share) => {
+            let hue = if share < 0 {
+                Hue::Blue
+            } else {
+                Hue::Vermillion
+            };
+            let strength = f32::from(share.unsigned_abs().min(100)) / 100.0;
+            blend(tokens.line, data.hues[hue as usize], strength)
+        }
         Paint::Coverage => data.coverage,
         Paint::Insertion => data.insertion,
         Paint::Codon(even) => data.codons[usize::from(!even)],
@@ -574,6 +583,20 @@ mod tests {
         let faded = color(Paint::Plain(Shade::Faded), &DARK, &DARK_DATA);
         assert_eq!(rgb(plain), rgb(DARK_DATA.coverage));
         assert!(faded.a < plain.a, "{faded:?} {plain:?}");
+    }
+
+    #[test]
+    fn copy_number_changes_go_from_grey_to_blue_or_vermillion() {
+        let paint = |share| color(Paint::Change(share), &DARK, &DARK_DATA);
+        assert_eq!(paint(0), DARK.line);
+        assert_eq!(paint(-100), DARK_DATA.hues[Hue::Blue as usize]);
+        assert_eq!(paint(100), DARK_DATA.hues[Hue::Vermillion as usize]);
+        let half = paint(50);
+        let (grey, red) = (DARK.line, DARK_DATA.hues[Hue::Vermillion as usize]);
+        assert!(
+            (half.r - f32::midpoint(grey.r, red.r)).abs() < 0.001,
+            "{half:?}"
+        );
     }
 
     #[test]

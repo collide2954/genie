@@ -73,6 +73,8 @@ pub enum Paint {
     Faint(Strand),
     Plain(Shade),
     Modified(u8),
+    /// A change of copy number, from -100 for a full loss to 100 for a full gain.
+    Change(i8),
     Coverage,
     Insertion,
     Codon(bool),
