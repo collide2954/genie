@@ -3,6 +3,7 @@
 mod bits;
 pub mod crai;
 mod encoding;
+mod nx16;
 mod rans;
 mod record;
 
@@ -146,8 +147,9 @@ pub(crate) fn block(bytes: &mut Bytes, major: u8) -> Result<Block, Error> {
         0 => data.to_vec(),
         1 => gzip::inflate(data)?,
         4 => rans::decode(data)?,
+        5 => nx16::decode(data, Some(raw))?,
         2 | 3 => return Err(Error::Invalid(Reason::CramOldCodec)),
-        5..=8 => return Err(Error::Invalid(Reason::CramNewCodec)),
+        6..=8 => return Err(Error::Invalid(Reason::CramNewCodec)),
         _ => return Err(bad()),
     };
     if data.len() != raw {
@@ -619,7 +621,7 @@ mod tests {
     fn cram_3_0_reads_equal_the_bam_reads() {
         let contigs = reference();
         let expected = bam_reads();
-        for name in ["cram30.cram", "cram-multi.cram"] {
+        for name in ["cram30.cram", "cram-multi.cram", "cram31.cram"] {
             let reads = cram_reads(name, &mut fetcher(&contigs)).unwrap();
             assert_eq!(compare(&reads, &expected), None, "{name}");
         }
@@ -699,7 +701,7 @@ mod tests {
             matches!(error, Error::Invalid(Reason::CramOldCodec)),
             "{error}"
         );
-        let error = cram_reads("cram31.cram", &mut fetcher(&contigs)).unwrap_err();
+        let error = cram_reads("cram-codecs.cram", &mut fetcher(&contigs)).unwrap_err();
         assert!(
             matches!(error, Error::Invalid(Reason::CramNewCodec)),
             "{error}"

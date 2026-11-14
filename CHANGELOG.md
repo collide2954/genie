@@ -37,7 +37,7 @@
 
 ### CRAM
 
-- genie opens CRAM 3.0 files as read tracks, with gzip and rANS compression. It decodes the reads with the reference that is open, and checks the MD5 of each part of the file against that reference.
+- genie opens CRAM 3.0 and 3.1 files as read tracks, with gzip, rANS and rANS Nx16 compression. It decodes the reads with the reference that is open, and checks the MD5 of each part of the file against that reference.
 - A CRAM file without its `.crai` index gets one in the cache folder.
 
 ### Packages

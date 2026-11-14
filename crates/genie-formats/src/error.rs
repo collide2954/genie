@@ -104,7 +104,7 @@ impl fmt::Display for Reason {
                 "the file uses bzip2 or lzma compression, which genie does not read"
             }
             Self::CramNewCodec => {
-                "the file uses CRAM 3.1 compression, which genie does not read yet"
+                "the file uses CRAM 3.1 arithmetic, fqzcomp or name tokenizer compression, which genie does not read yet"
             }
             Self::CramReference => "the reference is not the reference of the CRAM file here",
         })

@@ -2743,7 +2743,7 @@ mod tests {
             error,
             "The reference is not the reference of the CRAM file here."
         );
-        let newer = open(fixture("cram31.cram")).unwrap();
+        let newer = open(fixture("cram-codecs.cram")).unwrap();
         let error = load(
             &newer,
             "chr1",
@@ -2756,7 +2756,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             error,
-            "The file uses CRAM 3.1 compression, which genie does not read yet."
+            "The file uses CRAM 3.1 arithmetic, fqzcomp or name tokenizer compression, which genie does not read yet."
         );
     }
 

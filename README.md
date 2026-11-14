@@ -80,7 +80,7 @@ Click the tracks button (the layers icon) in the title bar to add a public track
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
-| Alignment track | BAM; CRAM 3.0 |
+| Alignment track | BAM; CRAM 3.0 and 3.1 |
 | Variant track | VCF (plain, gzip or bgzip). genie does not read BCF. |
 | Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Session | genie session (`.genie`) |
@@ -125,7 +125,7 @@ To prepare a BAM track:
 samtools sort -o reads.bam reads.sam && samtools index reads.bam
 ```
 
-A CRAM file keeps the bases of a read as differences from a reference. genie uses the reference that is open, so open the genome or the FASTA file that made the CRAM file. Each part of a CRAM file has the MD5 of its reference bases. If the open reference is different there, the track says "The reference is not the reference of the CRAM file here." and does not show wrong bases. CRAM files that hold their own reference, or that do not need one, open with any reference. genie reads CRAM 3.0 with gzip and rANS compression, which is what most archives and `samtools view -C --output-fmt-option version=3.0` make. It does not read CRAM 3.1 compression yet, nor bzip2 and lzma blocks.
+A CRAM file keeps the bases of a read as differences from a reference. genie uses the reference that is open, so open the genome or the FASTA file that made the CRAM file. Each part of a CRAM file has the MD5 of its reference bases. If the open reference is different there, the track says "The reference is not the reference of the CRAM file here." and does not show wrong bases. CRAM files that hold their own reference, or that do not need one, open with any reference. genie reads CRAM 3.0 and 3.1 files with gzip, rANS and rANS Nx16 compression. This is what most archives and samtools make by default. genie does not read the arithmetic coder, fqzcomp and the name tokenizer of CRAM 3.1, and bzip2 and lzma blocks. The `small` and `archive` profiles of samtools use them.
 
 genie shows reads when the view is 30 kb or less. It hides QC-fail and secondary reads. By default, it also hides duplicate reads and soft clips, and it keeps 100 reads for each 50 bp.
 

@@ -658,5 +658,7 @@ cram cram31.cram --output-fmt-option version=3.1
 cram cram-embed.cram --output-fmt-option version=3.0 --output-fmt-option embed_ref=1
 cram cram-noref.cram --output-fmt-option version=3.0 --output-fmt-option no_ref=1
 cram cram-multi.cram --output-fmt-option version=3.0 --output-fmt-option multi_seq_per_slice=1
+cram cram-codecs.cram --output-fmt-option version=3.1 --output-fmt-option use_arith=1 \
+    --output-fmt-option use_fqz=1 --output-fmt-option use_tok=1
 cram cram-xz.cram --output-fmt-option version=3.0 --output-fmt-option use_bzip2=1 \
     --output-fmt-option use_lzma=1
