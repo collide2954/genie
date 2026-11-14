@@ -45,6 +45,7 @@ pub enum Reason {
     CramOldCodec,
     CramNewCodec,
     CramReference,
+    SegmentHeader,
 }
 
 impl fmt::Display for Error {
@@ -107,6 +108,9 @@ impl fmt::Display for Reason {
                 "the file uses CRAM 3.1 arithmetic, fqzcomp or name tokenizer compression, which genie does not read yet"
             }
             Self::CramReference => "the reference is not the reference of the CRAM file here",
+            Self::SegmentHeader => {
+                "the header line does not name the chromosome, start and end columns"
+            }
         })
     }
 }
