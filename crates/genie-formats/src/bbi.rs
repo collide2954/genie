@@ -22,8 +22,19 @@ const BLOCK_LIMIT: u64 = 1 << 26;
 const AUTO_SQL_LIMIT: u64 = 1 << 16;
 const LABELS: [&str; 2] = ["geneName2", "name2"];
 const SYMBOL_FIELDS: [&str; 3] = ["geneName", "geneName2", "name2"];
-/// The columns of a bigInteract file that the arc shows, so the card does not show them again.
-const LINK_COLUMNS: [&str; 7] = [
+/// The columns of the two ends of a link in a bigInteract file.
+const ENDS: [&str; 6] = [
+    "sourceChrom",
+    "sourceStart",
+    "sourceEnd",
+    "targetChrom",
+    "targetStart",
+    "targetEnd",
+];
+/// The columns of a bigInteract file that the arc and the card show, so the fields of the card
+/// do not show them again.
+const LINK_COLUMNS: [&str; 8] = [
+    "value",
     "color",
     "sourceChrom",
     "sourceStart",
@@ -724,10 +735,7 @@ impl Index {
 
     /// True for a bigInteract file: a bigBed file of links between two regions.
     pub fn is_interact(&self) -> bool {
-        self.bed
-            && LINK_COLUMNS[1..]
-                .iter()
-                .all(|name| self.column(name).is_some())
+        self.bed && ENDS.iter().all(|name| self.column(name).is_some())
     }
 
     /// The links of a bigInteract file that touch a region of a contig.
@@ -1016,12 +1024,11 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "Strength of interaction",
                 "Experiment name",
                 "Name of the source region",
                 "Name of the target region"
             ]
         );
-        assert_eq!(fields[0].1, "12.5");
+        assert_eq!(fields[0].1, "hic");
     }
 }

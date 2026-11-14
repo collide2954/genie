@@ -21,7 +21,7 @@ fn track_actions(track: &Track) -> Vec<Action> {
         Message::TrackSettings(id),
     )];
     let source = &track.source;
-    if !source.has_signal() {
+    if !source.has_signal() && !source.has_links() {
         actions.extend(
             MODES.map(|(label, mode)| Action::new(label, name, change(Change::Mode(mode)))),
         );

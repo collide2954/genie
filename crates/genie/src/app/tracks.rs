@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use genie_core::methylation::Site;
 use genie_core::{Region, Viewport};
 use genie_render::features::Mode;
-use genie_render::{alignments, features, signal, variants};
+use genie_render::{alignments, features, links, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
@@ -468,10 +468,16 @@ impl Genie {
                     }
                 }
             }
+            Content::Links(found) => {
+                let height = track.height.unwrap_or(links::HEIGHT);
+                let index = links::hit(viewport, found, height, x, y)?;
+                Detail::Link(found[index].clone())
+            }
         };
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
             Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
+            Detail::Link(link) => track::link_fields(&track.source, link),
             Detail::Read { .. }
             | Detail::Junction(_)
             | Detail::Methylation { .. }

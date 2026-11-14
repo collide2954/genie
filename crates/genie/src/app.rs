@@ -1260,8 +1260,8 @@ mod tests {
     use crate::theme::Appearance;
     use crate::tiles::Key;
     use crate::track::{
-        Change, Content, FeatureFile, Format, Grouping, Loaded, Options, ReadFile, SignalFile,
-        Source, Toggle, VariantFile,
+        Change, Content, FeatureFile, Format, Grouping, LinkFile, Loaded, Options, ReadFile,
+        SignalFile, Source, Toggle, VariantFile,
     };
     use genie_formats::fields::{Rule, Test};
 
@@ -3893,6 +3893,44 @@ mod tests {
             local: Point::new(x, y),
             at: Point::new(x, y + 100.0),
         }
+    }
+
+    #[test]
+    fn link_tracks_draw_arcs_and_their_cards_name_both_ends() {
+        use genie_core::interaction::Interaction;
+        let mut genie = opened();
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/loops.bedpe").into(),
+            name: "loops.bedpe".to_owned(),
+            data: None,
+            format: Format::Links(LinkFile::Table {
+                bedpe: genie_formats::bedpe::Bedpe::default(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let link = Interaction {
+            name: "loopA".to_owned(),
+            value: Some(5.0),
+            ..Interaction::new(Region::between(100, 120), Region::between(700, 720), None)
+        };
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.contigs = vec![Some("chr1".to_owned()), None];
+        track.slot.wanted = Some((0, region));
+        let loaded = Loaded::links(region, vec![link]);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(410.0, 4.0))));
+        for text in [
+            "loopA",
+            "chr1:101-720",
+            "Ends 101-120 and 701-720",
+            "Distance 600 bp",
+            "Value 5",
+        ] {
+            assert!(shows(&genie, text), "{text}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(410.0, 40.0))));
+        assert!(!shows(&genie, "loopA"));
     }
 
     #[test]

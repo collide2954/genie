@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, REVERSE};
+use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::signal::{Summary, reduce as signal_reduce};
@@ -20,11 +21,13 @@ use genie_render::signal::{Scale, Style};
 use crate::location::{Location, Reader};
 
 mod features;
+mod links;
 pub(crate) mod reads;
 mod signal;
 mod variants;
 
 pub use features::FeatureFile;
+pub use links::LinkFile;
 pub use reads::ReadFile;
 pub use signal::SignalFile;
 pub use variants::VariantFile;
@@ -44,6 +47,7 @@ pub enum Format {
     Variants(VariantFile),
     Reads(ReadFile),
     Signal(SignalFile),
+    Links(LinkFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +81,7 @@ impl Source {
             Format::Variants(file) => file.contigs(),
             Format::Reads(file) => &file.contigs,
             Format::Signal(file) => file.contigs(),
+            Format::Links(file) => file.contigs(),
         }
     }
 
@@ -89,7 +94,11 @@ impl Source {
     }
 
     pub fn has_colors(&self) -> bool {
-        matches!(&self.format, Format::Features(file) if file.has_colors())
+        matches!(&self.format, Format::Features(file) if file.has_colors()) || self.has_links()
+    }
+
+    pub fn has_links(&self) -> bool {
+        matches!(self.format, Format::Links(_))
     }
 
     pub fn has_signal(&self) -> bool {
@@ -132,6 +141,7 @@ impl Source {
             Format::Variants(_) => VariantFile::SPAN,
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
+            Format::Links(file) => file.span(),
         }
     }
 }
@@ -409,6 +419,7 @@ pub enum Content {
     Reads(Pile),
     Variants(Calls),
     Signal(Signal),
+    Links(Vec<Interaction>),
 }
 
 #[derive(Debug)]
@@ -536,6 +547,14 @@ impl Loaded {
         }
     }
 
+    pub fn links(region: Region, links: Vec<Interaction>) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Links(links),
+        }
+    }
+
     pub fn signal(region: Region, summaries: Vec<Summary>, step: u64) -> Self {
         Self {
             region,
@@ -583,7 +602,7 @@ impl Loaded {
             Content::Features(annotation) => annotation.count,
             Content::Reads(pile) => pile.count,
             Content::Variants(calls) => calls.samples,
-            Content::Signal(_) => 0,
+            Content::Signal(_) | Content::Links(_) => 0,
         }
     }
 
@@ -819,6 +838,16 @@ impl Track {
                     variants,
                     samples: calls.samples,
                 })
+            }
+            Content::Links(links) => {
+                let rules = &self.filter.rules;
+                Content::Links(
+                    links
+                        .iter()
+                        .filter(|link| fields::passes(rules, &link_fields(&self.source, link)))
+                        .cloned()
+                        .collect(),
+                )
             }
             Content::Reads(_) | Content::Signal(_) => return None,
         };
@@ -1077,7 +1106,12 @@ pub fn is_track(location: &Location) -> bool {
         || is_signal(&name)
         || is_bedmethyl(&name)
         || is_bigbed(&name)
+        || is_bedpe(&name)
         || Kind::of(&name).is_some()
+}
+
+pub fn is_bedpe(name: &str) -> bool {
+    inner_extension(name, &["bedpe"])
 }
 
 pub fn is_bam(name: &str) -> bool {
@@ -1210,6 +1244,8 @@ pub fn open_with(
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
+    } else if is_bedpe(&name) {
+        Format::Links(LinkFile::open(reading, &name)?)
     } else if is_bedmethyl(&name) || (is_bed(&name) && sniffs_methyl(reading)) {
         Format::Signal(SignalFile::open_methyl(reading, &name, index)?)
     } else if is_signal(&name) {
@@ -1276,7 +1312,9 @@ fn open_bbi(location: &Location, name: &str, label: Option<&str>) -> Result<Form
     if let Some(field) = label {
         index.label_with(field);
     }
-    Ok(if index.is_bed() {
+    Ok(if index.is_interact() {
+        Format::Links(LinkFile::Big { index })
+    } else if index.is_bed() {
         Format::Features(FeatureFile::BigBed { index })
     } else {
         Format::Signal(SignalFile::BigWig { index })
@@ -1301,6 +1339,13 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
                 Kind::Gff | Kind::Gtf => gff::fields(feature.extra()),
             }
         }
+        _ => Vec::new(),
+    }
+}
+
+pub fn link_fields(source: &Source, link: &Interaction) -> Vec<Field> {
+    match &source.format {
+        Format::Links(file) => file.fields(link),
         _ => Vec::new(),
     }
 }
@@ -1372,6 +1417,7 @@ pub fn load_kept(
             let loaded = file.load(location, contig, region, step, options.methyl)?;
             Ok(Loaded { options, ..loaded })
         }
+        Format::Links(file) => file.load(location, contig, region),
     }
 }
 
@@ -1451,7 +1497,7 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
     match &source.format {
         Format::Features(file) => file.spans(source.data(), contig, region),
         Format::Variants(file) => file.spans(source.data(), contig, region),
-        Format::Reads(_) | Format::Signal(_) => Ok(Vec::new()),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Ok(Vec::new()),
     }
 }
 
@@ -1478,7 +1524,7 @@ fn kept(
             .filter(|variant| fields::passes(rules, &variant_fields(source, variant)))
             .map(|variant| variant.span)
             .collect(),
-        Format::Reads(_) | Format::Signal(_) => Vec::new(),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Vec::new(),
     })
 }
 
@@ -1510,7 +1556,7 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
                     .collect()
             })
             .unwrap_or_default(),
-        Format::Reads(_) | Format::Signal(_) => Vec::new(),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -1540,7 +1586,7 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
     let entries = match &source.format {
         Format::Features(file) => file.names(source.data())?,
         Format::Variants(file) => file.names(source.data())?,
-        Format::Reads(_) | Format::Signal(_) => return Ok(Names::default()),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => return Ok(Names::default()),
     };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
         Some(Named {
@@ -1572,8 +1618,8 @@ mod tests {
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Loaded, Methyl, Options,
         Plot, Prepared, SignalFile, Source, Toggle, Track, Typed, VariantFile, change,
-        contig_names, fits, hides, is_track, load, lookup, names, neighbor, open, open_bbi,
-        open_typed, open_with, spans, step,
+        contig_names, fits, hides, is_track, link_fields, load, lookup, names, neighbor, open,
+        open_bbi, open_typed, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2438,6 +2484,61 @@ mod tests {
         };
         assert_ne!(load(&local).len(), 0);
         assert_eq!(load(&remote), load(&local));
+    }
+
+    fn links_of(loaded: &Loaded) -> Vec<String> {
+        let Content::Links(found) = &loaded.content else {
+            panic!("expected links");
+        };
+        found.iter().map(|link| link.name.clone()).collect()
+    }
+
+    #[test]
+    fn interaction_files_open_as_link_tracks() {
+        let scratch = Scratch::new("track-links");
+        let big = open(fixture("interact.bb")).unwrap();
+        assert!(big.has_links() && big.has_colors() && !big.can_jump());
+        assert_eq!(big.contigs(), ["chr1", "chr2"]);
+        let window = region(0, 1_000_000);
+        let none = |_: Region| Err("There is no reference.".to_owned());
+        let loaded = load(&big, "chr1", window, Options::default(), 1, true, none).unwrap();
+        assert_eq!(links_of(&loaded), ["loopA", "loopB", "trans", ""]);
+        let Content::Links(found) = &loaded.content else {
+            panic!("expected links");
+        };
+        let labels: Vec<String> = link_fields(&big, &found[0])
+            .into_iter()
+            .map(|field| field.label)
+            .collect();
+        assert_eq!(labels[0], "Experiment name");
+        let text = "#chr1\tx1\tx2\tchr2\ty1\ty2\tname\tscore\tstrand1\tstrand2\tcolor\tobserved\n\
+            chr1\t1000\t2000\tchr1\t90000\t91000\tloop1\t5\t.\t.\t0,0,255\t30\n";
+        let path = scratch.file("loops.bedpe", text);
+        assert!(is_track(&Location::File(path.clone())));
+        assert!(is_track(&Location::File(PathBuf::from(
+            "/data/loops.bedpe.gz"
+        ))));
+        let table = open(path).unwrap();
+        assert!(table.has_links());
+        let loaded = load(
+            &table,
+            "chr1",
+            region(40_000, 50_000),
+            Options::default(),
+            1,
+            true,
+            none,
+        )
+        .unwrap();
+        assert_eq!(links_of(&loaded), ["loop1"]);
+        let Content::Links(found) = &loaded.content else {
+            panic!("expected links");
+        };
+        let fields: Vec<(String, String)> = link_fields(&table, &found[0])
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        assert_eq!(fields, [("observed".to_owned(), "30".to_owned())]);
     }
 
     #[test]

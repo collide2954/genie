@@ -175,6 +175,8 @@ fn kind_height(track: &Track) -> f32 {
         SIGNAL_HEIGHT + choices + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_signal() {
         SIGNAL_HEIGHT
+    } else if track.source.has_links() {
+        COLORED_HEIGHT - 3.0 * LINK_HEIGHT - SEPARATOR_HEIGHT
     } else if track.source.has_colors() {
         COLORED_HEIGHT
     } else {
@@ -355,6 +357,8 @@ pub fn view<'a>(
         signal_items(track, range).extend(methyl_items(track))
     } else if track.source.has_signal() {
         signal_items(track, range)
+    } else if track.source.has_links() {
+        column![]
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     };

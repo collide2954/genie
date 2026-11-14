@@ -173,7 +173,7 @@ pub fn view<'a>(
         .spacing(8)
         .push(line("Name", field("Name", &draft.name, Drafting::Name)))
         .push(line("Color", swatches(id, track.hue)));
-    if !track.source.has_signal() {
+    if !track.source.has_signal() && !track.source.has_links() {
         let modes =
             MODES.map(|(label, choice)| (label, change(Change::Mode(choice)), choice == mode));
         body = body.push(line("Rows", choices(modes)));

@@ -4,7 +4,7 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, features, matches, overview, ruler, sequence, signal, translation, variants,
+    alignments, features, links, matches, overview, ruler, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -50,6 +50,7 @@ pub(super) const LABEL_SIZE: f32 = 10.0;
 const READ_HINT: &str = "Zoom in to see the reads";
 pub(super) const VARIANT_HINT: &str = "Zoom in to see the variants";
 pub(super) const SIGNAL_HINT: &str = "Zoom in to see the signal";
+pub(super) const LINK_HINT: &str = "Zoom in to see the links";
 pub(super) const DROP_HINT: &str = "Drop the file to open it";
 pub(super) const ZOOM_HINT: &str = "Zoom in to see the features";
 const CROWDED_HINT: &str = "There is too much to draw here. Zoom in.";
@@ -91,6 +92,7 @@ impl Genie {
                 match track.data(session.contig).map(|data| &data.content) {
                     Some(Content::Reads(pile)) => reads += pile.reads.len(),
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
+                    Some(Content::Links(links)) => features += links.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
                     None => {}
@@ -733,6 +735,12 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
                 .filter(|variant| variant.span.intersection(visible).is_some())
                 .count(),
         ),
+        Content::Links(links) => Some(
+            links
+                .iter()
+                .filter(|link| link.span().overlaps(visible))
+                .count(),
+        ),
         Content::Reads(_) | Content::Signal(_) => None,
     }
 }
@@ -798,6 +806,8 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             VARIANT_HINT
         } else if track.source.has_signal() {
             SIGNAL_HINT
+        } else if track.source.has_links() {
+            LINK_HINT
         } else {
             ZOOM_HINT
         };
@@ -834,6 +844,11 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         Some(Content::Variants(calls)) => {
             let primitives = variants::scene(viewport, &calls.variants, mode);
             Body::Scene(primitives, shape.height)
+        }
+        Some(Content::Links(found)) => {
+            let height = track.height.unwrap_or(shape.height);
+            let look = (track.hue, track.plot.colors);
+            Body::Scene(links::scene(viewport, found, look, height), height)
         }
         Some(Content::Features(annotation)) => {
             let packed;
@@ -1135,7 +1150,9 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
+        Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
+        None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
 }

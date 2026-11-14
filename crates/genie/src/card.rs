@@ -1,6 +1,7 @@
 use genie_core::alignment::{
     Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, Part, REVERSE, SECOND,
 };
+use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
@@ -66,6 +67,7 @@ pub enum Detail {
         bases: String,
         wrong: usize,
     },
+    Link(Interaction),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -327,7 +329,33 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             let facts = format!("{} bp · {strands} · {fit}", grouped(span.len()));
             (pattern.clone(), *span, vec![facts, bases.clone()])
         }
+        Detail::Link(link) => {
+            let title = if link.name.is_empty() {
+                "Link".to_owned()
+            } else {
+                link.name.clone()
+            };
+            (title, link.span(), link_lines(link))
+        }
     }
+}
+
+fn link_lines(link: &Interaction) -> Vec<String> {
+    let place =
+        |region: Region| format!("{}-{}", grouped(region.start() + 1), grouped(region.end()));
+    let mut lines = Vec::new();
+    match (&link.elsewhere, link.distance()) {
+        (Some(contig), _) => lines.push(format!("Other end {contig}:{}", place(link.far))),
+        (None, Some(distance)) => {
+            lines.push(format!("Ends {} and {}", place(link.near), place(link.far)));
+            lines.push(format!("Distance {} bp", grouped(distance)));
+        }
+        (None, None) => {}
+    }
+    if let Some(value) = link.value {
+        lines.push(format!("Value {}", amount(value)));
+    }
+    lines
 }
 
 fn plural(count: u32, word: &str) -> String {
