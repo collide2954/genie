@@ -123,7 +123,8 @@ pub struct Genie {
     hubs: Vec<Arc<Hub>>,
     hub_view: Option<hubs::View>,
     hub_adding: Vec<Location>,
-    hub_next: Option<Location>,
+    /// The hubs to read once the next reference opens, and whether to show each one.
+    hubs_next: Vec<(Location, bool)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,7 +208,7 @@ impl Default for Genie {
             hubs: Vec::new(),
             hub_view: None,
             hub_adding: Vec::new(),
-            hub_next: None,
+            hubs_next: Vec::new(),
         }
     }
 }
@@ -884,7 +885,7 @@ impl Genie {
             Ok(reference) => reference,
             Err(error) => {
                 self.pending.clear();
-                self.hub_next = None;
+                self.hubs_next.clear();
                 self.fail(error);
                 return Task::none();
             }
@@ -3551,6 +3552,7 @@ mod tests {
             plot: crate::track::Plot::default(),
             filter: crate::track::Filter::default(),
             modification: None,
+            declared: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -3559,6 +3561,7 @@ mod tests {
             reading: crate::reading::Reading::default(),
             tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
             regions: Vec::new(),
+            hubs: Vec::new(),
         };
         let mut genie = Genie::default();
         let _ = genie.restore(saved);
@@ -3635,8 +3638,10 @@ mod tests {
                 plot: crate::track::Plot::default(),
                 filter: crate::track::Filter::default(),
                 modification: None,
+                declared: None,
             }],
             regions: Vec::new(),
+            hubs: Vec::new(),
         };
         let mut genie = Genie {
             last: Some(last),

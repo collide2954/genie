@@ -654,8 +654,17 @@ pub struct Track {
     pub height: Option<f32>,
     pub filter: Filter,
     pub modification: Option<String>,
+    /// The file type and index that a track hub gave, kept so that sessions open it again.
+    pub declared: Option<Declared>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
+}
+
+/// The file type and index that a track hub gives for a track.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declared {
+    pub kind: String,
+    pub index: Option<Location>,
 }
 
 impl Track {
@@ -682,6 +691,7 @@ impl Track {
             height: None,
             filter: Filter::default(),
             modification: None,
+            declared: None,
             slot: Slot::default(),
             extra: Vec::new(),
         }

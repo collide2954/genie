@@ -12,7 +12,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Filter, Grouping, Methyl, Options, Plot};
+use crate::track::{Declared, Filter, Grouping, Methyl, Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -37,6 +37,8 @@ pub struct Saved {
     pub reading: Reading,
     pub tracks: Vec<SavedTrack>,
     pub regions: Vec<SavedRegion>,
+    /// The track hubs that the session shows in the Tracks menu.
+    pub hubs: Vec<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +59,7 @@ pub struct SavedTrack {
     pub plot: Plot,
     pub filter: Filter,
     pub modification: Option<String>,
+    pub declared: Option<Declared>,
 }
 
 impl SavedTrack {
@@ -72,6 +75,7 @@ impl SavedTrack {
             plot: Plot::default(),
             filter: Filter::default(),
             modification: None,
+            declared: None,
         }
     }
 }
@@ -145,8 +149,16 @@ impl Saved {
                         label: section.value("label").map(str::to_owned),
                     },
                     modification: section.value("methylation").map(str::to_owned),
+                    declared: section.value("type").map(|kind| Declared {
+                        kind: kind.to_owned(),
+                        index: section.value("index").map(|text| read(text, base)),
+                    }),
                 })
             })
+            .collect();
+        let hubs = document
+            .sections("hub")
+            .filter_map(|section| section.value("file").map(|text| read(text, base)))
             .collect();
         let regions = document
             .sections("region")
@@ -164,6 +176,7 @@ impl Saved {
             reading,
             tracks,
             regions,
+            hubs,
         })
     }
 
@@ -247,6 +260,12 @@ impl Saved {
             if let Some(label) = &track.filter.label {
                 entries.push(("label", label.clone()));
             }
+            if let Some(declared) = &track.declared {
+                entries.push(("type", declared.kind.clone()));
+                if let Some(index) = &declared.index {
+                    entries.push(("index", written(index, base)));
+                }
+            }
             sections.push(section("track", entries));
         }
         for region in &self.regions {
@@ -255,6 +274,9 @@ impl Saved {
                 ("name", region.name.clone()),
             ];
             sections.push(section("region", entries));
+        }
+        for hub in &self.hubs {
+            sections.push(section("hub", vec![("file", written(hub, base))]));
         }
         ini::write(&Document { sections })
     }
@@ -375,7 +397,7 @@ mod tests {
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Filter, Grouping, Methyl, Options, Plot};
+    use crate::track::{Declared, Filter, Grouping, Methyl, Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -439,6 +461,10 @@ mod tests {
                     },
                     filter: Filter::default(),
                     modification: Some("5hmC".to_owned()),
+                    declared: Some(Declared {
+                        kind: "bam".to_owned(),
+                        index: Some(Location::File(base().join("index").join("reads.bai"))),
+                    }),
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
@@ -459,15 +485,12 @@ mod tests {
                         label: Some("Gene symbol".to_owned()),
                     },
                     modification: None,
+                    declared: None,
                 },
                 SavedTrack {
-                    location: Location::File(base().join("coverage.bw")),
-                    name: None,
                     over: Some(0),
-                    mode: None,
                     hue: Hue::Green,
                     height: Some(64.0),
-                    options: Options::default(),
                     plot: Plot {
                         style: Style::Line,
                         linked: true,
@@ -478,8 +501,11 @@ mod tests {
                         }),
                         ..Plot::default()
                     },
-                    filter: Filter::default(),
-                    modification: None,
+                    declared: Some(Declared {
+                        kind: "bigWig".to_owned(),
+                        index: None,
+                    }),
+                    ..SavedTrack::plain(Location::File(base().join("coverage.bw")))
                 },
             ],
             regions: vec![
@@ -492,7 +518,27 @@ mod tests {
                     locus: "chr2:11-20".to_owned(),
                 },
             ],
+            hubs: vec![
+                Location::File(base().join("hubs").join("hub.txt")),
+                Location::parse("https://example.org/hub.txt").unwrap(),
+            ],
         }
+    }
+
+    #[test]
+    fn hub_tracks_keep_their_type_and_sessions_keep_their_hubs() {
+        let text = saved().text(&base());
+        for line in [
+            "type = bam",
+            "index = index/reads.bai",
+            "type = bigWig",
+            "file = hubs/hub.txt",
+            "file = https://example.org/hub.txt",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+        assert_eq!(text.matches("[hub]").count(), 2, "{text}");
+        assert_eq!(text.matches("index =").count(), 1, "{text}");
     }
 
     #[test]

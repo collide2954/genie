@@ -647,6 +647,9 @@ impl Genie {
             self.fail(REMOTE_SESSION.to_owned());
             return Task::none();
         }
+        if let Some(declared) = self.restored_type(&location) {
+            return self.open_restored(location, declared);
+        }
         if hub::is_hub(&location) {
             return self.open_hub(location, true);
         }
@@ -873,6 +876,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) {
     track.plot = found.plot;
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());
+    track.declared.clone_from(&found.declared);
 }
 
 pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {

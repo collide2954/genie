@@ -44,6 +44,7 @@ impl Genie {
             None => self.open(saved.reference.clone()),
         };
         self.pending = tracks;
+        self.hubs_next = saved.hubs.iter().map(|hub| (hub.clone(), false)).collect();
         self.restoring = Some(saved);
         task
     }
@@ -120,6 +121,7 @@ impl Genie {
                     plot: track.plot,
                     filter: track.filter.clone(),
                     modification: track.modification.clone(),
+                    declared: track.declared.clone(),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved
@@ -140,6 +142,7 @@ impl Genie {
                     .to_string(),
                 })
                 .collect(),
+            hubs: self.hubs.iter().map(|hub| hub.location.clone()).collect(),
         })
     }
 

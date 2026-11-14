@@ -11,7 +11,7 @@ use crate::genome;
 use crate::hub::{self, Entry, Hub, Wanted};
 use crate::icon::{self, Icon};
 use crate::location::Location;
-use crate::track::{self, Change, Source};
+use crate::track::{self, Change, Declared, Source, Typed};
 use crate::{font, style};
 
 use super::{Genie, Message, Popup, Status};
@@ -205,22 +205,50 @@ impl Genie {
                 return Task::none();
             }
         };
-        let label = self
+        let entry = self
             .hubs
             .iter()
             .flat_map(|hub| &hub.tracks)
             .find(|entry| entry.data.as_ref() == Some(data))
-            .map(|entry| entry.short.clone());
+            .cloned();
         let task = self.add_track(Arc::clone(&source));
-        if let (Some(label), Some(session)) = (label, &mut self.session)
+        if let (Some(entry), Some(session)) = (entry, &mut self.session)
             && let Some(track) = session
                 .tracks
                 .iter_mut()
                 .find(|track| track.source == source)
         {
-            track.name = label;
+            track.name = entry.short;
+            track.declared = Some(Declared {
+                kind: entry.kind,
+                index: entry.index,
+            });
         }
         task
+    }
+
+    /// The type and index that the restored session gives for a track from a hub.
+    pub(super) fn restored_type(&self, location: &Location) -> Option<(Typed, Option<Location>)> {
+        let saved = self.restoring.as_ref()?;
+        let track = saved
+            .tracks
+            .iter()
+            .find(|track| track.location == *location)?;
+        let declared = track.declared.as_ref()?;
+        Some((Typed::of(&declared.kind)?, declared.index.clone()))
+    }
+
+    /// Opens a track of a restored session with the type and index that its hub gave.
+    pub(super) fn open_restored(
+        &mut self,
+        location: Location,
+        (typed, index): (Typed, Option<Location>),
+    ) -> Task<Message> {
+        self.busy += 1;
+        Task::perform(
+            async move { track::open_typed(location, typed, index.as_ref()).map(Arc::new) },
+            Message::TrackOpened,
+        )
     }
 
     fn open_hub_genome(&mut self, index: usize) -> Task<Message> {
@@ -240,19 +268,20 @@ impl Genie {
             (None, Some(known)) => self.open_genome(&known.id),
             (None, None) => return Task::none(),
         };
-        self.hub_next = Some(location);
+        self.hubs_next = vec![(location, true)];
         task
     }
 
-    /// Forgets the hubs of the last reference, and reads again a hub that waits for this one.
+    /// Forgets the hubs of the last reference, and reads the hubs that wait for this one.
     pub(super) fn reopen_hubs(&mut self) -> Task<Message> {
         self.hubs.clear();
         self.hub_view = None;
         self.hub_adding.clear();
-        match self.hub_next.take() {
-            Some(location) => self.open_hub(location, true),
-            None => Task::none(),
-        }
+        let next = std::mem::take(&mut self.hubs_next);
+        Task::batch(
+            next.into_iter()
+                .map(|(location, show)| self.open_hub(location, show)),
+        )
     }
 
     fn hub_state(&self, data: &Location) -> State {
@@ -691,15 +720,51 @@ mod tests {
         assert!(shows(&genie, "myAsm"));
         assert!(shows(&genie, "Fly"));
         let _ = genie.update(Message::Hub(Hubbing::Genome(0)));
-        assert_eq!(genie.hub_next.as_ref(), Some(&location));
+        assert_eq!(genie.hubs_next, [(location.clone(), true)]);
         assert!(shows(&genie, "Opening myAsm.2bit…"));
         let Some(Location::File(sequence)) = genie.hubs[0].genomes[0].sequence.clone() else {
             panic!("the genome has a sequence on this computer");
         };
         let _ = genie.update(Message::Opened(Ok(reference(sequence))));
-        assert_eq!(genie.hub_next, None);
+        assert_eq!(genie.hubs_next.len(), 0);
         assert_eq!(genie.hubs.len(), 0);
         assert_eq!(genie.busy, 1);
+    }
+
+    #[test]
+    fn sessions_keep_hubs_and_open_hub_tracks_by_their_type() {
+        let scratch = Scratch::new("app-hub-session");
+        let location = local_hub(&scratch);
+        let mut genie = Genie::default();
+        let fasta = PathBuf::from("ref.fa");
+        let _ = genie.update(Message::Opened(Ok(reference(fasta.clone()))));
+        let open = Location::File(fasta.clone());
+        let wanted = Wanted {
+            genome: None,
+            reference: Some(&open),
+        };
+        load(&mut genie, &location, wanted);
+        let _ = genie.update(Message::Hub(Hubbing::Toggle(0)));
+        let data = genie.hubs[0].tracks[0].data.clone().unwrap();
+        let opened = || track::open_typed(data.clone(), Typed::Big, None).map(Arc::new);
+        let _ = genie.update(Message::Hub(Hubbing::Added(data.clone(), opened())));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.hubs, std::slice::from_ref(&location));
+        let kind = saved.tracks[0]
+            .declared
+            .as_ref()
+            .map(|found| found.kind.clone());
+        assert_eq!(kind.as_deref(), Some("bigGenePred"));
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        assert_eq!(restored.restored_type(&data), Some((Typed::Big, None)));
+        let _ = restored.update(Message::Opened(Ok(reference(fasta))));
+        assert_eq!(restored.busy, 2);
+        let _ = restored.update(Message::TrackOpened(opened()));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.name, "Genes");
+        let kind = track.declared.as_ref().map(|found| found.kind.as_str());
+        assert_eq!(kind, Some("bigGenePred"));
     }
 
     #[test]
