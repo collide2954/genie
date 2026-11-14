@@ -22,9 +22,9 @@ const WIDTH: f32 = 560.0;
 const ROWS: usize = 500;
 const GENOMES: usize = 100;
 const INDENT: f32 = 14.0;
-const HEADING: f32 = 24.0;
-const LINE: f32 = 25.0;
-const DOUBLE: f32 = 40.0;
+const HEADING: f32 = 23.0;
+const LINE: f32 = 23.0;
+const DOUBLE: f32 = 38.0;
 const HINT: &str = "Click a track to add it or to remove it.";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -450,6 +450,7 @@ fn track_row<'a>(
     let title = row![
         text(entry.short.clone())
             .size(12)
+            .style(if enabled { text::default } else { style::muted })
             .wrapping(text::Wrapping::None),
         space::horizontal(),
         text(status)
@@ -520,7 +521,14 @@ fn genome_list<'a>(hub: &Hub, words: &[String]) -> (List<'a>, String) {
             .filter(|part| !part.is_empty())
             .collect();
         let title = row![
-            text(label).size(12).wrapping(text::Wrapping::None),
+            text(label)
+                .size(12)
+                .style(if openable {
+                    text::default
+                } else {
+                    style::muted
+                })
+                .wrapping(text::Wrapping::None),
             space::horizontal(),
             text(status)
                 .size(11)
