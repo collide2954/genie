@@ -20,6 +20,7 @@ pub mod gtf;
 pub mod gzi;
 pub mod gzip;
 pub mod http;
+pub mod hub;
 pub mod icon;
 pub mod ini;
 pub mod md5;

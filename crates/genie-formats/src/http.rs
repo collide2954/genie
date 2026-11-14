@@ -114,6 +114,11 @@ impl Url {
         }
     }
 
+    /// The address of a location given relative to this one, as in a hub or a redirect.
+    pub fn join(&self, location: &str) -> Result<Self, Error> {
+        self.resolve(location)
+    }
+
     fn resolve(&self, location: &str) -> Result<Self, Error> {
         if Self::is_url(location) {
             return Self::parse(location);
@@ -129,7 +134,7 @@ impl Url {
             format!("{}{location}", &path[..=path.rfind('/').unwrap_or(0)])
         };
         Ok(Self {
-            target,
+            target: without_dots(&target),
             ..self.clone()
         })
     }
@@ -151,6 +156,45 @@ impl fmt::Display for Url {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let scheme = if self.secure { "https" } else { "http" };
         write!(f, "{scheme}://{}{}", self.authority(), self.target)
+    }
+}
+
+/// A path without its "." and ".." parts (RFC 3986), keeping any query.
+fn without_dots(target: &str) -> String {
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (target, None),
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    let pieces: Vec<&str> = path.split('/').collect();
+    for (index, piece) in pieces.iter().enumerate() {
+        let last = index + 1 == pieces.len();
+        match *piece {
+            "." => {
+                if last {
+                    parts.push("");
+                }
+            }
+            ".." => {
+                if parts.len() > 1 {
+                    parts.pop();
+                }
+                if last {
+                    parts.push("");
+                }
+            }
+            piece => parts.push(piece),
+        }
+    }
+    let path = parts.join("/");
+    let path = if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    };
+    match query {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
     }
 }
 
@@ -567,6 +611,26 @@ mod tests {
             bare.with_extension("bai").to_string(),
             "https://example.org/data/reads.bai"
         );
+    }
+
+    #[test]
+    fn relative_addresses_join_the_folder_of_the_file() {
+        let hub = Url::parse("https://example.org/hubs/mine/hub.txt?x=1").unwrap();
+        let join = |location: &str| hub.join(location).unwrap().to_string();
+        assert_eq!(
+            join("genomes.txt"),
+            "https://example.org/hubs/mine/genomes.txt"
+        );
+        assert_eq!(
+            join("hg38/trackDb.txt"),
+            "https://example.org/hubs/mine/hg38/trackDb.txt"
+        );
+        assert_eq!(join("../data/a.bb"), "https://example.org/hubs/data/a.bb");
+        assert_eq!(join("./a/../b.bw"), "https://example.org/hubs/mine/b.bw");
+        assert_eq!(join("/top.bb"), "https://example.org/top.bb");
+        assert_eq!(join("//cdn.org/c.bb"), "https://cdn.org/c.bb");
+        assert_eq!(join("http://other.org/d.bb"), "http://other.org/d.bb");
+        assert_eq!(join("../../../../e.bb"), "https://example.org/e.bb");
     }
 
     fn data() -> Vec<u8> {
