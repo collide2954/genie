@@ -277,7 +277,7 @@ fn long_cigar<'a>(
     real.unwrap_or(cigar)
 }
 
-fn tags(aux: &[u8], bases: &[u8], reverse: bool, clipped: bool) -> Tags {
+pub(crate) fn tags(aux: &[u8], bases: &[u8], reverse: bool, clipped: bool) -> Tags {
     let mut tags = Tags::default();
     let (mut mm, mut ml, mut mn) = (None, None, None);
     walk(aux, |key, kind, value| match key {

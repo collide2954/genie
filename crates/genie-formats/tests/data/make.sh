@@ -542,3 +542,120 @@ expect reads.bam chr1:1-1000 chr1:5000-8000 chr1:20000-24000 chr1:40000-50000 ch
 expect pairs.bam chr1 chr2
 expect variants.vcf.gz chr1:1-2000 chr1:30000-31000 chr1:60000-60100 chr1:100000-130000 \
     chr2:50000-50010 chr2:90000-95000 chrX:1-100 chr2
+
+# CRAM fixtures: reads drawn from reference.fa.gz, written as BAM and as CRAM in several ways.
+bgzip -dc reference.fa.gz | awk -v OFS='\t' '
+function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
+function bases(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text substr("ACGT", draw(4) + 1, 1)
+    return text
+}
+function qualities(count,    text, i) {
+    text = ""
+    for (i = 0; i < count; i++) text = text sprintf("%c", 33 + draw(42))
+    return text
+}
+function other(base,    pick) {
+    do pick = substr("ACGT", draw(4) + 1, 1); while (pick == base)
+    return pick
+}
+function build(contig, start, cigar,    text, at, rest, count, op, k, base) {
+    text = ""
+    at = start
+    rest = cigar
+    while (match(rest, /^[0-9]+[MIDNSHP]/)) {
+        count = substr(rest, 1, RLENGTH - 1) + 0
+        op = substr(rest, RLENGTH, 1)
+        rest = substr(rest, RLENGTH + 1)
+        if (op == "M") {
+            for (k = 0; k < count; k++) {
+                base = toupper(substr(sequence[contig], at + k, 1))
+                if (draw(30) == 0) base = other(base)
+                text = text base
+            }
+            at += count
+        } else if (op == "I" || op == "S") text = text bases(count)
+        else if (op == "D" || op == "N") at += count
+    }
+    return text
+}
+function quality(i, text) { return i % 25 == 0 ? "*" : qualities(length(text)) }
+function extra(i,    text) {
+    text = "NM:i:" draw(4) "\tZB:B:c,1,-2,3\tZF:f:1.5"
+    if (i % 3 == 0) text = text "\tHP:i:" (1 + draw(2))
+    if (i % 4 == 0) text = text "\tRG:Z:group" (draw(2) ? "A" : "B")
+    return text
+}
+function single(i, contig, start, flag, cigar,    text, tags) {
+    text = build(contig, start, cigar)
+    tags = extra(i)
+    if (cigar ~ /N/) tags = tags "\tXS:A:" (draw(2) ? "+" : "-")
+    if (flag == 2048) tags = tags "\tSA:Z:chr2,1000,+,20S30M,60,0;"
+    print sprintf("read%04d", i), flag, contig, start, draw(61), cigar, "*", 0, 0, text, quality(i, text), tags
+}
+function mate(name, i, flag, contig, start, partner, at, insert,    text) {
+    text = build(contig, start, "50M")
+    print name, flag, contig, start, 60, "50M", partner, at, insert, text, quality(i, text), extra(i)
+}
+/^>/ { name = substr($1, 2); names[++count] = name; next }
+{ sequence[name] = sequence[name] $0 }
+END {
+    seed = 37
+    print "@HD", "VN:1.6", "SO:unsorted"
+    for (c = 1; c <= count; c++) {
+        print "@SQ", "SN:" names[c], "LN:" length(sequence[names[c]]), "UR:reference.fa.gz"
+    }
+    print "@RG", "ID:groupA", "SM:A"
+    print "@RG", "ID:groupB", "SM:B"
+    split("50M 20M2I28M 25M3D25M 15M300N35M 5S45M 3H47M 10M1D10M2I28M 48M2S 4S40M6S 30M5N20M", cigars, " ")
+    split("0 16 0 16 1024 256 512 2048 16 0", flags, " ")
+    for (i = 1; i <= 1200; i++) {
+        pick = draw(20)
+        contig = pick < 14 ? "chr1" : pick < 19 ? "chr2" : "chrM"
+        start = 1 + draw(length(sequence[contig]) - 400)
+        single(i, contig, start, flags[1 + draw(10)], cigars[1 + draw(10)])
+    }
+    for (i = 1; i <= 250; i++) {
+        name = sprintf("pair%04d", i)
+        contig = draw(4) ? "chr1" : "chr2"
+        left = 1 + draw(length(sequence[contig]) - 1000)
+        kind = draw(10)
+        insert = kind == 0 ? 50 : 250 + draw(150)
+        right = left + insert - 50
+        if (kind == 1) {
+            mate(name, i, 97, "chr1", left, "chr2", 2001, 0)
+            mate(name, i, 145, "chr2", 2001, "chr1", left, 0)
+        } else if (kind == 2) {
+            mate(name, i, 73, contig, left, "=", left, 0)
+            print name, 133, contig, left, 0, "*", "=", left, 0, bases(50), qualities(50)
+        } else if (kind == 3) {
+            mate(name, i, 83, contig, left, "=", right, insert)
+            mate(name, i, 163, contig, right, "=", left, -insert)
+        } else {
+            mate(name, i, 99, contig, left, "=", right, insert)
+            mate(name, i, 147, contig, right, "=", left, -insert)
+        }
+    }
+    for (i = 1; i <= 10; i++) print sprintf("lost%02d", i), 4, "*", 0, 0, "*", "*", 0, 0, bases(50), qualities(50)
+}' > cram.sam
+samtools sort -o cram.bam cram.sam 2> /dev/null
+samtools index cram.bam
+rm cram.sam
+cram() {
+    local out=$1
+    shift
+    samtools view -C -T reference.fa.gz --output-fmt-option seqs_per_slice=200 "$@" \
+        -o "$out.tmp" cram.bam
+    # htslib writes the absolute reference path into UR; keep the file name only.
+    samtools view -H "$out.tmp" | sed 's#UR:[^\t]*#UR:reference.fa.gz#' > "$out.sam"
+    samtools reheader -P "$out.sam" "$out.tmp" > "$out"
+    rm "$out.tmp" "$out.sam"
+    samtools index "$out"
+}
+cram cram30.cram --output-fmt-option version=3.0
+cram cram31.cram --output-fmt-option version=3.1
+cram cram-embed.cram --output-fmt-option version=3.0 --output-fmt-option embed_ref=1
+cram cram-noref.cram --output-fmt-option version=3.0 --output-fmt-option no_ref=1
+cram cram-xz.cram --output-fmt-option version=3.0 --output-fmt-option use_bzip2=1 \
+    --output-fmt-option use_lzma=1

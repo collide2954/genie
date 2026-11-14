@@ -7,6 +7,7 @@ pub mod bedmethyl;
 pub mod bgzf;
 mod binning;
 pub mod contigs;
+pub mod cram;
 pub mod cytoband;
 mod error;
 pub mod fai;

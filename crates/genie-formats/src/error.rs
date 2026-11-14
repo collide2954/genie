@@ -39,6 +39,12 @@ pub enum Reason {
     Unsorted,
     Scattered,
     TooLong,
+    NotCram,
+    CramVersion,
+    BadCram,
+    CramOldCodec,
+    CramNewCodec,
+    CramReference,
 }
 
 impl fmt::Display for Error {
@@ -91,6 +97,16 @@ impl fmt::Display for Reason {
             Self::Unsorted => "the records are not sorted by position",
             Self::Scattered => "the records of one contig are not together",
             Self::TooLong => "a position is too large for this kind of index",
+            Self::NotCram => "the file is not a CRAM file",
+            Self::CramVersion => "genie reads CRAM version 3.0 and 3.1 files",
+            Self::BadCram => "a CRAM block is not valid",
+            Self::CramOldCodec => {
+                "the file uses bzip2 or lzma compression, which genie does not read"
+            }
+            Self::CramNewCodec => {
+                "the file uses CRAM 3.1 compression, which genie does not read yet"
+            }
+            Self::CramReference => "the reference is not the reference of the CRAM file here",
         })
     }
 }
