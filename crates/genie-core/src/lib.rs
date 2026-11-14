@@ -4,6 +4,7 @@ mod band;
 pub mod codon;
 mod feature;
 mod history;
+pub mod interaction;
 mod locus;
 mod marks;
 pub mod methylation;
