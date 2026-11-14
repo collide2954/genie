@@ -71,8 +71,26 @@ Click the tracks button (the layers icon) in the title bar to add a public track
 
 - genie reads these tracks in parts from the UCSC download server, as for other [files on the web](#files-on-the-web).
 - The track gets the name from the list, for example ClinVar. A track that is open shows **Added** in the list.
-- For yeast and for reference files, the list is empty and the button is off.
+- For yeast and for reference files, the menu has no UCSC tracks. It always has the [track hubs](#track-hubs).
 - Sessions keep these tracks with their names.
+
+## Track hubs
+
+A track hub is a set of track files on a web server, with a `hub.txt` file that names them. The UCSC Genome Browser uses track hubs. To open a track hub:
+
+1. Click the tracks button, then click **Open a track hub…**. The genie menu and the palette (Ctrl+K) also have this item.
+2. Type the address of the `hub.txt` file, then push Enter.
+
+A dialog shows the tracks of the hub for the open genome, in their groups: super tracks, composite tracks and views. Type words to find a track. Click a track to add it. Click it again to remove it.
+
+- Open URL (Ctrl+U) also opens a hub when the address ends with `.txt`. To open a hub on your computer, open its `hub.txt` file.
+- genie reads the hub, genomes and trackDb files of the hub, and the files that their `include` lines name. It uses the genome of the hub that has the name of the open genome, for example hg38, or the name of the reference file.
+- genie adds tracks of these types: bigBed, bigWig and the other UCSC big formats (for example bigGenePred and bigNarrowPeak), bam, cram and vcfTabix. genie uses the type and the index that the hub gives, so the file names can be anything. The list shows tracks of other types, for example hic, but genie cannot add them.
+- A track gets its short label from the hub as its name.
+- If the hub has no tracks for the open genome, the dialog lists the genomes of the hub. Click a genome to open it with the tracks of the hub. genie opens the 2bit sequence of an assembly hub, or the UCSC genome with the same name.
+- The dialog shows the first 500 rows. Type words to find the other tracks.
+- The tracks button lists the hubs of the session and the 8 hubs that you opened last.
+- Sessions keep their hubs, and the type and the index of each track from a hub.
 
 ## Files
 
@@ -257,7 +275,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 ## Sessions
 
-To save the reference, the tracks (with their names, colors, ranges and overlays), the view and the regions as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
+To save the reference, the tracks (with their names, colors, ranges and overlays), the view, the regions and the track hubs as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
 
 If a file is in the folder of the session file, the session file has its path relative to that folder.
 

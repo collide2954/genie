@@ -40,6 +40,14 @@
 - genie opens CRAM 3.0 and 3.1 files as read tracks, with gzip, rANS and rANS Nx16 compression. It decodes the reads with the reference that is open, and checks the MD5 of each part of the file against that reference.
 - A CRAM file without its `.crai` index gets one in the cache folder.
 
+### Track hubs
+
+- genie opens UCSC track hubs from the web or from your computer. Use the tracks button, the genie menu, the palette or Open URL. A dialog shows the tracks of the open genome in their groups. Type words to find a track. Click a track to add or remove it.
+- genie adds bigBed, bigWig and the other UCSC big formats, bam, cram and vcfTabix tracks, with the type and the index that the hub gives.
+- If the hub has no tracks for the open genome, the dialog lists its genomes. A click opens the genome, also the 2bit sequence of an assembly hub, and then shows the tracks of the hub.
+- Sessions keep their hubs. The tracks button lists the hubs that you opened last.
+- The tracks button is on for all genomes and reference files.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
