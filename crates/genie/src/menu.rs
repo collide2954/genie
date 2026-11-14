@@ -3,7 +3,7 @@ use genie_formats::fields::{Rule, Test};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
-use iced::widget::{Column, button, column, container, pin, row, space, text, text_input};
+use iced::widget::{Column, button, column, container, opaque, pin, row, space, text, text_input};
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{Filtering, Message, Ranging, Renaming};
@@ -252,7 +252,7 @@ pub fn sized(
     } else {
         at.y
     };
-    pin(card).x(x).y(y).into()
+    pin(opaque(card)).x(x).y(y).into()
 }
 
 pub fn range_fields<'a>(id: u64, range: Option<&(String, String)>) -> Element<'a, Message> {

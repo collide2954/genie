@@ -1,11 +1,12 @@
 use genie_formats::fields::{self, Rule, Test};
-use iced::widget::{Column, button, container, text};
-use iced::{Element, Length};
+use iced::widget::{Column, button, container, row, text, text_input};
+use iced::{Alignment, Element, Length};
 
-use crate::{menu, style};
+use crate::{font, menu, style};
 
 use super::{Choice, Filtering, Genie, Message};
 
+const NUMBER: &str = "field-number";
 const WIDTH: f32 = 240.0;
 const HEADING: f32 = 21.0;
 const ROW: f32 = 22.6;
@@ -25,6 +26,7 @@ fn choice<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Mess
 impl Genie {
     pub(super) fn choose_field(&mut self, choice: Choice) {
         self.close_menus();
+        self.field_draft = fields::number(&choice.item).map(|_| choice.item.clone());
         self.field = Some(choice);
     }
 
@@ -54,17 +56,34 @@ impl Genie {
             ),
             choice(format!("Hide {item}"), add(Test::Hide(item.clone())), false),
         ];
-        if let Some(number) = fields::number(item) {
-            rows.push(choice(
-                format!("At least {item}"),
-                add(Test::AtLeast(number)),
-                false,
-            ));
-            rows.push(choice(
-                format!("At most {item}"),
-                add(Test::AtMost(number)),
-                false,
-            ));
+        if fields::number(item).is_some() {
+            let draft = self.field_draft.as_deref().unwrap_or(item);
+            let typed = fields::number(draft);
+            let input = text_input("Number", draft)
+                .id(NUMBER)
+                .font(font::MONO)
+                .size(12)
+                .padding([3, 6])
+                .width(Length::Fill)
+                .style(style::locus)
+                .on_input(move |text| Message::Filter(id, Filtering::Draft(text)));
+            let bound = |words: &'static str, test: fn(f64) -> Test| {
+                button(text(words).size(12).wrapping(text::Wrapping::None))
+                    .padding([3, 8])
+                    .style(style::ghost)
+                    .on_press_maybe(typed.map(|number| add(test(number))))
+            };
+            rows.push(
+                row![
+                    input,
+                    bound("At least", Test::AtLeast),
+                    bound("At most", Test::AtMost)
+                ]
+                .spacing(2)
+                .padding([0, 4])
+                .align_y(Alignment::Center)
+                .into(),
+            );
         }
         let mut height = HEADING + rows.len() as f32 * ROW + PADDING;
         let mut content = Column::new()

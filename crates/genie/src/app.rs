@@ -117,6 +117,7 @@ pub struct Genie {
     track_draft: Option<crate::track_dialog::Draft>,
     palette: Option<crate::palette::State>,
     finder: Option<find::Finder>,
+    field_draft: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +196,7 @@ impl Default for Genie {
             track_draft: None,
             palette: None,
             finder: None,
+            field_draft: None,
         }
     }
 }
@@ -678,6 +680,7 @@ pub enum Filtering {
     Add(Rule),
     Remove(usize),
     Label(Option<String>),
+    Draft(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5024,12 +5027,44 @@ mod tests {
         press(&mut genie, "Keep only keep");
         assert_eq!(shown_names(&genie), ["BRCA1"]);
         press(&mut genie, "0.5");
-        assert!(shows(&genie, "At most 0.5"));
+        assert!(shows(&genie, "At most"));
         press(&mut genie, "Label with this field");
         assert_eq!(shown_names(&genie), ["0.5"]);
         press(&mut genie, "0.5");
         let _ = genie.update(Message::MenuDismissed);
-        assert!(!shows(&genie, "At most 0.5"));
+        assert!(!shows(&genie, "At most"));
+    }
+
+    #[test]
+    fn typed_numbers_set_at_least_and_at_most_rules() {
+        let rules = |genie: &Genie| {
+            genie.session.as_ref().unwrap().tracks[0]
+                .filter
+                .rules
+                .clone()
+        };
+        let mut genie = with_two_features();
+        let _ = genie.update(Message::TrackClicked(0, 0, over(15.0, 5.0)));
+        press(&mut genie, "0.5");
+        assert_eq!(genie.field_draft.as_deref(), Some("0.5"));
+        let _ = genie.update(Message::Filter(0, Filtering::Draft("0.25".to_owned())));
+        assert!(shows(&genie, "At least"));
+        press(&mut genie, "At least");
+        assert_eq!(
+            rules(&genie),
+            [field_rule("Column 14", Test::AtLeast(0.25))]
+        );
+        assert_eq!(shown_names(&genie), ["BRCA1"]);
+        press(&mut genie, "0.5");
+        let _ = genie.update(Message::Filter(0, Filtering::Draft("a lot".to_owned())));
+        press(&mut genie, "At most");
+        assert_eq!(rules(&genie).len(), 1);
+        let _ = genie.update(Message::Filter(0, Filtering::Draft("0.75".to_owned())));
+        press(&mut genie, "At most");
+        assert_eq!(
+            rules(&genie)[1],
+            field_rule("Column 14", Test::AtMost(0.75))
+        );
     }
 
     #[test]

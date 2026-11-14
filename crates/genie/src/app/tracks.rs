@@ -275,6 +275,10 @@ impl Genie {
     }
 
     pub(super) fn filter(&mut self, id: u64, filtering: Filtering) {
+        if let Filtering::Draft(text) = filtering {
+            self.field_draft = Some(text);
+            return;
+        }
         self.close_menus();
         self.on_session(|session| {
             let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) else {
@@ -287,7 +291,7 @@ impl Genie {
                     filter.rules.remove(index);
                 }
                 Filtering::Label(label) => filter.label = label,
-                Filtering::Add(_) | Filtering::Remove(_) => {}
+                Filtering::Add(_) | Filtering::Remove(_) | Filtering::Draft(_) => {}
             }
             track.refilter();
         });
@@ -296,6 +300,7 @@ impl Genie {
     pub(super) fn close_menus(&mut self) {
         self.menu = None;
         self.field = None;
+        self.field_draft = None;
         self.sequence_menu = None;
         self.copy_menu = None;
         self.popup = None;
