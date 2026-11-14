@@ -2396,6 +2396,23 @@ mod tests {
         assert!(!shows(&genie, "Next feature"));
     }
 
+    #[test]
+    fn menus_show_the_keys_of_their_items() {
+        use crate::chrome::keys;
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        for keys in [keys('F'), keys('B')] {
+            assert!(shows(&genie, &keys), "{keys}");
+        }
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        let _ = genie.update(Message::CopyMenu(None, Point::new(100.0, 50.0)));
+        assert!(shows(&genie, &keys('C')));
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        let _ = genie.update(Message::CopyMenu(Some(1), Point::new(100.0, 50.0)));
+        assert!(shows(&genie, "Copy locus"));
+        assert!(!shows(&genie, &keys('C')));
+    }
+
     fn chosen(genie: &Genie) -> Option<u64> {
         genie.sidebar.as_ref().and_then(|sidebar| sidebar.chosen)
     }

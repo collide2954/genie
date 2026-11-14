@@ -6,6 +6,7 @@ use iced::widget::column;
 use iced::{Element, Point, Task};
 
 use crate::card;
+use crate::chrome;
 use crate::menu;
 use crate::reference::Reference;
 
@@ -42,13 +43,14 @@ impl Genie {
 
     pub(super) fn copy_menu(&self) -> Option<Element<'_, Message>> {
         let (region, at) = self.copy_menu?;
+        let locus = Message::Copy(Copying::Locus(region));
+        let locus = if region.is_none() {
+            menu::keyed("Copy locus", chrome::keys('C'), locus, true)
+        } else {
+            menu::item("Copy locus", locus, false, true)
+        };
         let content = column![
-            menu::item(
-                "Copy locus",
-                Message::Copy(Copying::Locus(region)),
-                false,
-                true
-            ),
+            locus,
             menu::item(
                 "Copy sequence",
                 Message::Copy(Copying::Sequence(region)),

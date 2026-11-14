@@ -7,6 +7,7 @@ use iced::widget::{Column, button, column, container, pin, row, space, text, tex
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{Filtering, Message, Ranging, Renaming};
+use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
@@ -200,6 +201,27 @@ pub fn item<'a>(
         .width(Length::Fill)
         .padding([3, 8])
         .style(if chosen { style::chosen } else { style::ghost })
+        .on_press_maybe(enabled.then_some(message))
+        .into()
+}
+
+pub fn keyed<'a>(
+    label: impl text::IntoFragment<'a>,
+    keys: String,
+    message: Message,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let content = row![
+        text(label).size(12),
+        space::horizontal(),
+        text(keys).size(11).style(style::muted)
+    ]
+    .spacing(12)
+    .align_y(Alignment::Center);
+    button(content)
+        .width(Length::Fill)
+        .padding([3, 8])
+        .style(style::ghost)
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
@@ -399,16 +421,16 @@ fn jumps<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         "feature"
     };
     vec![
-        item(
+        keyed(
             format!("Next {noun}"),
+            keys('F'),
             Message::Jump(track.id, true),
-            false,
             true,
         ),
-        item(
+        keyed(
             format!("Previous {noun}"),
+            keys('B'),
             Message::Jump(track.id, false),
-            false,
             true,
         ),
         separator(),
