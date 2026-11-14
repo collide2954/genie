@@ -176,7 +176,8 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 ## Navigation
 
-- Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom.
+- Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom. The buttons right of the locus box zoom out, zoom in and show the whole chromosome.
+- Click the genie logo for a menu with the main actions and their keys. Push Ctrl+K (Cmd+K on macOS) to find an action by its words, for example "group phase", then push Enter. Push F1 or click the ? button to see all keys and mouse actions.
 - Drag on the ruler to zoom to that range. Push Escape to stop the drag.
 - To go back to an earlier view, push Alt+Left (Cmd+[ on macOS), push the back button of the mouse or click the back arrow left of the locus box. Alt+Right (Cmd+] on macOS) goes forward again. genie keeps the last 100 jumps: the locus box, name search, ruler drags, region and feature jumps and changes of contig. Moves and zooms do not add a step.
 - Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.
@@ -225,7 +226,8 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - To fix the range of a signal track, right-click it, type the minimum and the maximum, then push Enter. The fields show the range in view. **Auto range** goes back to the range of the data in view. A track with a fixed range does not use "Shared scale".
 - To show two or more signal tracks in one lane, right-click a signal track, then click a track under **Overlay on**. The lane shows each signal as a line in the color of its track, with one range for all. If two tracks have the same color, genie gives the added track a different color. To show a track in its own lane again, right-click the lane and click the track under **Separate**.
 - Double-click a track name to change it, then push Enter. Push Escape to stop. If you delete the name, the track shows its file name again. The track menu also has **Rename**.
-- Right-click a track to set its rows, its color or its place.
+- Right-click a track to set its rows, its color or its place. When the pointer is on a track, a ⋯ button next to its name opens the same menu and a × button removes the track.
+- Click **Track settings…** at the top of the track menu to see all settings of the track in one dialog: name, color, rows, height, and the settings of its kind. Each change shows at once.
 - Right-click a read track to show duplicate reads and soft clips, or to keep all reads.
 - genie colors unusual read pairs: vermillion for an insert size that is larger than expected, blue for a smaller one, green for two mates on the same strand, purple for mates that point away from each other, and orange for a mate on a different chromosome. The expected insert sizes come from the loaded pairs. Right-click a read track to turn these colors off.
 - Right-click a read track to sort the rows by the base at that position, or to group the reads by phase (HP tag) or by strand.

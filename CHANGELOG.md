@@ -9,6 +9,18 @@
 - The read track menu selects the modification of the lane, for example 5mC or 5hmC.
 - genie opens bedMethyl files from modkit as signal tracks that show the percent of modified reads. The track menu selects the modification and joins or separates the two strands of each CpG. The card of a site shows its counts.
 
+### Easier to use
+
+- Click the genie logo for a menu: Open file, Open URL, Recent, Save session, Export image, Keys and mouse, and Settings. Ctrl+O (Cmd+O on macOS) opens a file.
+- Ctrl+K (Cmd+K on macOS) opens a palette. Type words in any order to find an action, a track item or a recent file, then push Enter.
+- The ? button and F1 show all keys and mouse actions.
+- Buttons next to the locus box zoom out, zoom in and show the whole chromosome.
+- Put the pointer on a track to see a button for its menu and a button that removes it.
+- **Track settings…** in the track menu shows all settings of the track in one dialog. Each change shows at once.
+- Menu items show their keys, for example "Next feature Ctrl+F".
+- A strip under the ruler shows tips until you close it.
+- The logo has one strand in green and purple bases.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
