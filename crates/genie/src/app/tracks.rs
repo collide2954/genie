@@ -203,6 +203,16 @@ impl Genie {
     }
 
     pub(super) fn lane(&mut self, id: u64, lane: Lane) {
+        if lane == Lane::Entered {
+            self.lane_hover = Some(id);
+            return;
+        }
+        if lane == Lane::Left {
+            if self.lane_hover == Some(id) {
+                self.lane_hover = None;
+            }
+            return;
+        }
         if let Lane::Dropped = lane {
             let target = self.drop_target();
             self.moving = None;
@@ -232,7 +242,7 @@ impl Genie {
             Lane::Released => self.resize = None,
             Lane::Fit => session.tracks[position].height = None,
             Lane::Moved(delta) => self.moving = Some((id, delta)),
-            Lane::Dropped => {}
+            Lane::Dropped | Lane::Entered | Lane::Left => {}
         }
     }
 

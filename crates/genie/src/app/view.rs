@@ -40,6 +40,8 @@ use super::{
 const OVERVIEW_HEIGHT: f32 = 12.0;
 pub(super) const HEADER_HEIGHT: f32 = 20.0;
 const NAME_WIDTH: f32 = 160.0;
+const TRACK_BUTTON: f32 = 16.0;
+const TRACK_ICON: f32 = 12.0;
 pub(super) const RULER_HEIGHT: f32 = 20.0;
 pub(super) const BASE_HEIGHT: f32 = 16.0;
 pub(super) const EMPTY_HEIGHT: f32 = 20.0;
@@ -515,7 +517,13 @@ impl Genie {
                 .filter(|(id, _)| !repack && *id == track.id)
                 .map(|(_, draft)| draft.as_str());
             data = data
-                .push(track_view(session, track, repack, padding, draft))
+                .push(track_view(
+                    session,
+                    track,
+                    (repack, padding),
+                    draft,
+                    !repack && self.lane_hover == Some(track.id),
+                ))
                 .push(line(index + 1));
         }
         if !repack {
@@ -897,9 +905,9 @@ pub(super) fn lanes_height(track: &Track, pile: &Pile) -> f32 {
 fn track_view<'a>(
     session: &'a Session,
     track: &'a Track,
-    repack: bool,
-    padding: f32,
+    (repack, padding): (bool, f32),
     draft: Option<&'a str>,
+    hovered: bool,
 ) -> Element<'a, Message> {
     let id = track.id;
     let count = session.count();
@@ -916,8 +924,8 @@ fn track_view<'a>(
     )
     .on_double_click(Message::Lane(id, Lane::Fit))
     .interaction(mouse::Interaction::ResizingVertically);
-    let handle: Element<'a, Message> = match draft {
-        Some(draft) => Escape::new(
+    let handle: Element<'a, Message> = if let Some(draft) = draft {
+        Escape::new(
             text_input("Name", draft)
                 .id(TRACK_NAME)
                 .size(LABEL_SIZE)
@@ -928,8 +936,9 @@ fn track_view<'a>(
                 .on_submit(Message::Rename(Renaming::Done)),
             Message::Rename(Renaming::Cancel),
         )
-        .into(),
-        None => Grip::new(
+        .into()
+    } else {
+        let name = Grip::new(
             chrome::tip(
                 name_label(session, track),
                 "Drag to move · Double-click to rename · Right-click for options",
@@ -938,8 +947,15 @@ fn track_view<'a>(
             move |delta| Message::Lane(id, Lane::Moved(delta)),
             Message::Lane(id, Lane::Dropped),
         )
-        .on_double_click(Message::Rename(Renaming::Start(id)))
-        .into(),
+        .on_double_click(Message::Rename(Renaming::Start(id)));
+        if hovered {
+            row![name, track_buttons(id)]
+                .spacing(2)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            name.into()
+        }
     };
     let mut layers = stack![
         container(body)
@@ -962,9 +978,40 @@ fn track_view<'a>(
                 .padding(edge_padding()),
         );
     }
-    container(Context::new(layers, move |at| Message::TrackMenu(id, at)))
-        .id(format!("lane-{id}"))
+    let lane = container(Context::new(layers, move |at| Message::TrackMenu(id, at)))
+        .id(format!("lane-{id}"));
+    mouse_area(lane)
+        .on_enter(Message::Lane(id, Lane::Entered))
+        .on_exit(Message::Lane(id, Lane::Left))
         .into()
+}
+
+fn track_buttons<'a>(id: u64) -> Element<'a, Message> {
+    let more = Context::left(
+        container(icon::view(Icon::More, TRACK_ICON))
+            .width(TRACK_BUTTON)
+            .height(TRACK_BUTTON)
+            .style(chip),
+        move |at| Message::TrackMenu(id, at),
+    );
+    let remove = button(icon::view(Icon::Close, TRACK_ICON - 2.0))
+        .width(TRACK_BUTTON)
+        .height(TRACK_BUTTON)
+        .padding(0)
+        .style(style::chip_button)
+        .on_press(Message::TrackChanged(id, Change::Remove));
+    row![
+        container(chrome::tip(more, "Track menu", tooltip::Position::Bottom))
+            .id(format!("more-{id}")),
+        container(chrome::tip(
+            remove,
+            "Remove the track",
+            tooltip::Position::Bottom
+        ))
+        .id(format!("remove-{id}")),
+    ]
+    .spacing(2)
+    .into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

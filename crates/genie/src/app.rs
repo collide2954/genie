@@ -85,6 +85,7 @@ pub struct Genie {
     copy_menu: Option<(Option<u64>, Point)>,
     resize: Option<(u64, f32)>,
     moving: Option<(u64, f32)>,
+    lane_hover: Option<u64>,
     scroll: f32,
     window: Size,
     hover: Option<Card>,
@@ -154,6 +155,7 @@ impl Default for Genie {
             copy_menu: None,
             resize: None,
             moving: None,
+            lane_hover: None,
             scroll: 0.0,
             window: chrome::WINDOW,
             hover: None,
@@ -768,6 +770,8 @@ pub enum Lane {
     Fit,
     Moved(f32),
     Dropped,
+    Entered,
+    Left,
 }
 
 enum Opening {
@@ -1168,7 +1172,7 @@ mod tests {
     use iced::time::{Duration, Instant};
     use iced_test::{selector, simulator};
 
-    use iced::{Point, Size};
+    use iced::{Event, Point, Size, mouse};
 
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
@@ -2394,6 +2398,65 @@ mod tests {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(!shows(&genie, "Next feature"));
+    }
+
+    fn click_id(genie: &Genie, id: &str) -> Vec<Message> {
+        let mut ui = simulator(genie.view());
+        let at = ui
+            .find(selector::id(id.to_owned()))
+            .unwrap()
+            .bounds()
+            .center();
+        ui.point_at(at);
+        let _ = ui.simulate(vec![
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+        ui.into_messages().collect()
+    }
+
+    fn has_id(genie: &Genie, id: &str) -> bool {
+        simulator(genie.view())
+            .find(selector::id(id.to_owned()))
+            .is_ok()
+    }
+
+    #[test]
+    fn track_buttons_show_while_the_pointer_is_on_the_track() {
+        let mut genie = with_track();
+        assert!(!has_id(&genie, "more-0"));
+        let _ = genie.update(Message::Lane(0, Lane::Entered));
+        assert!(has_id(&genie, "more-0") && has_id(&genie, "remove-0"));
+        let opened = click_id(&genie, "more-0");
+        assert!(
+            opened
+                .iter()
+                .any(|message| matches!(message, Message::TrackMenu(0, _))),
+            "{opened:?}"
+        );
+        let removed = click_id(&genie, "remove-0");
+        assert!(
+            removed.contains(&Message::TrackChanged(0, Change::Remove)),
+            "{removed:?}"
+        );
+        let _ = genie.update(Message::Lane(0, Lane::Left));
+        assert!(!has_id(&genie, "more-0"));
+    }
+
+    #[test]
+    fn moving_over_a_track_reports_it() {
+        let genie = with_track();
+        let mut ui = simulator(genie.view());
+        let at = ui.find(selector::id("lane-0")).unwrap().bounds().center();
+        ui.point_at(at);
+        let _ = ui.simulate(vec![Event::Mouse(mouse::Event::CursorMoved {
+            position: at,
+        })]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.contains(&Message::Lane(0, Lane::Entered)),
+            "{messages:?}"
+        );
     }
 
     #[test]

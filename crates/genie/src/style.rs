@@ -124,6 +124,21 @@ pub fn scrollbar(theme: &Theme, status: scrollable::Status) -> scrollable::Style
     }
 }
 
+pub fn chip_button(theme: &Theme, status: button::Status) -> button::Style {
+    let tokens = tokens(theme);
+    let background = if is_active(status) {
+        tokens.line
+    } else {
+        tokens.canvas.scale_alpha(crate::scene::CHIP)
+    };
+    button::Style {
+        background: Some(background.into()),
+        text_color: tokens.text,
+        border: Border::default().rounded(3),
+        ..button::Style::default()
+    }
+}
+
 pub fn window_control(theme: &Theme, status: button::Status) -> button::Style {
     let tokens = tokens(theme);
     button::Style {
