@@ -133,6 +133,7 @@ pub fn coverage(
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(format!("0-{max}")),
         size: RANGE_SIZE,
+        align: Align::End,
     });
     primitives
 }
@@ -191,13 +192,11 @@ pub fn methylation(viewport: Viewport, lanes: &[MethylationLane]) -> Vec<Primiti
             }
         }
         if let Some(label) = label {
-            primitives.push(Primitive::Text {
+            primitives.push(Primitive::Label {
                 x: 4.0,
                 y: top + GROUP_SIZE / 2.0 + 1.0,
                 content: Cow::Owned(label.clone()),
                 size: GROUP_SIZE,
-                paint: Paint::Muted,
-                font: Font::Ui,
                 align: Align::Start,
             });
         }
@@ -208,6 +207,7 @@ pub fn methylation(viewport: Viewport, lanes: &[MethylationLane]) -> Vec<Primiti
             y: RANGE_SIZE / 2.0 + 1.0,
             content: Cow::Borrowed(PERCENT_RANGE),
             size: RANGE_SIZE,
+            align: Align::End,
         });
     }
     primitives
@@ -642,7 +642,7 @@ mod tests {
         methylation_hit, reads,
     };
     use crate::features::Mode;
-    use crate::scene::{Base, Hue, Paint, Primitive, Shade};
+    use crate::scene::{Align, Base, Hue, Paint, Primitive, Shade};
 
     fn site(position: u64, modified: u32, total: u32) -> Site {
         Site {
@@ -674,14 +674,15 @@ mod tests {
                 ([10.0, 22.0, 1.0, 19.0], Paint::Modified(255)),
             ]
         );
+        assert_eq!(texts(&primitives), []);
         assert_eq!(
-            texts(&primitives),
+            labels(&primitives),
             [
-                ("Haplotype 1".to_owned(), 4.0),
-                ("Haplotype 2".to_owned(), 4.0)
+                ("Haplotype 1".to_owned(), 4.0, Align::Start),
+                ("Haplotype 2".to_owned(), 4.0, Align::Start),
+                ("0-100 %".to_owned(), 88.0, Align::End)
             ]
         );
-        assert_eq!(labels(&primitives), [("0-100 %".to_owned(), 88.0)]);
         assert!((methylation_height(2) - 42.0).abs() < f32::EPSILON);
     }
 
@@ -762,11 +763,13 @@ mod tests {
             .collect()
     }
 
-    fn labels(primitives: &[Primitive]) -> Vec<(String, f32)> {
+    fn labels(primitives: &[Primitive]) -> Vec<(String, f32, Align)> {
         primitives
             .iter()
             .filter_map(|primitive| match primitive {
-                Primitive::Label { content, x, .. } => Some((content.to_string(), *x)),
+                Primitive::Label {
+                    content, x, align, ..
+                } => Some((content.to_string(), *x, *align)),
                 _ => None,
             })
             .collect()
@@ -783,7 +786,7 @@ mod tests {
         assert_eq!(bars.len(), 20);
         assert_eq!(bars[0], ([10.0, 21.0, 1.0, 20.0], Paint::Coverage));
         assert_eq!(bars[10], ([30.0, 1.0, 1.0, 40.0], Paint::Coverage));
-        assert_eq!(labels(&primitives), [("0-4".to_owned(), 88.0)]);
+        assert_eq!(labels(&primitives), [("0-4".to_owned(), 88.0, Align::End)]);
         assert_eq!(texts(&primitives), []);
     }
 

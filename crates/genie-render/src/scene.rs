@@ -128,6 +128,7 @@ pub enum Primitive {
         y: f32,
         content: Cow<'static, str>,
         size: f32,
+        align: Align,
     },
     Arc {
         from: f32,
@@ -202,6 +203,7 @@ mod tests {
                 y: 2.0,
                 content: Cow::Borrowed("b"),
                 size: 9.0,
+                align: Align::End,
             },
             Primitive::Arc {
                 from: 1.0,

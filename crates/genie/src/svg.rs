@@ -264,18 +264,24 @@ pub fn draw(
                 y,
                 content,
                 size,
+                align,
             } => {
                 let width = width(content, *size, Face::Ui);
                 let height = (size * CHIP_LINE).round();
                 let (x, y) = (left + x, top + y);
+                let start = match align {
+                    Align::Start => x,
+                    Align::Center => x - width / 2.0,
+                    Align::End => x - width,
+                };
                 let chip = (
-                    x - width - CHIP_PADDING,
+                    start - CHIP_PADDING,
                     y - height / 2.0,
                     width + 2.0 * CHIP_PADDING,
                     height,
                 );
                 svg.rounded(chip, 3.0, tokens.canvas.scale_alpha(CHIP));
-                svg.text((x, y), content, *size, Face::Ui, tokens.muted, Align::End);
+                svg.text((x, y), content, *size, Face::Ui, tokens.muted, *align);
             }
             Primitive::Arc {
                 from,
@@ -421,6 +427,14 @@ mod tests {
                 y: 6.0,
                 content: Cow::Borrowed("0-9"),
                 size: 10.0,
+                align: Align::End,
+            },
+            Primitive::Label {
+                x: 4.0,
+                y: 30.0,
+                content: Cow::Borrowed("Haplotype 1"),
+                size: 10.0,
+                align: Align::Start,
             },
         ];
         draw(&mut svg, &primitives, (0.0, 10.0), (&LIGHT, &LIGHT_DATA));
@@ -435,6 +449,8 @@ mod tests {
         );
         assert!(text.contains(">0-9</text>"), "{text}");
         assert!(text.contains("text-anchor=\"end\""), "{text}");
+        assert!(text.contains("<rect x=\"0\" y=\"33.5\""), "{text}");
+        assert!(text.contains(">Haplotype 1</text>"), "{text}");
     }
 
     #[test]

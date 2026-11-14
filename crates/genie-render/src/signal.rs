@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use genie_core::signal::{Bin, Summary, slice};
 use genie_core::{Region, Viewport};
 
-use crate::scene::{Hue, LABEL_INSET, Paint, Primitive};
+use crate::scene::{Align, Hue, LABEL_INSET, Paint, Primitive};
 
 pub const HEIGHT: f32 = 48.0;
 
@@ -255,6 +255,7 @@ fn range_label(scale: Scale, width: f32) -> Primitive {
         y: RANGE_SIZE / 2.0 + 1.0,
         content: Cow::Owned(label(scale)),
         size: RANGE_SIZE,
+        align: Align::End,
     }
 }
 

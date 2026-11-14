@@ -374,7 +374,15 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                         y,
                         content,
                         size,
-                    } => label(renderer, bounds, Point::new(*x, *y), content, *size, tokens),
+                        align,
+                    } => label(
+                        renderer,
+                        bounds,
+                        (Point::new(*x, *y), *align),
+                        content,
+                        *size,
+                        tokens,
+                    ),
                 }
             }
             if let Some(frame) = marks {
@@ -456,26 +464,36 @@ fn text_clip(bounds: Rectangle, x: f32, ems: f32, align: Align) -> Rectangle {
 fn label(
     renderer: &mut Renderer,
     bounds: Rectangle,
-    at: Point,
+    (at, align): (Point, Align),
     content: &str,
     size: f32,
     tokens: &Tokens,
 ) {
+    let align_x = match align {
+        Align::Start => text::Alignment::Left,
+        Align::Center => text::Alignment::Center,
+        Align::End => text::Alignment::Right,
+    };
     let text = |content| Text {
         content,
         bounds: bounds.size(),
         size: Pixels(size),
         line_height: text::LineHeight::Relative(1.0),
         font: typeface(Font::Ui),
-        align_x: text::Alignment::Right,
+        align_x,
         align_y: alignment::Vertical::Center,
         shaping: text::Shaping::Basic,
         wrapping: text::Wrapping::None,
     };
     let width = <Renderer as text::Renderer>::Paragraph::with_text(text(content)).min_width();
     let height = (size * CHIP_LINE).round();
+    let start = match align {
+        Align::Start => at.x,
+        Align::Center => at.x - width / 2.0,
+        Align::End => at.x - width,
+    };
     let chip = Rectangle {
-        x: bounds.x + at.x - width - CHIP_PADDING,
+        x: bounds.x + start - CHIP_PADDING,
         y: bounds.y + at.y - height / 2.0,
         width: width + 2.0 * CHIP_PADDING,
         height,
