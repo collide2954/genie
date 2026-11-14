@@ -1,5 +1,6 @@
 pub mod alignments;
 pub mod features;
+pub mod matches;
 pub mod overview;
 pub mod rows;
 pub mod ruler;
