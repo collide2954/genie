@@ -30,12 +30,13 @@ use crate::track::{self, Change, Content, Pile, Source, Track};
 use super::orders::Answer;
 use super::view::{body_height, signal_columns, signal_scale};
 use super::{
-    Filtering, Genie, Lane, Message, Opening, Preparation, Preparing, Ranging, Renaming, Status,
+    Filtering, Genie, Lane, Message, Opening, Popup, Preparation, Preparing, Ranging, Renaming,
+    Status,
 };
 
 pub(super) const TRACK_NAME: &str = "track-name";
 const BAD_RANGE: &str = "Type two numbers. The maximum must be larger than the minimum.";
-const MIN_HEIGHT: f32 = 10.0;
+pub(super) const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
 const NO_CACHE: &str = "genie cannot find a cache folder for the genome files.";
@@ -300,6 +301,7 @@ impl Genie {
         self.popup = None;
         self.address = None;
         self.range_draft = None;
+        self.track_draft = None;
     }
 
     pub(super) fn open_menu(&mut self, id: u64, at: Point) {
@@ -310,7 +312,7 @@ impl Genie {
             .map(|scale| (signal::number(scale.min), signal::number(scale.max)));
     }
 
-    fn shown_range(&self, id: u64) -> Option<signal::Scale> {
+    pub(super) fn shown_range(&self, id: u64) -> Option<signal::Scale> {
         let session = self.session.as_ref()?;
         let track = session.tracks.iter().find(|track| track.id == id)?;
         if let Some(range) = track.plot.range {
@@ -358,7 +360,10 @@ impl Genie {
                 Some(signal::Scale { min, max })
             }
         };
-        self.close_menus();
+        let dialog = matches!(self.popup, Some(Popup::Track(_)));
+        if !dialog {
+            self.close_menus();
+        }
         self.on_session(|session| {
             if let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) {
                 track.plot.range = fixed;
@@ -367,6 +372,11 @@ impl Genie {
                 }
             }
         });
+        if dialog {
+            self.range_draft = self
+                .shown_range(id)
+                .map(|scale| (signal::number(scale.min), signal::number(scale.max)));
+        }
     }
 
     pub(super) fn hovered(&mut self, id: u64, panel: usize, pointer: Option<Pointer>) {

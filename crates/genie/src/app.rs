@@ -46,6 +46,7 @@ mod orders;
 mod regions;
 mod sessions;
 pub mod snapshot;
+mod track_settings;
 mod tracks;
 mod ucsc;
 mod view;
@@ -111,6 +112,7 @@ pub struct Genie {
     folder: Option<PathBuf>,
     renaming: Option<(u64, String)>,
     range_draft: Option<(String, String)>,
+    track_draft: Option<crate::track_dialog::Draft>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +123,7 @@ enum Popup {
     Help,
     App,
     AppRecent,
+    Track(u64),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -184,6 +187,7 @@ impl Default for Genie {
             folder: None,
             renaming: None,
             range_draft: None,
+            track_draft: None,
         }
     }
 }
@@ -628,6 +632,8 @@ pub enum Message {
     CatalogMenu,
     AppMenu,
     RecentMenu(bool),
+    TrackSettings(u64),
+    TrackDraft(Drafting),
     Catalog(usize),
     CatalogOpened(usize, Result<Arc<Source>, String>),
     Offline(Offline),
@@ -767,6 +773,12 @@ pub enum Sweep {
     Pressed(f32),
     Dragged(f32),
     Released,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Drafting {
+    Name(String),
+    Height(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -943,6 +955,8 @@ impl Genie {
             Message::CatalogMenu => self.toggle(Popup::Catalog),
             Message::AppMenu => self.toggle_app_menu(),
             Message::RecentMenu(open) => self.show_recent(open),
+            Message::TrackSettings(id) => self.open_track_settings(id),
+            Message::TrackDraft(drafting) => self.draft_track(drafting),
             Message::Catalog(index) => return self.open_catalog(index),
             Message::CatalogOpened(index, result) => return self.catalog_opened(index, result),
             Message::Offline(offline) => return self.offline(offline),
@@ -1185,8 +1199,8 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Caching, Copying, Filtering, Genie, Lane, Message, Offline, Paneling, Port,
-        Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
+        Address, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline, Paneling,
+        Port, Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -2303,6 +2317,72 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn track_settings_open_from_the_menu_and_apply_at_once() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Track settings…").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.contains(&Message::TrackSettings(0)),
+            "{messages:?}"
+        );
+        let _ = genie.update(Message::TrackSettings(0));
+        let mut ui = simulator(genie.view());
+        for line in [
+            "Name", "Color", "Rows", "Expanded", "Squished", "Height", "Fit rows",
+        ] {
+            assert!(ui.find(line).is_ok(), "{line}");
+        }
+        ui.click("Squished").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        let squish = Message::TrackChanged(0, Change::Mode(Rows::Squished));
+        assert!(messages.contains(&squish), "{messages:?}");
+        let _ = genie.update(squish);
+        let _ = genie.update(Message::TrackDraft(Drafting::Name("Genes".to_owned())));
+        let _ = genie.update(Message::TrackDraft(Drafting::Height("120".to_owned())));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.mode, Some(Rows::Squished));
+        assert_eq!(track.name, "Genes");
+        assert_eq!(track.height, Some(120.0));
+        assert!(has_id(&genie, "track-dialog"));
+        let _ = genie.update(Message::TrackDraft(Drafting::Name(String::new())));
+        let _ = genie.update(Message::TrackDraft(Drafting::Height(String::new())));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.name, track.source.name);
+        assert_eq!(track.height, None);
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!has_id(&genie, "track-dialog"));
+    }
+
+    #[test]
+    fn track_settings_show_the_settings_of_each_kind() {
+        let kinds: [(Genie, &[&str]); 3] = [
+            (
+                with_reads(),
+                &[
+                    "Show duplicates",
+                    "Group by phase",
+                    "Color unusual pairs",
+                    "Color by modification",
+                ],
+            ),
+            (
+                with_signal(),
+                &["Bars", "Line", "Shared scale", "Auto range"],
+            ),
+            (with_filtered(), &["Filter"]),
+        ];
+        for (mut genie, lines) in kinds {
+            let _ = genie.update(Message::TrackSettings(0));
+            let mut ui = simulator(genie.view());
+            for line in lines {
+                assert!(ui.find(*line).is_ok(), "{line}");
+            }
+        }
     }
 
     #[test]

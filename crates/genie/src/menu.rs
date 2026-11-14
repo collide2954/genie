@@ -23,18 +23,18 @@ const HEADING_HEIGHT: f32 = 21.0;
 const LINK_HEIGHT: f32 = 22.6;
 const SEPARATOR_HEIGHT: f32 = 8.0;
 const FILTER_WIDTH: f32 = 260.0;
-const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
+pub const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
-const MODES: [(&str, Mode); 3] = [
+pub const MODES: [(&str, Mode); 3] = [
     ("Expanded", Mode::Expanded),
     ("Squished", Mode::Squished),
     ("Collapsed", Mode::Collapsed),
 ];
-const GROUPS: [(&str, Grouping); 2] = [
+pub const GROUPS: [(&str, Grouping); 2] = [
     ("Group by phase", Grouping::Phase),
     ("Group by strand", Grouping::Strand),
 ];
-const TOGGLES: [(&str, Toggle); 3] = [
+pub const TOGGLES: [(&str, Toggle); 3] = [
     ("Show duplicates", Toggle::Duplicates),
     ("Show soft clips", Toggle::Clips),
     ("Down-sample", Toggle::Downsample),
@@ -53,7 +53,7 @@ pub fn height(track: &Track, links: usize) -> f32 {
         let rows = filter.rules.len() + usize::from(filter.label.is_some());
         HEADING_HEIGHT + rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
-    kind_height(track) + extra + rules
+    LINK_HEIGHT + SEPARATOR_HEIGHT + kind_height(track) + extra + rules
 }
 
 pub fn describe(rule: &Rule) -> String {
@@ -73,7 +73,7 @@ fn heading(words: &str) -> Element<'_, Message> {
         .into()
 }
 
-fn filter_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+pub fn filter_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     let (id, filter) = (track.id, &track.filter);
     if filter.is_empty() {
         return Vec::new();
@@ -136,7 +136,7 @@ fn modification_choices(track: &Track) -> Vec<String> {
     }
 }
 
-fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+pub fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     let shown = track.shown_modification();
     modification_choices(track)
         .into_iter()
@@ -153,7 +153,7 @@ fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         .collect()
 }
 
-fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     let mut items = modification_items(track);
     items.push(item(
         "Join CpG strands",
@@ -255,7 +255,7 @@ pub fn sized(
     pin(card).x(x).y(y).into()
 }
 
-fn range_fields<'a>(id: u64, range: Option<&(String, String)>) -> Element<'a, Message> {
+pub fn range_fields<'a>(id: u64, range: Option<&(String, String)>) -> Element<'a, Message> {
     let (min, max) = range.map_or(("", ""), |(min, max)| (min.as_str(), max.as_str()));
     let field = |placeholder: &str, value: &str, edit: fn(String) -> Ranging| {
         text_input(placeholder, value)
@@ -351,13 +351,15 @@ pub fn view<'a>(
             .on_press(Message::TrackChanged(id, Change::Hue(hue)))
             .into()
     });
-    let mut content = if track.source.is_bedmethyl() {
+    let kind = if track.source.is_bedmethyl() {
         signal_items(track, range).extend(methyl_items(track))
     } else if track.source.has_signal() {
         signal_items(track, range)
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     };
+    let settings = self::item("Track settings…", Message::TrackSettings(id), false, true);
+    let mut content = column![settings, separator(), kind].spacing(1);
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));
     } else if !track.source.has_variants() {
