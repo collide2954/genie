@@ -31,6 +31,8 @@ const FIELD_GAP: f32 = 6.0;
 const HOVER_FIELDS: usize = 6;
 const VALUE_LIMIT: usize = 160;
 const CHARACTER: f32 = 6.0;
+const TITLE_CHARACTER: f32 = 7.0;
+const WRAP: text::Wrapping = text::Wrapping::WordOrGlyph;
 const PART: &str = "Other part";
 const CIGAR_LIMIT: usize = 30;
 
@@ -357,15 +359,19 @@ fn short(value: &str) -> String {
     short
 }
 
-fn wrapped(text: &str, width: f32) -> usize {
-    let per_line = ((width / CHARACTER).floor() as usize).max(1);
+fn wrapped(text: &str, width: f32, character: f32) -> usize {
+    let per_line = ((width / character).floor() as usize).max(1);
     text.chars().count().div_ceil(per_line).max(1)
 }
 
 fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
     let parts: Vec<String> = fields::items(value).map(str::to_owned).collect();
     if parts.is_empty() {
-        return text(value.to_owned()).size(11).width(Length::Fill).into();
+        return text(value.to_owned())
+            .size(11)
+            .wrapping(WRAP)
+            .width(Length::Fill)
+            .into();
     }
     let count = parts.len();
     let mut cell = row![].spacing(4).width(Length::Fill);
@@ -376,14 +382,17 @@ fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
             item.clone()
         };
         let label = label.to_owned();
-        cell = cell.push(Context::left(text(shown).size(11), move |at| {
-            Message::Field(Choice {
-                track,
-                label: label.clone(),
-                item: item.clone(),
-                at,
-            })
-        }));
+        cell = cell.push(Context::left(
+            text(shown).size(11).wrapping(WRAP),
+            move |at| {
+                Message::Field(Choice {
+                    track,
+                    label: label.clone(),
+                    item: item.clone(),
+                    at,
+                })
+            },
+        ));
     }
     cell.wrap().vertical_spacing(2).into()
 }
@@ -407,11 +416,12 @@ fn part_words(part: &Part) -> String {
 
 fn part_row<'a>(part: &Part, pinned: bool) -> Element<'a, Message> {
     let words = part_words(part);
+    let words = text(words).size(11).wrapping(WRAP);
     let cell: Element<'a, Message> = if pinned {
         let locus = format!("{}:{}", part.contig, part.start + 1);
-        Context::left(text(words).size(11), move |_| Message::Visit(locus.clone())).into()
+        Context::left(words, move |_| Message::Visit(locus.clone())).into()
     } else {
-        text(words).size(11).into()
+        words.into()
     };
     row![
         text(PART).size(11).style(style::muted).width(LABEL_WIDTH),
@@ -424,10 +434,18 @@ fn part_row<'a>(part: &Part, pinned: bool) -> Element<'a, Message> {
 fn field_row<'a>(track: Option<u64>, label: String, value: String) -> Element<'a, Message> {
     let cell = match track {
         Some(track) => items(track, &label, &value),
-        None => text(value).size(11).width(Length::Fill).into(),
+        None => text(value)
+            .size(11)
+            .wrapping(WRAP)
+            .width(Length::Fill)
+            .into(),
     };
     row![
-        text(label).size(11).style(style::muted).width(LABEL_WIDTH),
+        text(label)
+            .size(11)
+            .style(style::muted)
+            .wrapping(WRAP)
+            .width(LABEL_WIDTH),
         cell,
     ]
     .spacing(FIELD_GAP)
@@ -439,6 +457,7 @@ fn heading<'a>(title: String, pinned: bool) -> Element<'a, Message> {
         text(title)
             .font(font::UI_STRONG)
             .size(12)
+            .wrapping(WRAP)
             .width(Length::Fill)
     ]
     .align_y(Align::Center);
@@ -495,12 +514,14 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             (field.label.clone(), value)
         })
         .collect();
-    let count = lines.len()
+    let count = lines.len() + wrapped(&title, width - 2.0 * PADDING, TITLE_CHARACTER) - 1
         + parts.len()
         + usize::from(hidden > 0)
         + rows
             .iter()
-            .map(|(label, value)| wrapped(label, LABEL_WIDTH).max(wrapped(value, value_width)))
+            .map(|(label, value)| {
+                wrapped(label, LABEL_WIDTH, CHARACTER).max(wrapped(value, value_width, CHARACTER))
+            })
             .sum::<usize>();
     let room = (window.height - 2.0 * EDGE).max(BASE_HEIGHT);
     let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
@@ -510,13 +531,16 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         text(locus.to_string())
             .font(font::MONO)
             .size(11)
-            .style(style::muted),
+            .style(style::muted)
+            .wrapping(WRAP),
     ]
-    .extend(
-        lines
-            .into_iter()
-            .map(|line| text(line).size(11).style(style::muted).into()),
-    )
+    .extend(lines.into_iter().map(|line| {
+        text(line)
+            .size(11)
+            .style(style::muted)
+            .wrapping(WRAP)
+            .into()
+    }))
     .extend(
         rows.into_iter()
             .map(|(label, value)| field_row(pinned.then_some(card.track), label, value)),
@@ -767,6 +791,34 @@ mod tests {
         let pinned = bounds(&card, true);
         assert!(pinned.height > hover.height, "{pinned:?} {hover:?}");
         assert!(pinned.height <= 400.0 - 8.0, "{pinned:?}");
+    }
+
+    #[test]
+    fn long_words_wrap_inside_the_card() {
+        let title = "ENST00000357654.9_BRCA1_201_protein_coding_MANE_Select_transcript_of_BRCA1";
+        let label = "molecular_consequence_of_the_variant";
+        let value = "NM_007294.4(BRCA1):c.673_680delinsCAGTAT";
+        let card = Card {
+            track: 1,
+            contig: "chr17".to_owned(),
+            detail: Detail::Feature(Feature::new(title, region(9, 20), Strand::Forward)),
+            at: Point::new(100.0, 780.0),
+            fields: vec![field(label, value)],
+        };
+        let window = Size::new(1280.0, 800.0);
+        for pinned in [false, true] {
+            let mut ui = simulator(view(&card, pinned, window));
+            let edge = ui.find(selector::id("card")).unwrap().bounds();
+            assert!(edge.y + edge.height <= card.at.y, "{pinned} {edge:?}");
+            for words in [title, label, value] {
+                let shown = ui.find(words).unwrap().bounds();
+                assert!(shown.height > 20.0, "{words} {pinned} {shown:?}");
+                assert!(
+                    shown.x + shown.width <= edge.x + edge.width,
+                    "{words} {pinned} {shown:?} {edge:?}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -25,6 +25,10 @@
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
 
+### Fixes
+
+- A card breaks a word that is too long for one line, for example a long variant name. Before, the word went past the edge of the card.
+
 ## 0.2.0
 
 genie opens track files as they come, also when they have no index or are not sorted.
