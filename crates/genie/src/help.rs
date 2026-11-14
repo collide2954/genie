@@ -112,6 +112,7 @@ pub fn groups() -> [Group; 6] {
         group(
             "Help",
             vec![
+                (keys('K'), "Find an action"),
                 ("F1".to_owned(), "Show this list"),
                 ("Escape".to_owned(), "Close menus and cards"),
             ],

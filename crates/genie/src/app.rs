@@ -43,6 +43,7 @@ mod filters;
 mod navigation;
 mod offline;
 mod orders;
+mod palette;
 mod regions;
 mod sessions;
 pub mod snapshot;
@@ -113,6 +114,7 @@ pub struct Genie {
     renaming: Option<(u64, String)>,
     range_draft: Option<(String, String)>,
     track_draft: Option<crate::track_dialog::Draft>,
+    palette: Option<crate::palette::State>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +126,7 @@ enum Popup {
     App,
     AppRecent,
     Track(u64),
+    Palette,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -188,6 +191,7 @@ impl Default for Genie {
             renaming: None,
             range_draft: None,
             track_draft: None,
+            palette: None,
         }
     }
 }
@@ -634,6 +638,7 @@ pub enum Message {
     RecentMenu(bool),
     TrackSettings(u64),
     TrackDraft(Drafting),
+    Palette(Paletting),
     Catalog(usize),
     CatalogOpened(usize, Result<Arc<Source>, String>),
     Offline(Offline),
@@ -773,6 +778,13 @@ pub enum Sweep {
     Pressed(f32),
     Dragged(f32),
     Released,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Paletting {
+    Query(String),
+    Choose(usize),
+    Run,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -957,6 +969,7 @@ impl Genie {
             Message::RecentMenu(open) => self.show_recent(open),
             Message::TrackSettings(id) => self.open_track_settings(id),
             Message::TrackDraft(drafting) => self.draft_track(drafting),
+            Message::Palette(paletting) => return self.palette_message(paletting),
             Message::Catalog(index) => return self.open_catalog(index),
             Message::CatalogOpened(index, result) => return self.catalog_opened(index, result),
             Message::Offline(offline) => return self.offline(offline),
@@ -1199,8 +1212,9 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline, Paneling,
-        Port, Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut, window_event,
+        Address, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline, Paletting,
+        Paneling, Port, Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut,
+        window_event,
     };
     use crate::export;
     use crate::location::Location;
@@ -2317,6 +2331,45 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn the_palette_finds_and_runs_actions() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::Command(Command::Palette));
+        assert!(has_id(&genie, "palette"));
+        let query = Message::Palette(Paletting::Query("phase group".to_owned()));
+        let _ = genie.update(query);
+        {
+            let mut ui = simulator(genie.view());
+            assert!(ui.find("Group by phase").is_ok());
+            assert!(ui.find("Show duplicates").is_err());
+        }
+        let _ = genie.update(Message::Palette(Paletting::Run));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.options.group, Grouping::Phase);
+        assert!(!has_id(&genie, "palette"));
+    }
+
+    #[test]
+    fn the_palette_moves_its_choice_and_finds_recent_files() {
+        let mut genie = opened();
+        let file = Location::File(PathBuf::from("/data/hg38.2bit"));
+        genie.recent.add(file.clone().into());
+        let _ = genie.update(Message::Command(Command::Palette));
+        let _ = genie.update(Message::Palette(Paletting::Query("zoom".to_owned())));
+        let _ = genie.update(Message::Command(Command::NextSuggestion));
+        assert_eq!(genie.palette.as_ref().map(|state| state.selected), Some(1));
+        let _ = genie.update(Message::Command(Command::PreviousSuggestion));
+        assert_eq!(genie.palette.as_ref().map(|state| state.selected), Some(0));
+        let _ = genie.update(Message::Palette(Paletting::Query("hg38".to_owned())));
+        let mut ui = simulator(genie.view());
+        ui.click("Open hg38.2bit").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        let choose = Message::Palette(Paletting::Choose(0));
+        assert!(messages.contains(&choose), "{messages:?}");
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!has_id(&genie, "palette"));
     }
 
     #[test]

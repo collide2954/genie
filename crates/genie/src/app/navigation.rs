@@ -68,12 +68,12 @@ impl Genie {
                 operation::focus(chrome::LOCUS),
                 operation::select_all(chrome::LOCUS),
             ]),
-            Command::NextSuggestion => {
-                self.step_highlight(true);
-                Task::none()
-            }
-            Command::PreviousSuggestion => {
-                self.step_highlight(false);
+            Command::Palette => self.open_palette(),
+            Command::NextSuggestion | Command::PreviousSuggestion => {
+                let forward = command == Command::NextSuggestion;
+                if !self.step_palette(forward) {
+                    self.step_highlight(forward);
+                }
                 Task::none()
             }
             Command::Dismiss => {

@@ -12,6 +12,7 @@ pub enum Command {
     Whole,
     Help,
     Open,
+    Palette,
     Back,
     Forward,
     NextFeature,
@@ -48,6 +49,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
+        Key::Character("k" | "K") if modifiers.command() => Some(Command::Palette),
         Key::Character("o" | "O") if modifiers.command() => Some(Command::Open),
         Key::Character("u" | "U") if modifiers.command() => Some(Command::OpenUrl),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
@@ -114,6 +116,15 @@ mod tests {
             Some(Command::AddRegion)
         );
         assert_eq!(command(&character("d"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_k_opens_the_palette() {
+        assert_eq!(
+            command(&character("k"), Modifiers::COMMAND),
+            Some(Command::Palette)
+        );
+        assert_eq!(command(&character("k"), Modifiers::empty()), None);
     }
 
     #[test]

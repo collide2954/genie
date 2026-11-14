@@ -224,6 +224,7 @@ impl Genie {
             .or_else(|| (self.popup == Some(Popup::Help)).then(crate::help::view))
             .or_else(|| self.app_menu())
             .or_else(|| self.track_dialog())
+            .or_else(|| self.palette_view())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::MenuDismissed)

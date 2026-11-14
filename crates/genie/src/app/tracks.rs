@@ -302,6 +302,7 @@ impl Genie {
         self.address = None;
         self.range_draft = None;
         self.track_draft = None;
+        self.palette = None;
     }
 
     pub(super) fn open_menu(&mut self, id: u64, at: Point) {

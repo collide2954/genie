@@ -18,6 +18,7 @@ mod logger;
 mod menu;
 mod motion;
 mod navigator;
+mod palette;
 mod paths;
 mod port;
 mod prepare;
