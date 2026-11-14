@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use crate::alignment::{Alignment, REVERSE};
 use crate::modification::{self, MODIFIED_FROM};
 
+pub const PREFERRED: &str = "5mC";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Site {
     pub position: u64,
@@ -115,7 +117,13 @@ impl<K: Ord + Copy> Methylation<K> {
             .calls
             .iter()
             .enumerate()
-            .max_by_key(|&(index, calls)| (*calls, std::cmp::Reverse(index)))?;
+            .max_by_key(|&(index, calls)| {
+                (
+                    *calls,
+                    self.names[index] == PREFERRED,
+                    std::cmp::Reverse(index),
+                )
+            })?;
         Some(self.names[index].as_str())
     }
 
@@ -246,6 +254,17 @@ mod tests {
         let mut forward = Tally::default();
         forward.add(&read(100, 0, &[(2, 0, 200)]), 0);
         assert_eq!(forward.finish(base).sites("5mC", 0), [site(102, 1, 1)]);
+    }
+
+    #[test]
+    fn ties_go_to_5mc() {
+        let mut dorado = read(100, 0, &[(1, 0, 10), (1, 1, 200)]);
+        dorado.tags.mods.codes.reverse();
+        let mut tally = Tally::default();
+        tally.add(&dorado, 0);
+        let methylation = tally.finish(base);
+        assert_eq!(methylation.names(), ["5hmC", "5mC"]);
+        assert_eq!(methylation.busiest(), Some("5mC"));
     }
 
     #[test]

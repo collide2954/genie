@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Read, Seek};
 
 use genie_core::Region;
-use genie_core::methylation::Site;
+use genie_core::methylation::{PREFERRED, Site};
 use genie_core::modification;
 use genie_core::signal::Summary;
 
@@ -15,7 +15,6 @@ use crate::{Error, Reason};
 const COUNTS: usize = 9;
 const FIRST_COUNT: usize = 9;
 const ON_CYTOSINE: [&str; 5] = ["m", "h", "f", "c", "C"];
-const FIRST: &str = "5mC";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
@@ -110,7 +109,7 @@ pub fn codes(records: &[Record]) -> Vec<String> {
             names.push(name);
         }
     }
-    if let Some(at) = names.iter().position(|name| name == FIRST) {
+    if let Some(at) = names.iter().position(|name| name == PREFERRED) {
         let first = names.remove(at);
         names.insert(0, first);
     }
