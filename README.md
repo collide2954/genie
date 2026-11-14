@@ -82,7 +82,7 @@ Click the tracks button (the layers icon) in the title bar to add a public track
 | Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
 | Alignment track | BAM |
 | Variant track | VCF (plain, gzip or bgzip). genie does not read BCF. |
-| Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip) |
+| Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Session | genie session (`.genie`) |
 
 Open a genome or a reference sequence first. Then open tracks or drop them on the window.
@@ -143,6 +143,14 @@ sort -k1,1 -k2,2n signal.bedGraph | bgzip > signal.bedGraph.gz && tabix -p bed s
 
 genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows a bedGraph track that has a tabix index when the view is 10 Mb or less. For the best speed, convert bedGraph to bigWig with bedGraphToBigWig.
 
+A bedMethyl file from `modkit pileup` is a BED file. To prepare a large bedMethyl track:
+
+```bash
+sort -k1,1 -k2,2n calls.bed | bgzip > calls.bedMethyl.gz && tabix -p bed calls.bedMethyl.gz
+```
+
+genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.
+
 ## Files on the web
 
 genie can open reference sequences and tracks from a web server. To open a file from the web:
@@ -160,7 +168,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - genie reads only the parts of a file that the view needs. The server must send parts of files (HTTP range requests). If the server sends only full files, genie opens only files of 4 MB or less.
 - genie looks for the index on the same server. The address of an index is the address of the file with the index extension, for example `reads.bam.bai`.
 - If a track file on the web has no index, genie downloads the file into its cache folder and prepares it there, as for files on your computer. The limit is 1 GB. If you stop a download, it continues from where it stopped the next time that you open the file. genie does not make indexes for FASTA files from the web.
-- genie reads plain BED, GFF3, GTF, VCF and bedGraph files up to 50 MB completely.
+- genie reads plain BED, GFF3, GTF, VCF, bedGraph and bedMethyl files up to 50 MB completely.
 - For files that genie reads from the web in parts, the locus box finds names only in bigBed files that have a name index.
 - genie keeps up to 64 MB of data from the web in memory. It writes a file from the web to disk only when it must make an index for the file.
 - genie uses the certificates of the operating system for HTTPS. A connection to an `http://` address is not secure. genie does not send user names, passwords or cookies.
@@ -226,6 +234,8 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - A split read has other parts in the genome (SA tag). A dark mark shows the clipped end of the read. The card lists the other parts, for example "chr2:1,234,000 + · MAPQ 60". In a card that you keep open, click a part to go to it.
 - A read that spans an intron (N in the CIGAR) shows a thin line over the intron. Above the reads, an arc joins the two ends of each splice junction. A higher and thicker arc has more reads. The color of the arc shows the strand: blue for forward, vermillion for reverse and grey if the strand is not known. The strand comes from the XS or ts tag of the reads. If the reads have no such tag, it comes from the bases at the two ends of the intron: GT-AG, GC-AG or AT-AC on the forward strand, or their reverse complements. If there is space, the arc shows its number of reads. The count includes all reads, also the reads that down-sampling hides. Put the pointer on an arc to see its position, reads, strand and intron length. A collapsed read track shows the coverage and the arcs.
 - Long reads can have base modifications (MM and ML tags), for example 5mC from nanopore or PacBio. Right-click a read track and turn on **Color by modification**. The reads become grey, and each call has a color: vermillion for modified, blue for not modified, and a light color for a probability near 50%. Mismatches stay on top. When you zoom out, a pixel shows the mean probability of its calls. The card of a read counts the calls for each modification, for example "Modified 5mC 34 of 120" (calls with a probability of 50% or more).
+- When **Color by modification** is on, a lane above the reads shows the share of modified reads at each site. A vermillion bar goes up to the share of modified calls, and grey fills the rest. If you group the reads by phase or by strand, each group has a lane with the group name. At a CpG, genie adds the calls of the two strands together, at the C of the forward strand. Put the pointer on a bar to see the counts, for example "Modified 12 of 20 reads · 60 %", and the counts of the other modifications at the site. The lane shows 5mC, or the modification with the most calls if the reads have no 5mC. To show a different modification, right-click the track and click it, for example **Show 5hmC**.
+- genie opens bedMethyl files from `modkit pileup` as signal tracks. genie knows a bedMethyl file by its name (`.bedMethyl`, also compressed) or by its columns, also if the name ends with `.bed`. The bars show the percent of modified reads, from 0 to 100. Right-click the track to select the modification, for example **Show 5hmC**. **Join CpG strands** adds the counts of the two strands of each CpG together, at the C of the forward strand. genie joins two sites only if the file has a site on each strand. Turn it off to see each strand. Zoom in until a pixel shows less than 8 bp: then the card of a site shows its counts, for example "Modified 12 of 20 reads · 60 %".
 - Right-click the sequence to show the reverse strand and 3 or 6 reading frames.
 - Drag a track name to move the track.
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.

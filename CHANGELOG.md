@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Methylation
+
+- When **Color by modification** is on, a lane above the reads shows the share of modified reads at each site. Grouped reads get a lane for each group, for example one for each haplotype.
+- At a CpG, genie adds the calls of the two strands together.
+- The read track menu selects the modification of the lane, for example 5mC or 5hmC.
+- genie opens bedMethyl files from modkit as signal tracks that show the percent of modified reads. The track menu selects the modification and joins or separates the two strands of each CpG. The card of a site shows its counts.
+
+### Packages
+
+- The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
+
 ## 0.2.0
 
 genie opens track files as they come, also when they have no index or are not sorted.

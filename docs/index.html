@@ -261,7 +261,7 @@ footer p { margin: 0 0 4px; }
         </div>
         <div>
           <h3>Files</h3>
-          <p>Sequences: FASTA and 2bit. Features: BED, GFF3, GTF and bigBed. Reads: BAM. Variants: VCF. Signal: bigWig and bedGraph. genie also opens files from web servers. It reads only the parts that the view needs. Files without an index open too: genie sorts and indexes them in its cache.</p>
+          <p>Sequences: FASTA and 2bit. Features: BED, GFF3, GTF and bigBed. Reads: BAM. Variants: VCF. Signal: bigWig, bedGraph and bedMethyl. genie also opens files from web servers. It reads only the parts that the view needs. Files without an index open too: genie sorts and indexes them in its cache.</p>
         </div>
         <div>
           <h3>Tracks</h3>
@@ -300,7 +300,7 @@ footer p { margin: 0 0 4px; }
   <section id="reads">
     <div class="wrap">
       <h2>Long reads and RNA-seq</h2>
-      <p>Turn on <b>Color by modification</b> in the menu of a read track to show the 5mC and 5hmC calls of nanopore and PacBio reads: vermillion for modified, blue for not modified. Group the reads by haplotype to compare the two copies of a chromosome. Split reads list their other parts, and a click goes to them.</p>
+      <p>Turn on <b>Color by modification</b> in the menu of a read track to show the 5mC and 5hmC calls of nanopore and PacBio reads: vermillion for modified, blue for not modified. A lane above the reads shows the share of modified reads at each site. Group the reads by haplotype to compare the two copies of a chromosome: each haplotype gets its own lane. genie also opens bedMethyl files from modkit. Split reads list their other parts, and a click goes to them.</p>
       <figure class="shot">
         <picture>
           <source srcset="images/snrpn-dark.png" media="(prefers-color-scheme: dark)">
