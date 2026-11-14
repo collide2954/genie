@@ -595,6 +595,9 @@ impl Genie {
         if count == 1 {
             top = top.push(self.bands(session));
         }
+        if self.settings.tips {
+            top = top.push(hairline()).push(crate::help::strip());
+        }
         let tracks = top
             .push(hairline())
             .push(

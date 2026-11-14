@@ -64,6 +64,7 @@ pub enum Setting {
     Density(Density),
     Motion(bool),
     Port(bool),
+    Tips(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +74,7 @@ pub struct Settings {
     pub motion: bool,
     pub appearance: Appearance,
     pub port: bool,
+    pub tips: bool,
 }
 
 impl Default for Settings {
@@ -83,6 +85,7 @@ impl Default for Settings {
             motion: true,
             appearance: Appearance::System,
             port: true,
+            tips: true,
         }
     }
 }
@@ -113,6 +116,7 @@ impl Settings {
                 _ => Appearance::System,
             },
             port: section.value("port") != Some("off"),
+            tips: section.value("tips") != Some("off"),
         }
     }
 
@@ -135,6 +139,7 @@ impl Settings {
                 ("motion", switch(self.motion)),
                 ("theme", theme.to_owned()),
                 ("port", switch(self.port)),
+                ("tips", switch(self.tips)),
             ]
             .map(|(key, value)| (key.to_owned(), value))
             .to_vec(),
@@ -161,6 +166,7 @@ impl Settings {
             Setting::Density(density) => Self { density, ..self },
             Setting::Motion(motion) => Self { motion, ..self },
             Setting::Port(port) => Self { port, ..self },
+            Setting::Tips(tips) => Self { tips, ..self },
         }
     }
 
@@ -281,7 +287,7 @@ mod tests {
 
     use genie_formats::ini::{self, Document};
 
-    use super::{Density, Settings, size_text};
+    use super::{Density, Setting, Settings, size_text};
     use crate::recent::Recent;
     use crate::scratch::Scratch;
     use crate::theme::Appearance;
@@ -300,9 +306,13 @@ mod tests {
             motion: false,
             appearance: Appearance::Dark,
             port: false,
+            tips: false,
         };
         assert_eq!(Settings::parse(&text(settings)), settings);
         assert!(Settings::default().port);
+        assert!(Settings::default().tips);
+        let hidden = Settings::default().apply(Setting::Tips(false));
+        assert!(!hidden.tips);
     }
 
     #[test]

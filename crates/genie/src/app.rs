@@ -2306,6 +2306,20 @@ mod tests {
     }
 
     #[test]
+    fn first_start_tips_show_until_closed() {
+        let tips = crate::help::tips();
+        assert!(!shows(&Genie::default(), &tips));
+        let mut genie = opened();
+        assert!(shows(&genie, &tips));
+        let closed = click_id(&genie, "tips-close");
+        let hide = Message::SettingChanged(Setting::Tips(false));
+        assert!(closed.contains(&hide), "{closed:?}");
+        let _ = genie.update(hide);
+        assert!(!genie.settings.tips);
+        assert!(!shows(&genie, &tips));
+    }
+
+    #[test]
     fn the_app_menu_lists_actions_with_their_keys() {
         use crate::chrome::keys;
         let mut genie = opened();

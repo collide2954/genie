@@ -2,12 +2,44 @@ use iced::widget::{Column, button, center, column, container, opaque, row, space
 use iced::{Alignment, Element, Length};
 
 use crate::app::Message;
-use crate::chrome::{keys, modifier};
+use crate::chrome::{self, keys, modifier};
 use crate::icon::{self, Icon};
+use crate::settings::Setting;
 use crate::shortcuts::Command;
 use crate::{font, style};
 
 const WIDTH: f32 = 720.0;
+
+pub fn tips() -> String {
+    format!(
+        "Drag to move · {}+wheel to zoom · Right-click a track for its menu · F1 for all keys",
+        modifier()
+    )
+}
+
+pub fn strip<'a>() -> Element<'a, Message> {
+    let close = container(
+        button(icon::view(Icon::Close, 9.0))
+            .width(16)
+            .height(16)
+            .padding(0)
+            .style(style::ghost)
+            .on_press(Message::SettingChanged(Setting::Tips(false))),
+    )
+    .id("tips-close");
+    row![
+        text(tips()).size(11).style(style::muted),
+        space::horizontal(),
+        chrome::tip(
+            close,
+            "Hide the tips",
+            iced::widget::tooltip::Position::Left
+        )
+    ]
+    .padding([2, 8])
+    .align_y(Alignment::Center)
+    .into()
+}
 
 pub struct Group {
     pub title: &'static str,
