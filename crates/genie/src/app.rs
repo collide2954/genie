@@ -17,6 +17,7 @@ use iced::{
 
 use crate::card::Card;
 use crate::chrome::{self, Action};
+use crate::hub::Hub;
 use crate::location::Location;
 use crate::motion::{self, Transition};
 use crate::port::{Order, Reply};
@@ -41,6 +42,7 @@ mod export;
 mod figure;
 mod filters;
 mod find;
+mod hubs;
 mod navigation;
 mod offline;
 mod orders;
@@ -118,6 +120,10 @@ pub struct Genie {
     palette: Option<crate::palette::State>,
     finder: Option<find::Finder>,
     field_draft: Option<String>,
+    hubs: Vec<Arc<Hub>>,
+    hub_view: Option<hubs::View>,
+    hub_adding: Vec<Location>,
+    hub_next: Option<Location>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +136,7 @@ enum Popup {
     AppRecent,
     Track(u64),
     Palette,
+    Hub,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -197,6 +204,10 @@ impl Default for Genie {
             palette: None,
             finder: None,
             field_draft: None,
+            hubs: Vec::new(),
+            hub_view: None,
+            hub_adding: Vec::new(),
+            hub_next: None,
         }
     }
 }
@@ -658,6 +669,7 @@ pub enum Message {
     Visit(String),
     Cache(Caching),
     Find(find::Finding),
+    Hub(hubs::Hubbing),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -763,6 +775,7 @@ pub enum Address {
 struct AddressField {
     text: String,
     error: Option<String>,
+    hub: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -871,6 +884,7 @@ impl Genie {
             Ok(reference) => reference,
             Err(error) => {
                 self.pending.clear();
+                self.hub_next = None;
                 self.fail(error);
                 return Task::none();
             }
@@ -890,7 +904,7 @@ impl Genie {
         self.forget_matches();
         self.session = Some(Session::new(reference, self.width));
         self.resume();
-        let mut tasks = vec![self.fetch(), self.remember()];
+        let mut tasks = vec![self.fetch(), self.remember(), self.reopen_hubs()];
         let pending = std::mem::take(&mut self.pending);
         self.waiting = pending.len();
         if self.waiting == 0 {
@@ -969,6 +983,7 @@ impl Genie {
             Message::ToggleSettings => return self.toggle_settings(),
             Message::Cache(event) => return self.caching(event),
             Message::Find(finding) => return self.find(finding),
+            Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,

@@ -180,7 +180,6 @@ pub struct LocusField {
     pub forward: bool,
     pub genome: String,
     pub about: String,
-    pub catalog: bool,
 }
 
 pub const GENOME: &str = "genome";
@@ -254,7 +253,7 @@ pub fn title_bar<'a>(
         Icon::Moon => "Theme: dark",
         _ => "Theme: system",
     };
-    let navigation = row![files(locus.as_ref().is_some_and(|field| field.catalog))]
+    let navigation = row![files(locus.is_some())]
         .push(
             locus
                 .as_ref()
@@ -445,11 +444,11 @@ fn tool<'a>(
         .into()
 }
 
-fn files<'a>(catalog: bool) -> Element<'a, Message> {
-    let words = if catalog {
-        "UCSC tracks"
+fn files<'a>(open: bool) -> Element<'a, Message> {
+    let words = if open {
+        "Add tracks from UCSC or a track hub"
     } else {
-        "No UCSC tracks for this reference"
+        "Open a reference to add tracks"
     };
     row![
         tool(Icon::Open, "open", "Open a file", Message::Open),
@@ -464,7 +463,7 @@ fn files<'a>(catalog: bool) -> Element<'a, Message> {
             "catalog",
             words.to_owned(),
             Message::CatalogMenu,
-            catalog
+            open
         ),
     ]
     .spacing(TOOL_GAP)
@@ -608,7 +607,6 @@ mod tests {
             forward: false,
             genome: "hg38".to_owned(),
             about: "Human GRCh38".to_owned(),
-            catalog: false,
         }
     }
 
@@ -716,22 +714,15 @@ mod tests {
     }
 
     #[test]
-    fn the_catalog_button_opens_the_track_catalog() {
-        let catalog = LocusField {
-            catalog: true,
-            ..field("chr1:1-4", None)
-        };
-        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, Some(catalog)));
+    fn the_tracks_button_opens_the_track_menu_once_a_reference_is_open() {
+        let open = Some(field("chr1:1-4", None));
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, open));
         ui.click(selector::id("catalog")).unwrap();
         assert_eq!(
             ui.into_messages().collect::<Vec<_>>(),
             [Message::CatalogMenu]
         );
-        let mut ui = simulator(title_bar(
-            Controls::Custom,
-            Icon::Monitor,
-            Some(field("chr1:1-4", None)),
-        ));
+        let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, None));
         ui.click(selector::id("catalog")).unwrap();
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(!messages.contains(&Message::CatalogMenu), "{messages:?}");

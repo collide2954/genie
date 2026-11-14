@@ -16,6 +16,7 @@ use iced::{Point, Task};
 
 use crate::card::{Card, Detail};
 use crate::genome;
+use crate::hub;
 use crate::location::Location;
 use crate::paths;
 use crate::port::Reply;
@@ -329,6 +330,7 @@ impl Genie {
         self.range_draft = None;
         self.track_draft = None;
         self.palette = None;
+        self.hub_view = None;
     }
 
     pub(super) fn open_menu(&mut self, id: u64, at: Point) {
@@ -644,6 +646,9 @@ impl Genie {
         if location.is_remote() && saved::is_session(Path::new(&location.name())) {
             self.fail(REMOTE_SESSION.to_owned());
             return Task::none();
+        }
+        if hub::is_hub(&location) {
+            return self.open_hub(location, true);
         }
         if track::is_track(&location) {
             if self.session.is_none() {

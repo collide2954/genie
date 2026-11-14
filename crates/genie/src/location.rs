@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use genie_formats::http::Url;
 use genie_formats::remote::Remote;
@@ -66,6 +66,24 @@ impl Location {
         }
     }
 
+    /// The location of a file that this file names relative to its own folder, as a hub does.
+    pub fn join(&self, relative: &str) -> Result<Self, String> {
+        let relative = relative.trim();
+        if Url::is_url(relative) {
+            return Self::parse(relative);
+        }
+        match self {
+            Self::Url(url) => url
+                .join(relative)
+                .map(Self::Url)
+                .map_err(|error| error.to_string()),
+            Self::File(path) => {
+                let folder = path.parent().unwrap_or(Path::new(""));
+                Ok(Self::File(tidy(&folder.join(relative))))
+            }
+        }
+    }
+
     #[must_use]
     pub fn with_extension(&self, extension: &str) -> Self {
         match self {
@@ -95,6 +113,25 @@ impl Location {
                 .map_err(|error| error.to_string()),
         }
     }
+}
+
+/// A path without its "." parts, and with each ".." part taking away the folder before it.
+fn tidy(path: &Path) -> PathBuf {
+    let mut tidy = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(tidy.components().next_back(), Some(Component::Normal(_))) {
+                    tidy.pop();
+                } else {
+                    tidy.push(part);
+                }
+            }
+            _ => tidy.push(part),
+        }
+    }
+    tidy
 }
 
 impl From<PathBuf> for Location {
@@ -167,6 +204,29 @@ mod tests {
         );
         assert_eq!(url.path(), None);
         assert!(Location::parse("https://user:pass@example.org/a").is_err());
+    }
+
+    #[test]
+    fn relative_names_join_the_folder_of_the_file() {
+        let file = Location::File(PathBuf::from("/hubs/mine/hg38/trackDb.txt"));
+        assert_eq!(
+            file.join("../data/./a.bb").unwrap(),
+            Location::File(PathBuf::from("/hubs/mine/data/a.bb"))
+        );
+        assert_eq!(
+            file.join(" b.bw ").unwrap(),
+            Location::File(PathBuf::from("/hubs/mine/hg38/b.bw"))
+        );
+        assert_eq!(
+            file.join("https://example.org/c.bam").unwrap().to_string(),
+            "https://example.org/c.bam"
+        );
+        let url = Location::parse("https://example.org/hubs/x/hub.txt").unwrap();
+        assert_eq!(
+            url.join("../y/genomes.txt").unwrap().to_string(),
+            "https://example.org/hubs/y/genomes.txt"
+        );
+        assert!(url.join("https://user:pass@example.org/a").is_err());
     }
 
     #[test]

@@ -1215,6 +1215,50 @@ pub fn open_with(
     })
 }
 
+/// How genie reads a track whose file type a track hub gives, so the file name can be anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typed {
+    /// bigBed, bigWig and the other UCSC big formats.
+    Big,
+    Bam,
+    Cram,
+    Vcf,
+}
+
+impl Typed {
+    /// The way to read a hub type such as `bigBed`, `bam` or `vcfTabix`, if genie can read it.
+    pub fn of(kind: &str) -> Option<Self> {
+        match kind {
+            "bam" => Some(Self::Bam),
+            "cram" => Some(Self::Cram),
+            "vcf" | "vcfTabix" | "vcfPhasedTrio" => Some(Self::Vcf),
+            _ if kind.starts_with("big") => Some(Self::Big),
+            _ => None,
+        }
+    }
+}
+
+/// Opens a track with a file type from a track hub, and with the index that the hub names.
+pub fn open_typed(
+    location: Location,
+    typed: Typed,
+    index: Option<&Location>,
+) -> Result<Source, String> {
+    let name = location.name();
+    let format = match typed {
+        Typed::Big => open_bbi(&location, &name, None)?,
+        Typed::Bam => Format::Reads(ReadFile::open_bam(&location, &name, index)?),
+        Typed::Cram => Format::Reads(ReadFile::open_cram(&location, &name, index)?),
+        Typed::Vcf => Format::Variants(VariantFile::open(&location, &name, index)?),
+    };
+    Ok(Source {
+        location,
+        data: None,
+        name,
+        format,
+    })
+}
+
 fn open_bbi(location: &Location, name: &str, label: Option<&str>) -> Result<Format, String> {
     let mut file = location.open()?;
     let mut index = bbi::Index::read(&mut file)
@@ -1514,10 +1558,12 @@ mod tests {
     use genie_render::scene::Hue;
     use genie_render::signal::{Scale, Style};
 
+    use super::reads::Reads;
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Loaded, Methyl, Options,
-        Plot, Prepared, SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits,
-        hides, is_track, load, lookup, names, neighbor, open, open_bbi, open_with, spans, step,
+        Plot, Prepared, SignalFile, Source, Toggle, Track, Typed, VariantFile, change,
+        contig_names, fits, hides, is_track, load, lookup, names, neighbor, open, open_bbi,
+        open_typed, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2315,6 +2361,47 @@ mod tests {
             neighbor(&reads, &names, &assembly, 0, 0, true, &[]).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn hub_tracks_open_by_their_type_without_known_names() {
+        let read = |name: &str| fs::read(fixture(name)).unwrap();
+        let files = vec![
+            ("/data/1".to_owned(), read("genes.bb")),
+            ("/data/2".to_owned(), read("signal.bw")),
+            ("/data/3".to_owned(), read("reads.bam")),
+            ("/data/3i".to_owned(), read("reads.bam.bai")),
+            ("/data/4".to_owned(), read("variants.vcf.gz")),
+            ("/data/4i".to_owned(), read("variants.vcf.gz.tbi")),
+            ("/data/5".to_owned(), read("cram30.cram")),
+            ("/data/5i".to_owned(), read("cram30.cram.crai")),
+        ];
+        let server = crate::server::serve(files);
+        let at = |path: &str| Location::parse(&server.url(path)).unwrap();
+        let open = |path: &str, kind: &str, index: Option<&str>| {
+            let typed = Typed::of(kind).unwrap();
+            open_typed(at(path), typed, index.map(at).as_ref())
+        };
+        assert!(open("/data/1", "bigGenePred", None).unwrap().is_bigbed());
+        assert!(open("/data/2", "bigWig", None).unwrap().has_signal());
+        assert!(
+            open("/data/3", "bam", Some("/data/3i"))
+                .unwrap()
+                .has_reads()
+        );
+        let calls = open("/data/4", "vcfTabix", Some("/data/4i")).unwrap();
+        assert!(calls.has_variants());
+        let cram = open("/data/5", "cram", Some("/data/5i")).unwrap();
+        assert!(matches!(
+            &cram.format,
+            Format::Reads(file) if matches!(file.index, Reads::Cram(..))
+        ));
+        assert_eq!(cram.location, at("/data/5"));
+        let missing = open("/data/3", "bam", None).unwrap_err();
+        assert!(missing.contains("There is no index 3.bai"), "{missing}");
+        assert_eq!(Typed::of("hic"), None);
+        assert_eq!(Typed::of("bigInteract"), Some(Typed::Big));
+        assert_eq!(Typed::of("vcfPhasedTrio"), Some(Typed::Vcf));
     }
 
     #[test]

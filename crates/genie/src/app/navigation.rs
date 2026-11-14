@@ -60,7 +60,7 @@ impl Genie {
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
             Command::AddRegion => self.regions(Regions::Add),
-            Command::OpenUrl => self.ask_address(),
+            Command::OpenUrl => self.ask_address(false),
             Command::Find => self.open_finder(),
             Command::NextFeature | Command::PreviousFeature => {
                 let forward = command == Command::NextFeature;

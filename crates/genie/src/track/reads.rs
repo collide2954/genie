@@ -36,8 +36,17 @@ impl ReadFile {
 
     pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
         if super::is_cram(name) {
-            return Self::open_cram(location, name, index);
+            Self::open_cram(location, name, index)
+        } else {
+            Self::open_bam(location, name, index)
         }
+    }
+
+    pub(super) fn open_bam(
+        location: &Location,
+        name: &str,
+        index: Option<&Location>,
+    ) -> Result<Self, String> {
         let candidates = match index {
             Some(index) => vec![index.clone()],
             None => vec![
@@ -64,7 +73,7 @@ impl ReadFile {
         })
     }
 
-    fn open_cram(
+    pub(super) fn open_cram(
         location: &Location,
         name: &str,
         index: Option<&Location>,

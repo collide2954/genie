@@ -169,10 +169,6 @@ impl Genie {
                 forward: session.history.can_go_forward(),
                 genome,
                 about,
-                catalog: reference
-                    .genome
-                    .as_deref()
-                    .is_some_and(|genome| !crate::catalog::entries(genome).is_empty()),
             }
         });
         let mut layers = stack![column![
@@ -224,6 +220,7 @@ impl Genie {
             .or_else(|| (self.popup == Some(Popup::Help)).then(crate::help::view))
             .or_else(|| self.app_menu())
             .or_else(|| self.track_dialog())
+            .or_else(|| self.hub_dialog())
             .or_else(|| self.palette_view())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))

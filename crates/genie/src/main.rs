@@ -12,6 +12,7 @@ mod font;
 mod genome;
 mod grip;
 mod help;
+mod hub;
 mod icon;
 mod location;
 mod logger;
