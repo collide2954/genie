@@ -52,6 +52,9 @@ impl Genie {
                 self.toggle(Popup::Help);
                 Task::none()
             }
+            Command::Open => {
+                Task::perform(super::tracks::pick(self.session.is_some()), Message::Picked)
+            }
             Command::Back => self.step_history(false),
             Command::Forward => self.step_history(true),
             Command::AddRegion => self.regions(Regions::Add),

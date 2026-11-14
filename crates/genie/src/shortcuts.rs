@@ -11,6 +11,7 @@ pub enum Command {
     Zoom(f32),
     Whole,
     Help,
+    Open,
     Back,
     Forward,
     NextFeature,
@@ -47,6 +48,7 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
+        Key::Character("o" | "O") if modifiers.command() => Some(Command::Open),
         Key::Character("u" | "U") if modifiers.command() => Some(Command::OpenUrl),
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
@@ -112,6 +114,15 @@ mod tests {
             Some(Command::AddRegion)
         );
         assert_eq!(command(&character("d"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_o_opens_a_file() {
+        assert_eq!(
+            command(&character("o"), Modifiers::COMMAND),
+            Some(Command::Open)
+        );
+        assert_eq!(command(&character("o"), Modifiers::empty()), None);
     }
 
     #[test]

@@ -68,6 +68,7 @@ pub fn groups() -> [Group; 6] {
         group(
             "Files and images",
             vec![
+                (keys('O'), "Open a file"),
                 ("Drop them on genie".to_owned(), "Open files"),
                 (keys('U'), "Open a URL"),
                 (keys('S'), "Save the session"),

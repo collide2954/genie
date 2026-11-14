@@ -21,7 +21,8 @@ const TOOL_ICON: f32 = 14.0;
 const WINDOW_BUTTON_WIDTH: f32 = 46.0;
 const WINDOW_ICON: f32 = 16.0;
 const GRIP: f32 = 6.0;
-const BRAND_WIDTH: f32 = 60.0;
+const BRAND_WIDTH: f32 = 76.0;
+const CHEVRON: f32 = 10.0;
 const LOGO: f32 = 14.0;
 const BRAND_GAP: f32 = 12.0;
 const NAVIGATION_GAP: f32 = 6.0;
@@ -33,6 +34,10 @@ const fn inset(controls: Controls) -> f32 {
         Controls::Native => 76.0,
         Controls::Custom => 10.0,
     }
+}
+
+pub const fn brand_x(controls: Controls) -> f32 {
+    inset(controls)
 }
 
 pub const fn locus_x(controls: Controls) -> f32 {
@@ -193,18 +198,31 @@ fn genome_label<'a>(name: String, about: String) -> Element<'a, Message> {
         .into()
 }
 
+fn brand_button<'a>() -> Element<'a, Message> {
+    let logo = brand::view(LOGO, None);
+    let chevron = container(icon::view(Icon::Down, CHEVRON))
+        .width(CHEVRON)
+        .height(CHEVRON);
+    let menu = button(
+        row![logo, text("genie").font(font::UI_STRONG).size(12), chevron]
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .padding([3, 4])
+    .style(style::ghost)
+    .on_press(Message::AppMenu);
+    container(tip(menu, "Menu", tooltip::Position::Bottom))
+        .id("app-menu")
+        .width(BRAND_WIDTH)
+        .into()
+}
+
 pub fn title_bar<'a>(
     controls: Controls,
     appearance: Icon,
     locus: Option<LocusField>,
 ) -> Element<'a, Message> {
-    let logo = brand::view(LOGO, None);
-    let brand = container(
-        row![logo, text("genie").font(font::UI_STRONG).size(12)]
-            .spacing(6)
-            .align_y(Alignment::Center),
-    )
-    .width(BRAND_WIDTH);
+    let brand = brand_button();
     let regions = locus.is_some().then(|| {
         tool(
             Icon::Bookmark,
@@ -641,6 +659,15 @@ mod tests {
     }
 
     #[test]
+    fn the_brand_opens_the_app_menu() {
+        for locus in [None, Some(field("chr1:1-4", None))] {
+            let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, locus));
+            ui.click(selector::id("app-menu")).unwrap();
+            assert_eq!(ui.into_messages().collect::<Vec<_>>(), [Message::AppMenu]);
+        }
+    }
+
+    #[test]
     fn the_help_button_shows_the_keys_and_mouse_list() {
         for locus in [None, Some(field("chr1:1-4", None))] {
             let mut ui = simulator(title_bar(Controls::Custom, Icon::Monitor, locus));
@@ -844,10 +871,12 @@ mod tests {
 
     #[test]
     fn pressing_empty_bar_space_drags_the_window() {
-        let messages = press_at(
-            title_bar(Controls::Custom, Icon::Monitor, None),
-            Point::new(164.0, 20.0),
-        );
+        let bar = title_bar(Controls::Custom, Icon::Monitor, None);
+        let mut ui =
+            iced_test::Simulator::with_size(iced::Settings::default(), (800.0, 300.0), bar);
+        ui.point_at(Point::new(400.0, 20.0));
+        let _ = ui.simulate(simulator::click());
+        let messages: Vec<Message> = ui.into_messages().collect();
         assert!(messages.contains(&Message::Window(Action::Drag)));
     }
 

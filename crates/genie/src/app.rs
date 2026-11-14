@@ -34,6 +34,7 @@ use crate::track::{self, Change, Loaded, Prepared, Source, Track};
 use crate::{font, paths, timer};
 
 mod address;
+mod app_menu;
 mod caching;
 mod copy;
 mod export;
@@ -118,6 +119,8 @@ enum Popup {
     Genomes,
     Catalog,
     Help,
+    App,
+    AppRecent,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -623,6 +626,8 @@ pub enum Message {
     Genome(String),
     GenomeMenu,
     CatalogMenu,
+    AppMenu,
+    RecentMenu(bool),
     Catalog(usize),
     CatalogOpened(usize, Result<Arc<Source>, String>),
     Offline(Offline),
@@ -936,6 +941,8 @@ impl Genie {
             Message::Genome(id) => return self.open_genome(&id),
             Message::GenomeMenu => self.toggle(Popup::Genomes),
             Message::CatalogMenu => self.toggle(Popup::Catalog),
+            Message::AppMenu => self.toggle_app_menu(),
+            Message::RecentMenu(open) => self.show_recent(open),
             Message::Catalog(index) => return self.open_catalog(index),
             Message::CatalogOpened(index, result) => return self.catalog_opened(index, result),
             Message::Offline(offline) => return self.offline(offline),
@@ -2296,6 +2303,59 @@ mod tests {
         let _ = genie.update(Message::Command(Command::Forward));
         settle(&mut genie);
         assert!(shows(&genie, "chr2:61-160"));
+    }
+
+    #[test]
+    fn the_app_menu_lists_actions_with_their_keys() {
+        use crate::chrome::keys;
+        let mut genie = opened();
+        let _ = genie.update(Message::AppMenu);
+        let mut ui = simulator(genie.view());
+        for line in [
+            "Recent",
+            &keys('O'),
+            &keys('U'),
+            &keys('S'),
+            &keys('E'),
+            "F1",
+        ] {
+            assert!(ui.find(line).is_ok(), "{line}");
+        }
+        let items = [
+            ("Open file…", Message::Command(Command::Open)),
+            ("Open URL…", Message::Command(Command::OpenUrl)),
+            ("Save session", Message::Command(Command::SaveSession)),
+            ("Export image…", Message::Command(Command::Export)),
+            ("Keys and mouse…", Message::Command(Command::Help)),
+            ("Settings", Message::ToggleSettings),
+        ];
+        for (label, _) in &items {
+            ui.click(*label).unwrap();
+        }
+        let messages: Vec<Message> = ui.into_messages().collect();
+        for (label, message) in items {
+            assert!(messages.contains(&message), "{label} {messages:?}");
+        }
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        assert!(!shows(&genie, "Open file…"));
+    }
+
+    #[test]
+    fn the_app_menu_lists_recent_files() {
+        let mut genie = opened();
+        let file = Location::File(PathBuf::from("/data/hg38.2bit"));
+        genie.recent.add(file.clone().into());
+        let _ = genie.update(Message::AppMenu);
+        assert!(!shows(&genie, "hg38.2bit"));
+        let _ = genie.update(Message::RecentMenu(true));
+        assert!(shows(&genie, "hg38.2bit"));
+        let mut ui = simulator(genie.view());
+        ui.click("hg38.2bit").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Reopen(file)), "{messages:?}");
+        let _ = genie.update(Message::RecentMenu(false));
+        assert!(!shows(&genie, "hg38.2bit"));
+        assert!(shows(&genie, "Open file…"));
     }
 
     #[test]

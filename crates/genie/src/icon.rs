@@ -31,6 +31,7 @@ pub enum Icon {
     Plus,
     Whole,
     Help,
+    Down,
 }
 
 enum Shape {
@@ -130,6 +131,7 @@ impl Icon {
             Self::Plus => PLUS,
             Self::Help => HELP,
             Self::Whole => WHOLE,
+            Self::Down => &[Shape::Polyline(&[[6.0, 9.0], [12.0, 15.0], [18.0, 9.0]])],
         }
     }
 }
@@ -280,7 +282,8 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 20] = [
+    const ICONS: [Icon; 21] = [
+        Icon::Down,
         Icon::Help,
         Icon::More,
         Icon::Minus,
