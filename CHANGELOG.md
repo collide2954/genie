@@ -35,6 +35,11 @@
 - A filtered bigBed track wider than 10 Mb shows the density of the features that the filter keeps, if their data in view is 16 MB or less.
 - A click inside a menu does not close the menu.
 
+### CRAM
+
+- genie opens CRAM 3.0 files as read tracks, with gzip and rANS compression. It decodes the reads with the reference that is open, and checks the MD5 of each part of the file against that reference.
+- A CRAM file without its `.crai` index gets one in the cache folder.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.

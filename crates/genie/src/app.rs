@@ -3953,7 +3953,7 @@ mod tests {
             name: "reads.bam".to_owned(),
             data: None,
             format: Format::Reads(ReadFile {
-                index: genie_formats::bai::Index::default(),
+                index: crate::track::reads::Reads::Bam(genie_formats::bai::Index::default()),
                 contigs: vec!["chr1".to_owned()],
             }),
         });

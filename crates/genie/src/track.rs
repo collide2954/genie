@@ -20,7 +20,7 @@ use genie_render::signal::{Scale, Style};
 use crate::location::{Location, Reader};
 
 mod features;
-mod reads;
+pub(crate) mod reads;
 mod signal;
 mod variants;
 
@@ -1062,6 +1062,7 @@ pub fn contig_names(names: &[String], assembly: &Assembly) -> Vec<Option<String>
 pub fn is_track(location: &Location) -> bool {
     let name = location.name();
     is_bam(&name)
+        || is_cram(&name)
         || is_vcf(&name)
         || is_signal(&name)
         || is_bedmethyl(&name)
@@ -1073,6 +1074,12 @@ pub fn is_bam(name: &str) -> bool {
     Path::new(name)
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("bam"))
+}
+
+pub fn is_cram(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("cram"))
 }
 
 fn inner_extension(name: &str, wanted: &[&str]) -> bool {
@@ -1187,7 +1194,7 @@ pub fn open_with(
     };
     let reading = data.as_ref().unwrap_or(&location);
     let index = index.as_ref();
-    let format = if is_bam(&name) {
+    let format = if is_bam(&name) || is_cram(&name) {
         Format::Reads(ReadFile::open(reading, &name, index)?)
     } else if is_vcf(&name) {
         Format::Variants(VariantFile::open(reading, &name, index)?)
@@ -1273,7 +1280,7 @@ pub fn load(
     options: Options,
     step: u64,
     detail: bool,
-    reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
+    reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     load_kept(
         source,
@@ -1293,7 +1300,7 @@ pub fn load_kept(
     region: Region,
     options: Options,
     (step, detail, rules): (u64, bool, &[Rule]),
-    reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
+    reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let location = source.data();
     match &source.format {
@@ -2687,6 +2694,70 @@ mod tests {
             no_reference,
         );
         assert_eq!(loaded.unwrap().options, options);
+    }
+
+    #[test]
+    fn cram_tracks_load_the_same_reads_as_bam() {
+        let reference =
+            crate::reference::open(fixture("reference.fa.gz"), None, &mut |_| {}).unwrap();
+        let cram = open(fixture("cram30.cram")).unwrap();
+        let bam = open(fixture("cram.bam")).unwrap();
+        assert_eq!(cram.contigs(), ["chr1", "chr2", "chrM"]);
+        assert!(is_track(&PathBuf::from("a.cram").into()));
+        for (contig, name, start, end) in [(0, "chr1", 10_000, 14_000), (1, "chr2", 0, 3_000)] {
+            let window = region(start, end);
+            let bases = |window: Region| reference.fetch(contig, window);
+            let from_cram = load(&cram, name, window, Options::default(), 1, true, bases);
+            let from_bam = load(&bam, name, window, Options::default(), 1, true, bases);
+            let from_cram = from_cram.unwrap();
+            assert_eq!(from_cram, from_bam.unwrap(), "{name}");
+            let Content::Reads(pile) = &from_cram.content else {
+                panic!("expected reads");
+            };
+            assert!(pile.count > 0, "{name}");
+        }
+    }
+
+    #[test]
+    fn cram_files_name_what_genie_cannot_read() {
+        let scratch = Scratch::new("cram-errors");
+        let bare = scratch.file("bare.cram", fs::read(fixture("cram30.cram")).unwrap());
+        let error = open(bare).unwrap_err();
+        assert_eq!(
+            error,
+            "There is no index bare.cram.crai. Index the file with samtools index."
+        );
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let cram = open(fixture("cram30.cram")).unwrap();
+        let error = load(
+            &cram,
+            "chr1",
+            region(10_000, 14_000),
+            Options::default(),
+            1,
+            true,
+            reference,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "The reference is not the reference of the CRAM file here."
+        );
+        let newer = open(fixture("cram31.cram")).unwrap();
+        let error = load(
+            &newer,
+            "chr1",
+            region(10_000, 14_000),
+            Options::default(),
+            1,
+            true,
+            reference,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "The file uses CRAM 3.1 compression, which genie does not read yet."
+        );
     }
 
     #[test]

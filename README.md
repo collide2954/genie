@@ -80,7 +80,7 @@ Click the tracks button (the layers icon) in the title bar to add a public track
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
-| Alignment track | BAM |
+| Alignment track | BAM; CRAM 3.0 |
 | Variant track | VCF (plain, gzip or bgzip). genie does not read BCF. |
 | Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Session | genie session (`.genie`) |
@@ -95,9 +95,9 @@ bgzip genome.fa && samtools faidx genome.fa.gz
 
 ### Files without an index
 
-If a track file has an index next to it (`.tbi`, `.csi` or `.bai`), genie uses that index. If the file has no index, genie prepares the file in its cache folder:
+If a track file has an index next to it (`.tbi`, `.csi`, `.bai` or `.crai`), genie uses that index. If the file has no index, genie prepares the file in its cache folder:
 
-- A sorted BAM file or a sorted bgzip file gets an index. genie does not copy the file.
+- A sorted BAM file, a CRAM file or a sorted bgzip file gets an index. genie does not copy the file.
 - A plain or gzip file gets a copy compressed with bgzip, and an index. Plain files up to 50 MB open directly, without a copy.
 - A file that is not sorted by position gets a sorted copy, for example a GTF file from GENCODE or Ensembl, or a BAM file from an aligner. genie sorts on disk, so the size of the file is not limited by memory.
 
@@ -124,6 +124,8 @@ To prepare a BAM track:
 ```bash
 samtools sort -o reads.bam reads.sam && samtools index reads.bam
 ```
+
+A CRAM file keeps the bases of a read as differences from a reference. genie uses the reference that is open, so open the genome or the FASTA file that made the CRAM file. Each part of a CRAM file has the MD5 of its reference bases. If the open reference is different there, the track says "The reference is not the reference of the CRAM file here." and does not show wrong bases. CRAM files that hold their own reference, or that do not need one, open with any reference. genie reads CRAM 3.0 with gzip and rANS compression, which is what most archives and `samtools view -C --output-fmt-option version=3.0` make. It does not read CRAM 3.1 compression yet, nor bzip2 and lzma blocks.
 
 genie shows reads when the view is 30 kb or less. It hides QC-fail and secondary reads. By default, it also hides duplicate reads and soft clips, and it keeps 100 reads for each 50 bp.
 

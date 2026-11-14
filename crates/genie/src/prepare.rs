@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, BufWriter, ErrorKind, Read, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
+use genie_formats::cram::Cram;
 use genie_formats::http::{self, Url};
 use genie_formats::sort::{self, Budget, Stage};
 use genie_formats::tabix::{self, Layout};
@@ -26,6 +27,7 @@ const HEAD: usize = 18;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Reads,
+    Cram,
     Text(Layout),
 }
 
@@ -80,6 +82,7 @@ pub fn check_with(location: &Location, cache: Option<&Path>, limit: u64) -> Resu
     };
     let ready = match kind {
         Kind::Reads => opens(&[".bai", ".csi"]) || location.with_extension("bai").open().is_ok(),
+        Kind::Cram => opens(&[".crai"]) || location.with_extension("crai").open().is_ok(),
         Kind::Text(_) if track::is_compressed(&name) => opens(&[".tbi", ".csi"]),
         Kind::Text(_) => location.size()? <= limit,
     };
@@ -109,6 +112,9 @@ pub fn check_with(location: &Location, cache: Option<&Path>, limit: u64) -> Resu
 fn kind(name: &str) -> Option<Kind> {
     if track::is_bam(name) {
         return Some(Kind::Reads);
+    }
+    if track::is_cram(name) {
+        return Some(Kind::Cram);
     }
     if track::is_vcf(name) {
         return Some(Kind::Text(Layout::VCF));
@@ -274,6 +280,7 @@ fn make(
     };
     let (data, index) = match work.kind {
         Kind::Reads => job.reads(),
+        Kind::Cram => job.cram(),
         Kind::Text(layout) => job.text(layout),
     }?;
     if !downloaded {
@@ -369,6 +376,15 @@ impl<'a, 'p> Job<'a, 'p> {
         )?;
         fs::write(self.partial.join(&index), bytes)?;
         Ok((Some(copy), index))
+    }
+
+    fn cram(&self) -> Result<Made, Error> {
+        let index = format!("{}.crai", self.name);
+        let mut reader = BufReader::new(self.watched(Step::Indexing, 1.0)?);
+        let cram = Cram::read(&mut reader)?;
+        let bytes = cram.index(&mut reader)?;
+        fs::write(self.partial.join(&index), bytes)?;
+        Ok((None, index))
     }
 
     fn text(&self, layout: Layout) -> Result<Made, Error> {
@@ -479,6 +495,13 @@ impl Read for Watched<'_, '_, '_> {
             .borrow_mut()
             .send(self.step, share * self.scale);
         Ok(count)
+    }
+}
+
+impl Seek for Watched<'_, '_, '_> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.read = self.inner.seek(position)?;
+        Ok(self.read)
     }
 }
 
@@ -593,6 +616,30 @@ mod tests {
         assert_eq!(
             check_with(&reads, Some(&cache), 0).unwrap(),
             Check::Prepared(prepared.clone())
+        );
+        assert!(track::open_with(reads, Some(prepared)).unwrap().has_reads());
+    }
+
+    #[test]
+    fn a_cram_without_an_index_gets_one_in_the_cache() {
+        let scratch = Scratch::new("prepare-cram");
+        let cache = folder(&scratch).join("cache");
+        assert_eq!(
+            check_with(&fixture("cram30.cram").into(), Some(&cache), 0).unwrap(),
+            Check::Ready
+        );
+        let reads = copy(&scratch, "cram30.cram");
+        let (prepared, steps) = prepare(&reads, &cache);
+        assert_eq!(prepared.data, reads);
+        assert_eq!(steps.first(), Some(&Step::Indexing));
+        let Location::File(index) = &prepared.index else {
+            panic!("expected a file");
+        };
+        let built = fs::read(index).unwrap();
+        let expected = fs::read(fixture("cram30.cram.crai")).unwrap();
+        assert_eq!(
+            genie_formats::gzip::inflate(&built).unwrap(),
+            genie_formats::gzip::inflate(&expected).unwrap()
         );
         assert!(track::open_with(reads, Some(prepared)).unwrap().has_reads());
     }
