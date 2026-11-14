@@ -3,10 +3,11 @@ use std::io::BufReader;
 use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Entry, Kind};
+use genie_formats::fields::{self, Rule};
 use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
-use super::{FEATURE_SPAN, Loaded, PLAIN_LIMIT, is_compressed, plain, tabix_index};
+use super::{FEATURE_SPAN, Kept, Loaded, PLAIN_LIMIT, is_compressed, plain, tabix_index};
 use crate::location::{Location, Reader};
 
 #[derive(Debug)]
@@ -76,13 +77,33 @@ impl FeatureFile {
         region: Region,
         step: u64,
         detail: bool,
+        (rules, budget): (&[Rule], u64),
     ) -> Result<Loaded, String> {
         if let Self::BigBed { index } = self
             && !detail
         {
+            let failed = |error: genie_formats::Error| error.to_string();
+            let mut reader = BufReader::new(location.open()?);
+            if !rules.is_empty()
+                && index
+                    .data_size(&mut reader, contig, region)
+                    .map_err(failed)?
+                    <= budget
+            {
+                let features = index
+                    .features(&mut reader, contig, region)
+                    .map_err(failed)?;
+                let kept = features
+                    .iter()
+                    .filter(|feature| fields::passes(rules, &index.fields(feature.extra())))
+                    .map(Feature::span)
+                    .collect();
+                let all = features.iter().map(Feature::span).collect();
+                return Ok(Loaded::kept_density(region, Kept { kept, all }, step));
+            }
             let summaries = index
-                .summaries(&mut BufReader::new(location.open()?), contig, region, step)
-                .map_err(|error| error.to_string())?;
+                .summaries(&mut reader, contig, region, step)
+                .map_err(failed)?;
             return Ok(Loaded::signal(region, summaries, step));
         }
         let (region, features) = self.features(location, contig, region)?;

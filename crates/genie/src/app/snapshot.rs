@@ -284,7 +284,15 @@ impl Genie {
                 let (contig, region) = track.slot.wanted?;
                 let name = track.contigs[contig].clone()?;
                 let source = Arc::clone(&track.source);
-                Some((track.id, source, name, contig, region, track.options))
+                let rules = track.filter.rules.clone();
+                Some((
+                    track.id,
+                    source,
+                    name,
+                    (contig, region),
+                    track.options,
+                    rules,
+                ))
             })
             .collect();
         if viewport.scale() <= 1.0 {
@@ -296,10 +304,11 @@ impl Genie {
             }
         }
         let length = viewport.length();
-        for (id, source, name, contig, region, options) in jobs {
+        for (id, source, name, (contig, region), options, rules) in jobs {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
+            let scope = (step, detail, rules.as_slice());
             let result =
-                track::load(&source, &name, region, options, step, detail, bases).map(Arc::new);
+                track::load_kept(&source, &name, region, options, scope, bases).map(Arc::new);
             self.on_session(|session| session.accept((id, 0), contig, region, result));
         }
     }

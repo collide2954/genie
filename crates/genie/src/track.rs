@@ -35,6 +35,7 @@ const DEPTH: usize = 100;
 const READ_GAP: u64 = 2;
 pub const PLAIN_LIMIT: u64 = 50 << 20;
 const SEARCH: u64 = 1 << 20;
+const DENSITY_BUDGET: u64 = 16 << 20;
 const SNIFF_LINES: usize = 50;
 
 #[derive(Debug)]
@@ -153,6 +154,26 @@ pub struct Signal {
     pub summaries: Vec<Summary>,
     pub step: u64,
     pub sites: Vec<Site>,
+    pub kept: Option<Kept>,
+}
+
+/// The features of a zoomed-out bigBed density that the filter keeps, and all of its features.
+#[derive(Debug, PartialEq)]
+pub struct Kept {
+    pub kept: Vec<Region>,
+    pub all: Vec<Region>,
+}
+
+impl Kept {
+    pub fn counts(&self, visible: Region) -> (usize, usize) {
+        let count = |spans: &[Region]| {
+            spans
+                .iter()
+                .filter(|span| span.intersection(visible).is_some())
+                .count()
+        };
+        (count(&self.kept), count(&self.all))
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -523,6 +544,21 @@ impl Loaded {
                 summaries,
                 step,
                 sites: Vec::new(),
+                kept: None,
+            }),
+        }
+    }
+
+    pub fn kept_density(region: Region, kept: Kept, step: u64) -> Self {
+        let summaries = signal_reduce(&bbi::depths(kept.kept.iter().copied(), region), step);
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Signal(Signal {
+                summaries,
+                step,
+                sites: Vec::new(),
+                kept: Some(kept),
             }),
         }
     }
@@ -537,6 +573,7 @@ impl Loaded {
                 summaries,
                 step,
                 sites,
+                kept: None,
             }),
         }
     }
@@ -724,6 +761,26 @@ impl Track {
                 .as_ref()
                 .and_then(|(_, data)| self.derive(data));
             self.extra[index].shown = shown;
+        }
+    }
+
+    /// A zoomed-out bigBed density depends on the filter rules, so a rule change drops it to
+    /// load it again.
+    pub fn forget_density(&mut self) {
+        if !matches!(
+            self.source.format,
+            Format::Features(FeatureFile::BigBed { .. })
+        ) {
+            return;
+        }
+        for slot in std::iter::once(&mut self.slot).chain(self.extra.iter_mut()) {
+            let density = slot
+                .loaded
+                .as_ref()
+                .is_some_and(|(_, data)| matches!(data.content, Content::Signal(_)));
+            if density {
+                (slot.loaded, slot.shown, slot.wanted) = (None, None, None);
+            }
         }
     }
 
@@ -1208,6 +1265,7 @@ pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
     found
 }
 
+#[cfg(test)]
 pub fn load(
     source: &Source,
     contig: &str,
@@ -1217,9 +1275,36 @@ pub fn load(
     detail: bool,
     reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
+    load_kept(
+        source,
+        contig,
+        region,
+        options,
+        (step, detail, &[]),
+        reference,
+    )
+}
+
+/// Loads like `load`, and a zoomed-out bigBed density counts only the features that pass the
+/// rules when their data is at most `DENSITY_BUDGET` bytes.
+pub fn load_kept(
+    source: &Source,
+    contig: &str,
+    region: Region,
+    options: Options,
+    (step, detail, rules): (u64, bool, &[Rule]),
+    reference: impl FnOnce(Region) -> Result<Vec<u8>, String>,
+) -> Result<Loaded, String> {
     let location = source.data();
     match &source.format {
-        Format::Features(file) => file.load(location, contig, region, step, detail),
+        Format::Features(file) => file.load(
+            location,
+            contig,
+            region,
+            step,
+            detail,
+            (rules, DENSITY_BUDGET),
+        ),
         Format::Variants(file) => file.load(location, contig, region),
         Format::Reads(file) => file.load(location, contig, region, options, reference),
         Format::Signal(file) => {
@@ -1423,8 +1508,8 @@ mod tests {
     use genie_render::signal::{Scale, Style};
 
     use super::{
-        Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Methyl, Options, Plot,
-        Prepared, SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits,
+        Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Loaded, Methyl, Options,
+        Plot, Prepared, SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits,
         hides, is_track, load, lookup, names, neighbor, open, open_bbi, open_with, spans, step,
     };
     use crate::location::Location;
@@ -2130,6 +2215,49 @@ mod tests {
         assert_eq!(next(1, 350, false, &keep), Some((1, region(300, 400))));
         assert_eq!(next(1, 150, false, &keep), Some((0, region(500, 600))));
         assert_eq!(next(1, 350, true, &keep), None);
+    }
+
+    #[test]
+    fn zoomed_out_bigbed_density_shows_only_kept_features() {
+        let source = open(fixture("ccres.bb")).unwrap();
+        let Format::Features(file) = &source.format else {
+            panic!("expected features");
+        };
+        let class = [Rule {
+            label: "Class".to_owned(),
+            test: Test::Keep("CTCF-only".to_owned()),
+        }];
+        let whole = region(0, 20_000);
+        let density = |rules: &[Rule], budget| {
+            let loaded = file
+                .load(source.data(), "chr1", whole, 16, false, (rules, budget))
+                .unwrap();
+            let Content::Signal(signal) = loaded.content else {
+                panic!("expected a density");
+            };
+            signal
+        };
+        let kept = density(&class, 1 << 24);
+        let covered: u64 = kept
+            .summaries
+            .iter()
+            .map(|summary| summary.span.len())
+            .sum();
+        assert_eq!(covered, 400);
+        assert!(
+            kept.summaries
+                .iter()
+                .all(|summary| summary.span.start() >= 500 && summary.span.end() <= 900)
+        );
+        assert_eq!(
+            kept.kept,
+            Some(Kept {
+                kept: vec![region(500, 900)],
+                all: vec![region(100, 400), region(500, 900)],
+            })
+        );
+        assert_eq!(density(&class, 1).kept, None);
+        assert_eq!(density(&[], 1 << 24).kept, None);
     }
 
     #[test]

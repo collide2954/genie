@@ -165,7 +165,7 @@ fn names_symbol(about: &str) -> bool {
         .any(|word| word.eq_ignore_ascii_case("symbol"))
 }
 
-fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
+pub fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
     let mut events: Vec<(u64, i64)> = Vec::new();
     for span in spans.filter_map(|span| span.intersection(region)) {
         events.push((span.start(), 1));
@@ -651,6 +651,20 @@ impl Index {
         Ok(found)
     }
 
+    /// The compressed bytes of the data blocks that hold the items of a region.
+    pub fn data_size(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+        region: Region,
+    ) -> Result<u64, Error> {
+        let Some(id) = self.id(contig) else {
+            return Ok(0);
+        };
+        let found = blocks(reader, self.full, self.big, id, region)?;
+        Ok(found.iter().map(|(_, size)| size).sum())
+    }
+
     pub fn find(
         &self,
         reader: &mut (impl Read + Seek),
@@ -816,5 +830,22 @@ mod tests {
     fn other_files_are_not_bigwig() {
         let error = Index::read(&mut Cursor::new(vec![0; 64])).unwrap_err();
         assert!(matches!(error, Error::Invalid(Reason::NotBigWig)));
+    }
+
+    #[test]
+    fn data_sizes_add_up_the_blocks_of_a_region() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/genes.bb");
+        let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+        let index = Index::read(&mut file).unwrap();
+        let mut size = |contig: &str, start, end| {
+            index
+                .data_size(&mut file, contig, genie_core::Region::between(start, end))
+                .unwrap()
+        };
+        let whole = size("chr1", 0, 3_000_000);
+        let part = size("chr1", 0, 20_000);
+        assert!(part > 0 && part < whole, "{part} {whole}");
+        assert!(whole < std::fs::metadata(&path).unwrap().len());
+        assert_eq!(size("chr9", 0, 100), 0);
     }
 }

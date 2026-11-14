@@ -313,8 +313,9 @@ impl Genie {
                 | Filtering::Checked(..) => {}
             }
             track.refilter();
+            track.forget_density();
         });
-        Task::none()
+        self.fetch()
     }
 
     pub(super) fn close_menus(&mut self) {
@@ -547,14 +548,15 @@ impl Genie {
                 let name = track.contigs[contig].clone()?;
                 track.slot_mut(panel).wanted = Some((contig, wanted));
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
-                let reference = Arc::clone(reference);
+                let (reference, rules) = (Arc::clone(reference), track.filter.rules.clone());
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
+                        let scope = (step, detail, rules.as_slice());
                         let result =
-                            track::load(&source, &name, wanted, options, step, detail, bases);
+                            track::load_kept(&source, &name, wanted, options, scope, bases);
                         match &result {
                             Ok(loaded) => log::debug!(
                                 "Loaded {} items of {} at {name}:{}-{} in {:.0?}",

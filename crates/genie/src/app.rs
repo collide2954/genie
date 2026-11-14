@@ -5037,6 +5037,34 @@ mod tests {
     }
 
     #[test]
+    fn zoomed_out_bigbed_densities_load_again_with_their_filter() {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../genie-formats/tests/data/ccres.bb");
+        let mut genie = opened();
+        let source = crate::track::open(path).unwrap();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(source))));
+        let region = Region::between(0, 1_000);
+        let accept = |genie: &mut Genie| {
+            let kept = crate::track::Kept {
+                kept: vec![Region::between(500, 900)],
+                all: vec![Region::between(100, 400), Region::between(500, 900)],
+            };
+            let track = &mut genie.session.as_mut().unwrap().tracks[0];
+            track.slot.wanted = Some((0, region));
+            let density = Loaded::kept_density(region, kept, 1);
+            track.accept_at(0, 0, region, Ok(Arc::new(density)));
+        };
+        accept(&mut genie);
+        let rule = field_rule("Class", Test::Keep("CTCF-only".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(rule)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert!(track.slot.loaded.is_none());
+        assert!(track.slot.wanted.is_some());
+        accept(&mut genie);
+        assert!(shows(&genie, "1 of 2"));
+    }
+
+    #[test]
     fn names_that_the_filter_hides_get_a_note() {
         let mut genie = with_two_features();
         let named = genie_core::Named {

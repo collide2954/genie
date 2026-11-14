@@ -751,15 +751,17 @@ fn count_chip<'a>(session: &Session, track: &Track, panel: usize) -> Option<Elem
         .loaded
         .as_ref()
         .filter(|(loaded, _)| *loaded == contig)?;
-    let words = match (
-        slot.data(contig).and_then(|data| in_view(data, visible)),
-        in_view(&all.1, visible),
-    ) {
-        (Some(shown), Some(total)) => {
-            format!("{} of {}", grouped(shown as u64), grouped(total as u64))
-        }
-        _ => FILTER_HINT.to_owned(),
+    let counts = match &all.1.content {
+        Content::Signal(signal) => signal.kept.as_ref().map(|kept| kept.counts(visible)),
+        _ => slot
+            .data(contig)
+            .and_then(|data| in_view(data, visible))
+            .zip(in_view(&all.1, visible)),
     };
+    let words = counts.map_or_else(
+        || FILTER_HINT.to_owned(),
+        |(shown, total)| format!("{} of {}", grouped(shown as u64), grouped(total as u64)),
+    );
     let id = track.id;
     Some(Context::left(label(words), move |at| Message::TrackMenu(id, at)).into())
 }
