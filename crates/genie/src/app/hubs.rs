@@ -30,6 +30,7 @@ const HINT: &str = "Click a track to add it or to remove it.";
 #[derive(Debug, Clone, PartialEq)]
 pub enum Hubbing {
     Ask,
+    Open(Location),
     Loaded(Location, bool, Result<Arc<Hub>, String>),
     Show(usize),
     Query(String),
@@ -69,6 +70,10 @@ impl Genie {
     pub(super) fn hubbing(&mut self, hubbing: Hubbing) -> Task<Message> {
         match hubbing {
             Hubbing::Ask => self.ask_address(true),
+            Hubbing::Open(location) => {
+                self.close_menus();
+                self.open_hub(location, true)
+            }
             Hubbing::Loaded(location, show, result) => self.hub_loaded(&location, show, result),
             Hubbing::Show(index) => self.show_hub(index),
             Hubbing::Query(query) => {
@@ -125,6 +130,7 @@ impl Genie {
         if self.session.is_none() {
             self.status = Status::Idle;
         }
+        self.known_hubs.add(hub.location.clone(), hub.short.clone());
         let known = self
             .hubs
             .iter()
@@ -136,10 +142,11 @@ impl Genie {
             self.hubs.push(hub);
             self.hubs.len() - 1
         };
+        let remember = self.remember_hubs();
         if show {
-            self.show_hub(index)
+            Task::batch([self.show_hub(index), remember])
         } else {
-            Task::none()
+            remember
         }
     }
 
@@ -700,6 +707,20 @@ mod tests {
         let _ = genie.update(Message::Palette(Paletting::Query("hub".to_owned())));
         assert!(shows(&genie, "Open a track hub…"));
         assert!(shows(&genie, "Show the hub My hub"));
+        let known = genie.known_hubs.entries().to_vec();
+        assert_eq!(known, [(location.clone(), "My hub".to_owned())]);
+        let _ = genie.update(Message::Opened(Ok(reference(PathBuf::from("ref.fa")))));
+        assert_eq!(genie.hubs.len(), 0);
+        let _ = genie.update(Message::CatalogMenu);
+        let mut ui = simulator(genie.view());
+        ui.click("My hub").unwrap();
+        let again = Message::Hub(Hubbing::Open(location.clone()));
+        assert!(ui.into_messages().any(|message| message == again));
+        let _ = genie.update(Message::Command(Command::Palette));
+        let _ = genie.update(Message::Palette(Paletting::Query("hub".to_owned())));
+        assert!(shows(&genie, "Open the hub My hub"));
+        let _ = genie.update(again);
+        assert_eq!(genie.busy, 1);
     }
 
     #[test]

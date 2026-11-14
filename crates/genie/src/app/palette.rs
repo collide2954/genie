@@ -213,6 +213,23 @@ impl Genie {
                 actions.extend(track_actions(track));
             }
         }
+        let recent_hubs = self
+            .known_hubs
+            .entries()
+            .iter()
+            .filter(|(location, _)| self.hubs.iter().all(|hub| hub.location != *location));
+        for (location, name) in recent_hubs {
+            let name = if name.is_empty() {
+                location.name()
+            } else {
+                name.clone()
+            };
+            actions.push(Action::new(
+                format!("Open the hub {name}"),
+                format!("Recent · {}", location.place()),
+                Message::Hub(Hubbing::Open(location.clone())),
+            ));
+        }
         for entry in self.recent.entries() {
             match entry {
                 Entry::Location(location) => actions.push(Action::new(

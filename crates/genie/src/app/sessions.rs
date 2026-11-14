@@ -234,6 +234,17 @@ impl Genie {
         })
         .discard()
     }
+
+    pub(super) fn remember_hubs(&self) -> Task<Message> {
+        let Some(folder) = paths::config_dir() else {
+            return Task::none();
+        };
+        let hubs = self.known_hubs.clone();
+        Task::future(async move {
+            let _ = hubs.save(&folder);
+        })
+        .discard()
+    }
 }
 
 async fn save_session_as(name: String) -> Option<PathBuf> {

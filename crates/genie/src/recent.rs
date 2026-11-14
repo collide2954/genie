@@ -12,6 +12,9 @@ pub const LIMIT: usize = 8;
 const SECTION: &str = "recent";
 const KEY: &str = "file";
 const GENOME: &str = "genome";
+const HUBS: &str = "hubs";
+const HUB: &str = "hub";
+const NAME: &str = "name";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
@@ -101,13 +104,116 @@ impl Recent {
     }
 }
 
+/// The track hubs that genie opened last, newest first, each with its short label.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Hubs {
+    entries: Vec<(Location, String)>,
+}
+
+impl Hubs {
+    pub fn entries(&self) -> &[(Location, String)] {
+        &self.entries
+    }
+
+    pub fn add(&mut self, location: Location, name: String) {
+        self.entries.retain(|(known, _)| *known != location);
+        self.entries.insert(0, (location, name));
+        self.entries.truncate(LIMIT);
+    }
+
+    pub fn parse(text: &str) -> Self {
+        let mut entries: Vec<(Location, String)> = Vec::new();
+        let document = ini::parse(text).ok();
+        let section = document
+            .as_ref()
+            .and_then(|document| document.section(HUBS));
+        for (key, value) in section.iter().flat_map(|section| &section.entries) {
+            match key.as_str() {
+                HUB => entries.push((
+                    Location::parse(value).unwrap_or_else(|_| Location::File(PathBuf::from(value))),
+                    String::new(),
+                )),
+                NAME => {
+                    if let Some((_, name)) = entries.last_mut() {
+                        name.clone_from(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        entries.truncate(LIMIT);
+        Self { entries }
+    }
+
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        ini::write(&ini::Document {
+            sections: vec![self.section()],
+        })
+    }
+
+    fn section(&self) -> Section {
+        Section {
+            name: HUBS.to_owned(),
+            entries: self
+                .entries
+                .iter()
+                .flat_map(|(location, name)| {
+                    [
+                        (HUB.to_owned(), location.to_string()),
+                        (NAME.to_owned(), name.clone()),
+                    ]
+                })
+                .collect(),
+        }
+    }
+
+    pub fn load(folder: &Path) -> Self {
+        fs::read_to_string(folder.join(FILE))
+            .map(|text| Self::parse(&text))
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self, folder: &Path) -> io::Result<()> {
+        settings::store(folder, self.section())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{Entry, LIMIT, Recent};
+    use super::{Entry, Hubs, LIMIT, Recent};
     use crate::location::Location;
+
+    #[test]
+    fn hubs_keep_their_names_newest_first() {
+        let mut hubs = Hubs::default();
+        let web = Location::parse("https://example.org/hub.txt").unwrap();
+        let local = Location::File(PathBuf::from("/data/my hub/hub.txt"));
+        hubs.add(web.clone(), "Web hub".to_owned());
+        hubs.add(local.clone(), "Local hub".to_owned());
+        hubs.add(web.clone(), "Web hub again".to_owned());
+        assert_eq!(
+            hubs.entries(),
+            [
+                (web, "Web hub again".to_owned()),
+                (local, "Local hub".to_owned())
+            ]
+        );
+        let text = hubs.text();
+        assert!(text.contains("hub = https://example.org/hub.txt\nname = Web hub again"));
+        assert_eq!(Hubs::parse(&text), hubs);
+        assert_eq!(Hubs::parse("[hubs]\nname = lost\n"), Hubs::default());
+        for index in 0..LIMIT + 3 {
+            hubs.add(
+                Location::File(PathBuf::from(format!("/{index}.txt"))),
+                String::new(),
+            );
+        }
+        assert_eq!(hubs.entries().len(), LIMIT);
+    }
 
     fn names(recent: &Recent) -> Vec<String> {
         recent

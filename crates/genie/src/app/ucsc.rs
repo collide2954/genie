@@ -6,7 +6,6 @@ use iced::{Alignment, Element, Length, Point, Task};
 
 use crate::catalog::{self, Entry, Group};
 use crate::chrome::{self, Controls};
-use crate::hub::Hub;
 use crate::location::Location;
 use crate::track::{self, Source};
 use crate::{menu, style};
@@ -67,7 +66,18 @@ impl Genie {
         content = content.push(heading("Track hubs"));
         height += HEADING;
         for (index, hub) in self.hubs.iter().enumerate() {
-            content = content.push(hub_choice(index, hub));
+            let show = Message::Hub(Hubbing::Show(index));
+            content = content.push(hub_choice(&hub.short, &hub.location, show));
+            height += CHOICE;
+        }
+        let recent = self
+            .known_hubs
+            .entries()
+            .iter()
+            .filter(|(location, _)| self.hubs.iter().all(|hub| hub.location != *location));
+        for (location, name) in recent {
+            let open = Message::Hub(Hubbing::Open(location.clone()));
+            content = content.push(hub_choice(name, location, open));
             height += CHOICE;
         }
         content = content.push(menu::item(
@@ -136,12 +146,15 @@ fn heading(label: &str) -> Element<'_, Message> {
         .into()
 }
 
-fn hub_choice<'a>(index: usize, hub: &Hub) -> Element<'a, Message> {
+fn hub_choice<'a>(name: &str, location: &Location, message: Message) -> Element<'a, Message> {
+    let name = if name.is_empty() {
+        location.name()
+    } else {
+        name.to_owned()
+    };
     let lines = column![
-        text(hub.short.clone())
-            .size(12)
-            .wrapping(text::Wrapping::None),
-        text(hub.location.place())
+        text(name).size(12).wrapping(text::Wrapping::None),
+        text(location.place())
             .size(11)
             .style(style::muted)
             .wrapping(text::Wrapping::None)
@@ -152,7 +165,7 @@ fn hub_choice<'a>(index: usize, hub: &Hub) -> Element<'a, Message> {
         .padding([3, 8])
         .clip(true)
         .style(style::ghost)
-        .on_press(Message::Hub(Hubbing::Show(index)))
+        .on_press(message)
         .into()
 }
 

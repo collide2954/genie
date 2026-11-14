@@ -23,7 +23,7 @@ use crate::motion::{self, Transition};
 use crate::port::{Order, Reply};
 use crate::prepare::{Step, Work};
 use crate::reading::{self, Reading};
-use crate::recent::{self, Recent};
+use crate::recent::{self, Hubs, Recent};
 use crate::reference::Reference;
 use crate::saved::{Saved, SavedTrack};
 use crate::scene::Pointer;
@@ -125,6 +125,7 @@ pub struct Genie {
     hub_adding: Vec<Location>,
     /// The hubs to read once the next reference opens, and whether to show each one.
     hubs_next: Vec<(Location, bool)>,
+    known_hubs: Hubs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,6 +210,7 @@ impl Default for Genie {
             hub_view: None,
             hub_adding: Vec::new(),
             hubs_next: Vec::new(),
+            known_hubs: Hubs::default(),
         }
     }
 }
@@ -842,6 +844,7 @@ impl Genie {
         let folder = paths::config_dir();
         let mut genie = Self {
             recent: folder.as_deref().map(Recent::load).unwrap_or_default(),
+            known_hubs: folder.as_deref().map(Hubs::load).unwrap_or_default(),
             settings: folder.as_deref().map(Settings::load).unwrap_or_default(),
             last: folder
                 .as_deref()
