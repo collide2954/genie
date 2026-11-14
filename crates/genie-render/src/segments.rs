@@ -79,16 +79,17 @@ pub fn scene(
         })
         .collect();
     if mode == Mode::Expanded {
+        let right = viewport.width() as f32 - NAME_INSET;
         primitives.extend(
             samples
                 .iter()
                 .enumerate()
                 .map(|(index, name)| Primitive::Label {
-                    x: NAME_INSET,
+                    x: right,
                     y: index as f32 * row + (row - gap) / 2.0,
                     content: Cow::Owned(name.clone()),
                     size: NAME_SIZE,
-                    align: Align::Start,
+                    align: Align::End,
                 }),
         );
     }
@@ -179,11 +180,17 @@ mod tests {
                 (200.0, 12.0, 700.0, Paint::Change(-50))
             ]
         );
-        let labels = drawn
+        let labels: Vec<(String, f32)> = drawn
             .iter()
-            .filter(|primitive| matches!(primitive, Primitive::Label { .. }))
-            .count();
-        assert_eq!(labels, 2);
+            .filter_map(|primitive| match primitive {
+                Primitive::Label { content, x, .. } => Some((content.to_string(), *x)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [("tumor".to_owned(), 996.0), ("normal".to_owned(), 996.0)]
+        );
         let squished = scene(view(), &segments, &names, Mode::Squished, (-1.5, 1.5));
         assert!(
             squished
