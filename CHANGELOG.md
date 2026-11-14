@@ -55,6 +55,13 @@
 - The card of a link shows its two ends, the distance, the value and the other fields. BEDPE header lines name the fields.
 - The arcs use the colors of the file, or the track color.
 
+### Copy number
+
+- genie opens copy number segment files as heatmap tracks: SEG files (as from TCGA, DNAcopy or GISTIC), CNVkit `.cns` and `.cnr` files, and GATK ModelSegments `.seg` files.
+- Each sample has a row: blue for a loss, vermillion for a gain, light grey near 0. The full colors start at a log2 value of ±1.5. The track menu sets a different range.
+- Up to 20 samples show their names. More samples get thinner rows, down to 1 px.
+- The card of a segment shows its sample, its length, its markers and its value.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
