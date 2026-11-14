@@ -21,6 +21,7 @@ pub mod gzip;
 pub mod http;
 pub mod icon;
 pub mod ini;
+pub mod md5;
 pub mod png;
 pub mod remote;
 mod sidecar;
