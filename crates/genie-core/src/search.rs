@@ -177,6 +177,17 @@ pub struct Found {
 }
 
 pub fn find(pattern: &Pattern, bases: &[u8], start: u64, mismatches: u8, limit: usize) -> Found {
+    collect(pattern, bases, start, mismatches, limit, false)
+}
+
+fn collect(
+    pattern: &Pattern,
+    bases: &[u8],
+    start: u64,
+    mismatches: u8,
+    limit: usize,
+    backward: bool,
+) -> Found {
     let length = pattern.len();
     let reference: Vec<u8> = bases.iter().map(|byte| base(*byte)).collect();
     let strands: &[(&[u8], Strand)] = if pattern.is_palindrome() {
@@ -195,7 +206,14 @@ pub fn find(pattern: &Pattern, bases: &[u8], start: u64, mismatches: u8, limit: 
         };
     }
     let most = usize::from(mismatches);
-    for (at, window) in reference.windows(length).enumerate() {
+    let starts = 0..=reference.len() - length;
+    let order: Box<dyn Iterator<Item = usize>> = if backward {
+        Box::new(starts.rev())
+    } else {
+        Box::new(starts)
+    };
+    for at in order {
+        let window = &reference[at..at + length];
         for (masks, strand) in strands {
             let Some(count) = wrong(masks, window, most) else {
                 continue;
@@ -224,9 +242,76 @@ pub fn find(pattern: &Pattern, bases: &[u8], start: u64, mismatches: u8, limit: 
     }
 }
 
+/// Where a search beyond the view starts, which way it goes, and how far it may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reach {
+    pub from: u64,
+    pub forward: bool,
+    pub length: u64,
+    pub budget: u64,
+    pub chunk: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scanned {
+    pub hit: Option<Hit>,
+    pub reached: u64,
+}
+
+/// Reads the bases chunk by chunk from `reach.from` and gives the nearest match: forward, the
+/// first one that starts at `from` or after; backward, the last one that starts before `from`.
+pub fn scan<E>(
+    pattern: &Pattern,
+    mismatches: u8,
+    reach: Reach,
+    mut fetch: impl FnMut(Region) -> Result<Vec<u8>, E>,
+) -> Result<Scanned, E> {
+    let tail = pattern.len().saturating_sub(1) as u64;
+    let chunk = reach.chunk.max(1);
+    let mut at = reach.from.min(reach.length);
+    if reach.forward {
+        let stop = reach.from.saturating_add(reach.budget).min(reach.length);
+        while at < stop {
+            let end = (at + chunk).min(stop);
+            let window = Region::between(at, (end + tail).min(reach.length));
+            let bases = fetch(window)?;
+            let found = collect(pattern, &bases, at, mismatches, 1, false);
+            if let Some(hit) = found.hits.into_iter().next() {
+                return Ok(Scanned {
+                    reached: hit.span.start(),
+                    hit: Some(hit),
+                });
+            }
+            at = end;
+        }
+        return Ok(Scanned {
+            hit: None,
+            reached: stop.max(at),
+        });
+    }
+    let stop = reach.from.saturating_sub(reach.budget);
+    while at > stop {
+        let begin = at.saturating_sub(chunk).max(stop);
+        let window = Region::between(begin, (at + tail).min(reach.length));
+        let bases = fetch(window)?;
+        let found = collect(pattern, &bases, begin, mismatches, 1, true);
+        if let Some(hit) = found.hits.into_iter().next() {
+            return Ok(Scanned {
+                reached: hit.span.start(),
+                hit: Some(hit),
+            });
+        }
+        at = begin;
+    }
+    Ok(Scanned {
+        hit: None,
+        reached: at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Found, Hit, Pattern, PatternError, find};
+    use super::{Found, Hit, Pattern, PatternError, Reach, find, scan};
     use crate::{Region, Strand};
 
     fn hit(start: u64, end: u64, strand: Strand, mismatches: &[u32]) -> Hit {
@@ -372,6 +457,93 @@ mod tests {
             all("ACGA", "ACNA", 0, 1),
             [hit(0, 4, Strand::Forward, &[2])]
         );
+    }
+
+    fn reference() -> Vec<u8> {
+        let mut bases = vec![b'A'; 60];
+        bases[18..22].copy_from_slice(b"GACC");
+        bases[30..34].copy_from_slice(b"GGTC");
+        bases[41..45].copy_from_slice(b"GACC");
+        bases
+    }
+
+    fn scanned(from: u64, forward: bool, budget: u64, chunk: u64) -> (Option<Hit>, u64, usize) {
+        let bases = reference();
+        let pattern = Pattern::parse("GACC").unwrap();
+        let reach = Reach {
+            from,
+            forward,
+            length: bases.len() as u64,
+            budget,
+            chunk,
+        };
+        let mut reads = 0;
+        let result = scan(&pattern, 0, reach, |region: Region| {
+            reads += 1;
+            assert!(region.len() <= chunk + 3, "{region:?}");
+            Ok::<_, String>(bases[region.start() as usize..region.end() as usize].to_vec())
+        })
+        .unwrap();
+        (result.hit, result.reached, reads)
+    }
+
+    #[test]
+    fn scans_forward_find_the_next_match_across_chunks() {
+        let (next, _, reads) = scanned(0, true, 100, 10);
+        assert_eq!(next, Some(hit(18, 22, Strand::Forward, &[])));
+        assert_eq!(reads, 2);
+        assert_eq!(
+            scanned(19, true, 100, 10).0,
+            Some(hit(30, 34, Strand::Reverse, &[]))
+        );
+        assert_eq!(
+            scanned(35, true, 100, 4).0,
+            Some(hit(41, 45, Strand::Forward, &[]))
+        );
+        assert_eq!(
+            scanned(18, true, 100, 10).0,
+            Some(hit(18, 22, Strand::Forward, &[]))
+        );
+    }
+
+    #[test]
+    fn scans_stop_at_the_budget_or_the_end() {
+        assert_eq!(scanned(0, true, 15, 10), (None, 15, 2));
+        assert_eq!(scanned(42, true, 100, 10).1, 60);
+        assert_eq!(scanned(42, true, 100, 10).0, None);
+        assert_eq!(scanned(60, true, 100, 10), (None, 60, 0));
+    }
+
+    #[test]
+    fn scans_backward_find_the_match_before() {
+        assert_eq!(
+            scanned(60, false, 100, 10).0,
+            Some(hit(41, 45, Strand::Forward, &[]))
+        );
+        assert_eq!(
+            scanned(41, false, 100, 10).0,
+            Some(hit(30, 34, Strand::Reverse, &[]))
+        );
+        assert_eq!(
+            scanned(30, false, 100, 7).0,
+            Some(hit(18, 22, Strand::Forward, &[]))
+        );
+        assert_eq!(scanned(18, false, 100, 10), (None, 0, 2));
+        assert_eq!(scanned(60, false, 10, 10), (None, 50, 1));
+    }
+
+    #[test]
+    fn scans_report_read_errors() {
+        let pattern = Pattern::parse("GACC").unwrap();
+        let reach = Reach {
+            from: 0,
+            forward: true,
+            length: 100,
+            budget: 100,
+            chunk: 10,
+        };
+        let failed = scan(&pattern, 0, reach, |_| Err::<Vec<u8>, _>("gone"));
+        assert_eq!(failed, Err("gone"));
     }
 
     #[test]
