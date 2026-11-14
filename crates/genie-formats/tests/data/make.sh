@@ -184,6 +184,42 @@ printf 'chr1\t20000\n' > gencode.pred.sizes
 bedToBigBed -tab -type=bed12+8 -as=gencode.pred.as gencode.pred.tmp gencode.pred.sizes gencode.pred.bb > /dev/null
 rm gencode.pred.as gencode.pred.tmp gencode.pred.sizes
 
+# bigInteract: links between two regions. A link between contigs has a record on each contig.
+cat > interact.as << 'AS'
+table interact
+"Interaction between two regions"
+   (
+   string chrom;        "Chromosome of this record. Links between contigs have two records"
+   uint chromStart;     "Start of the lower region, or of this region for links between contigs"
+   uint chromEnd;       "End of the upper region, or of this region for links between contigs"
+   string name;         "Name of item"
+   uint score;          "Score (0-1000)"
+   double value;        "Strength of interaction"
+   string exp;          "Experiment name"
+   string color;        "Item color as r,g,b or #RRGGBB, 0 for none"
+   string sourceChrom;  "Chromosome of the source region"
+   uint sourceStart;    "Start of the source region"
+   uint sourceEnd;      "End of the source region"
+   string sourceName;   "Name of the source region"
+   string sourceStrand; "Strand of the source region"
+   string targetChrom;  "Chromosome of the target region"
+   uint targetStart;    "Start of the target region"
+   uint targetEnd;      "End of the target region"
+   string targetName;   "Name of the target region"
+   string targetStrand; "Strand of the target region"
+   )
+AS
+{
+    printf 'chr1\t1000\t52000\tloopA\t500\t12.5\thic\t255,0,0\tchr1\t1000\t2000\tanchorA\t.\tchr1\t50000\t52000\tanchorB\t.\n'
+    printf 'chr1\t10000\t400000\tloopB\t1000\t40\thic\t#0000FF\tchr1\t398000\t400000\t.\t.\tchr1\t10000\t12000\t.\t.\n'
+    printf 'chr1\t60000\t61000\ttrans\t300\t3\thic\t0\tchr1\t60000\t61000\t.\t.\tchr2\t200000\t201000\t.\t.\n'
+    printf 'chr1\t70000\t90000\t.\t0\t0\thic\t0\tchr1\t70000\t71000\t.\t.\tchr1\t89000\t90000\t.\t.\n'
+    printf 'chr2\t200000\t201000\ttrans\t300\t3\thic\t0\tchr2\t200000\t201000\t.\t.\tchr1\t60000\t61000\t.\t.\n'
+} > interact.tmp
+printf 'chr1\t1000000\nchr2\t500000\n' > interact.sizes
+bedToBigBed -tab -type=bed5+13 -as=interact.as interact.tmp interact.sizes interact.bb > /dev/null
+rm interact.as interact.tmp interact.sizes
+
 awk -v OFS='\t' '
 function draw(limit) { seed = (seed * 16807) % 2147483647; return int(seed / 2147483647 * limit) }
 function exons(contig, strand, id, position, count, exon, intron, only_ends, gtf,    e, left, low, high) {

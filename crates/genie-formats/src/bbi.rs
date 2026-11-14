@@ -1,5 +1,6 @@
 use std::io::{Read, Seek, SeekFrom};
 
+use genie_core::interaction::Interaction;
 use genie_core::signal::{self, Bin, Summary};
 use genie_core::{Feature, Region};
 use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
@@ -21,6 +22,16 @@ const BLOCK_LIMIT: u64 = 1 << 26;
 const AUTO_SQL_LIMIT: u64 = 1 << 16;
 const LABELS: [&str; 2] = ["geneName2", "name2"];
 const SYMBOL_FIELDS: [&str; 3] = ["geneName", "geneName2", "name2"];
+/// The columns of a bigInteract file that the arc shows, so the card does not show them again.
+const LINK_COLUMNS: [&str; 7] = [
+    "color",
+    "sourceChrom",
+    "sourceStart",
+    "sourceEnd",
+    "targetChrom",
+    "targetStart",
+    "targetEnd",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Zoom {
@@ -163,6 +174,73 @@ fn names_symbol(about: &str) -> bool {
     about
         .split(|character: char| !character.is_ascii_alphanumeric())
         .any(|word| word.eq_ignore_ascii_case("symbol"))
+}
+
+/// Where the fields of a link are in the records of a bigInteract file.
+struct Columns {
+    name: Option<usize>,
+    score: Option<usize>,
+    value: Option<usize>,
+    color: Option<usize>,
+    source: [usize; 3],
+    target: [usize; 3],
+}
+
+impl Columns {
+    fn of(index: &Index) -> Option<Self> {
+        let at = |name| index.column(name);
+        Some(Self {
+            name: at("name"),
+            score: at("score"),
+            value: at("value"),
+            color: at("color"),
+            source: [at("sourceChrom")?, at("sourceStart")?, at("sourceEnd")?],
+            target: [at("targetChrom")?, at("targetStart")?, at("targetEnd")?],
+        })
+    }
+
+    fn link(&self, contig: &str, item: &Item<'_>, defined: usize) -> Option<Interaction> {
+        let fields: Vec<&str> = item.rest.split('\t').collect();
+        let get = |column: usize| fields.get(column.checked_sub(3)?).copied();
+        let end = |[chrom, start, end]: [usize; 3]| {
+            let number = |column| get(column)?.parse::<u64>().ok();
+            Some((get(chrom)?, Region::new(number(start)?, number(end)?)?))
+        };
+        let (source, target) = (end(self.source)?, end(self.target)?);
+        let (near, far, elsewhere) = match (source.0 == contig, target.0 == contig) {
+            (true, true) => (source.1, target.1, None),
+            (true, false) => (source.1, target.1, Some(target.0)),
+            (false, true) => (target.1, source.1, Some(source.0)),
+            (false, false) => return None,
+        };
+        let text = |column: Option<usize>| column.and_then(get).filter(|text| fields::shown(text));
+        let value = text(self.value)
+            .or_else(|| text(self.score))
+            .and_then(|text| text.parse::<f64>().ok())
+            .filter(|value| value.is_finite());
+        Some(Interaction {
+            name: text(self.name).unwrap_or_default().to_owned(),
+            value,
+            color: text(self.color).and_then(color),
+            extra: fields
+                .get(defined.saturating_sub(3)..)
+                .unwrap_or_default()
+                .join("\t"),
+            ..Interaction::new(near, far, elsewhere.map(str::to_owned))
+        })
+    }
+}
+
+/// A color written as `r,g,b` or `#RRGGBB`.
+fn color(text: &str) -> Option<[u8; 3]> {
+    match text.strip_prefix('#') {
+        Some(hex) if hex.len() == 6 => {
+            let [_, red, green, blue] = u32::from_str_radix(hex, 16).ok()?.to_be_bytes();
+            Some([red, green, blue])
+        }
+        Some(_) => None,
+        None => crate::bedpe::rgb(text),
+    }
 }
 
 pub fn depths(spans: impl Iterator<Item = Region>, region: Region) -> Vec<Summary> {
@@ -592,6 +670,16 @@ impl Index {
     }
 
     pub fn fields(&self, extra: &str) -> Vec<Field> {
+        self.fields_without(extra, &[])
+    }
+
+    /// The fields of a link in a bigInteract file, without the ends and the color that the arc
+    /// shows.
+    pub fn link_fields(&self, extra: &str) -> Vec<Field> {
+        self.fields_without(extra, &LINK_COLUMNS)
+    }
+
+    fn fields_without(&self, extra: &str, hidden: &[&str]) -> Vec<Field> {
         if extra.is_empty() {
             return Vec::new();
         }
@@ -602,7 +690,7 @@ impl Index {
                 .fields
                 .get(column)
                 .map_or(("", ""), |(name, about)| (name.as_str(), about.as_str()));
-            if name.starts_with('_') || !fields::shown(value) {
+            if name.starts_with('_') || !fields::shown(value) || hidden.contains(&name) {
                 continue;
             }
             let label = if name.is_empty() {
@@ -628,6 +716,40 @@ impl Index {
     fn contig(&self, id: u32) -> Option<&str> {
         let slot = self.ids.iter().position(|known| *known == id)?;
         Some(&self.names[slot])
+    }
+
+    fn column(&self, name: &str) -> Option<usize> {
+        self.fields.iter().position(|(field, _)| field == name)
+    }
+
+    /// True for a bigInteract file: a bigBed file of links between two regions.
+    pub fn is_interact(&self) -> bool {
+        self.bed
+            && LINK_COLUMNS[1..]
+                .iter()
+                .all(|name| self.column(name).is_some())
+    }
+
+    /// The links of a bigInteract file that touch a region of a contig.
+    pub fn interactions(
+        &self,
+        reader: &mut (impl Read + Seek),
+        contig: &str,
+        region: Region,
+    ) -> Result<Vec<Interaction>, Error> {
+        let (Some(id), Some(columns)) = (self.id(contig), Columns::of(self)) else {
+            return Ok(Vec::new());
+        };
+        let mut found = Vec::new();
+        for (offset, size) in blocks(reader, self.full, self.big, id, region)? {
+            let block = self.block(reader, offset, size)?;
+            for item in items(&block, self.big)? {
+                if item.chromosome == id && touches(item.start, item.end, region) {
+                    found.extend(columns.link(contig, &item, self.defined));
+                }
+            }
+        }
+        Ok(found)
     }
 
     pub fn features(
@@ -847,5 +969,59 @@ mod tests {
         assert!(part > 0 && part < whole, "{part} {whole}");
         assert!(whole < std::fs::metadata(&path).unwrap().len());
         assert_eq!(size("chr9", 0, 100), 0);
+    }
+
+    fn opened(name: &str) -> (Index, std::io::BufReader<std::fs::File>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(name);
+        let mut file = std::io::BufReader::new(std::fs::File::open(&path).unwrap());
+        (Index::read(&mut file).unwrap(), file)
+    }
+
+    #[test]
+    fn big_interact_files_give_links_with_their_ends_in_order() {
+        use genie_core::Region;
+        let (index, mut file) = opened("interact.bb");
+        assert!(index.is_interact());
+        assert!(!opened("genes.bb").0.is_interact());
+        let mut links = |contig: &str, start, end| {
+            index
+                .interactions(&mut file, contig, Region::between(start, end))
+                .unwrap()
+        };
+        let middle = links("chr1", 300_000, 310_000);
+        assert_eq!(middle.len(), 1);
+        let far = &middle[0];
+        assert_eq!(far.name, "loopB");
+        assert_eq!(far.near, Region::between(10_000, 12_000));
+        assert_eq!(far.far, Region::between(398_000, 400_000));
+        assert_eq!((far.value, far.color), (Some(40.0), Some([0, 0, 255])));
+        let all = links("chr1", 0, 1_000_000);
+        let names: Vec<&str> = all.iter().map(|link| link.name.as_str()).collect();
+        assert_eq!(names, ["loopA", "loopB", "trans", ""]);
+        assert_eq!(all[0].color, Some([255, 0, 0]));
+        assert_eq!((all[2].color, all[2].value), (None, Some(3.0)));
+        assert_eq!(all[2].elsewhere.as_deref(), Some("chr2"));
+        assert_eq!(all[2].far, Region::between(200_000, 201_000));
+        let other = links("chr2", 0, 500_000);
+        assert_eq!(other[0].near, Region::between(200_000, 201_000));
+        assert_eq!(other[0].elsewhere.as_deref(), Some("chr1"));
+        let fields: Vec<(String, String)> = index
+            .link_fields(&all[0].extra)
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        let labels: Vec<&str> = fields.iter().map(|(label, _)| label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Strength of interaction",
+                "Experiment name",
+                "Name of the source region",
+                "Name of the target region"
+            ]
+        );
+        assert_eq!(fields[0].1, "12.5");
     }
 }
