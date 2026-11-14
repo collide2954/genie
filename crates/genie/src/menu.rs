@@ -177,6 +177,8 @@ fn kind_height(track: &Track) -> f32 {
         SIGNAL_HEIGHT
     } else if track.source.has_links() {
         COLORED_HEIGHT - 3.0 * LINK_HEIGHT - SEPARATOR_HEIGHT
+    } else if track.source.has_segments() {
+        FEATURES_HEIGHT + 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_colors() {
         COLORED_HEIGHT
     } else {
@@ -300,6 +302,21 @@ fn signal_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'
         .push(separator())
 }
 
+/// The range of a segment track: the log2 values that get the full blue and red.
+pub fn segment_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
+    let id = track.id;
+    column![
+        range_fields(id, range),
+        item(
+            "Default range (±1.5)",
+            Message::Range(id, Ranging::Auto),
+            track.plot.range.is_none(),
+            true
+        ),
+    ]
+    .spacing(1)
+}
+
 fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     let (id, options, look) = (track.id, track.options, track.plot.look);
     let item = |label: &'a str, change: Change, chosen: bool| {
@@ -359,6 +376,14 @@ pub fn view<'a>(
         signal_items(track, range)
     } else if track.source.has_links() {
         column![]
+    } else if track.source.has_segments() {
+        column![
+            column(modes).spacing(1),
+            separator(),
+            segment_items(track, range),
+            separator()
+        ]
+        .spacing(1)
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     };

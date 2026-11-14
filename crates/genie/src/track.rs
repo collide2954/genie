@@ -6,6 +6,7 @@ use genie_core::alignment::{Alignment, Inserts, REVERSE};
 use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
+use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
@@ -23,12 +24,14 @@ use crate::location::{Location, Reader};
 mod features;
 mod links;
 pub(crate) mod reads;
+mod segments;
 mod signal;
 mod variants;
 
 pub use features::FeatureFile;
 pub use links::LinkFile;
 pub use reads::ReadFile;
+pub use segments::SegmentFile;
 pub use signal::SignalFile;
 pub use variants::VariantFile;
 
@@ -48,6 +51,7 @@ pub enum Format {
     Reads(ReadFile),
     Signal(SignalFile),
     Links(LinkFile),
+    Segments(SegmentFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +86,7 @@ impl Source {
             Format::Reads(file) => &file.contigs,
             Format::Signal(file) => file.contigs(),
             Format::Links(file) => file.contigs(),
+            Format::Segments(file) => file.contigs(),
         }
     }
 
@@ -99,6 +104,18 @@ impl Source {
 
     pub fn has_links(&self) -> bool {
         matches!(self.format, Format::Links(_))
+    }
+
+    pub fn has_segments(&self) -> bool {
+        matches!(self.format, Format::Segments(_))
+    }
+
+    /// The name of the value column of a segment file, as its header gives it.
+    pub fn segment_column(&self) -> &str {
+        match &self.format {
+            Format::Segments(file) => &file.segments.value,
+            _ => "",
+        }
     }
 
     pub fn has_signal(&self) -> bool {
@@ -131,6 +148,7 @@ impl Source {
     pub fn samples(&self) -> &[String] {
         match &self.format {
             Format::Variants(file) => file.samples(),
+            Format::Segments(file) => file.samples(),
             _ => &[],
         }
     }
@@ -142,6 +160,7 @@ impl Source {
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
+            Format::Segments(_) => u64::MAX,
         }
     }
 }
@@ -420,6 +439,14 @@ pub enum Content {
     Variants(Calls),
     Signal(Signal),
     Links(Vec<Interaction>),
+    Segments(Copies),
+}
+
+/// The copy number segments of a region, and the number of samples of the file.
+#[derive(Debug, PartialEq)]
+pub struct Copies {
+    pub segments: Vec<Segment>,
+    pub samples: usize,
 }
 
 #[derive(Debug)]
@@ -555,6 +582,14 @@ impl Loaded {
         }
     }
 
+    pub fn segments(region: Region, segments: Vec<Segment>, samples: usize) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Segments(Copies { segments, samples }),
+        }
+    }
+
     pub fn signal(region: Region, summaries: Vec<Summary>, step: u64) -> Self {
         Self {
             region,
@@ -602,6 +637,7 @@ impl Loaded {
             Content::Features(annotation) => annotation.count,
             Content::Reads(pile) => pile.count,
             Content::Variants(calls) => calls.samples,
+            Content::Segments(copies) => copies.samples,
             Content::Signal(_) | Content::Links(_) => 0,
         }
     }
@@ -849,7 +885,7 @@ impl Track {
                         .collect(),
                 )
             }
-            Content::Reads(_) | Content::Signal(_) => return None,
+            Content::Reads(_) | Content::Signal(_) | Content::Segments(_) => return None,
         };
         Some(Arc::new(Loaded {
             region: data.region,
@@ -909,6 +945,8 @@ impl Track {
                 alignments::fit(count)
             } else if self.source.has_variants() {
                 genie_render::variants::fit(count)
+            } else if self.source.has_segments() {
+                genie_render::segments::fit(count)
             } else {
                 Mode::fit(count)
             }
@@ -1107,11 +1145,17 @@ pub fn is_track(location: &Location) -> bool {
         || is_bedmethyl(&name)
         || is_bigbed(&name)
         || is_bedpe(&name)
+        || is_segments(&name)
         || Kind::of(&name).is_some()
 }
 
 pub fn is_bedpe(name: &str) -> bool {
     inner_extension(name, &["bedpe"])
+}
+
+/// True for copy number segment files: SEG, and `CNVkit` `.cns` and `.cnr`.
+pub fn is_segments(name: &str) -> bool {
+    inner_extension(name, &["seg", "cns", "cnr"])
 }
 
 pub fn is_bam(name: &str) -> bool {
@@ -1246,6 +1290,8 @@ pub fn open_with(
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
     } else if is_bedpe(&name) {
         Format::Links(LinkFile::open(reading, &name)?)
+    } else if is_segments(&name) {
+        Format::Segments(SegmentFile::open(reading, &name)?)
     } else if is_bedmethyl(&name) || (is_bed(&name) && sniffs_methyl(reading)) {
         Format::Signal(SignalFile::open_methyl(reading, &name, index)?)
     } else if is_signal(&name) {
@@ -1418,6 +1464,7 @@ pub fn load_kept(
             Ok(Loaded { options, ..loaded })
         }
         Format::Links(file) => file.load(location, contig, region),
+        Format::Segments(file) => Ok(file.load(contig, region)),
     }
 }
 
@@ -1497,7 +1544,9 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
     match &source.format {
         Format::Features(file) => file.spans(source.data(), contig, region),
         Format::Variants(file) => file.spans(source.data(), contig, region),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Ok(Vec::new()),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => {
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -1524,7 +1573,7 @@ fn kept(
             .filter(|variant| fields::passes(rules, &variant_fields(source, variant)))
             .map(|variant| variant.span)
             .collect(),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Vec::new(),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => Vec::new(),
     })
 }
 
@@ -1556,7 +1605,7 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
                     .collect()
             })
             .unwrap_or_default(),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => Vec::new(),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -1586,7 +1635,9 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
     let entries = match &source.format {
         Format::Features(file) => file.names(source.data())?,
         Format::Variants(file) => file.names(source.data())?,
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) => return Ok(Names::default()),
+        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => {
+            return Ok(Names::default());
+        }
     };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
         Some(Named {
@@ -2539,6 +2590,44 @@ mod tests {
             .map(|field| (field.label, field.value))
             .collect();
         assert_eq!(fields, [("observed".to_owned(), "30".to_owned())]);
+    }
+
+    #[test]
+    fn segment_files_open_as_heatmap_tracks_of_their_samples() {
+        let scratch = Scratch::new("track-segments");
+        let text = "ID\tchrom\tloc.start\tloc.end\tnum.mark\tseg.mean\n\
+            tumor1\tchr1\t1\t1000\t12\t0.85\n\
+            tumor2\tchr1\t101\t2000\t8\t-1.2\n";
+        let path = scratch.file("cohort.seg", text);
+        for name in [
+            "/data/cohort.seg",
+            "/data/t.cns",
+            "/data/t.cnr",
+            "/data/x.seg.gz",
+        ] {
+            assert!(is_track(&Location::File(PathBuf::from(name))), "{name}");
+        }
+        let source = open(path).unwrap();
+        assert!(source.has_segments() && !source.can_jump());
+        assert_eq!(source.samples(), ["tumor1", "tumor2"]);
+        assert_eq!(source.segment_column(), "seg.mean");
+        let none = |_: Region| Err("There is no reference.".to_owned());
+        let window = region(500, 600);
+        let loaded = load(&source, "chr1", window, Options::default(), 1, true, none).unwrap();
+        let Content::Segments(copies) = &loaded.content else {
+            panic!("expected segments");
+        };
+        assert_eq!(copies.samples, 2);
+        let values: Vec<f32> = copies
+            .segments
+            .iter()
+            .map(|segment| segment.value)
+            .collect();
+        assert_eq!(values, [0.85, -1.2]);
+        let mut track = Track::new(1, Arc::new(source), &assembly());
+        track.slot.wanted = Some((0, window));
+        track.accept_at(0, 0, window, Ok(Arc::new(loaded)));
+        assert_eq!(track.mode_at(0, 0), Mode::Expanded);
     }
 
     #[test]

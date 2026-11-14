@@ -56,6 +56,13 @@ fn track_actions(track: &Track) -> Vec<Action> {
             Message::Range(id, Ranging::Auto),
         ));
     }
+    if source.has_segments() {
+        actions.push(Action::new(
+            "Default range (±1.5)",
+            name,
+            Message::Range(id, Ranging::Auto),
+        ));
+    }
     if source.is_bedmethyl() {
         actions.push(Action::new(
             "Join CpG strands",

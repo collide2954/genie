@@ -1261,7 +1261,7 @@ mod tests {
     use crate::tiles::Key;
     use crate::track::{
         Change, Content, FeatureFile, Format, Grouping, LinkFile, Loaded, Options, ReadFile,
-        SignalFile, Source, Toggle, VariantFile,
+        SegmentFile, SignalFile, Source, Toggle, VariantFile,
     };
     use genie_formats::fields::{Rule, Test};
 
@@ -3893,6 +3893,57 @@ mod tests {
             local: Point::new(x, y),
             at: Point::new(x, y + 100.0),
         }
+    }
+
+    #[test]
+    fn segment_tracks_show_a_row_per_sample_and_a_range_in_the_menu() {
+        use genie_core::segment::Segment;
+        use genie_formats::seg::Segments;
+        let mut genie = opened();
+        let segments = Segments {
+            samples: vec!["tumor1".to_owned(), "tumor2".to_owned()],
+            value: "seg.mean".to_owned(),
+            ..Segments::default()
+        };
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/cohort.seg").into(),
+            name: "cohort.seg".to_owned(),
+            data: None,
+            format: Format::Segments(SegmentFile { segments }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let segment = |sample, start, end, value, markers| Segment {
+            span: Region::between(start, end),
+            sample,
+            value,
+            markers,
+        };
+        let found = vec![
+            segment(0, 0, 400, 0.85, Some(12)),
+            segment(1, 100, 900, -1.2, None),
+        ];
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.contigs = vec![Some("chr1".to_owned()), None];
+        track.slot.wanted = Some((0, region));
+        let loaded = Loaded::segments(region, found, 2);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        assert_eq!(track.mode_at(0, 0), Rows::Expanded);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.0, 5.0))));
+        for text in ["chr1:1-400", "400 bp · 12 markers", "seg.mean 0.85"] {
+            assert!(shows(&genie, text), "{text}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(10.0, 10.0)));
+        assert!(shows(&genie, "Default range (±1.5)"));
+        let _ = genie.update(Message::Range(0, Ranging::Min("-1".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Max("1".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        let range = genie.session.as_ref().unwrap().tracks[0]
+            .plot
+            .range
+            .unwrap();
+        assert_eq!((range.min, range.max), (-1.0, 1.0));
     }
 
     #[test]

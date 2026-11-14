@@ -7,7 +7,7 @@ use std::time::SystemTime;
 use genie_core::methylation::Site;
 use genie_core::{Region, Viewport};
 use genie_render::features::Mode;
-use genie_render::{alignments, features, links, signal, variants};
+use genie_render::{alignments, features, links, segments, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
@@ -29,7 +29,7 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Pile, Source, Track};
 
 use super::orders::Answer;
-use super::view::{body_height, signal_columns, signal_scale};
+use super::view::{body_height, segment_range, signal_columns, signal_scale};
 use super::{
     Filtering, Genie, Lane, Message, Opening, Popup, Preparation, Preparing, Ranging, Renaming,
     Status,
@@ -347,6 +347,10 @@ impl Genie {
         if let Some(range) = track.plot.range {
             return Some(range);
         }
+        if track.source.has_segments() {
+            let (min, max) = segment_range(track);
+            return Some(signal::Scale { min, max });
+        }
         let Content::Signal(data) = &track.data(session.contig)?.content else {
             return None;
         };
@@ -473,6 +477,16 @@ impl Genie {
                 let index = links::hit(viewport, found, height, x, y)?;
                 Detail::Link(found[index].clone())
             }
+            Content::Segments(copies) => {
+                let found = &copies.segments;
+                let index = segments::hit(viewport, found, copies.samples, mode, (x, y))?;
+                let segment = found[index];
+                Detail::Segment {
+                    sample: track.source.samples().get(segment.sample)?.clone(),
+                    segment,
+                    column: track.source.segment_column().to_owned(),
+                }
+            }
         };
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
@@ -482,7 +496,8 @@ impl Genie {
             | Detail::Junction(_)
             | Detail::Methylation { .. }
             | Detail::Signal { .. }
-            | Detail::Match { .. } => Vec::new(),
+            | Detail::Match { .. }
+            | Detail::Segment { .. } => Vec::new(),
         };
         Some(Card {
             track: id,

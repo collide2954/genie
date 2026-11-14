@@ -3,6 +3,7 @@ use genie_core::alignment::{
 };
 use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
+use genie_core::segment::Segment;
 use genie_core::signal::Bin;
 use genie_core::variant::{Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
@@ -68,6 +69,12 @@ pub enum Detail {
         wrong: usize,
     },
     Link(Interaction),
+    Segment {
+        sample: String,
+        segment: Segment,
+        /// The name of the value column of the file, for example seg.mean or log2.
+        column: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -337,7 +344,21 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             };
             (title, link.span(), link_lines(link))
         }
+        Detail::Segment {
+            sample,
+            segment,
+            column,
+        } => (sample.clone(), segment.span, segment_lines(segment, column)),
     }
+}
+
+fn segment_lines(segment: &Segment, column: &str) -> Vec<String> {
+    let mut facts = vec![format!("{} bp", grouped(segment.span.len()))];
+    if let Some(markers) = segment.markers {
+        facts.push(format!("{} markers", grouped(u64::from(markers))));
+    }
+    let value = format!("{column} {}", amount(f64::from(segment.value)));
+    vec![facts.join(" · "), value]
 }
 
 fn link_lines(link: &Interaction) -> Vec<String> {

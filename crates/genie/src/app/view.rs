@@ -4,7 +4,8 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, features, links, matches, overview, ruler, sequence, signal, translation, variants,
+    alignments, features, links, matches, overview, ruler, segments, sequence, signal, translation,
+    variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -93,6 +94,7 @@ impl Genie {
                     Some(Content::Reads(pile)) => reads += pile.reads.len(),
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
                     Some(Content::Links(links)) => features += links.len(),
+                    Some(Content::Segments(copies)) => features += copies.segments.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
                     None => {}
@@ -741,7 +743,7 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
                 .filter(|link| link.span().overlaps(visible))
                 .count(),
         ),
-        Content::Reads(_) | Content::Signal(_) => None,
+        Content::Reads(_) | Content::Signal(_) | Content::Segments(_) => None,
     }
 }
 
@@ -792,6 +794,39 @@ pub(super) fn body(
     body
 }
 
+/// The bars or lines of a signal track, with the tracks that overlay it.
+fn signal_body(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    summaries: &[genie_core::signal::Summary],
+    height: f32,
+) -> Body {
+    let (_, viewport) = session.view(panel);
+    let columns = signal_columns(track, viewport, summaries);
+    let Some(scale) = signal_scale(session, track, panel, &columns) else {
+        return Body::Space(height);
+    };
+    let width = viewport.width() as f32;
+    let members = members(session, track);
+    let primitives = if members.is_empty() {
+        signal::scene(&columns, scale, track.plot.style, track.hue, height, width)
+    } else {
+        let others: Vec<(Vec<signal::Column>, Hue)> = members
+            .iter()
+            .filter_map(|member| Some((member_columns(session, member, panel)?, member.hue)))
+            .collect();
+        let mut layers: Vec<(&[signal::Column], Hue)> = vec![(&columns, track.hue)];
+        layers.extend(
+            others
+                .iter()
+                .map(|(columns, hue)| (columns.as_slice(), *hue)),
+        );
+        signal::traces(&layers, scale, height, width)
+    };
+    Body::Scene(primitives, height)
+}
+
 fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack: bool) -> Body {
     let (contig, viewport) = session.view(panel);
     let slot = track.slot(panel);
@@ -816,30 +851,7 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
     match slot.data(contig).map(|data| &data.content) {
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
-            let columns = signal_columns(track, viewport, &data.summaries);
-            let Some(scale) = signal_scale(session, track, panel, &columns) else {
-                return Body::Space(height);
-            };
-            let width = viewport.width() as f32;
-            let members = members(session, track);
-            let primitives = if members.is_empty() {
-                signal::scene(&columns, scale, track.plot.style, track.hue, height, width)
-            } else {
-                let others: Vec<(Vec<signal::Column>, Hue)> = members
-                    .iter()
-                    .filter_map(|member| {
-                        Some((member_columns(session, member, panel)?, member.hue))
-                    })
-                    .collect();
-                let mut layers: Vec<(&[signal::Column], Hue)> = vec![(&columns, track.hue)];
-                layers.extend(
-                    others
-                        .iter()
-                        .map(|(columns, hue)| (columns.as_slice(), *hue)),
-                );
-                signal::traces(&layers, scale, height, width)
-            };
-            Body::Scene(primitives, height)
+            signal_body(session, track, panel, &data.summaries, height)
         }
         Some(Content::Variants(calls)) => {
             let primitives = variants::scene(viewport, &calls.variants, mode);
@@ -849,6 +861,12 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             let height = track.height.unwrap_or(shape.height);
             let look = (track.hue, track.plot.colors);
             Body::Scene(links::scene(viewport, found, look, height), height)
+        }
+        Some(Content::Segments(copies)) => {
+            let names = track.source.samples();
+            let range = segment_range(track);
+            let primitives = segments::scene(viewport, &copies.segments, names, mode, range);
+            Body::Scene(primitives, shape.height)
         }
         Some(Content::Features(annotation)) => {
             let packed;
@@ -1149,12 +1167,30 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 row_height,
             }
         }
+        Some(Content::Segments(copies)) => {
+            let rows = copies.samples.max(1);
+            let row_height = segments::row_height(mode, copies.samples);
+            Shape {
+                height: rows as f32 * row_height,
+                rows,
+                fixed: 0.0,
+                row_height,
+            }
+        }
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
+}
+
+/// The log2 values that get the full colors of a segment track: its own range, or ±1.5.
+pub(super) fn segment_range(track: &Track) -> (f32, f32) {
+    track
+        .plot
+        .range
+        .map_or(segments::RANGE, |range| (range.min, range.max))
 }
 
 pub(super) fn signal_columns(

@@ -185,6 +185,9 @@ pub fn view<'a>(
     if track.source.has_signal() {
         body = body.extend(signal_lines(track, range));
     }
+    if track.source.has_segments() {
+        body = body.push(line("Range", menu::segment_items(track, range)));
+    }
     if track.source.has_colors() {
         let colors = menu::item(
             "Use file colors",
