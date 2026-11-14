@@ -48,6 +48,13 @@
 - Sessions keep their hubs. The tracks button lists the hubs that you opened last.
 - The tracks button is on for all genomes and reference files.
 
+### Interaction tracks
+
+- genie opens bigInteract and BEDPE files as interaction tracks. Each link is an arc between its two ends: longer links rise higher, and links with a larger value have a thicker line.
+- Arcs with an end outside the view go past the edge. A link to another chromosome shows as a stub.
+- The card of a link shows its two ends, the distance, the value and the other fields. BEDPE header lines name the fields.
+- The arcs use the colors of the file, or the track color.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
