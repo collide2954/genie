@@ -681,6 +681,7 @@ pub enum Filtering {
     Remove(usize),
     Label(Option<String>),
     Draft(String),
+    Checked(String, bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -953,7 +954,7 @@ impl Genie {
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
-            Message::Filter(id, filtering) => self.filter(id, filtering),
+            Message::Filter(id, filtering) => return self.filter(id, filtering),
             Message::Field(choice) => self.choose_field(choice),
             Message::Visit(locus) => return self.show_locus(locus),
             Message::MenuDismissed => self.close_menus(),
@@ -5033,6 +5034,34 @@ mod tests {
         press(&mut genie, "0.5");
         let _ = genie.update(Message::MenuDismissed);
         assert!(!shows(&genie, "At most"));
+    }
+
+    #[test]
+    fn names_that_the_filter_hides_get_a_note() {
+        let mut genie = with_two_features();
+        let named = genie_core::Named {
+            name: "TP53".to_owned(),
+            contig: 0,
+            span: Region::between(100, 200),
+        };
+        assert_eq!(genie.filtered_for(&named), [] as [u64; 0]);
+        let keep = field_rule("Column 13", Test::Keep("keep".to_owned()));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(keep)));
+        assert_eq!(genie.filtered_for(&named), [0]);
+        let elsewhere = genie_core::Named { contig: 1, ..named };
+        assert_eq!(genie.filtered_for(&elsewhere), [] as [u64; 0]);
+        let checked = Filtering::Checked("BRCA1".to_owned(), false);
+        let _ = genie.update(Message::Filter(0, checked));
+        assert!(!shows(
+            &genie,
+            "BRCA1 is hidden by the filter of genes.bed.gz."
+        ));
+        let checked = Filtering::Checked("TP53".to_owned(), true);
+        let _ = genie.update(Message::Filter(0, checked));
+        assert!(shows(
+            &genie,
+            "TP53 is hidden by the filter of genes.bed.gz."
+        ));
     }
 
     #[test]

@@ -1336,6 +1336,39 @@ fn kept(
     })
 }
 
+/// True when the track has a feature or a variant with this name at this place and the filter
+/// hides all of them.
+pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[Rule]) -> bool {
+    if rules.is_empty() {
+        return false;
+    }
+    let same = |other: &str| other.eq_ignore_ascii_case(name);
+    let passes: Vec<bool> = match &source.format {
+        Format::Features(file) => file
+            .features(source.data(), contig, span)
+            .map(|(_, features)| {
+                features
+                    .iter()
+                    .filter(|feature| same(feature.name()) && feature.span() == span)
+                    .map(|feature| fields::passes(rules, &feature_fields(source, feature)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Format::Variants(file) => file
+            .variants(source.data(), contig, span)
+            .map(|variants| {
+                variants
+                    .iter()
+                    .filter(|variant| same(&variant.id) && variant.span == span)
+                    .map(|variant| fields::passes(rules, &variant_fields(source, variant)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Format::Reads(_) | Format::Signal(_) => Vec::new(),
+    };
+    !passes.is_empty() && passes.iter().all(|kept| !kept)
+}
+
 pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
     let name = name.trim();
     sources.iter().find_map(|source| {
@@ -1392,7 +1425,7 @@ mod tests {
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Loaded, Methyl, Options, Plot,
         Prepared, SignalFile, Source, Toggle, Track, VariantFile, change, contig_names, fits,
-        is_track, load, lookup, names, neighbor, open, open_bbi, open_with, spans, step,
+        hides, is_track, load, lookup, names, neighbor, open, open_bbi, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2097,6 +2130,25 @@ mod tests {
         assert_eq!(next(1, 350, false, &keep), Some((1, region(300, 400))));
         assert_eq!(next(1, 150, false, &keep), Some((0, region(500, 600))));
         assert_eq!(next(1, 350, true, &keep), None);
+    }
+
+    #[test]
+    fn hidden_names_fail_every_rule_check() {
+        let scratch = Scratch::new("hidden-names");
+        let text = [
+            "chr1\t100\t200\tTP53\t0\t+\t100\t200\t0\t1\t100,\t0,\tdrop\n",
+            "chr1\t300\t400\tBRCA1\t0\t+\t300\t400\t0\t1\t100,\t0,\tkeep\n",
+        ]
+        .concat();
+        let source = open(scratch.file("named.bed", text)).unwrap();
+        let keep = [Rule {
+            label: "Column 13".to_owned(),
+            test: Test::Keep("keep".to_owned()),
+        }];
+        assert!(hides(&source, "chr1", region(100, 200), "tp53", &keep));
+        assert!(!hides(&source, "chr1", region(300, 400), "BRCA1", &keep));
+        assert!(!hides(&source, "chr1", region(100, 200), "TP53", &[]));
+        assert!(!hides(&source, "chr1", region(500, 600), "EGFR", &keep));
     }
 
     #[test]

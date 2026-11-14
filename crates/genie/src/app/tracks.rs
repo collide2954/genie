@@ -274,10 +274,26 @@ impl Genie {
         Some((from, heights.len()))
     }
 
-    pub(super) fn filter(&mut self, id: u64, filtering: Filtering) {
-        if let Filtering::Draft(text) = filtering {
-            self.field_draft = Some(text);
-            return;
+    pub(super) fn filter(&mut self, id: u64, filtering: Filtering) -> Task<Message> {
+        match filtering {
+            Filtering::Draft(text) => {
+                self.field_draft = Some(text);
+                return Task::none();
+            }
+            Filtering::Checked(name, hidden) => {
+                let track = self
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.tracks.iter().find(|track| track.id == id))
+                    .map(|track| track.name.clone());
+                return match track {
+                    Some(track) if hidden => {
+                        self.inform(format!("{name} is hidden by the filter of {track}."))
+                    }
+                    _ => Task::none(),
+                };
+            }
+            _ => {}
         }
         self.close_menus();
         self.on_session(|session| {
@@ -291,10 +307,14 @@ impl Genie {
                     filter.rules.remove(index);
                 }
                 Filtering::Label(label) => filter.label = label,
-                Filtering::Add(_) | Filtering::Remove(_) | Filtering::Draft(_) => {}
+                Filtering::Add(_)
+                | Filtering::Remove(_)
+                | Filtering::Draft(_)
+                | Filtering::Checked(..) => {}
             }
             track.refilter();
         });
+        Task::none()
     }
 
     pub(super) fn close_menus(&mut self) {

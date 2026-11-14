@@ -8,7 +8,9 @@ use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Source};
 
-use super::{Genie, MAX_PANELS, Message, Paneling, Popup, Regions, Session, Suggestion, Sweep};
+use super::{
+    Filtering, Genie, MAX_PANELS, Message, Paneling, Popup, Regions, Session, Suggestion, Sweep,
+};
 
 const SUGGESTIONS: usize = 8;
 const MIN_SWEEP: f64 = 3.0;
@@ -146,16 +148,23 @@ impl Genie {
         let Some(session) = &self.session else {
             return Task::none();
         };
+        let mut feature = None;
         if let Some(suggestion) = chosen {
             self.draft = Some(match suggestion {
                 Suggestion::Contig(contig) => {
                     session.reference.assembly.contigs()[contig].name.clone()
                 }
-                Suggestion::Feature(named) => session.locus_of(&named),
+                Suggestion::Feature(named) => {
+                    let locus = session.locus_of(&named);
+                    feature = Some(named);
+                    locus
+                }
             });
         }
         self.highlight = None;
-        self.submit()
+        let moved = self.submit();
+        let checks = feature.map_or_else(Task::none, |named| self.check_hidden(&named));
+        Task::batch([moved, checks])
     }
 
     pub(super) fn drop_draft(&mut self) {
@@ -238,22 +247,32 @@ impl Genie {
         if text.split_whitespace().nth(1).is_some() {
             return self.submit_many(text);
         }
-        let resolved = session.reference.assembly.resolve(&text).or_else(|error| {
-            session
-                .tracks
-                .iter()
-                .filter_map(|track| track.names.as_deref())
-                .find_map(|names| names.find(&text))
-                .map(|named| Target {
-                    contig: named.contig,
-                    span: Span::Region(named.span),
-                })
-                .ok_or(error)
-        });
+        let resolved = session
+            .reference
+            .assembly
+            .resolve(&text)
+            .map(|target| (target, None))
+            .or_else(|error| {
+                session
+                    .tracks
+                    .iter()
+                    .filter_map(|track| track.names.as_deref())
+                    .find_map(|names| names.find(&text))
+                    .map(|named| {
+                        let target = Target {
+                            contig: named.contig,
+                            span: Span::Region(named.span),
+                        };
+                        (target, Some(named.clone()))
+                    })
+                    .ok_or(error)
+            });
         match resolved {
-            Ok(target) => {
+            Ok((target, named)) => {
                 session.join(width);
-                self.go_to(target)
+                let moved = self.go_to(target);
+                let checks = named.map_or_else(Task::none, |named| self.check_hidden(&named));
+                Task::batch([moved, checks])
             }
             Err(error) => {
                 let sources: Vec<Arc<Source>> = session
@@ -491,10 +510,46 @@ impl Genie {
         self.draft = None;
         let width = self.width;
         self.on_session(|session| session.join(width));
-        self.go_to(Target {
+        let moved = self.go_to(Target {
             contig: named.contig,
             span: Span::Region(named.span),
-        })
+        });
+        Task::batch([moved, self.check_hidden(&named)])
+    }
+
+    pub(super) fn filtered_for(&self, named: &Named) -> Vec<u64> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        session
+            .tracks
+            .iter()
+            .filter(|track| {
+                !track.filter.rules.is_empty()
+                    && track.contigs.get(named.contig).is_some_and(Option::is_some)
+            })
+            .map(|track| track.id)
+            .collect()
+    }
+
+    fn check_hidden(&self, named: &Named) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let checks = self.filtered_for(named).into_iter().filter_map(|id| {
+            let track = session.tracks.iter().find(|track| track.id == id)?;
+            let contig = track.contigs.get(named.contig)?.clone()?;
+            let (source, rules) = (Arc::clone(&track.source), track.filter.rules.clone());
+            let (name, span) = (named.name.clone(), named.span);
+            Some(Task::perform(
+                async move {
+                    let hidden = track::hides(&source, &contig, span, &name, &rules);
+                    (name, hidden)
+                },
+                move |(name, hidden)| Message::Filter(id, Filtering::Checked(name, hidden)),
+            ))
+        });
+        Task::batch(checks)
     }
 
     pub(super) fn navigate(

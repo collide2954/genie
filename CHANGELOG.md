@@ -31,6 +31,7 @@
 
 - Next feature and Previous feature (Ctrl+F and Ctrl+B) skip the features and variants that the filter hides.
 - For a number in a card, type your own limit in the menu, then click At least or At most.
+- If you type a name that a filter hides, genie goes to it and a note says so.
 - A click inside a menu does not close the menu.
 
 ### Packages
