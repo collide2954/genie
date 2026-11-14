@@ -890,7 +890,7 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
     let references = ["fa", "fasta", "fna", "fas", "gz", "bgz", "2bit"];
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
-            .set_title("Open a track, a reference sequence or a session")
+            .set_title("Open a track, a track hub, a reference sequence or a session")
             .add_filter(
                 "Tracks",
                 &[
@@ -915,9 +915,10 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
             .add_filter("Reference sequences", &references)
     } else {
         rfd::AsyncFileDialog::new()
-            .set_title("Open a reference sequence or a session")
+            .set_title("Open a reference sequence, a track hub or a session")
             .add_filter("Reference sequences", &references)
     }
+    .add_filter("Track hubs", &["txt"])
     .add_filter("Sessions", &[saved::EXTENSION]);
     dialog.pick_file().await.map(|file| file.path().to_owned())
 }

@@ -2496,6 +2496,7 @@ mod tests {
         let items = [
             ("Open file…", Message::Command(Command::Open)),
             ("Open URL…", Message::Command(Command::OpenUrl)),
+            ("Open a track hub…", Message::Hub(super::hubs::Hubbing::Ask)),
             ("Save session", Message::Command(Command::SaveSession)),
             ("Export image…", Message::Command(Command::Export)),
             ("Keys and mouse…", Message::Command(Command::Help)),

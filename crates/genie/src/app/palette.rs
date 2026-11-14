@@ -9,6 +9,7 @@ use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::track::{Change, Toggle, Track};
 
+use super::hubs::Hubbing;
 use super::{Genie, Message, Paletting, Popup, Ranging, Regions, Renaming};
 
 fn track_actions(track: &Track) -> Vec<Action> {
@@ -160,6 +161,7 @@ impl Genie {
         let mut actions = vec![
             Action::new("Open file…", keys('O'), Message::Command(Command::Open)),
             Action::new("Open URL…", keys('U'), Message::Command(Command::OpenUrl)),
+            Action::new("Open a track hub…", "", Message::Hub(Hubbing::Ask)),
             Action::new("Keys and mouse", "F1", Message::Command(Command::Help)),
             Action::new("Settings", "", Message::ToggleSettings),
             Action::new("Change the theme", "", Message::CycleAppearance),
@@ -199,6 +201,13 @@ impl Genie {
                 .is_some_and(|genome| !crate::catalog::entries(genome).is_empty());
             if catalog {
                 actions.push(Action::new("Add a UCSC track", "", Message::CatalogMenu));
+            }
+            for (index, hub) in self.hubs.iter().enumerate() {
+                actions.push(Action::new(
+                    format!("Show the hub {}", hub.short),
+                    hub.location.place(),
+                    Message::Hub(Hubbing::Show(index)),
+                ));
             }
             for track in &session.tracks {
                 actions.extend(track_actions(track));

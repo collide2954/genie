@@ -528,11 +528,12 @@ mod tests {
     use iced_test::simulator;
 
     use super::Hubbing;
-    use crate::app::{Address, Genie, Message};
+    use crate::app::{Address, Genie, Message, Paletting};
     use crate::hub::{self, Wanted};
     use crate::location::Location;
     use crate::reference::Reference;
     use crate::scratch::Scratch;
+    use crate::shortcuts::Command;
     use crate::track::{self, Typed};
 
     const HUB: &str = "hub mine\nshortLabel My hub\nlongLabel My long hub\n\
@@ -666,6 +667,10 @@ mod tests {
         assert!(ui.into_messages().any(|message| message == show));
         let _ = genie.update(show);
         assert!(shows(&genie, "Tracks for ref"));
+        let _ = genie.update(Message::Command(Command::Palette));
+        let _ = genie.update(Message::Palette(Paletting::Query("hub".to_owned())));
+        assert!(shows(&genie, "Open a track hub…"));
+        assert!(shows(&genie, "Show the hub My hub"));
     }
 
     #[test]

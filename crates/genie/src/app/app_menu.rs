@@ -8,12 +8,15 @@ use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::style;
 
+use super::hubs::Hubbing;
 use super::{Genie, Message, Popup};
 
 const WIDTH: f32 = 200.0;
 const RECENT_WIDTH: f32 = 280.0;
 const ROW: f32 = 24.0;
-const ROWS: f32 = 8.0;
+const ROWS: f32 = 9.0;
+/// The place of the Recent row in the menu, from the top.
+const RECENT_ROW: f32 = 3.0;
 const SEPARATORS: f32 = 2.0;
 const SEPARATOR: f32 = 8.0;
 const PADDING: f32 = 4.0;
@@ -61,7 +64,7 @@ impl Genie {
             return Some(main);
         }
         let count = self.recent.entries().len() as f32;
-        let beside = Point::new(at.x + WIDTH - OVERLAP, at.y + PADDING + 2.0 * ROW);
+        let beside = Point::new(at.x + WIDTH - OVERLAP, at.y + PADDING + RECENT_ROW * ROW);
         let extent = (RECENT_WIDTH, count * ROW + 2.0 * PADDING);
         let submenu = menu::sized(self.recent_items(), beside, self.window, extent);
         Some(stack![main, submenu].into())
@@ -96,6 +99,10 @@ impl Genie {
                 keys('U'),
                 Message::Command(Command::OpenUrl),
                 true,
+            ))
+            .push(hover(
+                menu::item("Open a track hub…", Message::Hub(Hubbing::Ask), false, true),
+                false,
             ))
             .push(hover(recent.into(), true))
             .push(menu::separator())
