@@ -545,6 +545,41 @@ fn references(
     Ok(found)
 }
 
+/// For a slice with several references: each run of reads of one reference, as (reference,
+/// 1-based start, span), and (-1, 0, 1) for unmapped reads.
+pub(crate) fn spans(
+    header: &Compression,
+    slice: &Slice,
+    blocks: &[Block],
+) -> Result<Vec<(i32, i64, i64)>, Error> {
+    let records = raw_records(header, slice, blocks)?;
+    let mut runs: Vec<(i32, i64, i64)> = Vec::new();
+    for raw in &records {
+        let (start, end) = if raw.reference < 0 {
+            (0, 0)
+        } else {
+            (raw.position, raw.end)
+        };
+        match runs.last_mut() {
+            Some((reference, low, high)) if *reference == raw.reference => {
+                *low = (*low).min(start);
+                *high = (*high).max(end);
+            }
+            _ => runs.push((raw.reference, start, end)),
+        }
+    }
+    Ok(runs
+        .into_iter()
+        .map(|(reference, start, end)| {
+            if reference < 0 {
+                (-1, 0, 1)
+            } else {
+                (reference, start, end - start + 1)
+            }
+        })
+        .collect())
+}
+
 /// The reads of a slice with the numbers of their references; with `only`, just the reads of
 /// that reference are built, so only its bases are needed.
 pub(crate) fn decode(

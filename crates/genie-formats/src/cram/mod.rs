@@ -8,6 +8,7 @@ mod record;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::fmt::Write as _;
 use std::io::{Read, Seek, SeekFrom};
 
 use genie_core::Region;
@@ -392,6 +393,42 @@ impl Cram {
         }
         Ok(())
     }
+
+    /// A CRAI index for the file: gzip text with a line for each slice, or for each reference
+    /// of a slice that holds several.
+    pub fn index(&self, reader: &mut (impl Read + Seek)) -> Result<Vec<u8>, Error> {
+        let mut text = String::new();
+        let mut offset = self.first;
+        while let Some(found) = container(reader, offset, self.version.0)? {
+            if found.records > 0 {
+                let (_, compression) = self.compression_at(reader, offset)?;
+                for (slot, landmark) in found.landmarks.iter().enumerate() {
+                    let end = found
+                        .landmarks
+                        .get(slot + 1)
+                        .copied()
+                        .unwrap_or(found.length);
+                    let size = end.saturating_sub(*landmark);
+                    let (head, blocks) = self.slice_at(reader, &found, *landmark)?;
+                    let spans = if head.reference == -2 {
+                        record::spans(&compression, &head, &blocks)?
+                    } else if head.reference < 0 {
+                        vec![(-1, 0, 1)]
+                    } else {
+                        vec![(head.reference, head.start, head.span)]
+                    };
+                    for (reference, start, span) in spans {
+                        let _ = writeln!(
+                            text,
+                            "{reference}\t{start}\t{span}\t{offset}\t{landmark}\t{size}"
+                        );
+                    }
+                }
+            }
+            offset = found.end();
+        }
+        Ok(gzip::compress(text.as_bytes()))
+    }
 }
 
 #[cfg(test)]
@@ -548,6 +585,27 @@ mod tests {
     }
 
     #[test]
+    fn built_indexes_match_samtools() {
+        for name in [
+            "cram30.cram",
+            "cram-embed.cram",
+            "cram-noref.cram",
+            "cram-multi.cram",
+        ] {
+            let mut reader = open(name);
+            let cram = Cram::read(&mut reader).unwrap();
+            let built = gzip::inflate(&cram.index(&mut reader).unwrap()).unwrap();
+            let packed = std::fs::read(data(&format!("{name}.crai"))).unwrap();
+            let expected = gzip::inflate(&packed).unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&built),
+                String::from_utf8_lossy(&expected),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn substitution_matrices_list_the_other_bases_by_code() {
         // 0x1B = 00 01 10 11: the other bases in ACGTN order get codes 0 to 3.
         let table = substitutions(&[0x1B, 0x1B, 0x1B, 0x1B, 0xE4]);
@@ -560,9 +618,11 @@ mod tests {
     #[test]
     fn cram_3_0_reads_equal_the_bam_reads() {
         let contigs = reference();
-        let reads = cram_reads("cram30.cram", &mut fetcher(&contigs)).unwrap();
         let expected = bam_reads();
-        assert_eq!(compare(&reads, &expected), None);
+        for name in ["cram30.cram", "cram-multi.cram"] {
+            let reads = cram_reads(name, &mut fetcher(&contigs)).unwrap();
+            assert_eq!(compare(&reads, &expected), None, "{name}");
+        }
     }
 
     #[test]
