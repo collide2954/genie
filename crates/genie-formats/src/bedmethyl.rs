@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Read, Seek};
 
 use genie_core::Region;
@@ -118,16 +118,25 @@ pub fn codes(records: &[Record]) -> Vec<String> {
 }
 
 pub fn sites(records: &[Record], name: &str, join: bool) -> Vec<Site> {
+    let chosen: Vec<&Record> = records
+        .iter()
+        .filter(|record| modification::name(&record.code) == name)
+        .collect();
+    let forward: BTreeSet<u64> = chosen
+        .iter()
+        .filter(|record| record.strand == b'+')
+        .map(|record| record.span.start())
+        .collect();
     let mut sites: BTreeMap<u64, (u32, u32)> = BTreeMap::new();
-    for record in records {
-        if modification::name(&record.code) != name {
-            continue;
-        }
+    for record in chosen {
+        let start = record.span.start();
         let shifts = join
             && record.strand == b'-'
             && ON_CYTOSINE.contains(&record.code.as_str())
-            && record.span.start() > 0;
-        let position = record.span.start() - u64::from(shifts);
+            && start
+                .checked_sub(1)
+                .is_some_and(|before| forward.contains(&before));
+        let position = start - u64::from(shifts);
         let entry = sites.entry(position).or_default();
         entry.0 += record.modified;
         entry.1 += record.valid;
@@ -213,19 +222,18 @@ mod tests {
             record(101, "m", b'-', 10, 5),
             record(100, "h", b'+', 20, 2),
             record(200, "a", b'-', 4, 1),
+            record(301, "m", b'-', 8, 2),
         ];
         let single =
             |start: u64, value: f32| Summary::single(Region::between(start, start + 1), value);
-        let summaries = |name: &str, join: bool| percents(&sites(&records, name, join));
+        let summaries = |name: &str, join: bool| percents(&sites(&records[..4], name, join));
         let joined = sites(&records, "5mC", true);
-        assert_eq!(
-            joined,
-            [Site {
-                position: 100,
-                modified: 20,
-                total: 30
-            }]
-        );
+        let site = |position, modified, total| Site {
+            position,
+            modified,
+            total,
+        };
+        assert_eq!(joined, [site(100, 20, 30), site(301, 2, 8)]);
         let percent = percents(&joined);
         assert_eq!(percent[0].span, Region::between(100, 101));
         assert!(
