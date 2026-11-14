@@ -3,7 +3,7 @@ use std::f32::consts::TAU;
 use iced::widget::canvas::{self, Frame, Geometry, LineCap, Path, Stroke};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
-use crate::theme::tokens;
+use crate::theme::{DARK_DATA, LIGHT_DATA, tokens};
 
 pub const GRID: f32 = 24.0;
 const CORNER: f32 = 5.5;
@@ -17,11 +17,18 @@ const STRAND: f32 = 1.75;
 const RUNG: f32 = 1.0;
 const RUNG_GAP: f32 = 2.25;
 const RUNGS: [f32; 4] = [1.0 / 6.0, 1.0 / 3.0, 2.0 / 3.0, 5.0 / 6.0];
+const BASES: f32 = 6.0;
+
+pub const GREEN_ON_DARK: Color = DARK_DATA.bases[0];
+pub const PURPLE_ON_DARK: Color = DARK_DATA.insertion;
+pub const GREEN_ON_LIGHT: Color = LIGHT_DATA.bases[0];
+pub const PURPLE_ON_LIGHT: Color = LIGHT_DATA.insertion;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Look {
     pub square: Color,
     pub glyph: Color,
+    pub bases: [Color; 2],
     pub rungs: bool,
 }
 
@@ -29,8 +36,24 @@ pub struct Look {
 pub const ICON: Look = Look {
     square: Color::from_rgb8(0x1F, 0x1F, 0x1F),
     glyph: Color::WHITE,
+    bases: [GREEN_ON_DARK, PURPLE_ON_DARK],
     rungs: true,
 };
+
+pub fn themed(theme: &Theme) -> Look {
+    let tokens = tokens(theme);
+    let bases = if theme.extended_palette().is_dark {
+        [GREEN_ON_LIGHT, PURPLE_ON_LIGHT]
+    } else {
+        [GREEN_ON_DARK, PURPLE_ON_DARK]
+    };
+    Look {
+        square: tokens.accent,
+        glyph: tokens.canvas,
+        bases,
+        rungs: false,
+    }
+}
 
 fn point(sign: f32, twist: f32) -> [f32; 2] {
     let along = (twist + TAIL) / (1.0 + 2.0 * TAIL);
@@ -47,6 +70,26 @@ pub fn strand(sign: f32) -> Vec<[f32; 2]> {
             point(sign, -TAIL + along * (1.0 + 2.0 * TAIL))
         })
         .collect()
+}
+
+pub fn bases(sign: f32) -> Vec<(usize, Vec<[f32; 2]>)> {
+    let mut parts: Vec<(usize, Vec<[f32; 2]>)> = Vec::new();
+    for step in 0..=STEPS {
+        let along = f32::from(step) / f32::from(STEPS);
+        let twist = -TAIL + along * (1.0 + 2.0 * TAIL);
+        let base = ((twist * BASES).floor() as i32).rem_euclid(2) as usize;
+        let at = point(sign, twist);
+        match parts.last_mut() {
+            Some((current, points)) if *current == base => points.push(at),
+            last => {
+                if let Some((_, points)) = last {
+                    points.push(at);
+                }
+                parts.push((base, vec![at]));
+            }
+        }
+    }
+    parts
 }
 
 pub fn rungs() -> Vec<[[f32; 2]; 2]> {
@@ -82,14 +125,7 @@ impl<Message> canvas::Program<Message> for Program {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let look = self.look.unwrap_or_else(|| {
-            let tokens = tokens(theme);
-            Look {
-                square: tokens.accent,
-                glyph: tokens.canvas,
-                rungs: false,
-            }
-        });
+        let look = self.look.unwrap_or_else(|| themed(theme));
         let scale = self.size / GRID;
         let at = |[x, y]: [f32; 2]| Point::new(x * scale, y * scale);
         let stroke = |width: f32| {
@@ -97,6 +133,16 @@ impl<Message> canvas::Program<Message> for Program {
                 .with_color(look.glyph)
                 .with_width(width * scale)
                 .with_line_cap(LineCap::Round)
+        };
+        let line = |points: &[[f32; 2]]| {
+            Path::new(|builder| {
+                if let Some((first, rest)) = points.split_first() {
+                    builder.move_to(at(*first));
+                    for next in rest {
+                        builder.line_to(at(*next));
+                    }
+                }
+            })
         };
         let mut frame = Frame::new(renderer, bounds.size());
         let square = Path::rounded_rectangle(
@@ -110,18 +156,18 @@ impl<Message> canvas::Program<Message> for Program {
                 frame.stroke(&Path::line(at(from), at(to)), stroke(RUNG));
             }
         }
-        for sign in [1.0, -1.0] {
-            let points = strand(sign);
-            let path = Path::new(|builder| {
-                if let Some((first, rest)) = points.split_first() {
-                    builder.move_to(at(*first));
-                    for next in rest {
-                        builder.line_to(at(*next));
-                    }
-                }
-            });
-            frame.stroke(&path, stroke(STRAND));
+        let parts = bases(-1.0);
+        let ends = [parts.first(), parts.last()];
+        for (base, points) in ends.into_iter().flatten() {
+            frame.stroke(&line(points), stroke(STRAND).with_color(look.bases[*base]));
         }
+        for (base, points) in &parts {
+            let flat = stroke(STRAND)
+                .with_color(look.bases[*base])
+                .with_line_cap(LineCap::Butt);
+            frame.stroke(&line(points), flat);
+        }
+        frame.stroke(&line(&strand(1.0)), stroke(STRAND));
         vec![frame.into_geometry()]
     }
 }
@@ -134,7 +180,10 @@ mod tests {
     use genie_formats::{icon, png};
     use iced::Color;
 
-    use super::{GRID, ICON, Look, rungs, strand, view};
+    use super::{
+        GREEN_ON_DARK, GREEN_ON_LIGHT, GRID, ICON, Look, PURPLE_ON_DARK, PURPLE_ON_LIGHT, rungs,
+        strand, themed, view,
+    };
 
     const PNGS: [u32; 4] = [32, 128, 256, 512];
     const ICO: [u32; 7] = [16, 24, 32, 48, 64, 128, 256];
@@ -282,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn the_icon_is_white_strands_on_a_dark_rounded_square() {
+    fn the_icon_has_a_white_strand_and_a_green_and_purple_strand() {
         let image = crate::export::picture(
             view::<()>(GRID, Some(ICON)),
             GRID,
@@ -300,11 +349,29 @@ mod tests {
                 image.rgba[at + 3],
             ]
         };
+        let near = |found: [u8; 4], want: Color| {
+            let want = want.into_rgba8();
+            (0..3).all(|channel| found[channel].abs_diff(want[channel]) < 40)
+        };
         assert_eq!(pixel(0, 0)[3], 0);
         assert_eq!(pixel(63, 63)[3], 0);
         let dark = pixel(6, 32);
         assert!(dark[3] == 255 && dark[0] < 0x30, "{dark:?}");
         let crossing = pixel(32, 32);
         assert!(crossing[3] == 255 && crossing[0] > 0xE0, "{crossing:?}");
+        let green = pixel(25, 18);
+        assert!(near(green, ICON.bases[0]), "{green:?}");
+        let purple = pixel(18, 23);
+        assert!(near(purple, ICON.bases[1]), "{purple:?}");
+    }
+
+    #[test]
+    fn the_logo_bases_stand_out_on_the_square_of_each_theme() {
+        let light = themed(&crate::theme::light());
+        let dark = themed(&crate::theme::dark());
+        assert_eq!(light.square, crate::theme::LIGHT.accent);
+        assert_eq!(dark.square, crate::theme::DARK.accent);
+        assert_eq!(light.bases, [GREEN_ON_DARK, PURPLE_ON_DARK]);
+        assert_eq!(dark.bases, [GREEN_ON_LIGHT, PURPLE_ON_LIGHT]);
     }
 }
