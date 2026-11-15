@@ -1009,10 +1009,7 @@ impl Genie {
             Message::TrackMenu(id, at) => self.open_menu(id, at),
             Message::TrackChanged(id, change) => return self.change_track(id, change),
             Message::TrackHovered(id, panel, pointer) => return self.hovered(id, panel, pointer),
-            Message::TrackClicked(id, panel, pointer) => {
-                self.pinned = self.card(id, panel, pointer);
-                return self.find_effects(panel, true);
-            }
+            Message::TrackClicked(id, panel, pointer) => return self.clicked(id, panel, pointer),
             Message::Effects(generation, lines) => self.effects_found(generation, lines),
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),

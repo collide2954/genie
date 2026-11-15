@@ -382,11 +382,18 @@ impl Genie {
                 }
             }
             Sweep::Released => {
+                let genome = session.genome;
                 let Some((swept, start, end)) = self.sweep.take() else {
                     return Task::none();
                 };
-                if swept != panel || (viewport.to_px(end) - viewport.to_px(start)).abs() < MIN_SWEEP
-                {
+                if swept != panel {
+                    return Task::none();
+                }
+                if (viewport.to_px(end) - viewport.to_px(start)).abs() < MIN_SWEEP {
+                    if genome {
+                        let span = Span::Whole;
+                        return self.go_to(Target { contig, span });
+                    }
                     return Task::none();
                 }
                 let length = viewport.length() as f64;
@@ -397,7 +404,7 @@ impl Genie {
                     return self.mark_region(contig, region);
                 }
                 let span = Span::Region(region);
-                if panel > 0 {
+                if panel > 0 && !genome {
                     let motion = self.settings.motion;
                     self.on_session(|session| {
                         session.steer(panel, |viewport| viewport.jump(span), motion);

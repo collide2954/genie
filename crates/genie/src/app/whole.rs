@@ -127,8 +127,11 @@ mod tests {
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
 
-    use crate::app::{Genie, Message};
+    use iced::Point;
+
+    use crate::app::{Genie, Message, Sweep};
     use crate::reference::Reference;
+    use crate::scene::Pointer;
     use crate::shortcuts::Command;
     use crate::track::{FeatureFile, Format, Source};
 
@@ -230,5 +233,27 @@ mod tests {
         assert_eq!(track.slot(0).wanted, Some((0, Region::between(0, 3_000))));
         assert_eq!(track.slot(1).wanted, Some((1, Region::between(0, 1_000))));
         assert_eq!(track.slot(2).wanted, None);
+    }
+
+    #[test]
+    fn a_click_opens_a_chromosome_and_a_drag_opens_a_region() {
+        let mut genie = genie();
+        go(&mut genie, "All");
+        let _ = genie.update(Message::Ruler(1, Sweep::Pressed(0.5)));
+        let _ = genie.update(Message::Ruler(1, Sweep::Released));
+        assert_eq!(panels(&genie), [(1, Region::between(0, 1_000))]);
+        go(&mut genie, "All");
+        let _ = genie.update(Message::Ruler(0, Sweep::Pressed(0.25)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Dragged(0.5)));
+        let _ = genie.update(Message::Ruler(0, Sweep::Released));
+        assert_eq!(panels(&genie), [(0, Region::between(750, 1_500))]);
+        go(&mut genie, "All");
+        let pointer = Pointer {
+            local: Point::new(10.0, 5.0),
+            at: Point::new(10.0, 100.0),
+        };
+        let _ = genie.update(Message::TrackClicked(7, 2, pointer));
+        assert_eq!(panels(&genie), [(2, Region::between(0, 5))]);
+        assert!(genie.pinned.is_none());
     }
 }

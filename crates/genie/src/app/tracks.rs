@@ -5,7 +5,7 @@ use std::thread;
 use std::time::SystemTime;
 
 use genie_core::methylation::Site;
-use genie_core::{Region, Viewport};
+use genie_core::{Region, Span, Target, Viewport};
 use genie_render::features::Mode;
 use genie_render::{alignments, features, links, segments, signal, variants};
 use iced::futures::channel::mpsc;
@@ -423,6 +423,17 @@ impl Genie {
         }
         self.hover = pointer.and_then(|pointer| self.card(id, panel, pointer));
         self.find_effects(panel, false)
+    }
+
+    /// Keeps the card open, or opens the chromosome in the whole-genome view.
+    pub(super) fn clicked(&mut self, id: u64, panel: usize, pointer: Pointer) -> Task<Message> {
+        if let Some(session) = self.session.as_ref().filter(|session| session.genome) {
+            let (contig, _) = session.view(panel);
+            let span = Span::Whole;
+            return self.go_to(Target { contig, span });
+        }
+        self.pinned = self.card(id, panel, pointer);
+        self.find_effects(panel, true)
     }
 
     pub(super) fn change_reading(&mut self, change: reading::Change) {
