@@ -3,9 +3,7 @@
 //! of the table.
 
 use std::collections::HashSet;
-use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::grouped;
@@ -42,6 +40,16 @@ pub enum Sampling {
     Arrange(u64, Arranging),
     /// Forget the sample table.
     Close,
+    /// What a text file on the web is, after genie read its first lines.
+    Checked(Location, Text),
+}
+
+/// What a `.txt` file is, from its first lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Text {
+    Hub,
+    Loops,
+    Table,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,34 +59,47 @@ pub enum Arranging {
     Color(String),
 }
 
-/// True for a file that genie opens as a sample table: tab or comma separated files, PLINK
-/// files, and text files on this computer that are not track hubs.
-pub(super) fn is_table(location: &Location) -> bool {
+/// The type of a file without `.gz` or `.bgz`, in lower case.
+fn extension(location: &Location) -> Option<String> {
     let name = location.name().to_ascii_lowercase();
     let stem = name
         .strip_suffix(".gz")
         .or_else(|| name.strip_suffix(".bgz"))
         .unwrap_or(&name);
-    let Some((_, extension)) = stem.rsplit_once('.') else {
-        return false;
-    };
-    if EXTENSIONS.contains(&extension) {
-        return true;
-    }
-    extension == "txt" && location.path().is_some_and(|path| !starts_like_hub(path))
+    stem.rsplit_once('.')
+        .map(|(_, extension)| extension.to_owned())
 }
 
-/// True when the first line of a file that is not a comment starts with "hub", as track hub
-/// files do, or when genie cannot read the file.
-fn starts_like_hub(path: &Path) -> bool {
-    let Ok(file) = File::open(path) else {
-        return true;
+/// True for a file that genie opens as a sample table by its type: tab or comma separated
+/// files and PLINK files.
+pub(super) fn is_table(location: &Location) -> bool {
+    extension(location).is_some_and(|extension| EXTENSIONS.contains(&extension.as_str()))
+}
+
+/// True for a `.txt` file: a track hub, a loop list or a sample table.
+pub(super) fn is_text(location: &Location) -> bool {
+    extension(location).is_some_and(|extension| extension == "txt")
+}
+
+/// What a text file is: a loop list when its first line is a loop list header, a track hub
+/// when its first line that is not a comment starts with "hub", and else a sample table. A
+/// file that genie cannot read is a hub, so that the hub says why it does not open.
+pub(super) fn classify(location: &Location) -> Text {
+    let head = track::head(location, 50);
+    let mut lines = head
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty());
+    let Some(first) = lines.clone().next() else {
+        return Text::Hub;
     };
-    BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .find(|line| !line.trim().is_empty() && !line.starts_with('#'))
-        .is_none_or(|line| line.trim_start().to_ascii_lowercase().starts_with("hub"))
+    if genie_formats::bedpe::is_loop_list(first) {
+        return Text::Loops;
+    }
+    match lines.find(|line| !line.starts_with('#')) {
+        Some(line) if !line.to_ascii_lowercase().starts_with("hub") => Text::Table,
+        _ => Text::Hub,
+    }
 }
 
 /// Reads a sample table from a file on this computer or on the web.
@@ -183,6 +204,30 @@ impl Genie {
         )
     }
 
+    /// Opens a text file as what it is. A file on the web is read in the background first.
+    pub(super) fn open_any_text(&mut self, location: Location) -> Task<Message> {
+        if !location.is_remote() {
+            let text = classify(&location);
+            return self.open_text(location, text);
+        }
+        self.busy += 1;
+        Task::perform(
+            async move {
+                let text = classify(&location);
+                Message::Samples(Sampling::Checked(location, text))
+            },
+            std::convert::identity,
+        )
+    }
+
+    fn open_text(&mut self, location: Location, text: Text) -> Task<Message> {
+        match text {
+            Text::Hub => self.open_hub(location, true),
+            Text::Loops => self.open_track(location),
+            Text::Table => self.open_samples(location),
+        }
+    }
+
     pub(super) fn sampling(&mut self, sampling: Sampling) -> Task<Message> {
         match sampling {
             Sampling::Opened(location, result) => {
@@ -193,6 +238,10 @@ impl Genie {
                 }
             }
             Sampling::Arrange(id, arranging) => self.arrange_samples(id, arranging),
+            Sampling::Checked(location, text) => {
+                self.busy = self.busy.saturating_sub(1);
+                return self.open_text(location, text);
+            }
             Sampling::Close => {
                 if let Some(session) = &mut self.session {
                     session.samples = None;
@@ -294,7 +343,7 @@ mod tests {
     use genie_core::samples::{Arrangement, Group};
     use genie_core::variant::{Call, Variant};
 
-    use super::{group_lines, is_table, read};
+    use super::{Text, classify, group_lines, is_table, is_text, read};
     use crate::location::Location;
     use crate::scratch::Scratch;
 
@@ -356,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn tables_open_by_their_type_and_text_files_that_are_not_hubs() {
+    fn tables_open_by_their_type_and_text_files_by_their_first_lines() {
         let scratch = Scratch::new("sample-types");
         let named = |name: &str| Location::File(PathBuf::from(format!("/data/{name}")));
         for name in [
@@ -368,14 +417,28 @@ mod tests {
         ] {
             assert!(is_table(&named(name)), "{name}");
         }
-        for name in ["calls.vcf", "genes.bed", "notes", "reads.bam"] {
+        for name in ["calls.vcf", "genes.bed", "notes", "reads.bam", "traits.txt"] {
             assert!(!is_table(&named(name)), "{name}");
         }
-        let table = scratch.file("traits.txt", "sample\tpop\nS1\tEUR\n");
-        let hub = scratch.file("hub.txt", "# my hub\nhub demo\nshortLabel demo\n");
-        assert!(is_table(&Location::File(table)));
-        assert!(!is_table(&Location::File(hub)));
-        assert!(!is_table(&named("missing.txt")));
+        assert!(is_text(&named("hub.txt")) && is_text(&named("loops.TXT.gz")));
+        assert!(!is_text(&named("groups.tsv")));
+        let file = |name: &str, text: &str| Location::File(scratch.file(name, text));
+        let table = file("traits.txt", "sample\tpop\nS1\tEUR\n");
+        let hub = file("hub.txt", "# my hub\nhub demo\nshortLabel demo\n");
+        let loops = file(
+            "loops.txt",
+            "chr1\tx1\tx2\tchr2\ty1\ty2\tcolor\to\n1\t10\t20\t1\t50\t60\t0,0,255\t5\n",
+        );
+        let clinical = file(
+            "data_clinical_sample.txt",
+            "#Patient Identifier\tSample Identifier\n#A\tB\n#STRING\tSTRING\n#1\t1\n\
+             PATIENT_ID\tSAMPLE_ID\nP1\tS1\n",
+        );
+        assert_eq!(classify(&table), Text::Table);
+        assert_eq!(classify(&hub), Text::Hub);
+        assert_eq!(classify(&loops), Text::Loops);
+        assert_eq!(classify(&clinical), Text::Table);
+        assert_eq!(classify(&named("missing.txt")), Text::Hub);
     }
 
     #[test]

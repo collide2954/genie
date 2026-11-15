@@ -4,7 +4,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::path::Path;
 
 use genie_formats::http;
 use genie_formats::hub::{self as text, HubFile};
@@ -94,13 +93,6 @@ impl Wanted<'_> {
             .or_else(|| self.genome.and_then(named))
             .or_else(|| named(stem).filter(|_| !stem.is_empty()))
     }
-}
-
-/// True for a file that genie opens as a track hub: a text file such as hub.txt.
-pub fn is_hub(location: &Location) -> bool {
-    Path::new(&location.name())
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
 }
 
 /// Reads a hub, its genomes, and the tracks of the genome that matches the session.

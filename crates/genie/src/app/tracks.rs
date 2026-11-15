@@ -18,7 +18,6 @@ use iced::{Point, Task};
 
 use crate::card::{Card, Changes, Detail};
 use crate::genome;
-use crate::hub;
 use crate::location::Location;
 use crate::paths;
 use crate::port::Reply;
@@ -686,6 +685,20 @@ impl Genie {
         )
     }
 
+    /// Opens a track file in the background.
+    pub(super) fn open_track(&mut self, location: Location) -> Task<Message> {
+        if self.session.is_none() {
+            self.status = Status::Failed(NO_REFERENCE.to_owned());
+            return Task::none();
+        }
+        self.busy += 1;
+        let cache = self.cache.clone();
+        Task::perform(
+            async move { opening(location, cache.as_deref()) },
+            std::convert::identity,
+        )
+    }
+
     pub(super) fn open(&mut self, location: Location) -> Task<Message> {
         if let Some(path) = location.path()
             && saved::is_session(path)
@@ -712,20 +725,11 @@ impl Genie {
         if super::samples::is_table(&location) {
             return self.open_samples(location);
         }
-        if hub::is_hub(&location) {
-            return self.open_hub(location, true);
+        if super::samples::is_text(&location) {
+            return self.open_any_text(location);
         }
         if track::is_track(&location) {
-            if self.session.is_none() {
-                self.status = Status::Failed(NO_REFERENCE.to_owned());
-                return Task::none();
-            }
-            self.busy += 1;
-            let cache = self.cache.clone();
-            return Task::perform(
-                async move { opening(location, cache.as_deref()) },
-                std::convert::identity,
-            );
+            return self.open_track(location);
         }
         let name = location.name();
         if self.session.is_none() {
