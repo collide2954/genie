@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Read};
 
 use genie_core::Region;
+use genie_core::signal::Tally;
 
 use crate::{Error, Reason};
 
@@ -82,6 +83,19 @@ impl Scheme {
             }
         }
         0
+    }
+
+    /// The bases that a bin covers, up to the length of the contig.
+    fn span(self, bin: u32, length: u64) -> Region {
+        let (mut level, mut above) = (0, bin);
+        while above != 0 {
+            level += 1;
+            above = (above - 1) >> 3;
+        }
+        let shift = self.shift + 3 * (self.depth - level);
+        let start = u64::from(bin - Self::first(level)) << shift;
+        let end = start + (1 << shift);
+        Region::between(start, if length > start { end.min(length) } else { end })
     }
 
     fn bottom(self, bin: u32) -> usize {
@@ -471,6 +485,91 @@ impl Bins {
             }
         }
         merged
+    }
+
+    /// What the pseudo-bin of htslib says about the records of the reference: the virtual
+    /// offsets of its first record and after its last record, and the number of records.
+    fn meta(&self) -> Option<(Chunk, u64)> {
+        match self.find(self.scheme.meta())?.chunks.as_slice() {
+            [span, counts, ..] => Some((*span, counts.start)),
+            _ => None,
+        }
+    }
+
+    /// An estimate of the records that start in each part of a region, from the index alone:
+    /// the linear index of a TBI or BAI index, or the size of each bin of a CSI index. It needs
+    /// the pseudo-bin that htslib adds to its indexes. `length` is the length of the contig.
+    pub fn density(&self, region: Region, step: u64, length: u64) -> Option<Tally> {
+        let (span, records) = self.meta()?;
+        let mut tally = Tally::new(region, step);
+        if records == 0 {
+            return Some(tally);
+        }
+        let block = self.block_size(span);
+        let bytes = |offset: u64| (offset >> 16) as f64 + (offset & 0xFFFF) as f64 * block;
+        match &self.intervals {
+            Some(intervals) if !intervals.is_empty() => {
+                let mut marks: Vec<f64> = intervals.iter().map(|offset| bytes(*offset)).collect();
+                marks.push(bytes(span.end));
+                for index in 1..marks.len() {
+                    marks[index] = marks[index].max(marks[index - 1]);
+                }
+                let total = marks[marks.len() - 1] - marks[0];
+                if total <= 0.0 {
+                    return Some(tally);
+                }
+                let window = 1_u64 << self.scheme.shift;
+                for (index, pair) in marks.windows(2).enumerate() {
+                    let start = index as u64 * window;
+                    let part = Region::between(start, start + window);
+                    tally.spread(part, records as f64 * (pair[1] - pair[0]) / total);
+                }
+            }
+            _ => {
+                let sizes: Vec<(Region, f64)> = self
+                    .entries
+                    .iter()
+                    .filter(|bin| bin.number < self.scheme.bins())
+                    .map(|bin| {
+                        let size: f64 = bin
+                            .chunks
+                            .iter()
+                            .map(|chunk| (bytes(chunk.end) - bytes(chunk.start)).max(0.0))
+                            .sum();
+                        (self.scheme.span(bin.number, length), size)
+                    })
+                    .collect();
+                let total: f64 = sizes.iter().map(|(_, size)| size).sum();
+                if total <= 0.0 {
+                    return Some(tally);
+                }
+                for (part, size) in sizes {
+                    tally.spread(part, records as f64 * size / total);
+                }
+            }
+        }
+        Some(tally)
+    }
+
+    /// The share of a BGZF block, in compressed bytes, of one uncompressed byte: the usual
+    /// distance between the blocks that the index points to, over 64 KiB.
+    fn block_size(&self, span: Chunk) -> f64 {
+        let mut blocks: Vec<u64> = self
+            .entries
+            .iter()
+            .filter(|bin| bin.number < self.scheme.bins())
+            .flat_map(|bin| bin.chunks.iter())
+            .flat_map(|chunk| [chunk.start, chunk.end])
+            .chain(self.intervals.iter().flatten().copied())
+            .chain([span.start, span.end])
+            .map(|offset| offset >> 16)
+            .collect();
+        blocks.sort_unstable();
+        blocks.dedup();
+        let mut gaps: Vec<u64> = blocks.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        gaps.sort_unstable();
+        gaps.get(gaps.len() / 2)
+            .map_or(1.0, |gap| *gap as f64 / 65_536.0)
     }
 
     fn first_offset(&self, start: u64) -> u64 {

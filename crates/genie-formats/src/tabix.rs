@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, Read, Seek, Write};
 
 use genie_core::Region;
+use genie_core::signal::Tally;
 
 pub use crate::binning::Chunk;
 use crate::binning::{Bins, Builder, Scheme, put, read_count, read_u32};
@@ -338,6 +339,13 @@ impl Index {
             .map_or_else(Vec::new, |id| self.references[id].chunks(region))
     }
 
+    /// An estimate of the records that start in each part of a region of a contig, from the
+    /// index alone. `length` is the length of the contig.
+    pub fn density(&self, name: &str, region: Region, step: u64, length: u64) -> Option<Tally> {
+        let id = self.names.iter().position(|known| known == name)?;
+        self.references.get(id)?.density(region, step, length)
+    }
+
     pub fn query<R: Read + Seek>(
         &self,
         reader: &mut Bgzf<R>,
@@ -508,6 +516,54 @@ pub mod tests {
             })
             .unwrap();
         assert_eq!(found, ["chr1\t30\t40\tb"]);
+    }
+
+    fn indexed(lines: &[String], csi: bool) -> Index {
+        let mut writer = Writer::new(Vec::new());
+        let mut indexer = Indexer::new(Layout::BED, csi);
+        for line in lines {
+            std::io::Write::write_all(&mut writer, format!("{line}\n").as_bytes()).unwrap();
+            indexer.add(line, writer.virtual_offset()).unwrap();
+        }
+        let end = writer.virtual_offset();
+        writer.finish().unwrap();
+        Index::read(Cursor::new(indexer.finish(end).unwrap())).unwrap()
+    }
+
+    #[test]
+    fn the_index_alone_gives_the_density_of_records() {
+        let line = |start: u64| {
+            format!(
+                "chr1\t{start}\t{}\trecord_{start}_with_a_long_name_that_fills_blocks",
+                start + 1
+            )
+        };
+        let mut lines: Vec<String> = (0..3_000).map(|index| line(index * 333)).collect();
+        lines.extend((0..1_000).map(|index| line(2_000_000 + index * 1_000)));
+        lines.push("chr2\t5\t6\tother".to_owned());
+        for csi in [false, true] {
+            let index = indexed(&lines, csi);
+            let tally = index
+                .density("chr1", region(0, 3_000_000), 1_000_000, 3_000_000)
+                .unwrap();
+            let densities: Vec<f32> = tally
+                .summaries()
+                .iter()
+                .map(|summary| summary.max)
+                .collect();
+            for (found, wanted) in densities.iter().zip([3_000.0, 0.0, 1_000.0]) {
+                assert!(
+                    (found - wanted).abs() <= 0.1 * wanted + 30.0,
+                    "{csi} {densities:?}"
+                );
+            }
+            assert!(
+                (tally.total() - 4_000.0).abs() < 1.0,
+                "{csi} {}",
+                tally.total()
+            );
+            assert!(index.density("chrX", region(0, 100), 10, 100).is_none());
+        }
     }
 
     #[test]
