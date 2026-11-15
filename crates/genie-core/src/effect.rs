@@ -32,7 +32,12 @@ struct Edit {
     start: u64,
     deleted: Vec<u8>,
     inserted: Vec<u8>,
+    /// An insertion of the same bases as on its 5′ side, in transcript order: a dup.
+    duplicate: bool,
 }
+
+/// How far an insertion or a deletion moves at most to the 3′ end of the transcript.
+const SHIFT: u64 = 1_000;
 
 impl Edit {
     /// The change without the bases that the alleles share at their start and end.
@@ -54,11 +59,74 @@ impl Edit {
             start: position + prefix as u64,
             deleted: reference[..reference.len() - suffix].to_ascii_uppercase(),
             inserted: alternate[..alternate.len() - suffix].to_ascii_uppercase(),
+            duplicate: false,
         }
     }
 
     fn end(&self) -> u64 {
         self.start + self.deleted.len() as u64
+    }
+
+    /// The insertion or the deletion at the place nearest the 3′ end of the transcript that
+    /// gives the same sequence, where HGVS names it. It stays in the span of the transcript.
+    fn shifted(
+        mut self,
+        forward: bool,
+        span: Region,
+        bases: &mut dyn FnMut(Region) -> Option<Vec<u8>>,
+    ) -> Self {
+        let deletion = self.inserted.is_empty();
+        let mut unit = match (self.deleted.is_empty(), deletion) {
+            (false, true) => self.deleted.clone(),
+            (true, false) => self.inserted.clone(),
+            _ => return self,
+        };
+        let length = unit.len() as u64;
+        if forward {
+            let (from, to) = (self.end(), (self.end() + SHIFT).min(span.end()));
+            if let Some(after) = (from < to)
+                .then(|| bases(Region::between(from, to)))
+                .flatten()
+            {
+                for base in after.iter().map(u8::to_ascii_uppercase) {
+                    if base != unit[0] {
+                        break;
+                    }
+                    unit.rotate_left(1);
+                    self.start += 1;
+                }
+            }
+        } else {
+            let (from, to) = (
+                self.start.saturating_sub(SHIFT).max(span.start()),
+                self.start,
+            );
+            if let Some(before) = (from < to)
+                .then(|| bases(Region::between(from, to)))
+                .flatten()
+            {
+                for base in before.iter().rev().map(u8::to_ascii_uppercase) {
+                    if Some(&base) != unit.last() {
+                        break;
+                    }
+                    unit.rotate_right(1);
+                    self.start -= 1;
+                }
+            }
+        }
+        if deletion {
+            self.deleted = unit;
+            return self;
+        }
+        let side = if forward {
+            Region::between(self.start.saturating_sub(length), self.start)
+        } else {
+            Region::between(self.start, self.start + length)
+        };
+        self.duplicate = side.len() == length
+            && bases(side).is_some_and(|found| found.eq_ignore_ascii_case(&unit));
+        self.inserted = unit;
+        self
     }
 }
 
@@ -154,6 +222,16 @@ fn protein_change(reference: &[u8], alternate: &[u8], frameshift: bool, at: usiz
     let gained = &alternate[first..alternate.len() - shared];
     let end = first + lost.len().saturating_sub(1);
     match (lost.len(), gained.len()) {
+        (0, 1) if first >= 1 && reference[first - 1..first] == *gained => {
+            format!("p.{}{}dup", name(first - 1), first)
+        }
+        (0, size) if first >= size && reference[first - size..first] == *gained => format!(
+            "p.{}{}_{}{}dup",
+            name(first - size),
+            first - size + 1,
+            name(first - 1),
+            first
+        ),
         (0, _) if first > 0 => format!(
             "p.{}{}_{}{}ins{}",
             name(first - 1),
@@ -248,13 +326,14 @@ pub fn effect(
         return None;
     }
     let coding = transcript.coding()?;
+    let forward = transcript.strand() != Strand::Reverse;
     let edit = Edit::new(position, reference, alternate);
     if edit.deleted.is_empty() && edit.inserted.is_empty() {
         return None;
     }
+    let edit = edit.shifted(forward, transcript.span(), bases);
     let exons = transcript.blocks();
     let exon = |position: u64| exons.iter().position(|exon| exon.contains(position));
-    let forward = transcript.strand() != Strand::Reverse;
     let (first, last) = if edit.deleted.is_empty() {
         (edit.start.checked_sub(1)?, edit.start)
     } else {
@@ -505,6 +584,20 @@ impl Places {
             String::from_utf8_lossy(&bases).into_owned()
         };
         let ordered = |a: String, b: String| if self.forward { (a, b) } else { (b, a) };
+        if edit.duplicate {
+            let length = edit.inserted.len() as u64;
+            let (first, last) = if self.forward {
+                (edit.start.checked_sub(length)?, edit.start.checked_sub(1)?)
+            } else {
+                (edit.start, edit.start + length - 1)
+            };
+            let (low, high) = ordered(self.name(first)?, self.name(last)?);
+            return Some(if length == 1 {
+                format!("c.{low}dup")
+            } else {
+                format!("c.{low}_{high}dup")
+            });
+        }
         if edit.deleted.is_empty() {
             let left = self.name(edit.start.checked_sub(1)?)?;
             let (low, high) = ordered(left, self.name(edit.start)?);
@@ -571,11 +664,30 @@ mod tests {
     }
 
     fn change(strand: Strand, position: u64, reference: &str, alternate: &str) -> Effect {
-        let genome = genome(strand);
+        change_in(&genome(strand), strand, position, reference, alternate)
+    }
+
+    fn change_in(
+        genome: &[u8],
+        strand: Strand,
+        position: u64,
+        reference: &str,
+        alternate: &str,
+    ) -> Effect {
         let mut bases =
             |region: Region| Some(genome[region.start() as usize..region.end() as usize].to_vec());
         let variant = (position, reference.as_bytes(), alternate.as_bytes());
         effect(&transcript(strand), variant, &mut bases).unwrap()
+    }
+
+    /// The genome with A at some places, so that deletions there cannot move in the C bases
+    /// around them.
+    fn genome_with_a(strand: Strand, places: &[usize]) -> Vec<u8> {
+        let mut genome = genome(strand);
+        for place in places {
+            genome[*place] = b'A';
+        }
+        genome
     }
 
     fn written(effect: &Effect) -> (Option<&str>, Option<&str>, Option<&str>) {
@@ -610,11 +722,49 @@ mod tests {
         let pair = |coding: &str, protein: &str| (coding.to_owned(), protein.to_owned());
         assert_eq!(forward(114, "GG", "G"), pair("c.11del", "p.Gly4fs"));
         assert_eq!(forward(116, "CTTT", "C"), pair("c.13_15del", "p.Phe5del"));
-        assert_eq!(
-            forward(110, "A", "AAAA"),
-            pair("c.6_7insAAA", "p.Lys2_Arg3insLys")
-        );
+        assert_eq!(forward(110, "A", "AAAA"), pair("c.4_6dup", "p.Lys2dup"));
         assert_eq!(forward(110, "A", "AT"), pair("c.6_7insT", "p.Arg3fs"));
+    }
+
+    /// In a repeat, the same change can sit at several places. HGVS names the place nearest
+    /// the 3′ end of the transcript, and an insertion of the bases before it is a dup.
+    #[test]
+    fn insertions_and_deletions_move_to_the_three_prime_end() {
+        let on = |strand, position, reference, alternate| {
+            let found = change(strand, position, reference, alternate);
+            (found.coding.unwrap(), found.protein.unwrap())
+        };
+        let pair = |coding: &str, protein: &str| (coding.to_owned(), protein.to_owned());
+        // c.4_6 is AAA.
+        assert_eq!(
+            on(Strand::Forward, 107, "G", "GA"),
+            pair("c.6dup", "p.Arg3fs")
+        );
+        assert_eq!(
+            on(Strand::Forward, 107, "GA", "G"),
+            pair("c.6del", "p.Lys2fs")
+        );
+        assert_eq!(
+            on(Strand::Reverse, 221, "T", "TT"),
+            pair("c.6dup", "p.Arg3fs")
+        );
+        assert_eq!(
+            on(Strand::Reverse, 220, "TT", "T"),
+            pair("c.6del", "p.Lys2fs")
+        );
+        // When the intron starts with the same bases, a deletion at the end of an exon moves
+        // into the intron, as ClinVar names SOD1 c.357_357+2del.
+        let mut genome = genome(Strand::Forward);
+        genome[120] = b'T';
+        genome[121] = b'T';
+        let mut bases =
+            |region: Region| Some(genome[region.start() as usize..region.end() as usize].to_vec());
+        let variant = (116, b"CTTT".as_slice(), b"C".as_slice());
+        let found = effect(&transcript(Strand::Forward), variant, &mut bases).unwrap();
+        assert_eq!(
+            written(&found),
+            (Some("c.15_15+2del"), Some("p.?"), Some("splice site"))
+        );
     }
 
     #[test]
@@ -634,8 +784,9 @@ mod tests {
             written(&forward(135, "C", "A")),
             (Some("c.16-15C>A"), None, Some("intron"))
         );
+        let lone = genome_with_a(Strand::Forward, &[134]);
         assert_eq!(
-            written(&forward(133, "CC", "C")),
+            written(&change_in(&lone, Strand::Forward, 133, "CA", "C")),
             (Some("c.15+15del"), None, Some("intron"))
         );
         assert_eq!(
@@ -651,11 +802,17 @@ mod tests {
     #[test]
     fn deletions_of_whole_exons_name_the_exons_or_the_transcript() {
         for strand in [Strand::Forward, Strand::Reverse] {
-            let genome = genome(strand);
+            let genome = genome_with_a(strand, &[90, 134, 140, 179, 239]);
             // A deletion as VCF gives it: the base before, then the deleted bases.
             let deleted = |start: usize, end: usize| {
                 let reference = String::from_utf8(genome[start - 1..end].to_vec()).unwrap();
-                change(strand, start as u64 - 1, &reference, &reference[..1])
+                change_in(
+                    &genome,
+                    strand,
+                    start as u64 - 1,
+                    &reference,
+                    &reference[..1],
+                )
             };
             let inside = if strand == Strand::Forward {
                 "c.16-10_35+10del"
