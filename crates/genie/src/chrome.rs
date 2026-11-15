@@ -392,6 +392,12 @@ fn zoom<'a>() -> Element<'a, Message> {
             "Show the whole chromosome",
             Message::Command(Command::Whole)
         ),
+        tool(
+            Icon::Genome,
+            "whole-genome",
+            "Show the whole genome (type All)",
+            Message::Command(Command::Genome)
+        ),
     ]
     .spacing(TOOL_GAP)
     .into()
@@ -687,6 +693,7 @@ mod tests {
             ("zoom-out", Command::Zoom(0.5)),
             ("zoom-in", Command::Zoom(2.0)),
             ("whole", Command::Whole),
+            ("whole-genome", Command::Genome),
         ] {
             let mut ui = simulator(title_bar(
                 Controls::Custom,

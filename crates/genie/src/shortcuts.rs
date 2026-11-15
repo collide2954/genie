@@ -10,6 +10,8 @@ pub enum Command {
     Pan(f32),
     Zoom(f32),
     Whole,
+    /// Show all main chromosomes side by side.
+    Genome,
     Help,
     Open,
     Palette,

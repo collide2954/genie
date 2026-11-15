@@ -30,6 +30,8 @@ pub enum Icon {
     Minus,
     Plus,
     Whole,
+    /// Chromosomes side by side, longest first.
+    Genome,
     Help,
     Down,
 }
@@ -131,6 +133,7 @@ impl Icon {
             Self::Plus => PLUS,
             Self::Help => HELP,
             Self::Whole => WHOLE,
+            Self::Genome => GENOME,
             Self::Down => &[Shape::Polyline(&[[6.0, 9.0], [12.0, 15.0], [18.0, 9.0]])],
         }
     }
@@ -160,6 +163,13 @@ const WHOLE: &[Shape] = &[
     Shape::Line([6.0, 12.0], [18.0, 12.0]),
     Shape::Polyline(&[[9.0, 9.0], [6.0, 12.0], [9.0, 15.0]]),
     Shape::Polyline(&[[15.0, 9.0], [18.0, 12.0], [15.0, 15.0]]),
+];
+
+const GENOME: &[Shape] = &[
+    Shape::Rect([3.0, 4.0], [6.0, 20.0], 1.5),
+    Shape::Rect([8.5, 6.5], [11.5, 20.0], 1.5),
+    Shape::Rect([14.0, 9.5], [17.0, 20.0], 1.5),
+    Shape::Rect([19.5, 12.5], [22.0, 20.0], 1.25),
 ];
 
 impl Shape {
@@ -282,13 +292,14 @@ impl<Message> canvas::Program<Message> for Program {
 mod tests {
     use super::{Icon, Shape};
 
-    const ICONS: [Icon; 21] = [
+    const ICONS: [Icon; 22] = [
         Icon::Down,
         Icon::Help,
         Icon::More,
         Icon::Minus,
         Icon::Plus,
         Icon::Whole,
+        Icon::Genome,
         Icon::Layers,
         Icon::Link,
         Icon::Bookmark,

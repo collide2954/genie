@@ -14,7 +14,7 @@ use super::{Genie, Message, Popup, Updating};
 const WIDTH: f32 = 200.0;
 const RECENT_WIDTH: f32 = 280.0;
 const ROW: f32 = 24.0;
-const ROWS: f32 = 10.0;
+const ROWS: f32 = 11.0;
 /// The place of the Recent row in the menu, from the top.
 const RECENT_ROW: f32 = 3.0;
 const SEPARATORS: f32 = 2.0;
@@ -123,6 +123,15 @@ impl Genie {
                 shift_keys('F'),
                 Message::Command(Command::Find),
                 session,
+            ))
+            .push(hover(
+                menu::item(
+                    "Show the whole genome",
+                    Message::Command(Command::Genome),
+                    false,
+                    session,
+                ),
+                false,
             ))
             .push(menu::separator())
             .push(keyed(

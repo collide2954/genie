@@ -51,6 +51,10 @@ impl Genie {
                     span: Span::Whole,
                 })
             }
+            Command::Genome => {
+                self.close_menus();
+                self.show_genome()
+            }
             Command::Help => {
                 self.toggle(Popup::Help);
                 Task::none()

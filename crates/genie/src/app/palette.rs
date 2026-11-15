@@ -196,6 +196,7 @@ impl Genie {
                 Action::new("Zoom in", "+", command(Command::Zoom(2.0))),
                 Action::new("Zoom out", "-", command(Command::Zoom(0.5))),
                 Action::new("Show the whole chromosome", "", command(Command::Whole)),
+                Action::new("Show the whole genome", "", command(Command::Genome)),
                 Action::new("Go back", "", command(Command::Back)),
                 Action::new("Go forward", "", command(Command::Forward)),
                 Action::new(
