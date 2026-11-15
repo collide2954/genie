@@ -184,6 +184,18 @@ impl Source {
         self.detail() < self.span()
     }
 
+    /// What a density of the file counts per Mb. A bigBed density shows the depth of the
+    /// features instead.
+    pub fn unit(&self) -> Option<&'static str> {
+        match &self.format {
+            Format::Variants(_) => Some("variants"),
+            Format::Features(file) if !matches!(file, FeatureFile::BigBed { .. }) => {
+                Some("features")
+            }
+            _ => None,
+        }
+    }
+
     /// Whether a view shows the features or the variants, and not their density.
     pub fn detailed(&self, visible: Region) -> bool {
         visible.len() <= self.detail()

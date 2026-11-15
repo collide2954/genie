@@ -475,6 +475,7 @@ impl Genie {
                     Detail::Signal {
                         span: column.span,
                         bin: column.bin,
+                        unit: track.source.unit(),
                     }
                 }
             }

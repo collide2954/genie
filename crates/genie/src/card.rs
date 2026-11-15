@@ -60,6 +60,8 @@ pub enum Detail {
     Signal {
         span: Region,
         bin: Bin,
+        /// The records that a density counts per Mb, for example "variants".
+        unit: Option<&'static str>,
     },
     Match {
         pattern: String,
@@ -268,6 +270,16 @@ fn amount(value: f64) -> String {
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
+/// The title of a density, for example "About 520 variants per Mb".
+fn density_title(per_megabase: f64, unit: &str) -> String {
+    let number = if per_megabase >= 10.0 {
+        grouped(per_megabase.round() as u64)
+    } else {
+        amount(per_megabase)
+    };
+    format!("About {number} {unit} per Mb")
+}
+
 pub fn signal_facts(bin: Bin) -> (String, Option<String>) {
     if bin.max - bin.min <= f32::EPSILON * bin.max.abs().max(1.0) {
         return (format!("Value {}", amount(f64::from(bin.max))), None);
@@ -280,12 +292,17 @@ pub fn signal_facts(bin: Bin) -> (String, Option<String>) {
     (format!("Mean {}", amount(bin.mean())), Some(range))
 }
 
+fn signal_content(span: Region, bin: Bin, unit: Option<&str>) -> (String, Region, Vec<String>) {
+    if let Some(unit) = unit {
+        return (density_title(bin.mean(), unit), span, Vec::new());
+    }
+    let (title, range) = signal_facts(bin);
+    (title, span, range.into_iter().collect())
+}
+
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
-        Detail::Signal { span, bin } => {
-            let (title, range) = signal_facts(*bin);
-            (title, *span, range.into_iter().collect())
-        }
+        Detail::Signal { span, bin, unit } => signal_content(*span, *bin, *unit),
         Detail::Variant { variant, sample } => {
             let title = if variant.id.is_empty() {
                 change(variant)
@@ -828,6 +845,36 @@ mod tests {
             sum: 0.000_25,
         };
         assert_eq!(signal_facts(tiny).0, "Value 2.50e-4");
+    }
+
+    #[test]
+    fn density_cards_count_the_records_per_megabase() {
+        let card = |mean: f64| {
+            let detail = Detail::Signal {
+                span: region(0, 2_000_000),
+                bin: Bin {
+                    count: 2_000_000.0,
+                    min: 0.0,
+                    max: 30_000.0,
+                    sum: mean * 2_000_000.0,
+                },
+                unit: Some("variants"),
+            };
+            let card = Card {
+                track: 1,
+                contig: "chr1".to_owned(),
+                detail,
+                at: Point::ORIGIN,
+                fields: Vec::new(),
+                effects: Changes::default(),
+            };
+            plain(&card)
+        };
+        assert_eq!(
+            card(12_345.4),
+            "About 12,345 variants per Mb\nchr1:1-2,000,000"
+        );
+        assert_eq!(card(2.25), "About 2.25 variants per Mb\nchr1:1-2,000,000");
     }
 
     #[test]
