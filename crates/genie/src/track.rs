@@ -17,6 +17,7 @@ use genie_formats::{bbi, bed, bedmethyl, gff, gzip, tabix, vcf};
 use genie_render::alignments::{self, Look, MethylationLane};
 use genie_render::features::Mode;
 use genie_render::rows;
+use genie_render::samples::Rows;
 use genie_render::scene::Hue;
 use genie_render::signal::{Scale, Style};
 
@@ -928,6 +929,8 @@ pub struct Track {
     pub modification: Option<String>,
     /// The file type and index that a track hub gave, kept so that sessions open it again.
     pub declared: Option<Declared>,
+    /// The rows of the samples of the file, for genotypes and copy number segments.
+    pub rows: Arc<Rows>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -939,6 +942,16 @@ pub struct Declared {
     pub index: Option<Location>,
 }
 
+/// The number of samples that share a row of a track: one for copy number segments, and more
+/// for the genotypes of a big cohort.
+pub fn row_size(source: &Source) -> usize {
+    if source.has_variants() {
+        genie_render::variants::group(source.samples().len())
+    } else {
+        1
+    }
+}
+
 impl Track {
     pub fn new(id: u64, source: Arc<Source>, assembly: &Assembly) -> Self {
         let contigs = contig_names(source.contigs(), assembly);
@@ -946,6 +959,7 @@ impl Track {
             min: 0.0,
             max: 100.0,
         });
+        let rows = Arc::new(Rows::plain(source.samples().len(), row_size(&source)));
         Self {
             id,
             name: source.name.clone(),
@@ -964,6 +978,7 @@ impl Track {
             filter: Filter::default(),
             modification: None,
             declared: None,
+            rows,
             slot: Slot::default(),
             extra: Vec::new(),
         }

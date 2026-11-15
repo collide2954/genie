@@ -459,19 +459,26 @@ impl Genie {
                 read_detail(track, panel, contig, pile, viewport, mode, (x, y))?
             }
             Content::Variants(calls) => {
-                let (index, line) = variants::hit(viewport, &calls.variants, mode, x, y)?;
+                let rows = &track.rows;
+                let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, y)?;
                 let variant = calls.variants[index].clone();
                 let sample = line.and_then(|line| {
                     let names = track.source.samples();
-                    let size = variants::group(variant.calls.len());
-                    let first = line * size;
-                    let last = (first + size).min(variant.calls.len());
-                    let call = variants::strongest(variant.calls.get(first..last)?);
-                    let label = if last - first == 1 {
-                        names.get(first)?.clone()
-                    } else {
-                        let (from, to) = (names.get(first)?, names.get(last - 1)?);
-                        format!("{from} to {to} ({} samples)", last - first)
+                    let members = rows.members.get(line)?;
+                    let call = variants::strongest(
+                        members
+                            .iter()
+                            .filter_map(|&sample| variant.calls.get(sample).copied()),
+                    );
+                    let label = match members.as_slice() {
+                        [one] => names.get(*one)?.clone(),
+                        [first, .., last] => format!(
+                            "{} to {} ({} samples)",
+                            names.get(*first)?,
+                            names.get(*last)?,
+                            members.len()
+                        ),
+                        [] => return None,
                     };
                     Some((label, call))
                 });

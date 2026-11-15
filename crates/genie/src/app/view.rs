@@ -4,8 +4,8 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, features, links, matches, overview, ruler, segments, sequence, signal, translation,
-    variants,
+    alignments, features, links, matches, overview, ruler, samples, segments, sequence, signal,
+    translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -904,7 +904,7 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             signal_body(session, track, panel, &data.summaries, height)
         }
         Some(Content::Variants(calls)) => {
-            let primitives = variants::scene(viewport, &calls.variants, mode);
+            let primitives = variants::scene(viewport, &calls.variants, mode, &track.rows);
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Links(found)) => {
@@ -1228,11 +1228,11 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 return Shape::plain(variants::SITE_HEIGHT);
             }
             let row_height = variants::row_height(mode);
-            let fixed = variants::SITE_HEIGHT + 1.0;
-            let rows = variants::rows(calls.samples);
+            let rows = &track.rows;
+            let fixed = variants::SITE_HEIGHT + 1.0 + rows.groups.len() as f32 * samples::GROUP_GAP;
             Shape {
-                height: fixed + rows as f32 * row_height,
-                rows,
+                height: fixed + rows.len() as f32 * row_height,
+                rows: rows.len(),
                 fixed,
                 row_height,
             }
