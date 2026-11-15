@@ -76,7 +76,7 @@ impl Url {
     pub fn name(&self) -> String {
         let path = self.target.split('?').next().unwrap_or_default();
         match path.rsplit('/').next() {
-            Some(name) if !name.is_empty() => name.to_owned(),
+            Some(name) if !name.is_empty() => unescape(name),
             _ => self.host.clone(),
         }
     }
@@ -157,6 +157,31 @@ impl fmt::Display for Url {
         let scheme = if self.secure { "https" } else { "http" };
         write!(f, "{scheme}://{}{}", self.authority(), self.target)
     }
+}
+
+/// A part of a path with its %XX escapes decoded, except the escapes of characters that a file
+/// name cannot hold. A part that does not decode to UTF-8 stays as it is.
+fn unescape(part: &str) -> String {
+    let bytes = part.as_bytes();
+    let mut found = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let value = bytes
+            .get(index + 1..index + 3)
+            .filter(|hex| bytes[index] == b'%' && hex.iter().all(u8::is_ascii_hexdigit))
+            .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
+            .filter(|value| {
+                *value >= 0x80 || (*value >= 0x20 && !b"<>:\"/\\|?*\x7f".contains(value))
+            });
+        if let Some(value) = value {
+            found.push(value);
+            index += 3;
+        } else {
+            found.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(found).unwrap_or_else(|_| part.to_owned())
 }
 
 /// A path without its "." and ".." parts (RFC 3986), keeping any query.
@@ -611,6 +636,27 @@ mod tests {
             bare.with_extension("bai").to_string(),
             "https://example.org/data/reads.bai"
         );
+    }
+
+    #[test]
+    fn names_decode_the_escapes_that_file_names_can_hold() {
+        let name = |text: &str| Url::parse(text).unwrap().name();
+        assert_eq!(
+            name("https://example.org/GSE1_primary%2Breplicate_loops.txt.gz?x=%2B"),
+            "GSE1_primary+replicate_loops.txt.gz"
+        );
+        assert_eq!(name("https://example.org/my%20reads.bam"), "my reads.bam");
+        assert_eq!(name("https://example.org/caf%C3%A9.bed"), "café.bed");
+        assert_eq!(name("https://example.org/100%25.bed"), "100%.bed");
+        assert_eq!(
+            name("https://example.org/a%2Fb%3Ac%00.bed"),
+            "a%2Fb%3Ac%00.bed"
+        );
+        assert_eq!(
+            name("https://example.org/bad%zz%+1%A.bed"),
+            "bad%zz%+1%A.bed"
+        );
+        assert_eq!(name("https://example.org/half%C3.bed"), "half%C3.bed");
     }
 
     #[test]
