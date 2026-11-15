@@ -1695,6 +1695,8 @@ pub enum Typed {
     Bam,
     Cram,
     Vcf,
+    /// The Hi-C files of Juicer.
+    Hic,
 }
 
 impl Typed {
@@ -1704,6 +1706,7 @@ impl Typed {
             "bam" => Some(Self::Bam),
             "cram" => Some(Self::Cram),
             "vcf" | "vcfTabix" | "vcfPhasedTrio" => Some(Self::Vcf),
+            "hic" => Some(Self::Hic),
             _ if kind.starts_with("big") => Some(Self::Big),
             _ => None,
         }
@@ -1722,6 +1725,7 @@ pub fn open_typed(
         Typed::Bam => Format::Reads(ReadFile::open_bam(&location, &name, index)?),
         Typed::Cram => Format::Reads(ReadFile::open_cram(&location, &name, index)?),
         Typed::Vcf => Format::Variants(VariantFile::open(&location, &name, index)?),
+        Typed::Hic => Format::Contacts(ContactFile::open(&location, &name)?),
     };
     Ok(Source {
         location,
@@ -3234,7 +3238,8 @@ mod tests {
         assert_eq!(cram.location, at("/data/5"));
         let missing = open("/data/3", "bam", None).unwrap_err();
         assert!(missing.contains("There is no index 3.bai"), "{missing}");
-        assert_eq!(Typed::of("hic"), None);
+        assert_eq!(Typed::of("hic"), Some(Typed::Hic));
+        assert_eq!(Typed::of("longTabix"), None);
         assert_eq!(Typed::of("bigInteract"), Some(Typed::Big));
         assert_eq!(Typed::of("vcfPhasedTrio"), Some(Typed::Vcf));
     }

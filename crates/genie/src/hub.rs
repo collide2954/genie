@@ -407,7 +407,7 @@ mod tests {
             Some(file(&folder.join("hg38/index/reads.bai")))
         );
         assert_eq!(reads.typed(), Some(Typed::Bam));
-        assert_eq!(hub.tracks[7].typed(), None);
+        assert_eq!(hub.tracks[7].typed(), Some(Typed::Hic));
         let words = |text: &str| -> Vec<String> {
             text.split_whitespace().map(str::to_lowercase).collect()
         };

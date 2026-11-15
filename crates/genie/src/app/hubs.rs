@@ -585,7 +585,8 @@ mod tests {
     const TRACK_DB: &str = "track genes\ntype bigGenePred\nbigDataUrl data/genes\n\
         shortLabel Genes\nlongLabel Genes of the test\n\n\
         track wave\ntype bigWig\nbigDataUrl wave.bw\nshortLabel Wave\n\n\
-        track contacts\ntype hic\nbigDataUrl contacts.hic\nshortLabel Contacts\n";
+        track contacts\ntype hic\nbigDataUrl contacts.hic\nshortLabel Contacts\n\n\
+        track pairs\ntype longTabix\nbigDataUrl pairs.bed.gz\nshortLabel Pairs\n";
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -651,7 +652,7 @@ mod tests {
             "Tracks for ref",
             "Genes of the test",
             "bigWig",
-            "genie cannot show hic tracks.",
+            "genie cannot show longTabix tracks.",
         ] {
             assert!(shows(&genie, text), "{text}");
         }
