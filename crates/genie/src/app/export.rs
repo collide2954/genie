@@ -35,7 +35,7 @@ impl Genie {
         let mut title = row![text(session.reference.label()).size(CAPTION_SIZE)]
             .spacing(6)
             .align_y(Alignment::Center);
-        if count == 1 {
+        if count == 1 || session.genome {
             title = title
                 .push(text("·").size(CAPTION_SIZE).style(style::muted))
                 .push(
@@ -50,14 +50,15 @@ impl Genie {
             .height(CAPTION_HEIGHT)
             .align_y(Alignment::Center);
         let mut page = column![caption, hairline()];
-        if count > 1 {
+        let portions = session.portions();
+        if count > 1 && !session.genome {
             page = page
-                .push(across(count, HEADER_HEIGHT, |panel| {
+                .push(across(&portions, HEADER_HEIGHT, |panel| {
                     panel_label(session, panel)
                 }))
                 .push(hairline());
         }
-        page.push(across(count, RULER_HEIGHT, |panel| {
+        page.push(across(&portions, RULER_HEIGHT, |panel| {
             ruler_view(session, panel)
         }))
         .push(hairline())

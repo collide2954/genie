@@ -6,6 +6,8 @@ const LIMIT: usize = 100;
 pub struct Visit {
     pub contig: usize,
     pub region: Region,
+    /// The whole-genome view, which shows all main chromosomes.
+    pub genome: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -56,6 +58,7 @@ mod tests {
         Visit {
             contig,
             region: Region::between(start, start + 100),
+            genome: false,
         }
     }
 

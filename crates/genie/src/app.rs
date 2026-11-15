@@ -56,6 +56,7 @@ mod tracks;
 mod ucsc;
 mod updates;
 mod view;
+mod whole;
 
 use orders::Answer;
 use tracks::pick;
@@ -280,6 +281,8 @@ struct Session {
     marks: Marks,
     panels: Vec<Panel>,
     preparing: Vec<Preparing>,
+    /// The whole-genome view: the panels show the main chromosomes, each by its length.
+    genome: bool,
 }
 
 #[derive(Debug)]
@@ -328,6 +331,7 @@ impl Session {
             marks: Marks::default(),
             panels: Vec::new(),
             preparing: Vec::new(),
+            genome: false,
         }
     }
 
@@ -346,13 +350,21 @@ impl Session {
     }
 
     fn locate(&self, x: f32, width: f32) -> (usize, f32) {
-        let count = self.count();
-        let step = panel_width(width, count) + PANEL_GAP;
-        let panel = ((x / step).max(0.0) as usize).min(count - 1);
-        (panel, x - panel as f32 * step)
+        let widths = self.widths(width);
+        let mut left = 0.0;
+        for (panel, width) in widths.iter().enumerate() {
+            if x < left + width + PANEL_GAP || panel + 1 == widths.len() {
+                return (panel, x - left);
+            }
+            left += width + PANEL_GAP;
+        }
+        (0, x)
     }
 
     fn motion(&mut self, panel: usize) -> Option<(&mut Viewport, &mut Option<Transition>)> {
+        if self.genome {
+            return None;
+        }
         if panel == 0 {
             return Some((&mut self.viewport, &mut self.transition));
         }
@@ -439,6 +451,7 @@ impl Session {
     }
 
     fn split(&mut self, targets: &[Target], width: f32) {
+        self.genome = false;
         let width = f64::from(panel_width(width, targets.len()));
         let lengths: Vec<u64> = targets
             .iter()
@@ -466,7 +479,7 @@ impl Session {
     }
 
     fn join(&mut self, width: f32) {
-        if self.panels.is_empty() {
+        if self.genome || self.panels.is_empty() {
             return;
         }
         self.panels.clear();
@@ -477,6 +490,9 @@ impl Session {
     }
 
     fn refit(&mut self, width: f32) {
+        if self.genome {
+            return self.fit_genome(width);
+        }
         let width = f64::from(panel_width(width, self.count()));
         self.transition = None;
         let visible = self.viewport.visible();
@@ -489,6 +505,9 @@ impl Session {
     }
 
     fn resize(&mut self, width: f32) {
+        if self.genome {
+            return self.fit_genome(width);
+        }
         let width = f64::from(panel_width(width, self.count()));
         self.transition = None;
         self.viewport = self.viewport.resize(width);
@@ -502,6 +521,7 @@ impl Session {
         Visit {
             contig: self.contig,
             region: self.destination().visible(),
+            genome: self.genome,
         }
     }
 
@@ -523,6 +543,9 @@ impl Session {
     }
 
     fn grab(&mut self, share: f32) {
+        if self.genome {
+            return;
+        }
         self.transition = None;
         let position = f64::from(share) * self.viewport.length() as f64;
         if position >= self.viewport.start() && position <= self.viewport.end() {
@@ -599,6 +622,9 @@ impl Session {
     }
 
     fn locus(&self) -> String {
+        if self.genome {
+            return "All".to_owned();
+        }
         (0..self.count())
             .map(|panel| self.locus_at(panel))
             .collect::<Vec<_>>()

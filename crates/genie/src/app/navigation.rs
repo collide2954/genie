@@ -10,6 +10,7 @@ use crate::track::{self, Source};
 
 use super::{
     Filtering, Genie, MAX_PANELS, Message, Paneling, Popup, Regions, Session, Suggestion, Sweep,
+    whole,
 };
 
 const SUGGESTIONS: usize = 8;
@@ -247,6 +248,9 @@ impl Genie {
         if text.split_whitespace().nth(1).is_some() {
             return self.submit_many(text);
         }
+        if whole::is_genome(&text) && session.reference.assembly.find(text.trim()).is_none() {
+            return self.show_genome();
+        }
         let resolved = session
             .reference
             .assembly
@@ -296,10 +300,12 @@ impl Genie {
     }
 
     pub(super) fn go_to(&mut self, target: Target) -> Task<Message> {
+        let width = self.width;
         let Some(session) = &mut self.session else {
             return Task::none();
         };
         let before = session.visit();
+        session.leave_genome(width);
         session.show(target, self.settings.motion);
         if session.visit() != before {
             session.history.record(before);
@@ -309,6 +315,7 @@ impl Genie {
     }
 
     fn step_history(&mut self, forward: bool) -> Task<Message> {
+        let width = self.width;
         let Some(session) = &mut self.session else {
             return Task::none();
         };
@@ -321,13 +328,17 @@ impl Genie {
         let Some(visit) = visit else {
             return Task::none();
         };
-        session.show(
-            Target {
+        if visit.genome {
+            session.enter_genome(width);
+        } else {
+            session.leave_genome(width);
+            let target = Target {
                 contig: visit.contig,
                 span: Span::Region(visit.region),
-            },
-            self.settings.motion,
-        );
+            };
+            session.show(target, self.settings.motion);
+        }
+        self.pinned = None;
         self.drop_draft();
         self.hover = None;
         self.fetch()

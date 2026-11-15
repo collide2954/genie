@@ -477,7 +477,7 @@ impl Genie {
         let padding = self.settings.density.padding();
         let frames = reading.frames();
         let codon_height = frames.len() as f32 * translation::ROW_HEIGHT;
-        let strands = across(session.count(), BASE_HEIGHT + codon_height, |panel| {
+        let strands = across(&session.portions(), BASE_HEIGHT + codon_height, |panel| {
             let (contig, viewport) = session.view(panel);
             let visible = viewport.visible();
             let bases = sequence::scene(
@@ -589,27 +589,30 @@ impl Genie {
 
     fn browser<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let count = session.count();
+        let portions = session.portions();
         let mut top = column![];
         if count == 1 {
             top = top.push(Self::overview(session));
-        } else {
+        } else if !session.genome {
             top = top
-                .push(across(count, HEADER_HEIGHT, |panel| header(session, panel)))
+                .push(across(&portions, HEADER_HEIGHT, |panel| {
+                    header(session, panel)
+                }))
                 .push(hairline());
         }
-        top = top.push(across(count, RULER_HEIGHT, |panel| {
+        top = top.push(across(&portions, RULER_HEIGHT, |panel| {
             self.ruler_at(session, panel)
         }));
         if count == 1 {
             top = top.push(self.bands(session));
         }
         if let Some(bar) = self.find_bar() {
-            top = top
-                .push(hairline())
-                .push(bar)
-                .push(across(count, matches::HEIGHT, |panel| {
+            top = top.push(hairline()).push(bar);
+            if !session.genome {
+                top = top.push(across(&portions, matches::HEIGHT, |panel| {
                     self.find_lane(session, panel)
                 }));
+            }
         }
         if self.settings.tips {
             top = top.push(hairline()).push(crate::help::strip());
@@ -635,16 +638,17 @@ impl Genie {
     }
 }
 
+/// A row of panels with a line between them. Each panel gets its share of the width.
 pub(super) fn across<'a>(
-    count: usize,
+    portions: &[u16],
     height: f32,
     each: impl Fn(usize) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
-    if count == 1 {
+    if portions.len() <= 1 {
         return each(0);
     }
     let mut columns = row![];
-    for panel in 0..count {
+    for (panel, portion) in portions.iter().enumerate() {
         if panel > 0 {
             columns = columns.push(
                 container(space())
@@ -653,7 +657,11 @@ pub(super) fn across<'a>(
                     .style(|theme| container::background(tokens(theme).line)),
             );
         }
-        columns = columns.push(container(each(panel)).width(Length::FillPortion(1)));
+        columns = columns.push(
+            container(each(panel))
+                .width(Length::FillPortion(*portion))
+                .clip(true),
+        );
     }
     columns.into()
 }
@@ -963,11 +971,10 @@ fn track_view<'a>(
     hovered: bool,
 ) -> Element<'a, Message> {
     let id = track.id;
-    let count = session.count();
     let (shapes, tallest) = shapes(session, track, repack);
     let height = track.height.unwrap_or(tallest.height);
     let shape = tallest;
-    let body = across(count, height, |panel| {
+    let body = across(&session.portions(), height, |panel| {
         track_body(session, track, panel, shapes[panel], repack)
     });
     let edge = Grip::new(
