@@ -22,6 +22,25 @@ pub struct Header {
 }
 
 pub fn fields(info: &str, infos: &[(String, String)]) -> Vec<Field> {
+    let labels: Vec<String> = infos
+        .iter()
+        .map(|(id, about)| fields::label(about, id))
+        .collect();
+    let label_of = |key: &str| {
+        let Some(at) = infos.iter().position(|(id, _)| id == key) else {
+            return key.to_owned();
+        };
+        let label = &labels[at];
+        let shared = labels
+            .iter()
+            .enumerate()
+            .any(|(other, text)| other != at && text == label);
+        if shared {
+            key.to_owned()
+        } else {
+            label.clone()
+        }
+    };
     let mut found = Vec::new();
     for entry in info.split(';') {
         if entry == MORE {
@@ -35,12 +54,8 @@ pub fn fields(info: &str, infos: &[(String, String)]) -> Vec<Field> {
         if matches!(key, "" | ".") || !fields::shown(value) {
             continue;
         }
-        let label = infos
-            .iter()
-            .find(|(id, _)| id == key)
-            .map_or_else(|| key.to_owned(), |(_, about)| fields::label(about, key));
         found.push(Field {
-            label,
+            label: label_of(key),
             value: fields::plain(value),
         });
     }
@@ -370,6 +385,43 @@ mod tests {
             ("Total depth", "14"),
             ("dbSNP membership", "yes"),
             ("XX", "1"),
+        ];
+        let wanted: Vec<(String, String)> = wanted
+            .iter()
+            .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
+            .collect();
+        assert_eq!(shown, wanted);
+    }
+
+    /// Long descriptions can give two fields the same short label, as in the INFO of the 1000
+    /// Genomes Project. Those fields show their ID, in each card the same.
+    #[test]
+    fn info_fields_with_the_same_short_label_show_their_ids() {
+        let infos: Vec<(String, String)> = [
+            ("AF_EUR", "Allele frequency in EUR"),
+            (
+                "AF_EUR_unrel",
+                "Allele frequency in EUR (2504 unrelated samples)",
+            ),
+            (
+                "AN_EAS",
+                "Total number of alleles in called genotypes in EAS",
+            ),
+            (
+                "AN_AMR",
+                "Total number of alleles in called genotypes in AMR",
+            ),
+            ("DP", "Read depth"),
+        ]
+        .iter()
+        .map(|(id, about)| ((*id).to_owned(), (*about).to_owned()))
+        .collect();
+        let shown = pairs(fields("AF_EUR=0.1;AF_EUR_unrel=0.2;AN_EAS=10;DP=5", &infos));
+        let wanted = [
+            ("AF_EUR", "0.1"),
+            ("AF_EUR_unrel", "0.2"),
+            ("AN_EAS", "10"),
+            ("Read depth", "5"),
         ];
         let wanted: Vec<(String, String)> = wanted
             .iter()
