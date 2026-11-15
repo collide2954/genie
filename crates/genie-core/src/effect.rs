@@ -260,6 +260,9 @@ pub fn effect(
     } else {
         (edit.start, edit.end() - 1)
     };
+    if let Some(found) = removed(exons, &edit, (first, last)) {
+        return Some(found);
+    }
     match (exon(first), exon(last)) {
         (Some(a), Some(b)) if a == b => {
             if coding.contains(first) && coding.contains(last) {
@@ -284,6 +287,26 @@ pub fn effect(
             ..Effect::place("splice site")
         }),
     }
+}
+
+/// The effect of a deletion that takes whole exons away: all of them, or some of them.
+fn removed(exons: &[Region], edit: &Edit, (first, last): (u64, u64)) -> Option<Effect> {
+    if edit.deleted.is_empty() {
+        return None;
+    }
+    let whole = exons
+        .iter()
+        .filter(|exon| first <= exon.start() && exon.end() <= last + 1)
+        .count();
+    let (place, protein) = match whole {
+        0 => return None,
+        all if all == exons.len() => ("transcript deletion", "p.0?"),
+        _ => ("exon deletion", "p.?"),
+    };
+    Some(Effect {
+        protein: Some(protein.to_owned()),
+        ..Effect::place(place)
+    })
 }
 
 /// A variant in an intron: a splice site within 2 bases of an exon, else the intron.
@@ -527,6 +550,26 @@ mod tests {
         );
         assert_eq!(forward(101, "C", "A").place, Some("5′ UTR"));
         assert_eq!(forward(228, "C", "A").place, Some("3′ UTR"));
+    }
+
+    #[test]
+    fn deletions_of_whole_exons_name_the_exons_or_the_transcript() {
+        for strand in [Strand::Forward, Strand::Reverse] {
+            let genome = genome(strand);
+            // A deletion as VCF gives it: the base before, then the deleted bases.
+            let deleted = |start: usize, end: usize| {
+                let reference = String::from_utf8(genome[start - 1..end].to_vec()).unwrap();
+                change(strand, start as u64 - 1, &reference, &reference[..1])
+            };
+            let exons = (None, Some("p.?"), Some("exon deletion"));
+            assert_eq!(written(&deleted(140, 180)), exons, "{strand:?}");
+            assert_eq!(written(&deleted(90, 135)), exons, "{strand:?}");
+            assert_eq!(
+                written(&deleted(90, 240)),
+                (None, Some("p.0?"), Some("transcript deletion")),
+                "{strand:?}"
+            );
+        }
     }
 
     #[test]

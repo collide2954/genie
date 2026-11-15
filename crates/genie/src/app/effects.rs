@@ -220,7 +220,12 @@ fn lines(found: Vec<(String, Effect)>) -> Changes {
 fn line(name: &str, effect: &Effect) -> (u8, String) {
     let (rank, what) = match effect.place {
         None => (0, effect.protein.clone().unwrap_or_default()),
-        Some(place @ ("splice site" | "start or stop codon")) => (1, place.to_owned()),
+        Some(
+            place @ ("splice site"
+            | "start or stop codon"
+            | "exon deletion"
+            | "transcript deletion"),
+        ) => (1, place.to_owned()),
         Some(place) => (2, place.to_owned()),
     };
     let mut line = [name, &what]
@@ -293,6 +298,18 @@ mod tests {
             ]
         );
         assert_eq!(changes.others, 3);
+        let deletions = lines(vec![
+            named("T6", change(None, None, Some("intron"))),
+            named("T7", change(None, Some("p.?"), Some("exon deletion"))),
+            named(
+                "T8",
+                change(None, Some("p.0?"), Some("transcript deletion")),
+            ),
+        ]);
+        assert_eq!(
+            deletions.lines,
+            ["T7 exon deletion", "T8 transcript deletion", "T6 intron"]
+        );
     }
 
     fn reference() -> Reference {
