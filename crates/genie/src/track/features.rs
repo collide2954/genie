@@ -33,7 +33,8 @@ impl FeatureFile {
     pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
         let kind = Kind::of(name).ok_or_else(|| {
             format!(
-                "The file {name} is not a BED, GFF3, GTF, VCF, BAM, bigWig, bigBed or bedGraph file."
+                "The file {name} is not a BED, GFF3, GTF, bigBed, VCF, BAM, CRAM, bigWig, \
+                 bedGraph, bedMethyl, BEDPE, bigInteract or copy number file."
             )
         })?;
         if index.is_none() && !is_compressed(name) {

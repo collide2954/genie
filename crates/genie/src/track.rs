@@ -3887,7 +3887,8 @@ mod tests {
         let error = open(PathBuf::from("/data/calls.bcf")).unwrap_err();
         assert_eq!(
             error,
-            "The file calls.bcf is not a BED, GFF3, GTF, VCF, BAM, bigWig, bigBed or bedGraph file."
+            "The file calls.bcf is not a BED, GFF3, GTF, bigBed, VCF, BAM, CRAM, bigWig, bedGraph, \
+             bedMethyl, BEDPE, bigInteract or copy number file."
         );
     }
 
