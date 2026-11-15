@@ -16,6 +16,7 @@ mod number;
 mod order;
 pub mod pileup;
 mod region;
+pub mod samples;
 pub mod search;
 pub mod segment;
 pub mod signal;
