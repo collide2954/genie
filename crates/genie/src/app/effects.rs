@@ -8,7 +8,7 @@ use genie_core::{Feature, Region};
 use iced::Task;
 
 use super::{Genie, Message, Session};
-use crate::card::{Card, Detail};
+use crate::card::{Card, Changes, Detail};
 use crate::reference::Reference;
 use crate::track::Content;
 
@@ -42,19 +42,19 @@ impl Site {
     }
 }
 
-/// The variant of the last card with effects, the transcripts at it, and its lines. The lines
-/// are empty while genie computes them.
+/// The variant of the last card with effects, the transcripts at it, and its changes. The
+/// changes are empty while genie computes them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Effects {
     pub(super) generation: u64,
     site: Option<Site>,
     pub(super) transcripts: Vec<Feature>,
-    lines: Vec<String>,
+    changes: Changes,
 }
 
 impl Genie {
-    /// Gives a variant card the changes on the transcripts at the variant: the lines of the
-    /// last card of the same variant, or else lines from a background task.
+    /// Gives a variant card the changes on the transcripts at the variant: the changes of the
+    /// last card of the same variant, or else changes from a background task.
     pub(super) fn find_effects(&mut self, panel: usize, pinned: bool) -> Task<Message> {
         let Some(session) = &self.session else {
             return Task::none();
@@ -72,7 +72,7 @@ impl Genie {
                 &mut self.hover
             };
             if let Some(card) = card {
-                card.effects.clone_from(&self.effects.lines);
+                card.effects.clone_from(&self.effects.changes);
             }
             return Task::none();
         }
@@ -81,7 +81,7 @@ impl Genie {
             generation,
             site: Some(site.clone()),
             transcripts: transcripts.clone(),
-            lines: Vec::new(),
+            changes: Changes::default(),
         };
         if transcripts.is_empty() {
             return Task::none();
@@ -89,20 +89,20 @@ impl Genie {
         let reference = Arc::clone(&session.reference);
         Task::perform(
             async move { compute(&reference, contig, &site, &transcripts) },
-            move |lines| Message::Effects(generation, lines),
+            move |changes| Message::Effects(generation, changes),
         )
     }
 
-    pub(super) fn effects_found(&mut self, generation: u64, lines: Vec<String>) {
+    pub(super) fn effects_found(&mut self, generation: u64, changes: Changes) {
         if generation != self.effects.generation {
             return;
         }
         for card in [&mut self.hover, &mut self.pinned].into_iter().flatten() {
             if Site::of(card) == self.effects.site {
-                card.effects.clone_from(&lines);
+                card.effects.clone_from(&changes);
             }
         }
-        self.effects.lines = lines;
+        self.effects.changes = changes;
     }
 }
 
@@ -134,15 +134,10 @@ fn plain(allele: &str) -> bool {
     !allele.is_empty() && allele.bytes().all(|base| b"ACGTNacgtn".contains(&base))
 }
 
-/// The lines of the changes of a variant on transcripts, with the bases of the reference.
-fn compute(
-    reference: &Reference,
-    contig: usize,
-    site: &Site,
-    transcripts: &[Feature],
-) -> Vec<String> {
+/// The changes of a variant on transcripts, with the bases of the reference.
+fn compute(reference: &Reference, contig: usize, site: &Site, transcripts: &[Feature]) -> Changes {
     if !plain(&site.reference) {
-        return Vec::new();
+        return Changes::default();
     }
     let bases = Bases {
         reference,
@@ -200,9 +195,8 @@ impl Bases<'_> {
     }
 }
 
-/// One line for each different change, protein changes first, then a line that counts the
-/// others.
-fn lines(found: Vec<(String, Effect)>) -> Vec<String> {
+/// One line for each different change, protein changes first, and the number of the others.
+fn lines(found: Vec<(String, Effect)>) -> Changes {
     let mut ranked: Vec<(u8, String)> = Vec::new();
     for (name, effect) in found {
         let entry = line(&name, &effect);
@@ -211,18 +205,14 @@ fn lines(found: Vec<(String, Effect)>) -> Vec<String> {
         }
     }
     ranked.sort_by_key(|(rank, _)| *rank);
-    let more = ranked.len().saturating_sub(SHOWN);
-    let mut lines: Vec<String> = ranked
-        .into_iter()
-        .take(SHOWN)
-        .map(|(_, line)| line)
-        .collect();
-    match more {
-        0 => {}
-        1 => lines.push("+1 more transcript".to_owned()),
-        _ => lines.push(format!("+{more} more transcripts")),
+    Changes {
+        others: ranked.len().saturating_sub(SHOWN),
+        lines: ranked
+            .into_iter()
+            .take(SHOWN)
+            .map(|(_, line)| line)
+            .collect(),
     }
-    lines
 }
 
 /// The line of a change, for example "BRCA1 p.Arg1699Trp · c.5095C>T", and its rank: protein
@@ -256,6 +246,7 @@ mod tests {
     use genie_core::{Feature, Region, Strand};
 
     use super::{Bases, Site, WHOLE, compute, lines};
+    use crate::card::Changes;
     use crate::reference::{self, Reference};
 
     fn change(coding: Option<&str>, protein: Option<&str>, place: Option<&'static str>) -> Effect {
@@ -279,27 +270,29 @@ mod tests {
             named("T3", change(Some("c.8G>A"), Some("p.Arg3His"), None)),
             named("T4", change(None, Some("p.?"), Some("splice site"))),
         ];
+        let changes = lines(found.clone());
         assert_eq!(
-            lines(found.clone()),
+            changes.lines,
             [
                 "T3 p.Arg3His · c.8G>A",
                 "T2 splice site · c.15+1C>T",
                 "T4 splice site",
-                "+1 more transcript"
             ]
         );
+        assert_eq!(changes.others, 1);
         let mut more = found;
         more.push(named("T5", change(None, None, Some("5′ UTR"))));
         more.push(named("", change(Some("c.9T>C"), Some("p.Arg3="), None)));
+        let changes = lines(more);
         assert_eq!(
-            lines(more),
+            changes.lines,
             [
                 "T3 p.Arg3His · c.8G>A",
                 "p.Arg3= · c.9T>C",
                 "T2 splice site · c.15+1C>T",
-                "+3 more transcripts"
             ]
         );
+        assert_eq!(changes.others, 3);
     }
 
     fn reference() -> Reference {
@@ -361,18 +354,15 @@ mod tests {
             Some(format!("c.5{base}>{other}").as_str())
         );
         let protein = wanted.protein.unwrap();
-        assert_eq!(
-            compute(
-                &reference,
-                0,
-                &site(&[other, "<DEL>"]),
-                slice::from_ref(&transcript)
-            ),
-            [format!("T1 {protein} · c.5{base}>{other}")]
+        let changes = compute(
+            &reference,
+            0,
+            &site(&[other, "<DEL>"]),
+            slice::from_ref(&transcript),
         );
-        assert_eq!(
-            compute(&reference, 0, &site(&["*"]), &[transcript]),
-            [] as [String; 0]
-        );
+        assert_eq!(changes.lines, [format!("T1 {protein} · c.5{base}>{other}")]);
+        assert_eq!(changes.others, 0);
+        let changes = compute(&reference, 0, &site(&["*"]), &[transcript]);
+        assert_eq!(changes, Changes::default());
     }
 }

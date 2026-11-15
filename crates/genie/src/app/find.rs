@@ -8,7 +8,7 @@ use genie_render::matches;
 use iced::widget::{button, container, operation, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Length, Task};
 
-use crate::card::{Card, Detail};
+use crate::card::{Card, Changes, Detail};
 use crate::chrome;
 use crate::icon::{self, Icon};
 use crate::scene::{self, Pointer};
@@ -537,7 +537,7 @@ impl Genie {
             },
             at: pointer.at,
             fields: Vec::new(),
-            effects: Vec::new(),
+            effects: Changes::default(),
         })
     }
 

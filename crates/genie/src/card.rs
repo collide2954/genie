@@ -84,8 +84,31 @@ pub struct Card {
     pub detail: Detail,
     pub at: Point,
     pub fields: Vec<Field>,
-    /// The changes of a variant on the transcripts at it, one line each.
-    pub effects: Vec<String>,
+    pub effects: Changes,
+}
+
+/// The changes of a variant on the transcripts at it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Changes {
+    /// One line for each of the first transcripts.
+    pub lines: Vec<String>,
+    /// The number of the other transcripts.
+    pub others: usize,
+}
+
+impl Changes {
+    /// The line that counts the other transcripts.
+    fn others(&self) -> Option<String> {
+        match self.others {
+            0 => None,
+            1 => Some("+1 more transcript".to_owned()),
+            count => Some(format!("+{count} more transcripts")),
+        }
+    }
+
+    fn all(&self) -> impl Iterator<Item = String> + '_ {
+        self.lines.iter().cloned().chain(self.others())
+    }
 }
 
 fn strand(strand: Strand) -> Option<&'static str> {
@@ -418,7 +441,7 @@ pub fn plain(card: &Card) -> String {
     [title, locus(card, span).to_string()]
         .into_iter()
         .chain(lines)
-        .chain(card.effects.iter().cloned())
+        .chain(card.effects.all())
         .chain(fields)
         .chain(parts)
         .collect::<Vec<_>>()
@@ -596,8 +619,8 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     let count = lines.len() + wrapped(&title, width - 2.0 * PADDING, TITLE_CHARACTER) - 1
         + card
             .effects
-            .iter()
-            .map(|line| wrapped(line, width - 2.0 * PADDING, CHARACTER))
+            .all()
+            .map(|line| wrapped(&line, width - 2.0 * PADDING, CHARACTER))
             .sum::<usize>()
         + parts.len()
         + usize::from(hidden > 0)
@@ -627,8 +650,14 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     }))
     .extend(
         card.effects
+            .lines
             .iter()
             .map(|line| text(line.clone()).size(11).wrapping(WRAP).into()),
+    )
+    .extend(
+        card.effects
+            .others()
+            .map(|line| text(line).size(11).style(style::muted).into()),
     )
     .extend(
         rows.into_iter()
@@ -689,8 +718,8 @@ mod tests {
     use iced_test::{selector, simulator};
 
     use super::{
-        Card, Detail, change, cigar, coding, facts, genotype, pair_lines, plain, read_facts,
-        signal_facts, view,
+        Card, Changes, Detail, change, cigar, coding, facts, genotype, pair_lines, plain,
+        read_facts, signal_facts, view,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -745,7 +774,7 @@ mod tests {
             },
             at: Point::ORIGIN,
             fields: Vec::new(),
-            effects: Vec::new(),
+            effects: Changes::default(),
         };
         assert_eq!(
             plain(&card(Strand::Forward, "GGATCC", 0)),
@@ -877,7 +906,7 @@ mod tests {
                 field("Class", "pELS"),
                 field("Highest DNase Z-score", "2.5"),
             ],
-            effects: Vec::new(),
+            effects: Changes::default(),
         };
         assert_eq!(
             plain(&card),
@@ -901,7 +930,10 @@ mod tests {
             },
             at: Point::new(100.0, 780.0),
             fields: vec![field("DP", "10")],
-            effects: effects.iter().map(|line| (*line).to_owned()).collect(),
+            effects: Changes {
+                lines: effects[..2].iter().map(|line| (*line).to_owned()).collect(),
+                others: 2,
+            },
         };
         let text = plain(&card);
         let lines: Vec<&str> = text.lines().collect();
@@ -923,12 +955,16 @@ mod tests {
             }
         }
         let tall = Card {
-            effects: (0..100)
-                .map(|index| format!("T{index} p.Arg3His"))
-                .collect(),
+            effects: Changes {
+                lines: (0..100)
+                    .map(|index| format!("T{index} p.Arg3His"))
+                    .collect(),
+                others: 1,
+            },
             at: Point::new(100.0, 100.0),
             ..card
         };
+        assert!(plain(&tall).contains("T99 p.Arg3His\n+1 more transcript\nDP: 10"));
         let window = Size::new(1280.0, 400.0);
         let edge = simulator(view(&tall, true, window))
             .find(selector::id("card"))
@@ -946,7 +982,7 @@ mod tests {
             detail: Detail::Feature(feature),
             at: Point::ORIGIN,
             fields: Vec::new(),
-            effects: Vec::new(),
+            effects: Changes::default(),
         };
         let window = Size::new(1280.0, 400.0);
         let bounds = |card: &Card, pinned: bool| {
@@ -977,7 +1013,7 @@ mod tests {
             detail: Detail::Feature(Feature::new(title, region(9, 20), Strand::Forward)),
             at: Point::new(100.0, 780.0),
             fields: vec![field(label, value)],
-            effects: Vec::new(),
+            effects: Changes::default(),
         };
         let window = Size::new(1280.0, 800.0);
         for pinned in [false, true] {

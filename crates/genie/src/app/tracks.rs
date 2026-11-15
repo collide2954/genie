@@ -14,7 +14,7 @@ use iced::time::Instant;
 use iced::widget::operation;
 use iced::{Point, Task};
 
-use crate::card::{Card, Detail};
+use crate::card::{Card, Changes, Detail};
 use crate::genome;
 use crate::hub;
 use crate::location::Location;
@@ -511,7 +511,7 @@ impl Genie {
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
             fields,
-            effects: Vec::new(),
+            effects: Changes::default(),
         })
     }
 

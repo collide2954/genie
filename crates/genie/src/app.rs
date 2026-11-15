@@ -15,7 +15,7 @@ use iced::{
     window,
 };
 
-use crate::card::Card;
+use crate::card::{Card, Changes};
 use crate::chrome::{self, Action};
 use crate::hub::Hub;
 use crate::location::Location;
@@ -641,8 +641,8 @@ pub enum Message {
     WindowResized(Size),
     TrackHovered(u64, usize, Option<Pointer>),
     TrackClicked(u64, usize, Pointer),
-    /// The lines of the changes of the variant of a card, with the number of the request.
-    Effects(u64, Vec<String>),
+    /// The changes of the variant of a card, with the number of the request.
+    Effects(u64, Changes),
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
@@ -1252,7 +1252,6 @@ pub fn run() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::slice;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -1279,6 +1278,7 @@ mod tests {
         Paneling, Port, Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut,
         window_event,
     };
+    use crate::card::Changes;
     use crate::export;
     use crate::location::Location;
     use crate::menu;
@@ -1683,7 +1683,7 @@ mod tests {
             detail: crate::card::Detail::Feature(feature),
             at: Point::ORIGIN,
             fields: Vec::new(),
-            effects: Vec::new(),
+            effects: crate::card::Changes::default(),
         });
         assert_eq!(
             genie.copy_text().as_deref(),
@@ -5046,20 +5046,22 @@ mod tests {
         assert_eq!(genie.effects.transcripts, [transcript]);
         let generation = genie.effects.generation;
         let line = "GENE1 p.Lys3Arg · c.8A>G".to_owned();
-        let _ = genie.update(Message::Effects(generation, vec![line.clone()]));
+        let changes = Changes {
+            lines: vec![line.clone()],
+            others: 2,
+        };
+        let _ = genie.update(Message::Effects(generation, changes.clone()));
         assert!(shows(&genie, &line));
+        assert!(shows(&genie, "+2 more transcripts"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.7, 6.0))));
         assert_eq!(genie.effects.generation, generation);
         assert!(shows(&genie, &line));
         let _ = genie.update(Message::TrackClicked(0, 0, over(20.5, 5.0)));
         let _ = genie.update(Message::TrackHovered(0, 0, None));
-        assert_eq!(
-            genie.pinned.as_ref().unwrap().effects,
-            slice::from_ref(&line)
-        );
+        assert_eq!(genie.pinned.as_ref().unwrap().effects, changes);
         assert!(genie.copy_text().unwrap().contains(&line));
-        let _ = genie.update(Message::Effects(generation - 1, vec!["old".to_owned()]));
-        assert_eq!(genie.pinned.as_ref().unwrap().effects, [line]);
+        let _ = genie.update(Message::Effects(generation - 1, Changes::default()));
+        assert_eq!(genie.pinned.as_ref().unwrap().effects, changes);
     }
 
     #[test]
