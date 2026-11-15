@@ -84,6 +84,10 @@ pub enum Paint {
     Accent,
     Selection,
     Stain(u8),
+    /// One of the colors of the most common values of a sample field, from 0.
+    Category(u8),
+    /// A number of a sample field: from 0 for the smallest to 100 for the largest.
+    Level(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

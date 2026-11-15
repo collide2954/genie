@@ -203,6 +203,12 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         Paint::Accent => tokens.accent,
         Paint::Selection => tokens.accent_soft,
         Paint::Stain(ink) => blend(tokens.line, tokens.text, f32::from(ink.min(100)) / 100.0),
+        Paint::Category(place) => data.categories[usize::from(place) % data.categories.len()],
+        Paint::Level(level) => blend(
+            tokens.line,
+            data.hues[Hue::Blue as usize],
+            f32::from(level.min(100)) / 100.0,
+        ),
     }
 }
 
@@ -617,6 +623,25 @@ mod tests {
             color(Paint::Pair(Hue::Vermillion), &DARK, &DARK_DATA),
             DARK_DATA.hues[3].scale_alpha(0.85)
         );
+    }
+
+    #[test]
+    fn sample_paints_take_eight_colors_or_a_ramp_to_blue() {
+        for (tokens, data) in [(&LIGHT, &LIGHT_DATA), (&DARK, &DARK_DATA)] {
+            assert_eq!(color(Paint::Category(0), tokens, data), data.categories[0]);
+            assert_eq!(color(Paint::Category(7), tokens, data), data.categories[7]);
+            assert_eq!(color(Paint::Category(9), tokens, data), data.categories[1]);
+            assert_eq!(color(Paint::Level(0), tokens, data), tokens.line);
+            let blue = data.hues[Hue::Blue as usize];
+            assert_eq!(color(Paint::Level(100), tokens, data), blue);
+            let half = color(Paint::Level(50), tokens, data);
+            assert!((half.b - f32::midpoint(tokens.line.b, blue.b)).abs() < 1e-6);
+            for (index, first) in data.categories.iter().enumerate() {
+                for second in &data.categories[index + 1..] {
+                    assert_ne!(first, second);
+                }
+            }
+        }
     }
 
     #[test]
