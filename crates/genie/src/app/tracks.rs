@@ -1012,6 +1012,10 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "bedgraph",
                     "bdg",
                     "bedmethyl",
+                    "bedpe",
+                    "seg",
+                    "cns",
+                    "cnr",
                 ],
             )
             .add_filter(
