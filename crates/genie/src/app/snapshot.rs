@@ -340,6 +340,10 @@ mod tests {
     use super::{Request, USAGE, image_names, run};
     use crate::scratch::Scratch;
 
+    /// The index of the 1,000 bases of the test reference, so that the tests make no index in
+    /// the cache folder of this computer.
+    const FAI: &str = "chr1\t1000\t6\t1000\t1001\n";
+
     fn args(words: &[&str]) -> Vec<OsString> {
         words.iter().map(OsString::from).collect()
     }
@@ -417,6 +421,7 @@ mod tests {
         let scratch = Scratch::new("snapshot");
         let bases = "ACGT".repeat(250);
         scratch.file("ref.fa", format!(">chr1\n{bases}\n"));
+        scratch.file("ref.fa.fai", FAI);
         scratch.file("genes.bed", "chr1\t100\t400\tgeneA\t0\t+\n");
         let session = scratch.file(
             "work.genie",
@@ -465,6 +470,7 @@ mod tests {
     fn snapshots_show_one_region_from_sessions_with_panels() {
         let scratch = Scratch::new("snapshot-panels");
         scratch.file("ref.fa", format!(">chr1\n{}\n", "ACGT".repeat(250)));
+        scratch.file("ref.fa.fai", FAI);
         let session = scratch.file(
             "work.genie",
             "[session]\nreference = ref.fa\nlocus = chr1:1-500 chr1:501-1000\n",
