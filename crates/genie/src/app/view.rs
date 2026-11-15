@@ -727,10 +727,19 @@ fn track_body<'a>(
     repack: bool,
 ) -> Element<'a, Message> {
     let id = track.id;
+    let genome = session.genome;
     let interactive = |primitives, height| {
-        scene::view(primitives, height)
-            .on_hover(move |pointer| Message::TrackHovered(id, panel, pointer))
-            .on_click(move |pointer| Message::TrackClicked(id, panel, pointer))
+        let view = scene::view(primitives, height)
+            .on_hover(move |pointer| Message::TrackHovered(id, panel, pointer));
+        if genome {
+            // A drag selects a region of the chromosome, and a click opens it, as on the ruler.
+            view.on_press(move |share| Message::Ruler(panel, Sweep::Pressed(share)))
+                .on_drag(move |share| Message::Ruler(panel, Sweep::Dragged(share)))
+                .on_release(Message::Ruler(panel, Sweep::Released))
+                .crosshair()
+        } else {
+            view.on_click(move |pointer| Message::TrackClicked(id, panel, pointer))
+        }
     };
     let content = match body(session, track, panel, shape, repack) {
         Body::Hint(words) => hint(words),

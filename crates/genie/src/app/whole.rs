@@ -271,6 +271,55 @@ mod tests {
     }
 
     #[test]
+    fn a_click_on_a_track_opens_the_chromosome_under_it() {
+        use genie_core::signal::Summary;
+        use genie_formats::table::Table;
+        use iced_test::{selector, simulator};
+
+        use crate::track::{Loaded, SignalFile};
+
+        let mut genie = genie();
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/coverage.bedGraph").into(),
+            name: "coverage.bedGraph".to_owned(),
+            data: None,
+            format: Format::Signal(SignalFile::BedGraphTable {
+                table: Table::new(Vec::new()),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let names = ["chr1", "chr2", "chrM", "chrUn_x"];
+        genie.session.as_mut().unwrap().tracks[0].contigs =
+            names.iter().map(|name| Some((*name).to_owned())).collect();
+        go(&mut genie, "All");
+        let (contig, region) = genie.session.as_ref().unwrap().tracks[0]
+            .slot(0)
+            .wanted
+            .unwrap();
+        let loaded = Loaded::signal(region, vec![Summary::single(region, 5.0)], 1);
+        let _ = genie.update(Message::TrackLoaded(
+            0,
+            0,
+            contig,
+            region,
+            Ok(Arc::new(loaded)),
+        ));
+        let mut ui = simulator(genie.view());
+        ui.click(selector::id("lane-0")).unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Ruler(0, Sweep::Pressed(_)))),
+            "{messages:?}"
+        );
+        for message in messages {
+            let _ = genie.update(message);
+        }
+        assert_eq!(panels(&genie), [(0, Region::between(0, 3_000))]);
+    }
+
+    #[test]
     fn chromosome_names_show_where_they_fit() {
         assert_eq!(super::name("chr21", 18.0).as_deref(), Some("21"));
         assert_eq!(super::name("chr1", 100.0).as_deref(), Some("1"));
