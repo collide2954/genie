@@ -104,6 +104,13 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Structural variants
+
+- Structural variants show over their full length in the colors of their type: dark grey for deletions, vermillion for duplications, green for inversions and purple for insertions. genie finds them by SVTYPE, by symbolic alleles such as `<DEL>`, and by breakends.
+- Lines with ends show the confidence intervals of the start and the end (CIPOS and CIEND).
+- Breakends (BND) are arcs to their other ends in a lane above the sites, or stubs when the other end is on another chromosome.
+- The card says the type, the length, the other end of a breakend and if the call is imprecise, for example "Deletion · 2,345 bp · imprecise".
+
 ### Variant annotations
 
 - Variant cards show the annotations of Ensembl VEP (`CSQ`), SnpEff (`ANN`) and bcftools csq (`BCSQ`): the 3 most severe, one line for each with the gene, the consequence, the impact and the HGVS changes, and the number of the others.
