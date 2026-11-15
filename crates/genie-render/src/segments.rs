@@ -7,6 +7,7 @@ use genie_core::Viewport;
 use genie_core::segment::Segment;
 
 use crate::features::Mode;
+use crate::samples::Rows;
 use crate::scene::{Align, Paint, Primitive};
 
 /// The log2 values that get the full colors when the track has no range of its own.
@@ -52,13 +53,15 @@ pub fn change(value: f32, (low, high): (f32, f32)) -> Paint {
     Paint::Change((share * 100.0).round() as i8)
 }
 
-/// The segments in the view as colored rows, with the sample names when the rows are expanded.
+/// The segments in the view as colored rows in the order of `rows`, with the sample names when
+/// the rows are expanded, and the bands and strips of a sample table.
 pub fn scene(
     viewport: Viewport,
     segments: &[Segment],
     samples: &[String],
     mode: Mode,
     range: (f32, f32),
+    rows: &Rows,
 ) -> Vec<Primitive> {
     let row = row_height(mode, samples.len());
     let gap = if row >= 4.0 { 1.0 } else { 0.0 };
@@ -67,32 +70,35 @@ pub fn scene(
     let mut primitives: Vec<Primitive> = segments
         .iter()
         .filter(|segment| segment.span.overlaps(visible))
-        .map(|segment| {
+        .filter_map(|segment| {
             let left = px(segment.span.start());
-            Primitive::Rect {
+            Some(Primitive::Rect {
                 x: left,
-                y: segment.sample as f32 * row,
+                y: rows.top(*rows.place.get(segment.sample)?, row),
                 width: (px(segment.span.end()) - left).max(1.0),
                 height: row - gap,
                 paint: change(segment.value, range),
-            }
+            })
         })
         .collect();
     if mode == Mode::Expanded {
         let right = viewport.width() as f32 - NAME_INSET;
         primitives.extend(
-            samples
+            rows.members
                 .iter()
                 .enumerate()
-                .map(|(index, name)| Primitive::Label {
-                    x: right,
-                    y: index as f32 * row + (row - gap) / 2.0,
-                    content: Cow::Owned(name.clone()),
-                    size: NAME_SIZE,
-                    align: Align::End,
+                .filter_map(|(place, members)| {
+                    Some(Primitive::Label {
+                        x: right,
+                        y: rows.top(place, row) + (row - gap) / 2.0,
+                        content: Cow::Owned(samples.get(*members.first()?)?.clone()),
+                        size: NAME_SIZE,
+                        align: Align::End,
+                    })
                 }),
         );
     }
+    primitives.extend(rows.marks(row, gap));
     primitives
 }
 
@@ -102,12 +108,11 @@ pub fn hit(
     segments: &[Segment],
     samples: usize,
     mode: Mode,
+    rows: &Rows,
     (x, y): (f32, f32),
 ) -> Option<usize> {
-    if y < 0.0 {
-        return None;
-    }
-    let sample = (y / row_height(mode, samples)) as usize;
+    let place = rows.at(y, row_height(mode, samples))?;
+    let sample = *rows.members.get(place)?.first()?;
     let position = viewport.to_bp(f64::from(x));
     let reach = REACH * viewport.scale();
     segments.iter().position(|segment| {
@@ -119,11 +124,13 @@ pub fn hit(
 
 #[cfg(test)]
 mod tests {
+    use genie_core::samples::{Arrangement, Group, Tint};
     use genie_core::segment::Segment;
     use genie_core::{Region, Viewport};
 
     use super::{change, fit, hit, row_height, scene};
     use crate::features::Mode;
+    use crate::samples::{GROUP_GAP, Rows, STRIP};
     use crate::scene::{Paint, Primitive};
 
     fn segment(sample: usize, start: u64, end: u64, value: f32) -> Segment {
@@ -163,7 +170,15 @@ mod tests {
     fn each_sample_gets_a_row_and_expanded_rows_name_it() {
         let segments = [segment(0, 100, 300, 1.5), segment(1, 200, 900, -0.75)];
         let names = ["tumor".to_owned(), "normal".to_owned()];
-        let drawn = scene(view(), &segments, &names, Mode::Expanded, (-1.5, 1.5));
+        let rows = Rows::plain(2, 1);
+        let drawn = scene(
+            view(),
+            &segments,
+            &names,
+            Mode::Expanded,
+            (-1.5, 1.5),
+            &rows,
+        );
         let rects: Vec<(f32, f32, f32, Paint)> = drawn
             .iter()
             .filter_map(|primitive| match primitive {
@@ -191,27 +206,95 @@ mod tests {
             labels,
             [("tumor".to_owned(), 996.0), ("normal".to_owned(), 996.0)]
         );
-        let squished = scene(view(), &segments, &names, Mode::Squished, (-1.5, 1.5));
+        let squished = scene(
+            view(),
+            &segments,
+            &names,
+            Mode::Squished,
+            (-1.5, 1.5),
+            &rows,
+        );
         assert!(
             squished
                 .iter()
                 .all(|primitive| matches!(primitive, Primitive::Rect { .. }))
         );
-        assert_eq!(
-            hit(view(), &segments, 2, Mode::Expanded, (250.0, 5.0)),
-            Some(0)
+        let at = |x, y| hit(view(), &segments, 2, Mode::Expanded, &rows, (x, y));
+        assert_eq!(at(250.0, 5.0), Some(0));
+        assert_eq!(at(250.0, 17.0), Some(1));
+        assert_eq!(at(950.0, 17.0), None);
+        assert_eq!(at(250.0, 40.0), None);
+    }
+
+    #[test]
+    fn grouped_samples_sit_under_the_band_of_their_group() {
+        let segments = [segment(0, 100, 300, 1.5), segment(1, 200, 900, -0.75)];
+        let names = ["tumor".to_owned(), "normal".to_owned()];
+        let arrangement = Arrangement {
+            order: vec![1, 0],
+            groups: vec![
+                Group {
+                    name: "blood".to_owned(),
+                    first: 0,
+                    size: 1,
+                },
+                Group {
+                    name: "breast".to_owned(),
+                    first: 1,
+                    size: 1,
+                },
+            ],
+            tints: vec![Tint::Value(0), Tint::Other],
+        };
+        let rows = Rows::new(&arrangement, 1);
+        let drawn = scene(
+            view(),
+            &segments,
+            &names,
+            Mode::Expanded,
+            (-1.5, 1.5),
+            &rows,
         );
+        let rects: Vec<(f32, f32, Paint)> = drawn
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Rect { x, y, paint, .. } if *x > STRIP => Some((*x, *y, *paint)),
+                _ => None,
+            })
+            .collect();
         assert_eq!(
-            hit(view(), &segments, 2, Mode::Expanded, (250.0, 17.0)),
-            Some(1)
+            rects,
+            [
+                (100.0, 2.0 * GROUP_GAP + 12.0, Paint::Change(100)),
+                (200.0, GROUP_GAP, Paint::Change(-50))
+            ]
         );
+        let labels: Vec<(String, f32)> = drawn
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Label { content, y, .. } => Some((content.to_string(), *y)),
+                _ => None,
+            })
+            .collect();
         assert_eq!(
-            hit(view(), &segments, 2, Mode::Expanded, (950.0, 17.0)),
-            None
+            labels,
+            [
+                ("normal".to_owned(), GROUP_GAP + 5.5),
+                ("tumor".to_owned(), 2.0 * GROUP_GAP + 17.5)
+            ]
         );
-        assert_eq!(
-            hit(view(), &segments, 2, Mode::Expanded, (250.0, 40.0)),
-            None
-        );
+        let strips = drawn
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Rect { x, .. } if *x < 1.0))
+            .count();
+        let bands = drawn
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Text { .. }))
+            .count();
+        assert_eq!((strips, bands), (2, 2));
+        let at = |y| hit(view(), &segments, 2, Mode::Expanded, &rows, (250.0, y));
+        assert_eq!(at(5.0), None);
+        assert_eq!(at(GROUP_GAP + 5.0), Some(1));
+        assert_eq!(at(2.0 * GROUP_GAP + 17.0), Some(0));
     }
 }

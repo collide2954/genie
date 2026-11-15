@@ -915,7 +915,8 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         Some(Content::Segments(copies)) => {
             let names = track.source.samples();
             let range = segment_range(track);
-            let primitives = segments::scene(viewport, &copies.segments, names, mode, range);
+            let primitives =
+                segments::scene(viewport, &copies.segments, names, mode, range, &track.rows);
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Features(annotation)) => {
@@ -1267,12 +1268,13 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Segments(copies)) => {
-            let rows = copies.samples.max(1);
+            let rows = track.rows.len().max(1);
             let row_height = segments::row_height(mode, copies.samples);
+            let fixed = track.rows.groups.len() as f32 * samples::GROUP_GAP;
             Shape {
-                height: rows as f32 * row_height,
+                height: fixed + rows as f32 * row_height,
                 rows,
-                fixed: 0.0,
+                fixed,
                 row_height,
             }
         }

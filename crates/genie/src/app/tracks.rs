@@ -504,7 +504,8 @@ impl Genie {
             }
             Content::Segments(copies) => {
                 let found = &copies.segments;
-                let index = segments::hit(viewport, found, copies.samples, mode, (x, y))?;
+                let rows = &track.rows;
+                let index = segments::hit(viewport, found, copies.samples, mode, rows, (x, y))?;
                 let segment = found[index];
                 Detail::Segment {
                     sample: track.source.samples().get(segment.sample)?.clone(),
