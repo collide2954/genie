@@ -2,6 +2,7 @@ pub mod alignment;
 mod assembly;
 mod band;
 pub mod codon;
+pub mod effect;
 mod feature;
 mod history;
 pub mod interaction;
