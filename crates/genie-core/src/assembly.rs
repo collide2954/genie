@@ -1,7 +1,11 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
 use crate::{Locus, LocusError, Span};
+
+/// The most contigs that a whole-genome view shows.
+pub const GENOME_CONTIGS: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Contig {
@@ -63,6 +67,27 @@ impl Assembly {
 
     pub fn contigs(&self) -> &[Contig] {
         &self.contigs
+    }
+
+    /// The contigs of a whole-genome view, in their order: the contigs without `_` in the
+    /// name, so no alt, random, unplaced or patch contigs, or all contigs if each name has
+    /// one. Of more than `GENOME_CONTIGS` contigs, the longest ones.
+    pub fn chromosomes(&self) -> Vec<usize> {
+        let all = 0..self.contigs.len();
+        let mut chosen: Vec<usize> = all
+            .clone()
+            .filter(|index| !self.contigs[*index].name.contains('_'))
+            .collect();
+        if chosen.is_empty() {
+            chosen = all.collect();
+        }
+        if chosen.len() > GENOME_CONTIGS {
+            let mut longest = chosen.clone();
+            longest.sort_by_key(|index| Reverse(self.contigs[*index].length));
+            longest.truncate(GENOME_CONTIGS);
+            chosen.retain(|index| longest.contains(index));
+        }
+        chosen
     }
 
     pub fn find(&self, name: &str) -> Option<usize> {
@@ -276,6 +301,41 @@ mod tests {
         assert_eq!(assembly.find("CM000664.2"), Some(2));
         assert_eq!(assembly.find("GL000001.1"), None);
         assert_eq!(assembly.find("1"), Some(0));
+    }
+
+    #[test]
+    fn whole_genome_views_show_the_main_chromosomes() {
+        let sized = |names: &[(&str, u64)]| {
+            Assembly::new(
+                names
+                    .iter()
+                    .map(|(name, length)| Contig {
+                        name: (*name).to_owned(),
+                        length: *length,
+                    })
+                    .collect(),
+            )
+        };
+        let human = sized(&[
+            ("chr1", 248),
+            ("chr1_KI270706v1_random", 175),
+            ("chr2", 242),
+            ("chrUn_GL000220v1", 161),
+            ("chrX", 156),
+            ("chrM", 1),
+        ]);
+        assert_eq!(human.chromosomes(), [0, 2, 4, 5]);
+        let scaffolds = sized(&[("scaffold_1", 5), ("scaffold_2", 9)]);
+        assert_eq!(scaffolds.chromosomes(), [0, 1]);
+        let many: Vec<(String, u64)> = (0..60)
+            .map(|index| (format!("contig{index}"), 1_000 + index))
+            .collect();
+        let many: Vec<(&str, u64)> = many
+            .iter()
+            .map(|(name, length)| (name.as_str(), *length))
+            .collect();
+        let chosen = sized(&many).chromosomes();
+        assert_eq!(chosen, (10..60).collect::<Vec<usize>>());
     }
 
     #[test]

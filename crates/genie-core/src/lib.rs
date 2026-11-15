@@ -6,6 +6,7 @@ pub mod effect;
 mod feature;
 mod history;
 pub mod interaction;
+pub mod layout;
 mod locus;
 mod marks;
 pub mod methylation;
