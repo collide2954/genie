@@ -35,7 +35,7 @@ use crate::{font, scene, style};
 use super::tracks::TRACK_NAME;
 use super::{
     Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation, Preparing, Renaming,
-    Session, Status, Suggestion, Sweep,
+    Session, Status, Suggestion, Sweep, whole,
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -473,6 +473,52 @@ impl Genie {
     }
 
     pub(super) fn tracks<'a>(&'a self, session: &'a Session, repack: bool) -> Element<'a, Message> {
+        let padding = self.settings.density.padding();
+        let gap = self
+            .drop_target()
+            .filter(|(from, gap)| gap != from && *gap != from + 1)
+            .map(|(_, gap)| gap);
+        let line = |at: usize| {
+            if gap == Some(at) {
+                drop_line()
+            } else {
+                hairline()
+            }
+        };
+        let mut data = if session.genome {
+            column![line(0)]
+        } else {
+            column![self.sequence_row(session), line(0)]
+        };
+        for (index, track) in session.tracks.iter().enumerate() {
+            if track.over.is_some() {
+                continue;
+            }
+            let draft = self
+                .renaming
+                .as_ref()
+                .filter(|(id, _)| !repack && *id == track.id)
+                .map(|(_, draft)| draft.as_str());
+            data = data
+                .push(track_view(
+                    session,
+                    track,
+                    (repack, padding),
+                    draft,
+                    !repack && self.lane_hover == Some(track.id),
+                ))
+                .push(line(index + 1));
+        }
+        if !repack {
+            for item in &session.preparing {
+                data = data.push(preparing_lane(item)).push(hairline());
+            }
+        }
+        data.into()
+    }
+
+    /// The bases of the reference and their reading frames.
+    fn sequence_row<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let reading = session.reading;
         let padding = self.settings.density.padding();
         let frames = reading.frames();
@@ -505,43 +551,7 @@ impl Genie {
             ],
             Message::SequenceMenu,
         );
-        let gap = self
-            .drop_target()
-            .filter(|(from, gap)| gap != from && *gap != from + 1)
-            .map(|(_, gap)| gap);
-        let line = |at: usize| {
-            if gap == Some(at) {
-                drop_line()
-            } else {
-                hairline()
-            }
-        };
-        let mut data = column![container(sequence).id("sequence"), line(0)];
-        for (index, track) in session.tracks.iter().enumerate() {
-            if track.over.is_some() {
-                continue;
-            }
-            let draft = self
-                .renaming
-                .as_ref()
-                .filter(|(id, _)| !repack && *id == track.id)
-                .map(|(_, draft)| draft.as_str());
-            data = data
-                .push(track_view(
-                    session,
-                    track,
-                    (repack, padding),
-                    draft,
-                    !repack && self.lane_hover == Some(track.id),
-                ))
-                .push(line(index + 1));
-        }
-        if !repack {
-            for item in &session.preparing {
-                data = data.push(preparing_lane(item)).push(hairline());
-            }
-        }
-        data.into()
+        container(sequence).id("sequence").into()
     }
 
     fn ruler_at<'a>(&self, session: &Session, panel: usize) -> Element<'a, Message> {
@@ -560,12 +570,25 @@ impl Genie {
                 paint: Paint::Selection,
             });
         }
-        primitives.extend(ruler::scene(viewport, RULER_HEIGHT));
+        if !session.genome {
+            primitives.extend(ruler::scene(viewport, RULER_HEIGHT));
+        }
         let ruler = scene::view(primitives, RULER_HEIGHT)
             .on_press(move |share| Message::Ruler(panel, Sweep::Pressed(share)))
             .on_drag(move |share| Message::Ruler(panel, Sweep::Dragged(share)))
             .on_release(Message::Ruler(panel, Sweep::Released))
             .crosshair();
+        if session.genome {
+            let (contig, _) = session.view(panel);
+            let contig = &session.reference.assembly.contigs()[contig].name;
+            let name = whole::name(contig, viewport.width() as f32).unwrap_or_default();
+            let label = container(text(name).size(11).style(style::muted))
+                .center_x(Length::Fill)
+                .center_y(RULER_HEIGHT);
+            return container(stack![ruler, label])
+                .id(format!("ruler-{panel}"))
+                .into();
+        }
         if panel > 0 {
             return container(ruler).id(format!("ruler-{panel}")).into();
         }
@@ -712,7 +735,12 @@ fn track_body<'a>(
     let content = match body(session, track, panel, shape, repack) {
         Body::Hint(words) => hint(words),
         Body::Space(height) => space().width(Length::Fill).height(height).into(),
-        Body::Scene(primitives, height) => interactive(primitives, height).into(),
+        Body::Scene(mut primitives, height) => {
+            if session.genome {
+                primitives.retain(|primitive| !matches!(primitive, Primitive::Label { .. }));
+            }
+            interactive(primitives, height).into()
+        }
         Body::Reads { coverage, reads } => {
             let mut body = column![scene::view(coverage, alignments::COVERAGE_HEIGHT)].spacing(1);
             if let Some((primitives, height)) = reads {
@@ -974,9 +1002,12 @@ fn track_view<'a>(
     let (shapes, tallest) = shapes(session, track, repack);
     let height = track.height.unwrap_or(tallest.height);
     let shape = tallest;
-    let body = across(&session.portions(), height, |panel| {
-        track_body(session, track, panel, shapes[panel], repack)
-    });
+    let body = match genome_hint(session, track, &shapes, repack) {
+        Some(words) => hint(words),
+        None => across(&session.portions(), height, |panel| {
+            track_body(session, track, panel, shapes[panel], repack)
+        }),
+    };
     let edge = Grip::new(
         space().width(Length::Fill).height(EDGE),
         move |delta| Message::Lane(id, Lane::Resized(delta)),
@@ -1038,12 +1069,58 @@ fn track_view<'a>(
                 .padding(edge_padding()),
         );
     }
+    if let Some(range) = genome_range(session, track) {
+        let inset = Padding {
+            top: padding,
+            right: genie_render::scene::LABEL_INSET,
+            ..Padding::ZERO
+        };
+        layers = layers.push(
+            container(text(range).size(signal::RANGE_SIZE).style(style::muted))
+                .width(Length::Fill)
+                .align_right(Length::Fill)
+                .padding(inset),
+        );
+    }
     let lane = container(Context::new(layers, move |at| Message::TrackMenu(id, at)))
         .id(format!("lane-{id}"));
     mouse_area(lane)
         .on_enter(Message::Lane(id, Lane::Entered))
         .on_exit(Message::Lane(id, Lane::Left))
         .into()
+}
+
+/// The hint of a track in the whole-genome view when no chromosome shows data, once for all.
+fn genome_hint(session: &Session, track: &Track, shapes: &[Shape], repack: bool) -> Option<String> {
+    if !session.genome {
+        return None;
+    }
+    let mut words = None;
+    for (panel, shape) in shapes.iter().enumerate() {
+        match body(session, track, panel, *shape, repack) {
+            Body::Hint(text) => {
+                words.get_or_insert(text);
+            }
+            Body::Space(_) => {}
+            Body::Scene(..) | Body::Reads { .. } => return None,
+        }
+    }
+    words
+}
+
+/// The range of a signal in the whole-genome view, which all chromosomes share.
+fn genome_range(session: &Session, track: &Track) -> Option<String> {
+    if !session.genome {
+        return None;
+    }
+    (0..session.count()).find_map(|panel| {
+        let (contig, viewport) = session.view(panel);
+        let Content::Signal(data) = &track.slot(panel).data(contig)?.content else {
+            return None;
+        };
+        let columns = signal_columns(track, viewport, &data.summaries);
+        signal_scale(session, track, panel, &columns).map(signal::label)
+    })
 }
 
 fn track_buttons<'a>(id: u64) -> Element<'a, Message> {
@@ -1228,23 +1305,42 @@ pub(super) fn signal_scale(
     if let Some(range) = track.plot.range {
         return Some(range);
     }
+    let own = signal::range(columns);
+    // The whole-genome view gives all chromosomes one scale.
+    let panels: Vec<usize> = if session.genome {
+        (0..session.count())
+            .filter(|other| *other != panel)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let ranges = |others: &[&Track]| -> Option<signal::Scale> {
+        let elsewhere = panels
+            .iter()
+            .filter_map(|other| signal::range(&member_columns(session, track, *other)?));
+        let members = others.iter().flat_map(|member| {
+            std::iter::once(panel)
+                .chain(panels.iter().copied())
+                .filter_map(|other| signal::range(&member_columns(session, member, other)?))
+        });
+        own.into_iter()
+            .chain(elsewhere)
+            .chain(members)
+            .reduce(signal::Scale::union)
+    };
     let members = members(session, track);
     if !members.is_empty() {
-        return members
-            .iter()
-            .filter_map(|member| signal::range(&member_columns(session, member, panel)?))
-            .chain(signal::range(columns))
-            .reduce(signal::Scale::union);
+        return ranges(&members);
     }
     if !track.plot.linked {
-        return signal::range(columns);
+        return ranges(&[]);
     }
-    session
+    let linked: Vec<&Track> = session
         .tracks
         .iter()
-        .filter(|other| other.plot.linked)
-        .filter_map(|other| signal::range(&member_columns(session, other, panel)?))
-        .reduce(signal::Scale::union)
+        .filter(|other| other.plot.linked && other.id != track.id)
+        .collect();
+    ranges(&linked)
 }
 
 pub(super) fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track> {

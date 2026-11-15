@@ -8,6 +8,19 @@ use super::{Genie, Message, PANEL_GAP, Panel, Session, panel_width};
 
 /// The least width of a chromosome in the whole-genome view, so that a click can reach it.
 const LEAST: f32 = 3.0;
+/// The width of a letter of a chromosome name.
+const CHARACTER: f32 = 6.0;
+
+/// The name of a chromosome on the ruler of the whole-genome view, without "chr", if it fits
+/// in the width of the chromosome.
+pub(super) fn name(contig: &str, width: f32) -> Option<String> {
+    let short = contig
+        .strip_prefix("chr")
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(contig);
+    let fits = short.chars().count() as f32 * CHARACTER + 2.0 <= width;
+    fits.then(|| short.to_owned())
+}
 
 /// Whether the words of the locus box ask for the whole-genome view.
 pub(super) fn is_genome(text: &str) -> bool {
@@ -255,5 +268,59 @@ mod tests {
         let _ = genie.update(Message::TrackClicked(7, 2, pointer));
         assert_eq!(panels(&genie), [(2, Region::between(0, 5))]);
         assert!(genie.pinned.is_none());
+    }
+
+    #[test]
+    fn chromosome_names_show_where_they_fit() {
+        assert_eq!(super::name("chr21", 18.0).as_deref(), Some("21"));
+        assert_eq!(super::name("chr1", 100.0).as_deref(), Some("1"));
+        assert_eq!(super::name("chrM", 3.0), None);
+        assert_eq!(super::name("2L", 30.0).as_deref(), Some("2L"));
+        assert_eq!(super::name("chrUn_scaffold", 30.0), None);
+    }
+
+    #[test]
+    fn signal_tracks_share_one_scale_across_chromosomes() {
+        use genie_core::signal::Summary;
+        use genie_formats::table::Table;
+
+        use crate::app::view::{signal_columns, signal_scale};
+        use crate::track::{Content, Loaded, SignalFile};
+
+        let mut genie = genie();
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/coverage.bedGraph").into(),
+            name: "coverage.bedGraph".to_owned(),
+            data: None,
+            format: Format::Signal(SignalFile::BedGraphTable {
+                table: Table::new(Vec::new()),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let names = ["chr1", "chr2", "chrM", "chrUn_x"];
+        genie.session.as_mut().unwrap().tracks[0].contigs =
+            names.iter().map(|name| Some((*name).to_owned())).collect();
+        go(&mut genie, "All");
+        for (panel, value) in [(0, 10.0), (1, 40.0)] {
+            let (contig, region) = genie.session.as_ref().unwrap().tracks[0]
+                .slot(panel)
+                .wanted
+                .unwrap();
+            let summaries = vec![Summary::single(region, value)];
+            let loaded = Arc::new(Loaded::signal(region, summaries, 1));
+            let _ = genie.update(Message::TrackLoaded(0, panel, contig, region, Ok(loaded)));
+        }
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[0];
+        let scale = |panel| {
+            let (contig, viewport) = session.view(panel);
+            let Content::Signal(data) = &track.slot(panel).data(contig).unwrap().content else {
+                panic!("expected a signal");
+            };
+            let columns = signal_columns(track, viewport, &data.summaries);
+            signal_scale(session, track, panel, &columns).unwrap()
+        };
+        assert_eq!(scale(0), scale(1));
+        assert!((scale(0).max - 40.0).abs() < 1e-3, "{:?}", scale(0));
     }
 }

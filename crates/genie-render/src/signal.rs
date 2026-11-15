@@ -7,7 +7,7 @@ use crate::scene::{Align, Hue, LABEL_INSET, Paint, Primitive};
 
 pub const HEIGHT: f32 = 48.0;
 
-const RANGE_SIZE: f32 = 10.0;
+pub const RANGE_SIZE: f32 = 10.0;
 const LINE: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,7 +144,8 @@ pub fn number(value: f32) -> String {
     }
 }
 
-fn label(scale: Scale) -> String {
+/// The range of a scale as text, for example "0-30.9".
+pub fn label(scale: Scale) -> String {
     if scale.min == 0.0 {
         format!("0-{}", number(scale.max))
     } else {
