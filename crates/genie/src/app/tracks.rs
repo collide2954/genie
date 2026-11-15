@@ -28,7 +28,7 @@ use crate::reference;
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Change, Content, Pile, Scope, Source, Track};
+use crate::track::{self, Change, Content, Loaded, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
 use super::view::{body_height, segment_range, signal_columns, signal_scale};
@@ -545,6 +545,28 @@ impl Genie {
     }
 
     fn fetch_features(&mut self) -> Task<Message> {
+        self.fetch_tracks(None)
+    }
+
+    /// Keeps the data of a load. A view that changed while the load ran can need other data,
+    /// for example features after a density, so genie then loads the track again.
+    pub(super) fn track_loaded(
+        &mut self,
+        (id, panel): (u64, usize),
+        contig: usize,
+        region: Region,
+        result: Result<Arc<Loaded>, String>,
+    ) -> Task<Message> {
+        let landed = result.is_ok();
+        self.on_session(|session| session.accept((id, panel), contig, region, result));
+        if landed {
+            self.fetch_tracks(Some(id))
+        } else {
+            Task::none()
+        }
+    }
+
+    fn fetch_tracks(&mut self, only: Option<u64>) -> Task<Message> {
         let Some(session) = &mut self.session else {
             return Task::none();
         };
@@ -556,7 +578,7 @@ impl Genie {
             .collect();
         let mut tasks = Vec::new();
         for (panel, contig, viewport) in frames {
-            tasks.extend(Self::fetch_panel(session, panel, contig, viewport));
+            tasks.extend(Self::fetch_panel(session, panel, (contig, viewport), only));
         }
         Task::batch(tasks)
     }
@@ -564,8 +586,8 @@ impl Genie {
     fn fetch_panel(
         session: &mut super::Session,
         panel: usize,
-        contig: usize,
-        viewport: Viewport,
+        (contig, viewport): (usize, Viewport),
+        only: Option<u64>,
     ) -> Vec<Task<Message>> {
         let visible = viewport.visible();
         let length = viewport.length();
@@ -575,6 +597,7 @@ impl Genie {
         session
             .tracks
             .iter_mut()
+            .filter(|track| only.is_none_or(|id| track.id == id))
             .filter(|track| track.needs_at(panel, contig, visible, step))
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;

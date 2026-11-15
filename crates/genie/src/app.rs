@@ -1018,7 +1018,7 @@ impl Genie {
             Message::Prepare(work) => return self.prepare(work, None),
             Message::Preparing(id, event) => return self.preparing(id, event),
             Message::TrackLoaded(id, panel, contig, region, result) => {
-                self.on_session(|session| session.accept((id, panel), contig, region, result));
+                return self.track_loaded((id, panel), contig, region, result);
             }
             Message::NoticeDismissed => self.notice = None,
             Message::TrackMenu(id, at) => self.open_menu(id, at),
@@ -1695,6 +1695,53 @@ mod tests {
         });
         let _ = genie.update(Message::TrackOpened(Ok(signal_source(indexed))));
         assert!(shows(&genie, SIGNAL_HINT));
+    }
+
+    /// A density that lands after a zoom to a narrow view gives the narrow view its features.
+    #[test]
+    fn a_density_that_lands_after_a_zoom_asks_for_the_features() {
+        let records = vec![FaiRecord {
+            name: "chr1".to_owned(),
+            length: 50_000_000,
+            offset: 6,
+            line_bases: 60,
+            line_width: 61,
+        }];
+        let reference = Reference::fasta(PathBuf::from("big.fa"), records).unwrap();
+        let mut genie = Genie::default();
+        genie.settings.motion = false;
+        let _ = genie.update(Message::Opened(Ok(Arc::new(reference))));
+        let table = Arc::new(Source {
+            location: PathBuf::from("/data/genes.bed").into(),
+            name: "genes.bed".to_owned(),
+            data: None,
+            format: Format::Features(FeatureFile::Table {
+                kind: Kind::Bed,
+                table: genie_formats::features::Table::new([(
+                    "chr1".to_owned(),
+                    Region::between(20_000_100, 20_000_400),
+                    Feature::new(
+                        "geneA",
+                        Region::between(20_000_100, 20_000_400),
+                        Strand::Forward,
+                    ),
+                )]),
+                names: Vec::new(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(table)));
+        let wanted = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].slot(0).wanted;
+        let (contig, wide) = wanted(&genie).unwrap();
+        assert!(wide.len() > 10_000_000, "{wide:?}");
+        go(&mut genie, "chr1:20,000,001-20,001,000");
+        assert_eq!(wanted(&genie), Some((contig, wide)));
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        let density = Arc::new(Loaded::signal(wide, Vec::new(), 1_024));
+        let _ = genie.update(Message::TrackLoaded(id, 0, contig, wide, Ok(density)));
+        assert_eq!(
+            wanted(&genie),
+            Some((contig, Region::between(19_999_000, 20_002_000)))
+        );
     }
 
     fn reference() -> Arc<Reference> {
