@@ -139,7 +139,7 @@ fn protein_change(reference: &[u8], alternate: &[u8], frameshift: bool, at: usiz
     }
     if reference.get(first) == Some(&b'*') {
         let next = alternate.get(first).copied().unwrap_or(b'X');
-        return format!("p.Ter{}{}ext*?", first + 1, amino(next));
+        return format!("p.Ter{}{}extTer?", first + 1, amino(next));
     }
     if frameshift {
         return format!("p.{}{}fs", name(first), first + 1);
@@ -391,6 +391,13 @@ fn coded(
     };
     let start = numbers.number(edit.start)?;
     let coding = coding_change(&numbers, edit)?;
+    if edit.inserted.iter().any(|base| !b"ACGT".contains(base)) {
+        return Some(Effect {
+            coding: Some(coding),
+            protein: Some("p.?".to_owned()),
+            place: None,
+        });
+    }
     let frameshift = !edit
         .deleted
         .len()
@@ -512,7 +519,8 @@ mod tests {
         assert_eq!(forward(113, "T", "C"), pair("c.9T>C", "p.Arg3="));
         assert_eq!(forward(158, "G", "A"), pair("c.24G>A", "p.Trp8Ter"));
         assert_eq!(forward(105, "A", "G"), pair("c.1A>G", "p.Met1?"));
-        assert_eq!(forward(222, "T", "C"), pair("c.58T>C", "p.Ter20Glnext*?"));
+        assert_eq!(forward(222, "T", "C"), pair("c.58T>C", "p.Ter20GlnextTer?"));
+        assert_eq!(forward(112, "G", "N"), pair("c.8G>N", "p.?"));
     }
 
     #[test]
