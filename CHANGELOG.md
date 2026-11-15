@@ -104,6 +104,13 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Hi-C contact maps
+
+- genie opens the `.hic` files of Juicer (versions 6 to 9) as Hi-C tracks, also from the web and from track hubs (type `hic`). The contacts show as a triangle over the diagonal, from light grey to vermillion.
+- The size of the bins follows the zoom. genie reads only the blocks of the matrix that the view needs.
+- The track menu selects the normalization of the file (for example KR or SCALE, or none) and observed/expected ratios in blue and vermillion. Sessions keep both.
+- The card of a contact shows its two bins, their distance, the value and the normalization.
+
 ### Structural variants
 
 - Structural variants show over their full length in the colors of their type: dark grey for deletions, vermillion for duplications, green for inversions and purple for insertions. genie finds them by SVTYPE, by symbolic alleles such as `<DEL>`, and by breakends.
