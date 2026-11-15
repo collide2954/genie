@@ -974,6 +974,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) {
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());
     track.declared.clone_from(&found.declared);
+    track.choice.clone_from(&found.choice);
 }
 
 pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {

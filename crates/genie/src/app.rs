@@ -965,6 +965,10 @@ impl Genie {
         self.forget_matches();
         self.session = Some(Session::new(reference, self.width));
         self.resume();
+        let samples = self
+            .restoring
+            .as_ref()
+            .and_then(|saved| saved.samples.clone());
         let mut tasks = vec![self.fetch(), self.remember(), self.reopen_hubs()];
         let pending = std::mem::take(&mut self.pending);
         self.waiting = pending.len();
@@ -973,6 +977,9 @@ impl Genie {
         }
         for location in pending {
             tasks.push(self.open(location));
+        }
+        if let Some(location) = samples {
+            tasks.push(self.open_samples(location));
         }
         Task::batch(tasks)
     }
@@ -3641,6 +3648,7 @@ mod tests {
             filter: crate::track::Filter::default(),
             modification: None,
             declared: None,
+            choice: genie_core::samples::Choice::default(),
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -3650,6 +3658,7 @@ mod tests {
             tracks: vec![saved_track("a.bed.gz"), saved_track("b.bed.gz")],
             regions: Vec::new(),
             hubs: Vec::new(),
+            samples: None,
         };
         let mut genie = Genie::default();
         let _ = genie.restore(saved);
@@ -3727,9 +3736,11 @@ mod tests {
                 filter: crate::track::Filter::default(),
                 modification: None,
                 declared: None,
+                choice: genie_core::samples::Choice::default(),
             }],
             regions: Vec::new(),
             hubs: Vec::new(),
+            samples: None,
         };
         let mut genie = Genie {
             last: Some(last),
@@ -3961,7 +3972,9 @@ mod tests {
 
     #[test]
     fn lanes_have_the_height_the_app_expects() {
-        for genie in [with_rows(3), with_reads(), with_variants(), with_signal()] {
+        let makers: [fn() -> Genie; 4] = [|| with_rows(3), with_reads, with_variants, with_signal];
+        for make in makers {
+            let genie = make();
             let session = genie.session.as_ref().unwrap();
             let expected = super::view::body_height(session, &session.tracks[0]) + 4.0;
             let mut ui = simulator(genie.view());
@@ -5204,6 +5217,27 @@ mod tests {
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
         assert!(shows(&genie, "rs20"));
         assert!(!shows(&genie, "45"));
+    }
+
+    #[test]
+    fn sessions_reopen_the_sample_table_and_the_fields_of_tracks() {
+        let mut genie = with_sample_table();
+        arrange(&mut genie, Arranging::Group("pop".to_owned()));
+        let saved = genie.saved().unwrap();
+        let table = Location::File(PathBuf::from("/data/groups.tsv"));
+        assert_eq!(saved.samples.as_ref(), Some(&table));
+        assert_eq!(saved.tracks[0].choice.group.as_deref(), Some("pop"));
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        assert_eq!(restored.busy, 2);
+        let _ = restored.update(Message::TrackOpened(Ok(variant_source())));
+        let rows = |genie: &Genie| Arc::clone(&genie.session.as_ref().unwrap().tracks[0].rows);
+        assert_eq!(rows(&restored).groups, []);
+        let opened = Sampling::Opened(table, Ok(sample_table()));
+        let _ = restored.update(Message::Samples(opened));
+        assert_eq!(rows(&restored).groups.len(), 2);
+        assert_eq!(restored.busy, 0);
     }
 
     #[test]

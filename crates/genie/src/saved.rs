@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use genie_core::samples::Choice;
 use genie_formats::fields::{self, Rule, Test};
 use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
@@ -40,6 +41,8 @@ pub struct Saved {
     pub regions: Vec<SavedRegion>,
     /// The track hubs that the session shows in the Tracks menu.
     pub hubs: Vec<Location>,
+    /// The sample table of the session.
+    pub samples: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +64,8 @@ pub struct SavedTrack {
     pub filter: Filter,
     pub modification: Option<String>,
     pub declared: Option<Declared>,
+    /// The fields of the sample table that group, sort and color the samples of the track.
+    pub choice: Choice,
 }
 
 impl SavedTrack {
@@ -77,9 +82,15 @@ impl SavedTrack {
             filter: Filter::default(),
             modification: None,
             declared: None,
+            choice: Choice::default(),
         }
     }
 }
+
+/// The keys of the fields that group, sort and color the samples of a track.
+const GROUP_SAMPLES: &str = "group samples";
+const SORT_SAMPLES: &str = "sort samples";
+const COLOR_SAMPLES: &str = "color samples";
 
 impl Saved {
     pub fn parse(text: &str, base: &Path) -> Result<Self, String> {
@@ -141,6 +152,11 @@ impl Saved {
                         kind: kind.to_owned(),
                         index: section.value("index").map(|text| read(text, base)),
                     }),
+                    choice: Choice {
+                        group: section.value(GROUP_SAMPLES).map(str::to_owned),
+                        sort: section.value(SORT_SAMPLES).map(str::to_owned),
+                        color: section.value(COLOR_SAMPLES).map(str::to_owned),
+                    },
                 })
             })
             .collect();
@@ -157,6 +173,10 @@ impl Saved {
                 })
             })
             .collect();
+        let samples = document
+            .section("samples")
+            .and_then(|section| section.value("file"))
+            .map(|text| read(text, base));
         Ok(Self {
             reference: read(reference, base),
             genome: value("genome").map(str::to_owned),
@@ -165,6 +185,7 @@ impl Saved {
             tracks,
             regions,
             hubs,
+            samples,
         })
     }
 
@@ -240,6 +261,16 @@ impl Saved {
                     entries.push(("index", written(index, base)));
                 }
             }
+            let choice = &track.choice;
+            for (key, field) in [
+                (GROUP_SAMPLES, &choice.group),
+                (SORT_SAMPLES, &choice.sort),
+                (COLOR_SAMPLES, &choice.color),
+            ] {
+                if let Some(field) = field {
+                    entries.push((key, field.clone()));
+                }
+            }
             sections.push(section("track", entries));
         }
         for region in &self.regions {
@@ -251,6 +282,9 @@ impl Saved {
         }
         for hub in &self.hubs {
             sections.push(section("hub", vec![("file", written(hub, base))]));
+        }
+        if let Some(samples) = &self.samples {
+            sections.push(section("samples", vec![("file", written(samples, base))]));
         }
         ini::write(&Document { sections })
     }
@@ -438,6 +472,8 @@ mod tests {
 
     use genie_formats::fields::{Rule, Test};
 
+    use genie_core::samples::Choice;
+
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
@@ -531,6 +567,7 @@ mod tests {
                         kind: "bam".to_owned(),
                         index: Some(Location::File(base().join("index").join("reads.bai"))),
                     }),
+                    choice: Choice::default(),
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
@@ -552,6 +589,11 @@ mod tests {
                     },
                     modification: None,
                     declared: None,
+                    choice: Choice {
+                        group: Some("super_pop".to_owned()),
+                        sort: Some("age".to_owned()),
+                        color: Some("sex".to_owned()),
+                    },
                 },
                 SavedTrack {
                     over: Some(0),
@@ -588,7 +630,29 @@ mod tests {
                 Location::File(base().join("hubs").join("hub.txt")),
                 Location::parse("https://example.org/hub.txt").unwrap(),
             ],
+            samples: Some(Location::File(base().join("groups.tsv"))),
         }
+    }
+
+    #[test]
+    fn sessions_keep_the_sample_table_and_the_sample_fields_of_tracks() {
+        let text = saved().text(&base());
+        for line in [
+            "[samples]",
+            "file = groups.tsv",
+            "group samples = super_pop",
+            "sort samples = age",
+            "color samples = sex",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+        assert_eq!(Saved::parse(&text, &base()), Ok(saved()));
+        let mut plain = saved();
+        plain.samples = None;
+        plain.tracks[1].choice = Choice::default();
+        let text = plain.text(&base());
+        assert!(!text.contains("samples"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(plain));
     }
 
     #[test]

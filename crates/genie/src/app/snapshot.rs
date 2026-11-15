@@ -26,7 +26,7 @@ use crate::tiles::TILING;
 use crate::track;
 
 use super::sessions::local;
-use super::{Genie, Message};
+use super::{Genie, Message, Sampling};
 
 pub(super) const USAGE: &str = "Usage: genie snapshot SESSION REGIONS FOLDER [--width POINTS] [--theme light|dark] [--format png|svg]";
 const WIDTH: f32 = 1280.0;
@@ -202,6 +202,7 @@ impl Genie {
                 &mut |_| {},
             )?,
         };
+        let samples = saved.samples.clone();
         self.pending.clone_from(&tracks);
         self.restoring = Some(saved);
         let _ = self.update(Message::Opened(Ok(Arc::new(reference))));
@@ -212,6 +213,14 @@ impl Genie {
                 report(super::cannot_open(&format!("the track {name}"), error));
             }
             let _ = self.update(Message::TrackOpened(result));
+        }
+        if let Some(location) = samples {
+            let result = super::samples::read(&location).map(Arc::new);
+            if let Err(error) = &result {
+                report(error.clone());
+            }
+            let opened = Sampling::Opened(location, result);
+            let _ = self.update(Message::Samples(opened));
         }
         Ok(())
     }

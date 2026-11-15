@@ -129,6 +129,7 @@ impl Genie {
                     filter: track.filter.clone(),
                     modification: track.modification.clone(),
                     declared: track.declared.clone(),
+                    choice: track.choice.clone(),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved
@@ -150,6 +151,10 @@ impl Genie {
                 })
                 .collect(),
             hubs: self.hubs.iter().map(|hub| hub.location.clone()).collect(),
+            samples: session
+                .samples
+                .as_ref()
+                .map(|samples| samples.location.clone()),
         })
     }
 
