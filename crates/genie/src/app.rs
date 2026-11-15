@@ -5216,6 +5216,9 @@ mod tests {
         assert!(shows(&genie, "NA1 · heterozygous"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 45.0))));
         assert!(!shows(&genie, "NA1 · heterozygous"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
+        assert!(shows(&genie, "AFR · AF 1 · 2 alleles"));
+        assert!(shows(&genie, "EUR · AF 0.5 · 2 alleles"));
     }
 
     #[test]

@@ -9,7 +9,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::grouped;
-use genie_core::samples::Table;
+use genie_core::samples::{Arrangement, Table};
+use genie_core::variant::{Call, Variant};
 use genie_formats::gzip;
 use iced::Task;
 
@@ -22,6 +23,8 @@ use crate::track::{self, Track};
 const LIMIT: u64 = 64 << 20;
 /// The file types that genie opens as sample tables, also when compressed.
 const EXTENSIONS: [&str; 5] = ["tsv", "csv", "panel", "fam", "ped"];
+/// The most groups that a variant card shows, before a line that counts the others.
+const GROUP_LINES: usize = 10;
 
 /// The sample table of a session and the file that it came from.
 #[derive(Debug, Clone, PartialEq)]
@@ -236,13 +239,121 @@ impl Genie {
     }
 }
 
+/// The lines of a variant card for the groups of the samples: the frequency of the other
+/// alleles in each group and the number of called alleles, as "EUR · AF 0.12 · 1,006 alleles".
+/// Each call counts as two alleles.
+pub(super) fn group_lines(arrangement: &Arrangement, variant: &Variant) -> Vec<String> {
+    let groups = &arrangement.groups;
+    let mut lines: Vec<String> = groups
+        .iter()
+        .take(GROUP_LINES)
+        .map(|group| {
+            let end = (group.first + group.size).min(arrangement.order.len());
+            let (mut other, mut alleles) = (0_u64, 0_u64);
+            for &sample in &arrangement.order[group.first.min(end)..end] {
+                let count = match variant.calls.get(sample) {
+                    Some(Call::Reference) => 0,
+                    Some(Call::Het) => 1,
+                    Some(Call::Alternate) => 2,
+                    Some(Call::Missing) | None => continue,
+                };
+                other += count;
+                alleles += 2;
+            }
+            if alleles == 0 {
+                format!("{} · no calls", group.name)
+            } else {
+                let share = frequency(other, alleles);
+                format!("{} · AF {share} · {} alleles", group.name, grouped(alleles))
+            }
+        })
+        .collect();
+    match groups.len().saturating_sub(GROUP_LINES) {
+        0 => {}
+        1 => lines.push("+1 more group".to_owned()),
+        more => lines.push(format!("+{more} more groups")),
+    }
+    lines
+}
+
+/// A share of alleles with at most three decimals, or in scientific form when it is small.
+fn frequency(other: u64, alleles: u64) -> String {
+    let share = other as f64 / alleles.max(1) as f64;
+    if share > 0.0 && share < 0.001 {
+        return format!("{share:.1e}");
+    }
+    let text = format!("{share:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{is_table, read};
+    use genie_core::Region;
+    use genie_core::samples::{Arrangement, Group};
+    use genie_core::variant::{Call, Variant};
+
+    use super::{group_lines, is_table, read};
     use crate::location::Location;
     use crate::scratch::Scratch;
+
+    #[test]
+    fn group_lines_give_the_allele_frequency_of_each_group() {
+        let group = |name: &str, first, size| Group {
+            name: name.to_owned(),
+            first,
+            size,
+        };
+        let arrangement = Arrangement {
+            order: vec![0, 2, 1, 3, 4],
+            groups: vec![group("AFR", 0, 2), group("EUR", 2, 2), group("SAS", 4, 1)],
+            tints: Vec::new(),
+        };
+        let variant = Variant {
+            id: String::new(),
+            span: Region::between(10, 11),
+            reference: "A".to_owned(),
+            alternates: vec!["G".to_owned()],
+            quality: None,
+            filter: "PASS".to_owned(),
+            info: String::new(),
+            calls: vec![
+                Call::Het,
+                Call::Reference,
+                Call::Alternate,
+                Call::Het,
+                Call::Missing,
+            ],
+        };
+        assert_eq!(
+            group_lines(&arrangement, &variant),
+            [
+                "AFR · AF 0.75 · 4 alleles",
+                "EUR · AF 0.25 · 4 alleles",
+                "SAS · no calls"
+            ]
+        );
+        let many = Arrangement {
+            order: (0..12).collect(),
+            groups: (0..12)
+                .map(|index| group(&format!("G{index}"), index, 1))
+                .collect(),
+            tints: Vec::new(),
+        };
+        let calls = Variant {
+            calls: vec![Call::Reference; 12],
+            ..variant
+        };
+        let lines = group_lines(&many, &calls);
+        assert_eq!(lines.len(), 11);
+        assert_eq!(lines[0], "G0 · AF 0 · 2 alleles");
+        assert_eq!(lines[10], "+2 more groups");
+        assert_eq!(
+            group_lines(&Arrangement::plain(12), &calls),
+            [] as [String; 0]
+        );
+    }
 
     #[test]
     fn tables_open_by_their_type_and_text_files_that_are_not_hubs() {

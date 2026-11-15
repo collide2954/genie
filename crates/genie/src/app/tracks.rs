@@ -5,6 +5,7 @@ use std::thread;
 use std::time::SystemTime;
 
 use genie_core::methylation::Site;
+use genie_core::variant::Variant;
 use genie_core::{Region, Span, Target, Viewport};
 use genie_formats::fields::Field;
 use genie_render::features::Mode;
@@ -462,28 +463,7 @@ impl Genie {
             Content::Variants(calls) => {
                 let rows = &track.rows;
                 let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, y)?;
-                let variant = calls.variants[index].clone();
-                let sample = line.and_then(|line| {
-                    let names = track.source.samples();
-                    let members = rows.members.get(line)?;
-                    let call = variants::strongest(
-                        members
-                            .iter()
-                            .filter_map(|&sample| variant.calls.get(sample).copied()),
-                    );
-                    let label = match members.as_slice() {
-                        [one] => names.get(*one)?.clone(),
-                        [first, .., last] => format!(
-                            "{} to {} ({} samples)",
-                            names.get(*first)?,
-                            names.get(*last)?,
-                            members.len()
-                        ),
-                        [] => return None,
-                    };
-                    Some((label, call))
-                });
-                Detail::Variant { variant, sample }
+                variant_detail(track, calls.variants[index].clone(), line)
             }
             Content::Signal(data) => {
                 if let Some(detail) = site_detail(track, viewport, &data.sites, x) {
@@ -874,6 +854,42 @@ impl Genie {
             move |result| Message::NamesLoaded(id, result),
         );
         Task::batch([self.fetch_features(), names])
+    }
+}
+
+/// The card of a variant, from its site or from a row of its genotypes. The site of a track
+/// with groups of samples counts the alleles of each group.
+fn variant_detail(track: &Track, variant: Variant, line: Option<usize>) -> Detail {
+    let rows = &track.rows;
+    let sample = line.and_then(|line| {
+        let names = track.source.samples();
+        let members = rows.members.get(line)?;
+        let call = variants::strongest(
+            members
+                .iter()
+                .filter_map(|&sample| variant.calls.get(sample).copied()),
+        );
+        let label = match members.as_slice() {
+            [one] => names.get(*one)?.clone(),
+            [first, .., last] => format!(
+                "{} to {} ({} samples)",
+                names.get(*first)?,
+                names.get(*last)?,
+                members.len()
+            ),
+            [] => return None,
+        };
+        Some((label, call))
+    });
+    let groups = if line.is_none() {
+        super::samples::group_lines(&track.arrangement, &variant)
+    } else {
+        Vec::new()
+    };
+    Detail::Variant {
+        variant,
+        sample,
+        groups,
     }
 }
 

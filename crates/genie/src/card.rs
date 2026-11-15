@@ -56,6 +56,8 @@ pub enum Detail {
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
+        /// The allele frequency of each group of samples, while a field groups them.
+        groups: Vec<String>,
     },
     Signal {
         span: Region,
@@ -305,7 +307,11 @@ fn signal_content(span: Region, bin: Bin, unit: Option<&str>) -> (String, Region
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
         Detail::Signal { span, bin, unit } => signal_content(*span, *bin, *unit),
-        Detail::Variant { variant, sample } => {
+        Detail::Variant {
+            variant,
+            sample,
+            groups,
+        } => {
             let title = if variant.id.is_empty() {
                 change(variant)
             } else {
@@ -313,6 +319,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             };
             let mut lines = vec![change(variant)];
             lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
+            lines.extend(groups.iter().cloned());
             (title, variant.span, lines)
         }
         Detail::Feature(feature) => {
@@ -992,6 +999,7 @@ mod tests {
             detail: Detail::Variant {
                 variant: site("C", &["T"], None, "."),
                 sample: None,
+                groups: Vec::new(),
             },
             at: Point::new(100.0, 780.0),
             fields: vec![field("DP", "10")],
