@@ -18,6 +18,9 @@ const WHOLE: u64 = 4 << 20;
 const PART: u64 = 4 << 20;
 const IDLE: usize = 4;
 const AGENT: &str = concat!("genie/", env!("CARGO_PKG_VERSION"));
+const AMAZON: &str = "s3.amazonaws.com";
+const GOOGLE: &str = "storage.googleapis.com";
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Url {
@@ -25,6 +28,29 @@ pub struct Url {
     host: String,
     port: u16,
     target: String,
+    cloud: Option<Cloud>,
+}
+
+/// A cloud store whose public buckets genie reads through HTTPS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Cloud {
+    Amazon,
+    Google,
+}
+
+impl Cloud {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Amazon => "s3://",
+            Self::Google => "gs://",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Scheme {
+    Web { secure: bool },
+    Cloud(Cloud),
 }
 
 impl Url {
@@ -34,11 +60,15 @@ impl Url {
 
     pub fn parse(text: &str) -> Result<Self, Error> {
         let text = text.trim();
-        let (secure, rest) = scheme(text).ok_or_else(|| {
+        let (scheme, rest) = scheme(text).ok_or_else(|| {
             remote(format!(
-                "The address {text} does not start with https:// or http://."
+                "The address {text} does not start with https://, http://, s3:// or gs://."
             ))
         })?;
+        let secure = match scheme {
+            Scheme::Web { secure } => secure,
+            Scheme::Cloud(cloud) => return Self::in_bucket(cloud, rest, text),
+        };
         let (authority, target) = match rest.find(['/', '?']) {
             Some(at) if rest[at..].starts_with('?') => (&rest[..at], format!("/{}", &rest[at..])),
             Some(at) => (&rest[..at], rest[at..].to_owned()),
@@ -66,11 +96,64 @@ impl Url {
             host: host.to_ascii_lowercase(),
             port: port.unwrap_or(if secure { 443 } else { 80 }),
             target,
+            cloud: None,
+        })
+    }
+
+    /// The HTTPS address of an object in a public bucket. A bucket name that cannot be a part
+    /// of a server name goes into the path.
+    fn in_bucket(cloud: Cloud, rest: &str, text: &str) -> Result<Self, Error> {
+        let (bucket, key) = rest.split_once('/').unwrap_or((rest, ""));
+        let named = !bucket.is_empty()
+            && bucket
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte));
+        if !named {
+            return Err(remote(format!("The bucket name in {text} is not valid.")));
+        }
+        let key = escape(key);
+        let label = bucket
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        let (host, target) = match cloud {
+            Cloud::Amazon if label => (format!("{bucket}.{AMAZON}"), format!("/{key}")),
+            Cloud::Amazon => (AMAZON.to_owned(), format!("/{bucket}/{key}")),
+            Cloud::Google => (GOOGLE.to_owned(), format!("/{bucket}/{key}")),
+        };
+        Ok(Self {
+            secure: true,
+            host,
+            port: 443,
+            target,
+            cloud: Some(cloud),
         })
     }
 
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    /// Where the file is: the bucket of a cloud address, or else the server.
+    pub fn place(&self) -> String {
+        match self.bucket() {
+            Some((cloud, bucket, _)) => format!("{}{bucket}", cloud.prefix()),
+            None => self.host.clone(),
+        }
+    }
+
+    /// The cloud, the bucket and the key of an address in a cloud bucket.
+    fn bucket(&self) -> Option<(Cloud, &str, &str)> {
+        let cloud = self.cloud?;
+        let path = self.target.strip_prefix('/').unwrap_or(&self.target);
+        let named = self
+            .host
+            .strip_suffix(AMAZON)
+            .and_then(|host| host.strip_suffix('.'));
+        let (bucket, key) = named.map_or_else(
+            || path.split_once('/').unwrap_or((path, "")),
+            |bucket| (bucket, path),
+        );
+        Some((cloud, bucket, key))
     }
 
     pub fn name(&self) -> String {
@@ -154,6 +237,9 @@ impl Url {
 
 impl fmt::Display for Url {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some((cloud, bucket, key)) = self.bucket() {
+            return write!(f, "{}{bucket}/{}", cloud.prefix(), decode(key, |_| true));
+        }
         let scheme = if self.secure { "https" } else { "http" };
         write!(f, "{scheme}://{}{}", self.authority(), self.target)
     }
@@ -162,6 +248,30 @@ impl fmt::Display for Url {
 /// A part of a path with its %XX escapes decoded, except the escapes of characters that a file
 /// name cannot hold. A part that does not decode to UTF-8 stays as it is.
 fn unescape(part: &str) -> String {
+    decode(part, |value| {
+        value >= 0x80 || (value >= 0x20 && !b"<>:\"/\\|?*\x7f".contains(&value))
+    })
+}
+
+/// The key of a cloud object as a path, with %XX escapes for all bytes except letters, digits,
+/// `-_.~` and `/`.
+fn escape(key: &str) -> String {
+    let mut found = String::with_capacity(key.len());
+    for byte in key.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~/".contains(&byte) {
+            found.push(char::from(byte));
+        } else {
+            found.push('%');
+            found.push(char::from(HEX[usize::from(byte >> 4)]));
+            found.push(char::from(HEX[usize::from(byte & 15)]));
+        }
+    }
+    found
+}
+
+/// A part of a path with the %XX escapes decoded that `keep` accepts. A part that does not
+/// decode to UTF-8 stays as it is.
+fn decode(part: &str, keep: impl Fn(u8) -> bool) -> String {
     let bytes = part.as_bytes();
     let mut found = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -170,9 +280,7 @@ fn unescape(part: &str) -> String {
             .get(index + 1..index + 3)
             .filter(|hex| bytes[index] == b'%' && hex.iter().all(u8::is_ascii_hexdigit))
             .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
-            .filter(|value| {
-                *value >= 0x80 || (*value >= 0x20 && !b"<>:\"/\\|?*\x7f".contains(value))
-            });
+            .filter(|value| keep(*value));
         if let Some(value) = value {
             found.push(value);
             index += 3;
@@ -223,13 +331,19 @@ fn without_dots(target: &str) -> String {
     }
 }
 
-fn scheme(text: &str) -> Option<(bool, &str)> {
-    for (prefix, secure) in [("https://", true), ("http://", false)] {
-        if text.len() >= prefix.len() && text[..prefix.len()].eq_ignore_ascii_case(prefix) {
-            return Some((secure, &text[prefix.len()..]));
-        }
-    }
-    None
+fn scheme(text: &str) -> Option<(Scheme, &str)> {
+    [
+        ("https://", Scheme::Web { secure: true }),
+        ("http://", Scheme::Web { secure: false }),
+        ("s3://", Scheme::Cloud(Cloud::Amazon)),
+        ("gs://", Scheme::Cloud(Cloud::Google)),
+    ]
+    .into_iter()
+    .find_map(|(prefix, scheme)| {
+        text.get(..prefix.len())
+            .filter(|start| start.eq_ignore_ascii_case(prefix))
+            .map(|_| (scheme, &text[prefix.len()..]))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,12 +431,7 @@ pub fn fetch(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
                 let location = answer.header("location").ok_or_else(|| bad_answer(url))?;
                 current = current.resolve(location)?;
             }
-            status => {
-                return Err(remote(format!(
-                    "The server answered {status} {} for {url}.",
-                    answer.reason
-                )));
-            }
+            status => return Err(refused(url, status, &answer.reason)),
         }
     }
     Err(remote(format!("The address {url} has too many redirects.")))
@@ -594,6 +703,17 @@ fn insecure(host: &str, error: &rustls::Error) -> Error {
     remote(format!("The connection to {host} is not secure. {error}"))
 }
 
+fn refused(url: &Url, status: u16, reason: &str) -> Error {
+    let public = if url.cloud.is_some() && matches!(status, 401 | 403) {
+        " genie reads only public buckets."
+    } else {
+        ""
+    };
+    remote(format!(
+        "The server answered {status} {reason} for {url}.{public}"
+    ))
+}
+
 fn bad_answer(url: &Url) -> Error {
     remote(format!(
         "The server of {url} sent an answer that is not valid."
@@ -606,7 +726,7 @@ fn remote(message: String) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{Url, download_in, fetch, get};
+    use super::{Url, download_in, fetch, get, refused};
     use crate::server::serve;
 
     #[test]
@@ -657,6 +777,79 @@ mod tests {
             "bad%zz%+1%A.bed"
         );
         assert_eq!(name("https://example.org/half%C3.bed"), "half%C3.bed");
+    }
+
+    #[test]
+    fn cloud_addresses_read_public_buckets_over_https() {
+        let amazon = Url::parse(" s3://1000genomes/phase3/data/HG00096/HG00096.bam ").unwrap();
+        assert_eq!(
+            (amazon.secure, amazon.host(), amazon.port),
+            (true, "1000genomes.s3.amazonaws.com", 443)
+        );
+        assert_eq!(amazon.target, "/phase3/data/HG00096/HG00096.bam");
+        assert_eq!(
+            amazon.to_string(),
+            "s3://1000genomes/phase3/data/HG00096/HG00096.bam"
+        );
+        assert_eq!(amazon.place(), "s3://1000genomes");
+        assert_eq!(amazon.name(), "HG00096.bam");
+        assert_eq!(
+            amazon.with_suffix(".bai").to_string(),
+            "s3://1000genomes/phase3/data/HG00096/HG00096.bam.bai"
+        );
+        let google = Url::parse("GS://gcp-public-data--gnomad/release/4.1/a.vcf.bgz").unwrap();
+        assert_eq!(google.host(), "storage.googleapis.com");
+        assert_eq!(
+            google.target,
+            "/gcp-public-data--gnomad/release/4.1/a.vcf.bgz"
+        );
+        assert_eq!(
+            google.to_string(),
+            "gs://gcp-public-data--gnomad/release/4.1/a.vcf.bgz"
+        );
+        assert_eq!(google.place(), "gs://gcp-public-data--gnomad");
+        assert_eq!(
+            google.with_extension("tbi").to_string(),
+            "gs://gcp-public-data--gnomad/release/4.1/a.vcf.tbi"
+        );
+        let dotted = Url::parse("s3://My.Data/runs/x y+z%.bed").unwrap();
+        assert_eq!(dotted.host(), "s3.amazonaws.com");
+        assert_eq!(dotted.target, "/My.Data/runs/x%20y%2Bz%25.bed");
+        assert_eq!(dotted.to_string(), "s3://My.Data/runs/x y+z%.bed");
+        assert_eq!(dotted.place(), "s3://My.Data");
+        assert_eq!(dotted.name(), "x y+z%.bed");
+        assert_eq!(Url::parse(&dotted.to_string()).unwrap(), dotted);
+        let hub = Url::parse("gs://bucket/hubs/mine/hub.txt").unwrap();
+        assert_eq!(
+            hub.join("../data/a.bb").unwrap().to_string(),
+            "gs://bucket/hubs/data/a.bb"
+        );
+        assert!(Url::is_url("S3://a/b"));
+        let web = Url::parse("https://example.org/a.bam").unwrap();
+        assert_eq!(web.place(), "example.org");
+        for wrong in [
+            "s3://",
+            "s3:///key",
+            "gs://a b/c",
+            "s3://user@bucket/c",
+            "gs://bucket:80/c",
+        ] {
+            assert!(Url::parse(wrong).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn closed_buckets_say_that_genie_reads_only_public_buckets() {
+        let closed = Url::parse("s3://closed/a.bam").unwrap();
+        assert_eq!(
+            refused(&closed, 403, "Forbidden").to_string(),
+            "The server answered 403 Forbidden for s3://closed/a.bam. genie reads only public buckets."
+        );
+        let web = Url::parse("https://example.org/a.bam").unwrap();
+        assert_eq!(
+            refused(&web, 403, "Forbidden").to_string(),
+            "The server answered 403 Forbidden for https://example.org/a.bam."
+        );
     }
 
     #[test]

@@ -39,7 +39,7 @@ impl Location {
                 .parent()
                 .map(|folder| folder.display().to_string())
                 .unwrap_or_default(),
-            Self::Url(url) => url.host().to_owned(),
+            Self::Url(url) => url.place(),
         }
     }
 

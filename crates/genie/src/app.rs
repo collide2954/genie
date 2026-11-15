@@ -3153,7 +3153,8 @@ mod tests {
         let text = "data/genes.bed".to_owned();
         let _ = genie.update(Message::Address(Address::Edit(text)));
         let _ = genie.update(Message::Address(Address::Submit));
-        let error = "The address data/genes.bed does not start with https:// or http://.";
+        let error =
+            "The address data/genes.bed does not start with https://, http://, s3:// or gs://.";
         assert!(shows(&genie, error));
         let _ = genie.update(Message::Command(Command::Dismiss));
         assert_eq!(genie.address, None);

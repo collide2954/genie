@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Cloud addresses
+
+- genie opens files in public buckets of Amazon S3 and Google Cloud Storage from their `s3://` and `gs://` addresses, for example the 1000 Genomes data on AWS and the gnomAD data on Google Cloud. The addresses work in Open URL, in track hubs, in sessions and on the command line.
+- If a bucket is not public, the message tells you that genie reads only public buckets.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
