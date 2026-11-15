@@ -73,6 +73,12 @@
 - **Group by this tag** groups the reads by the value of any tag, for example CB or PS, with up to 30 groups. **Color by this tag** gives the 5 most common values the track colors.
 - The read track menu hides reads under MAPQ 1, 10, 20 or 30, and shows secondary, supplementary and QC-failed reads on request. Sessions keep these settings.
 
+### Protein changes
+
+- A variant card shows the change of the variant on the transcripts of the open feature tracks in HGVS notation, for example "BRCA1 p.Arg1699Trp · c.5095C>T".
+- genie names substitutions, new stop codons, frameshifts, and deletions and insertions that keep the frame. A variant near an exon edge shows "splice site". A variant out of the coding sequence shows its place, for example 5′ UTR or intron.
+- The card shows up to 3 transcripts, with the protein changes first, and the number of the other transcripts.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
