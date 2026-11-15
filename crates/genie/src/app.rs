@@ -4989,6 +4989,31 @@ mod tests {
     }
 
     #[test]
+    fn read_cards_list_fields_and_their_filters_load_the_reads_again() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackClicked(0, 0, over(20.0, 5.0)));
+        assert!(shows(&genie, "MAPQ"));
+        let choice = super::Choice {
+            track: 0,
+            label: "MAPQ".to_owned(),
+            item: "60".to_owned(),
+            at: Point::new(10.0, 10.0),
+        };
+        let _ = genie.update(Message::Field(choice));
+        assert!(shows(&genie, "Keep only 60"));
+        assert!(shows(&genie, "At least"));
+        assert!(!shows(&genie, "Label with this field"));
+        let rule = Rule {
+            label: "MAPQ".to_owned(),
+            test: Test::AtLeast(61.0),
+        };
+        let _ = genie.update(Message::Filter(0, Filtering::Add(rule)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.filter.rules.len(), 1);
+        assert!(track.slot.loaded.is_none());
+    }
+
+    #[test]
     fn split_read_cards_list_the_other_parts_and_go_there() {
         let mut genie = opened();
         let mut split = read("split7", 10);

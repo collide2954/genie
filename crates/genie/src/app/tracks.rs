@@ -314,7 +314,7 @@ impl Genie {
                 | Filtering::Checked(..) => {}
             }
             track.refilter();
-            track.forget_density();
+            track.forget_kept();
         });
         self.fetch()
     }
@@ -492,8 +492,8 @@ impl Genie {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
             Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
             Detail::Link(link) => track::link_fields(&track.source, link),
-            Detail::Read { .. }
-            | Detail::Junction(_)
+            Detail::Read { read, .. } => track::read_fields(read),
+            Detail::Junction(_)
             | Detail::Methylation { .. }
             | Detail::Signal { .. }
             | Detail::Match { .. }

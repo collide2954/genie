@@ -94,7 +94,7 @@ impl Genie {
                     .height(HEADING - 1.0),
             )
             .extend(rows);
-        if !track.source.has_variants() {
+        if track.source.has_features() {
             let chosen = track.filter.label.as_deref() == Some(picked.label.as_str());
             let label = Message::Filter(id, Filtering::Label(Some(picked.label.clone())));
             content = content.push(menu::separator()).push(choice(

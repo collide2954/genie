@@ -1,9 +1,10 @@
 use std::io::BufReader;
 
 use genie_core::Region;
-use genie_core::alignment::{DUPLICATE, Filter};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::cram::{Cram, crai};
+use genie_formats::fields::{self, Rule};
 use genie_formats::{bai, bam};
 
 use super::{Gather, Loaded, Options};
@@ -108,7 +109,7 @@ impl ReadFile {
         location: &Location,
         contig: &str,
         region: Region,
-        options: Options,
+        (options, rules): (Options, &[Rule]),
         mut reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
     ) -> Result<Loaded, String> {
         let id = self
@@ -121,12 +122,16 @@ impl ReadFile {
         } else {
             Filter::default()
         };
+        let keeps = |alignment: &Alignment| {
+            filter.keeps(alignment)
+                && (rules.is_empty() || fields::passes(rules, &super::read_fields(alignment)))
+        };
         let mut gather = Gather::new(region, id, options);
         match &self.index {
             Reads::Bam(index) => {
                 let mut reader = Bgzf::new(location.open()?);
                 bam::query(index, &mut reader, id, region, |alignment| {
-                    if filter.keeps(&alignment) {
+                    if keeps(&alignment) {
                         gather.add(alignment);
                     }
                     Ok(())
@@ -137,7 +142,7 @@ impl ReadFile {
                 let mut reader = BufReader::new(location.open()?);
                 let mut fetch = |_: usize, window: Region| reference(window);
                 cram.query(index, &mut reader, id, region, &mut fetch, |alignment| {
-                    if filter.keeps(&alignment) {
+                    if keeps(&alignment) {
                         gather.add(alignment);
                     }
                 })

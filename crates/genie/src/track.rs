@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, Inserts, REVERSE};
+use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE};
 use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
@@ -104,6 +104,10 @@ impl Source {
 
     pub fn has_links(&self) -> bool {
         matches!(self.format, Format::Links(_))
+    }
+
+    pub fn has_features(&self) -> bool {
+        matches!(self.format, Format::Features(_))
     }
 
     pub fn has_segments(&self) -> bool {
@@ -829,21 +833,24 @@ impl Track {
         }
     }
 
-    /// A zoomed-out bigBed density depends on the filter rules, so a rule change drops it to
-    /// load it again.
-    pub fn forget_density(&mut self) {
-        if !matches!(
+    /// Reads and a zoomed-out bigBed density depend on the filter rules, so a rule change drops
+    /// them to load them again.
+    pub fn forget_kept(&mut self) {
+        let reads = self.source.has_reads();
+        let bigbed = matches!(
             self.source.format,
             Format::Features(FeatureFile::BigBed { .. })
-        ) {
+        );
+        if !reads && !bigbed {
             return;
         }
         for slot in std::iter::once(&mut self.slot).chain(self.extra.iter_mut()) {
-            let density = slot
-                .loaded
-                .as_ref()
-                .is_some_and(|(_, data)| matches!(data.content, Content::Signal(_)));
-            if density {
+            let kept = reads
+                || slot
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|(_, data)| matches!(data.content, Content::Signal(_)));
+            if kept {
                 (slot.loaded, slot.shown, slot.wanted) = (None, None, None);
             }
         }
@@ -1389,6 +1396,29 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
     }
 }
 
+/// The fields of a read for its card and its filters: MAPQ, the insert size of a pair, and the
+/// small tags.
+pub fn read_fields(read: &Alignment) -> Vec<Field> {
+    let mut found = vec![Field {
+        label: "MAPQ".to_owned(),
+        value: read.mapq.to_string(),
+    }];
+    if let Some(mate) = read
+        .mate
+        .filter(|mate| read.has(PAIRED) && mate.insert != 0)
+    {
+        found.push(Field {
+            label: "Insert size".to_owned(),
+            value: mate.insert.unsigned_abs().to_string(),
+        });
+    }
+    found.extend(read.tags.all.iter().map(|(name, value)| Field {
+        label: String::from_utf8_lossy(name).into_owned(),
+        value: value.clone(),
+    }));
+    found
+}
+
 pub fn link_fields(source: &Source, link: &Interaction) -> Vec<Field> {
     match &source.format {
         Format::Links(file) => file.fields(link),
@@ -1458,7 +1488,7 @@ pub fn load_kept(
             (rules, DENSITY_BUDGET),
         ),
         Format::Variants(file) => file.load(location, contig, region),
-        Format::Reads(file) => file.load(location, contig, region, options, reference),
+        Format::Reads(file) => file.load(location, contig, region, (options, rules), reference),
         Format::Signal(file) => {
             let loaded = file.load(location, contig, region, step, options.methyl)?;
             Ok(Loaded { options, ..loaded })
@@ -3084,6 +3114,63 @@ mod tests {
                 .iter()
                 .all(|read| !read.alignment.has(DUPLICATE | QC_FAIL | SECONDARY))
         );
+    }
+
+    #[test]
+    fn read_fields_hold_mapq_the_insert_and_the_tags_and_rules_filter_reads() {
+        let mut read = alignment(100, vec![(Op::Match, 50)]);
+        read.flags = PAIRED;
+        read.mate = Some(Mate {
+            contig: 0,
+            start: 400,
+            insert: -350,
+        });
+        read.tags.all = vec![(*b"NM", "2".to_owned()), (*b"CB", "AAAC-1".to_owned())];
+        let fields: Vec<(String, String)> = super::read_fields(&read)
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        let expected = [
+            ("MAPQ", "60"),
+            ("Insert size", "350"),
+            ("NM", "2"),
+            ("CB", "AAAC-1"),
+        ];
+        let expected: Vec<(String, String)> = expected
+            .iter()
+            .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
+            .collect();
+        assert_eq!(fields, expected);
+        let source = open(fixture("reads.bam")).unwrap();
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let count = |rules: &[Rule]| {
+            let scope = (1, true, rules);
+            let loaded = super::load_kept(
+                &source,
+                "chr1",
+                region(5_000, 8_000),
+                Options::default(),
+                scope,
+                reference,
+            )
+            .unwrap();
+            let Content::Reads(pile) = &loaded.content else {
+                panic!("expected reads");
+            };
+            pile.reads.len()
+        };
+        let all = count(&[]);
+        assert!(all >= 10, "{all}");
+        let high = Rule {
+            label: "MAPQ".to_owned(),
+            test: Test::AtLeast(255.0),
+        };
+        assert_eq!(count(&[high]), 0);
+        let low = Rule {
+            label: "MAPQ".to_owned(),
+            test: Test::AtMost(255.0),
+        };
+        assert_eq!(count(&[low]), all);
     }
 
     fn alignment(start: u64, cigar: Vec<(Op, u32)>) -> Alignment {
