@@ -73,6 +73,12 @@
 - **Group by this tag** groups the reads by the value of any tag, for example CB or PS, with up to 30 groups. **Color by this tag** gives the 5 most common values the track colors.
 - The read track menu hides reads under MAPQ 1, 10, 20 or 30, and shows secondary, supplementary and QC-failed reads on request. Sessions keep these settings.
 
+### Whole genome
+
+- Type `All` in the locus box, or click the new button right of the zoom buttons, to see all main chromosomes side by side, each as wide as its share of the genome.
+- Signal, copy number, feature and variant tracks show their data or density on one scale for all chromosomes.
+- Click a chromosome to show it, or drag across a part to show that region. Back, forward and sessions keep the whole-genome view.
+
 ### Densities
 
 - Variant tracks wider than 1 Mb and feature tracks wider than 10 Mb show the number of variants or features per Mb. Before, they asked you to zoom in.

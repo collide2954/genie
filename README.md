@@ -198,7 +198,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 ## Navigation
 
-- Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom. The buttons right of the locus box zoom out, zoom in and show the whole chromosome.
+- Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom. The buttons right of the locus box zoom out, zoom in, show the whole chromosome and show the [whole genome](#whole-genome).
 - Click the genie logo for a menu with the main actions and their keys. Push Ctrl+K (Cmd+K on macOS) to find an action by its words, for example "group phase", then push Enter. Push F1 or click the ? button to see all keys and mouse actions.
 - Drag on the ruler to zoom to that range. Push Escape to stop the drag.
 - To go back to an earlier view, push Alt+Left (Cmd+[ on macOS), push the back button of the mouse or click the back arrow left of the locus box. Alt+Right (Cmd+] on macOS) goes forward again. genie keeps the last 100 jumps: the locus box, name search, ruler drags, region and feature jumps and changes of contig. Moves and zooms do not add a step.
@@ -223,6 +223,14 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Put the pointer on a feature, a read or a variant in a panel to see its data.
 - Back, forward, region jumps and feature jumps move the first panel.
 - Sessions, Ctrl+C (Cmd+C on macOS) and the `goto` command keep all loci. Images show all panels.
+
+## Whole genome
+
+- Type `All` (or `genome`) in the locus box, or click the button with four bars right of the zoom buttons, to see all main chromosomes side by side. The genie menu and the palette also have **Show the whole genome**.
+- Each chromosome is as wide as its share of the genome, and at least 3 pixels wide. The ruler shows the names of the chromosomes that have space, without "chr". genie does not show alt, random, unplaced and patch contigs (names with `_`). If a reference has more than 50 contigs, genie shows the 50 longest.
+- Tracks show what they show for a whole chromosome: signal tracks show their bars, copy number tracks show their rows, and feature and variant tracks show their density. All chromosomes use one scale, and the range shows once at the right of the track. Read tracks and other tracks that need a closer view show one hint.
+- Click a chromosome on the ruler or on a track to show it. Drag across a part of a chromosome to show that region. Put the pointer on the data to see its card.
+- Back and forward return to the whole-genome view. Sessions keep it.
 
 ## Regions
 
