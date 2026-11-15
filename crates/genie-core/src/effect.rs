@@ -260,32 +260,41 @@ pub fn effect(
     } else {
         (edit.start, edit.end() - 1)
     };
+    let places = Places::new(transcript, coding);
+    let name = || places.as_ref().and_then(|places| places.change(&edit));
+    let unknown = |place| Effect {
+        coding: name(),
+        protein: Some("p.?".to_owned()),
+        place: Some(place),
+    };
     if let Some(found) = removed(exons, &edit, (first, last)) {
-        return Some(found);
+        return Some(Effect {
+            coding: name(),
+            ..found
+        });
     }
     match (exon(first), exon(last)) {
         (Some(a), Some(b)) if a == b => {
             if coding.contains(first) && coding.contains(last) {
-                coded(transcript, coding, &edit, bases)
+                coded(transcript, coding, &edit, bases, places.as_ref()?)
             } else if coding.contains(first) || coding.contains(last) {
-                Some(Effect {
-                    protein: Some("p.?".to_owned()),
-                    ..Effect::place("start or stop codon")
-                })
+                Some(unknown("start or stop codon"))
             } else {
                 let upstream = (last < coding.start()) == forward;
-                Some(Effect::place(if upstream {
-                    "5′ UTR"
-                } else {
-                    "3′ UTR"
-                }))
+                Some(Effect {
+                    coding: name(),
+                    ..Effect::place(if upstream { "5′ UTR" } else { "3′ UTR" })
+                })
             }
         }
-        (None, None) => intronic(transcript, coding, &edit, (first, last)),
-        _ => Some(Effect {
-            protein: Some("p.?".to_owned()),
-            ..Effect::place("splice site")
-        }),
+        (None, None) => match intronic(transcript, (first, last))? {
+            "intron" => Some(Effect {
+                coding: name(),
+                ..Effect::place("intron")
+            }),
+            place => Some(unknown(place)),
+        },
+        _ => Some(unknown("splice site")),
     }
 }
 
@@ -309,13 +318,9 @@ fn removed(exons: &[Region], edit: &Edit, (first, last): (u64, u64)) -> Option<E
     })
 }
 
-/// A variant in an intron: a splice site within 2 bases of an exon, else the intron.
-fn intronic(
-    transcript: &Feature,
-    coding: Region,
-    edit: &Edit,
-    (first, last): (u64, u64),
-) -> Option<Effect> {
+/// The place of a variant in an intron: a splice site within 2 bases of an exon, else the
+/// intron. Variants outside the transcript have no place.
+fn intronic(transcript: &Feature, (first, last): (u64, u64)) -> Option<&'static str> {
     let span = transcript.span();
     if last < span.start() || first >= span.end() {
         return None;
@@ -324,42 +329,18 @@ fn intronic(
     let after = exons
         .iter()
         .filter(|exon| exon.end() <= first)
-        .map(|exon| (first - (exon.end() - 1), exon.end() - 1))
+        .map(|exon| first - (exon.end() - 1))
         .min();
     let before = exons
         .iter()
         .filter(|exon| exon.start() > last)
-        .map(|exon| (exon.start() - last, exon.start()))
+        .map(|exon| exon.start() - last)
         .min();
-    let near = [after, before]
-        .into_iter()
-        .flatten()
-        .min_by_key(|(distance, _)| *distance)?;
-    if near.0 > SPLICE {
-        return Some(Effect::place("intron"));
-    }
-    let numbers = Coding::new(transcript, coding);
-    let forward = numbers.forward;
-    let snv = edit.deleted.len() == 1 && edit.inserted.len() == 1;
-    let coding = numbers.number(near.1).filter(|_| snv).map(|number| {
-        let downstream = (near.1 < edit.start) == forward;
-        let sign = if downstream { '+' } else { '-' };
-        let (from, to) = if forward {
-            (edit.deleted[0], edit.inserted[0])
-        } else {
-            (complement(edit.deleted[0]), complement(edit.inserted[0]))
-        };
-        format!(
-            "c.{number}{sign}{}{}>{}",
-            near.0,
-            char::from(from),
-            char::from(to)
-        )
-    });
-    Some(Effect {
-        coding,
-        protein: Some("p.?".to_owned()),
-        place: Some("splice site"),
+    let near = [after, before].into_iter().flatten().min()?;
+    Some(if near > SPLICE {
+        "intron"
+    } else {
+        "splice site"
     })
 }
 
@@ -369,6 +350,7 @@ fn coded(
     coding: Region,
     edit: &Edit,
     bases: &mut dyn FnMut(Region) -> Option<Vec<u8>>,
+    places: &Places,
 ) -> Option<Effect> {
     let numbers = Coding::new(transcript, coding);
     let mut genomic = Vec::with_capacity(usize::try_from(numbers.length).ok()?);
@@ -390,7 +372,7 @@ fn coded(
         (reverse_complement(&genomic), reverse_complement(&changed))
     };
     let start = numbers.number(edit.start)?;
-    let coding = coding_change(&numbers, edit)?;
+    let coding = places.change(edit)?;
     if edit.inserted.iter().any(|base| !b"ACGT".contains(base)) {
         return Some(Effect {
             coding: Some(coding),
@@ -417,37 +399,133 @@ fn coded(
     })
 }
 
-/// The HGVS change of the coding sequence.
-fn coding_change(numbers: &Coding, edit: &Edit) -> Option<String> {
-    let strand = |bases: &[u8]| -> String {
-        let bases = if numbers.forward {
-            bases.to_vec()
-        } else {
-            reverse_complement(bases)
+/// The c. names of the positions of a transcript: a number in the coding sequence, -N before
+/// it and *N after it in the exons, and in an intron the nearest exon base with the distance
+/// from it.
+struct Places {
+    /// The exons in genome order.
+    exons: Vec<Region>,
+    forward: bool,
+    /// The number of exon bases.
+    total: u64,
+    /// The place of the first coding base among the exon bases, in transcript order.
+    first: u64,
+    /// The number of coding bases.
+    coding: u64,
+}
+
+impl Places {
+    fn new(transcript: &Feature, coding: Region) -> Option<Self> {
+        let mut exons = transcript.blocks().to_vec();
+        exons.sort_by_key(|exon| exon.start());
+        let forward = transcript.strand() != Strand::Reverse;
+        let mut places = Self {
+            total: exons.iter().map(|exon| exon.len()).sum(),
+            exons,
+            forward,
+            first: 0,
+            coding: Coding::new(transcript, coding).length,
         };
-        String::from_utf8_lossy(&bases).into_owned()
-    };
-    if edit.deleted.is_empty() {
-        let (left, right) = (numbers.number(edit.start - 1)?, numbers.number(edit.start)?);
-        let (low, high) = (left.min(right), left.max(right));
-        return Some(format!("c.{low}_{high}ins{}", strand(&edit.inserted)));
+        let start = if forward {
+            coding.start()
+        } else {
+            coding.end().checked_sub(1)?
+        };
+        places.first = places.order(start)?;
+        Some(places)
     }
-    let (a, b) = (numbers.number(edit.start)?, numbers.number(edit.end() - 1)?);
-    let (low, high) = (a.min(b), a.max(b));
-    let place = if low == high {
-        low.to_string()
-    } else {
-        format!("{low}_{high}")
-    };
-    Some(match (edit.deleted.len(), edit.inserted.len()) {
-        (1, 1) => format!(
-            "c.{place}{}>{}",
-            strand(&edit.deleted),
-            strand(&edit.inserted)
-        ),
-        (_, 0) => format!("c.{place}del"),
-        _ => format!("c.{place}delins{}", strand(&edit.inserted)),
-    })
+
+    /// The place of an exon base among the exon bases, in transcript order.
+    fn order(&self, position: u64) -> Option<u64> {
+        let mut before = 0;
+        for exon in &self.exons {
+            if exon.contains(position) {
+                let at = before + position - exon.start();
+                return Some(if self.forward {
+                    at
+                } else {
+                    self.total - 1 - at
+                });
+            }
+            before += exon.len();
+        }
+        None
+    }
+
+    fn exonic(&self, position: u64) -> Option<String> {
+        let at = self.order(position)?;
+        Some(if at < self.first {
+            format!("-{}", self.first - at)
+        } else if at - self.first < self.coding {
+            (at - self.first + 1).to_string()
+        } else {
+            format!("*{}", at - self.first - self.coding + 1)
+        })
+    }
+
+    /// The name of a position of the transcript. A base in the middle of an intron takes the
+    /// exon before it, as HGVS asks.
+    fn name(&self, position: u64) -> Option<String> {
+        if let Some(name) = self.exonic(position) {
+            return Some(name);
+        }
+        let left = self
+            .exons
+            .iter()
+            .filter(|exon| exon.end() <= position)
+            .map(|exon| exon.end() - 1)
+            .max()?;
+        let right = self
+            .exons
+            .iter()
+            .filter(|exon| exon.start() > position)
+            .map(|exon| exon.start())
+            .min()?;
+        let (up, down) = if self.forward {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let (to_up, to_down) = (up.abs_diff(position), down.abs_diff(position));
+        Some(if to_up <= to_down {
+            format!("{}+{to_up}", self.exonic(up)?)
+        } else {
+            format!("{}-{to_down}", self.exonic(down)?)
+        })
+    }
+
+    /// The HGVS change of an edit, with the bases on the strand of the transcript.
+    fn change(&self, edit: &Edit) -> Option<String> {
+        let strand = |bases: &[u8]| -> String {
+            let bases = if self.forward {
+                bases.to_vec()
+            } else {
+                reverse_complement(bases)
+            };
+            String::from_utf8_lossy(&bases).into_owned()
+        };
+        let ordered = |a: String, b: String| if self.forward { (a, b) } else { (b, a) };
+        if edit.deleted.is_empty() {
+            let left = self.name(edit.start.checked_sub(1)?)?;
+            let (low, high) = ordered(left, self.name(edit.start)?);
+            return Some(format!("c.{low}_{high}ins{}", strand(&edit.inserted)));
+        }
+        let (low, high) = ordered(self.name(edit.start)?, self.name(edit.end() - 1)?);
+        let place = if edit.deleted.len() == 1 {
+            low
+        } else {
+            format!("{low}_{high}")
+        };
+        Some(match (edit.deleted.len(), edit.inserted.len()) {
+            (1, 1) => format!(
+                "c.{place}{}>{}",
+                strand(&edit.deleted),
+                strand(&edit.inserted)
+            ),
+            (_, 0) => format!("c.{place}del"),
+            _ => format!("c.{place}delins{}", strand(&edit.inserted)),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -554,10 +632,20 @@ mod tests {
         );
         assert_eq!(
             written(&forward(135, "C", "A")),
-            (None, None, Some("intron"))
+            (Some("c.16-15C>A"), None, Some("intron"))
         );
-        assert_eq!(forward(101, "C", "A").place, Some("5′ UTR"));
-        assert_eq!(forward(228, "C", "A").place, Some("3′ UTR"));
+        assert_eq!(
+            written(&forward(133, "CC", "C")),
+            (Some("c.15+15del"), None, Some("intron"))
+        );
+        assert_eq!(
+            written(&forward(101, "C", "A")),
+            (Some("c.-4C>A"), None, Some("5′ UTR"))
+        );
+        assert_eq!(
+            written(&forward(228, "C", "A")),
+            (Some("c.*4C>A"), None, Some("3′ UTR"))
+        );
     }
 
     #[test]
@@ -569,9 +657,21 @@ mod tests {
                 let reference = String::from_utf8(genome[start - 1..end].to_vec()).unwrap();
                 change(strand, start as u64 - 1, &reference, &reference[..1])
             };
-            let exons = (None, Some("p.?"), Some("exon deletion"));
-            assert_eq!(written(&deleted(140, 180)), exons, "{strand:?}");
-            assert_eq!(written(&deleted(90, 135)), exons, "{strand:?}");
+            let inside = if strand == Strand::Forward {
+                "c.16-10_35+10del"
+            } else {
+                "c.26-10_45+10del"
+            };
+            assert_eq!(
+                written(&deleted(140, 180)),
+                (Some(inside), Some("p.?"), Some("exon deletion")),
+                "{strand:?}"
+            );
+            assert_eq!(
+                written(&deleted(90, 135)),
+                (None, Some("p.?"), Some("exon deletion")),
+                "{strand:?}"
+            );
             assert_eq!(
                 written(&deleted(90, 240)),
                 (None, Some("p.0?"), Some("transcript deletion")),
@@ -593,7 +693,14 @@ mod tests {
             written(&reverse(199, "A", "G")),
             (Some("c.25+1T>C"), Some("p.?"), Some("splice site"))
         );
-        assert_eq!(reverse(228, "C", "A").place, Some("5′ UTR"));
+        assert_eq!(
+            written(&reverse(228, "C", "A")),
+            (Some("c.-4G>T"), None, Some("5′ UTR"))
+        );
+        assert_eq!(
+            written(&reverse(135, "C", "A")),
+            (Some("c.45+15G>T"), None, Some("intron"))
+        );
     }
 
     #[test]
