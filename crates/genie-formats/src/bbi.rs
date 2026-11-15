@@ -22,26 +22,43 @@ const BLOCK_LIMIT: u64 = 1 << 26;
 const AUTO_SQL_LIMIT: u64 = 1 << 16;
 const LABELS: [&str; 2] = ["geneName2", "name2"];
 const SYMBOL_FIELDS: [&str; 3] = ["geneName", "geneName2", "name2"];
-/// The columns of the two ends of a link in a bigInteract file.
-const ENDS: [&str; 6] = [
-    "sourceChrom",
-    "sourceStart",
-    "sourceEnd",
-    "targetChrom",
-    "targetStart",
-    "targetEnd",
+/// The columns of the two ends of a link in a bigInteract file: the names since 2019, and the
+/// older names.
+const ENDS: [[&str; 6]; 2] = [
+    [
+        "sourceChrom",
+        "sourceStart",
+        "sourceEnd",
+        "targetChrom",
+        "targetStart",
+        "targetEnd",
+    ],
+    [
+        "region1Chrom",
+        "region1Start",
+        "region1End",
+        "region2Chrom",
+        "region2Start",
+        "region2End",
+    ],
 ];
 /// The columns of a bigInteract file that the arc and the card show, so the fields of the card
 /// do not show them again.
-const LINK_COLUMNS: [&str; 8] = [
-    "value",
-    "color",
-    "sourceChrom",
-    "sourceStart",
-    "sourceEnd",
-    "targetChrom",
-    "targetStart",
-    "targetEnd",
+const LINK_COLUMNS: [&str; 2] = ["value", "color"];
+/// The standard BED fields in their order, with the names that an autoSql gives them.
+const BED_FIELDS: [&[&str]; 12] = [
+    &["chrom"],
+    &["chromStart"],
+    &["chromEnd"],
+    &["name"],
+    &["score"],
+    &["strand"],
+    &["thickStart"],
+    &["thickEnd"],
+    &["reserved", "itemRgb"],
+    &["blockCount"],
+    &["blockSizes"],
+    &["chromStarts"],
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,6 +198,15 @@ fn label_columns(fields: &[(&str, &str)]) -> Vec<usize> {
         .collect()
 }
 
+/// The number of standard BED fields at the start of an autoSql.
+fn bed_fields(declared: &[(&str, &str)]) -> usize {
+    declared
+        .iter()
+        .zip(BED_FIELDS)
+        .take_while(|((field, _), names)| names.contains(field))
+        .count()
+}
+
 fn names_symbol(about: &str) -> bool {
     about
         .split(|character: char| !character.is_ascii_alphanumeric())
@@ -200,13 +226,14 @@ struct Columns {
 impl Columns {
     fn of(index: &Index) -> Option<Self> {
         let at = |name| index.column(name);
+        let ends = index.ends()?;
         Some(Self {
             name: at("name"),
             score: at("score"),
             value: at("value"),
             color: at("color"),
-            source: [at("sourceChrom")?, at("sourceStart")?, at("sourceEnd")?],
-            target: [at("targetChrom")?, at("targetStart")?, at("targetEnd")?],
+            source: [ends[0], ends[1], ends[2]],
+            target: [ends[3], ends[4], ends[5]],
         })
     }
 
@@ -652,6 +679,10 @@ impl Index {
             String::new()
         };
         let declared = declared(&text);
+        let defined = match bed_fields(&declared) {
+            counted if defined < 3 && counted >= 3 => counted,
+            _ => defined,
+        };
         let fields = declared
             .iter()
             .map(|(field, about)| ((*field).to_owned(), (*about).to_owned()))
@@ -687,7 +718,12 @@ impl Index {
     /// The fields of a link in a bigInteract file, without the ends and the color that the arc
     /// shows.
     pub fn link_fields(&self, extra: &str) -> Vec<Field> {
-        self.fields_without(extra, &LINK_COLUMNS)
+        let hidden: Vec<&str> = LINK_COLUMNS
+            .iter()
+            .chain(ENDS.iter().flatten())
+            .copied()
+            .collect();
+        self.fields_without(extra, &hidden)
     }
 
     fn fields_without(&self, extra: &str, hidden: &[&str]) -> Vec<Field> {
@@ -735,7 +771,18 @@ impl Index {
 
     /// True for a bigInteract file: a bigBed file of links between two regions.
     pub fn is_interact(&self) -> bool {
-        self.bed && ENDS.iter().all(|name| self.column(name).is_some())
+        self.bed && self.ends().is_some()
+    }
+
+    /// The columns of the two ends of a link, in either set of names.
+    fn ends(&self) -> Option<[usize; 6]> {
+        ENDS.iter().find_map(|names| {
+            let mut columns = [0; 6];
+            for (column, name) in columns.iter_mut().zip(names) {
+                *column = self.column(name)?;
+            }
+            Some(columns)
+        })
     }
 
     /// The links of a bigInteract file that touch a region of a contig.
@@ -1030,5 +1077,54 @@ mod tests {
             ]
         );
         assert_eq!(fields[0].1, "hic");
+    }
+
+    /// bigInteract files from before 2019 name the ends region1 and region2.
+    #[test]
+    fn big_interact_files_with_the_older_names_of_the_ends_give_the_same_links() {
+        use genie_core::Region;
+        let (index, mut file) = opened("interact.bb");
+        let mut older = index.clone();
+        for (field, _) in &mut older.fields {
+            *field = field
+                .replace("source", "region1")
+                .replace("target", "region2");
+        }
+        assert!(older.is_interact());
+        let region = Region::between(0, 1_000_000);
+        let wanted = index.interactions(&mut file, "chr1", region).unwrap();
+        let found = older.interactions(&mut file, "chr1", region).unwrap();
+        assert_eq!(found, wanted);
+        let labels: Vec<String> = older
+            .link_fields(&found[0].extra)
+            .into_iter()
+            .map(|field| field.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Experiment name",
+                "Name of the source region",
+                "Name of the target region"
+            ]
+        );
+    }
+
+    /// Old bigBed files can give 0 as the number of BED fields. The autoSql then tells it.
+    #[test]
+    fn files_without_the_number_of_bed_fields_count_them_in_the_auto_sql() {
+        use genie_core::Region;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/interact.bb");
+        let mut bytes = std::fs::read(path).unwrap();
+        bytes[34..36].copy_from_slice(&0_u16.to_le_bytes());
+        let mut file = Cursor::new(bytes);
+        let index = Index::read(&mut file).unwrap();
+        let region = Region::between(0, 1_000_000);
+        assert_eq!(index.features(&mut file, "chr1", region).unwrap().len(), 4);
+        let (wanted, mut original) = opened("interact.bb");
+        assert_eq!(
+            index.interactions(&mut file, "chr1", region).unwrap(),
+            wanted.interactions(&mut original, "chr1", region).unwrap()
+        );
     }
 }
