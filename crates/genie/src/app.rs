@@ -38,6 +38,7 @@ mod address;
 mod app_menu;
 mod caching;
 mod copy;
+mod effects;
 mod export;
 mod figure;
 mod filters;
@@ -130,6 +131,7 @@ pub struct Genie {
     known_hubs: Hubs,
     checks: update::Checks,
     release: update::State,
+    effects: effects::Effects,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,6 +219,7 @@ impl Default for Genie {
             known_hubs: Hubs::default(),
             checks: update::Checks::default(),
             release: update::State::default(),
+            effects: effects::Effects::default(),
         }
     }
 }
@@ -638,6 +641,8 @@ pub enum Message {
     WindowResized(Size),
     TrackHovered(u64, usize, Option<Pointer>),
     TrackClicked(u64, usize, Pointer),
+    /// The lines of the changes of the variant of a card, with the number of the request.
+    Effects(u64, Vec<String>),
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
@@ -977,10 +982,12 @@ impl Genie {
             Message::NoticeDismissed => self.notice = None,
             Message::TrackMenu(id, at) => self.open_menu(id, at),
             Message::TrackChanged(id, change) => return self.change_track(id, change),
-            Message::TrackHovered(id, panel, pointer) => self.hovered(id, panel, pointer),
+            Message::TrackHovered(id, panel, pointer) => return self.hovered(id, panel, pointer),
             Message::TrackClicked(id, panel, pointer) => {
                 self.pinned = self.card(id, panel, pointer);
+                return self.find_effects(panel, true);
             }
+            Message::Effects(generation, lines) => self.effects_found(generation, lines),
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
@@ -1245,6 +1252,7 @@ pub fn run() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::slice;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -5013,6 +5021,45 @@ mod tests {
         assert!(!shows(&genie, "NA2 · homozygous alternate"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 28.0))));
         assert!(shows(&genie, "NA2 · homozygous alternate"));
+    }
+
+    #[test]
+    fn variant_cards_show_the_changes_on_the_open_transcripts() {
+        let mut genie = with_variants();
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        let region = Region::between(0, 1_000);
+        let exon = Region::between(10, 40);
+        let transcript = Feature::new("GENE1", exon, Strand::Forward)
+            .with_blocks(vec![exon])
+            .with_coding(Some(Region::between(13, 37)));
+        let enhancer = Feature::new("ENHANCER", Region::between(0, 100), Strand::Forward);
+        let features = vec![transcript.clone(), enhancer];
+        let genes = &mut genie.session.as_mut().unwrap().tracks[1];
+        genes.slot.wanted = Some((0, region));
+        genes.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
+        assert_eq!(genie.effects.transcripts, [transcript]);
+        let generation = genie.effects.generation;
+        let line = "GENE1 p.Lys3Arg · c.8A>G".to_owned();
+        let _ = genie.update(Message::Effects(generation, vec![line.clone()]));
+        assert!(shows(&genie, &line));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.7, 6.0))));
+        assert_eq!(genie.effects.generation, generation);
+        assert!(shows(&genie, &line));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(20.5, 5.0)));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        assert_eq!(
+            genie.pinned.as_ref().unwrap().effects,
+            slice::from_ref(&line)
+        );
+        assert!(genie.copy_text().unwrap().contains(&line));
+        let _ = genie.update(Message::Effects(generation - 1, vec!["old".to_owned()]));
+        assert_eq!(genie.pinned.as_ref().unwrap().effects, [line]);
     }
 
     #[test]

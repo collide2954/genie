@@ -412,11 +412,17 @@ impl Genie {
         }
     }
 
-    pub(super) fn hovered(&mut self, id: u64, panel: usize, pointer: Option<Pointer>) {
+    pub(super) fn hovered(
+        &mut self,
+        id: u64,
+        panel: usize,
+        pointer: Option<Pointer>,
+    ) -> Task<Message> {
         if pointer.is_some() {
             self.pointed = Some(id);
         }
         self.hover = pointer.and_then(|pointer| self.card(id, panel, pointer));
+        self.find_effects(panel, false)
     }
 
     pub(super) fn change_reading(&mut self, change: reading::Change) {
