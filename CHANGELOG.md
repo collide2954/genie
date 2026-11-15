@@ -104,6 +104,13 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Variant annotations
+
+- Variant cards show the annotations of Ensembl VEP (`CSQ`), SnpEff (`ANN`) and bcftools csq (`BCSQ`): the 3 most severe, one line for each with the gene, the consequence, the impact and the HGVS changes, and the number of the others.
+- The fields Consequence, Impact, Gene and Biotype list the values of all annotations of a variant. Click a value to keep or hide the variants with it, for example to keep only HIGH.
+- The other columns of the first annotation show as fields, for example `CSQ SIFT` and `CSQ PolyPhen`.
+- The annotations do not count in the 400 characters of INFO that genie keeps, so long annotations do not push out the other INFO fields.
+
 ### Cloud addresses
 
 - genie opens files in public buckets of Amazon S3 and Google Cloud Storage from their `s3://` and `gs://` addresses, for example the 1000 Genomes data on AWS and the gnomAD data on Google Cloud. The addresses work in Open URL, in track hubs, in sessions and on the command line.
