@@ -49,6 +49,7 @@ mod offline;
 mod orders;
 mod palette;
 mod regions;
+mod samples;
 mod sessions;
 pub mod snapshot;
 mod track_settings;
@@ -59,6 +60,7 @@ mod view;
 mod whole;
 
 use orders::Answer;
+pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 use tracks::pick;
 pub(crate) use updates::Updating;
 
@@ -283,6 +285,8 @@ struct Session {
     preparing: Vec<Preparing>,
     /// The whole-genome view: the panels show the main chromosomes, each by its length.
     genome: bool,
+    /// The sample table that groups, sorts and colors the samples of the tracks.
+    samples: Option<samples::Samples>,
 }
 
 #[derive(Debug)]
@@ -332,6 +336,7 @@ impl Session {
             panels: Vec::new(),
             preparing: Vec::new(),
             genome: false,
+            samples: None,
         }
     }
 
@@ -713,6 +718,7 @@ pub enum Message {
     Find(find::Finding),
     Hub(hubs::Hubbing),
     Update(updates::Updating),
+    Samples(Sampling),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1034,6 +1040,7 @@ impl Genie {
             Message::Find(finding) => return self.find(finding),
             Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Update(updating) => return self.updating(updating),
+            Message::Samples(sampling) => return self.sampling(sampling),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,
@@ -1278,6 +1285,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use genie_core::samples::Table;
     use genie_core::signal::Summary;
     use genie_core::variant::{Call, Variant};
     use genie_core::{Band, Feature, Names, Region, Stain, Strand};
@@ -1285,7 +1293,7 @@ mod tests {
     use genie_formats::features::Kind;
     use genie_formats::tabix::Index;
     use genie_render::features::Mode as Rows;
-    use genie_render::scene::Hue;
+    use genie_render::scene::{Hue, Paint};
     use genie_render::signal::{Scale, Style};
     use iced::keyboard::{self, key::Named};
     use iced::theme::Mode;
@@ -1297,9 +1305,9 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline, Paletting,
-        Paneling, Port, Preparation, Ranging, Regions, Renaming, Sweep, mouse_button, shortcut,
-        window_event,
+        Address, Arranging, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline,
+        Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming, Sampling, Sweep,
+        mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -5056,6 +5064,122 @@ mod tests {
         assert!(!shows(&genie, "NA2 · homozygous alternate"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 28.0))));
         assert!(shows(&genie, "NA2 · homozygous alternate"));
+    }
+
+    fn sample_table() -> Arc<Table> {
+        let row = |name: &str, pop: &str, age: &str| {
+            (name.to_owned(), vec![pop.to_owned(), age.to_owned()])
+        };
+        Arc::new(Table::new(
+            vec!["pop".to_owned(), "age".to_owned()],
+            vec![
+                row("NA1", "EUR", "31"),
+                row("NA2", "AFR", "45"),
+                row("NA9", "EAS", "20"),
+            ],
+        ))
+    }
+
+    fn with_sample_table() -> Genie {
+        let mut genie = with_variants();
+        let location = Location::File(PathBuf::from("/data/groups.tsv"));
+        let opened = Sampling::Opened(location, Ok(sample_table()));
+        let _ = genie.update(Message::Samples(opened));
+        genie
+    }
+
+    fn arrange(genie: &mut Genie, arranging: Arranging) {
+        let _ = genie.update(Message::Samples(Sampling::Arrange(0, arranging)));
+    }
+
+    #[test]
+    fn sample_tables_say_how_many_samples_of_the_tracks_they_know() {
+        let genie = with_sample_table();
+        assert!(shows(
+            &genie,
+            "The sample table groups.tsv has 3 samples and 2 fields. \
+             It has 2 of the 2 samples of the open tracks."
+        ));
+        let session = genie.session.as_ref().unwrap();
+        assert!(session.samples.is_some());
+        assert_eq!(session.tracks[0].rows.groups, []);
+        let mut failed = with_variants();
+        let location = Location::File(PathBuf::from("/data/x.tsv"));
+        let error = "The sample table x.tsv is not valid.".to_owned();
+        let _ = failed.update(Message::Samples(Sampling::Opened(location, Err(error))));
+        assert!(shows(&failed, "The sample table x.tsv is not valid."));
+        assert!(failed.session.as_ref().unwrap().samples.is_none());
+    }
+
+    #[test]
+    fn fields_group_sort_and_color_the_rows_of_a_track() {
+        let mut genie = with_sample_table();
+        arrange(&mut genie, Arranging::Group("pop".to_owned()));
+        let rows = |genie: &Genie| Arc::clone(&genie.session.as_ref().unwrap().tracks[0].rows);
+        assert_eq!(rows(&genie).members, [vec![1], vec![0]]);
+        assert_eq!(
+            rows(&genie).groups,
+            [
+                (0, "AFR · 1 sample".to_owned()),
+                (1, "EUR · 1 sample".to_owned())
+            ]
+        );
+        let session = genie.session.as_ref().unwrap();
+        let height = super::view::body_height(session, &session.tracks[0]);
+        assert!((height - 61.0).abs() < f32::EPSILON, "{height}");
+        arrange(&mut genie, Arranging::Color("age".to_owned()));
+        assert_eq!(rows(&genie).strip, [Paint::Level(100), Paint::Level(0)]);
+        arrange(&mut genie, Arranging::Group("pop".to_owned()));
+        assert_eq!(rows(&genie).groups, []);
+        assert_eq!(rows(&genie).members, [vec![0], vec![1]]);
+        arrange(&mut genie, Arranging::Sort("age".to_owned()));
+        assert_eq!(rows(&genie).members, [vec![0], vec![1]]);
+        let _ = genie.update(Message::Samples(Sampling::Close));
+        assert!(genie.session.as_ref().unwrap().samples.is_none());
+        assert_eq!(rows(&genie).strip, []);
+        let _ = genie.update(Message::Samples(Sampling::Opened(
+            Location::File(PathBuf::from("/data/groups.tsv")),
+            Ok(sample_table()),
+        )));
+        assert_eq!(rows(&genie).strip, [Paint::Level(0), Paint::Level(100)]);
+    }
+
+    #[test]
+    fn the_palette_and_the_track_menu_arrange_samples() {
+        let mut genie = with_sample_table();
+        let _ = genie.update(Message::Command(Command::Palette));
+        let query = Message::Palette(Paletting::Query("group samples pop".to_owned()));
+        let _ = genie.update(query);
+        assert!(shows(&genie, "Group samples by pop"));
+        let _ = genie.update(Message::Palette(Paletting::Run));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.choice.group.as_deref(), Some("pop"));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Group samples by pop").unwrap();
+        for message in ui.into_messages().collect::<Vec<_>>() {
+            let _ = genie.update(message);
+        }
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.choice.group, None);
+        let _ = genie.update(Message::Command(Command::Palette));
+        let query = Message::Palette(Paletting::Query("close sample".to_owned()));
+        let _ = genie.update(query);
+        assert!(shows(&genie, "Close the sample table"));
+        let _ = genie.update(Message::Palette(Paletting::Run));
+        assert!(genie.session.as_ref().unwrap().samples.is_none());
+    }
+
+    #[test]
+    fn genotype_rows_under_group_bands_show_their_sample() {
+        let mut genie = with_sample_table();
+        arrange(&mut genie, Arranging::Group("pop".to_owned()));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 32.0))));
+        assert!(shows(&genie, "NA2 · homozygous alternate"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 56.0))));
+        assert!(shows(&genie, "NA1 · heterozygous"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 45.0))));
+        assert!(!shows(&genie, "NA1 · heterozygous"));
     }
 
     #[test]

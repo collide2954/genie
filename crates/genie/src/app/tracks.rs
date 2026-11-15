@@ -704,6 +704,9 @@ impl Genie {
         if let Some(declared) = self.restored_type(&location) {
             return self.open_restored(location, declared);
         }
+        if super::samples::is_table(&location) {
+            return self.open_samples(location);
+        }
         if hub::is_hub(&location) {
             return self.open_hub(location, true);
         }
@@ -834,6 +837,7 @@ impl Genie {
             if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
                 apply_saved(&mut track, found);
             }
+            track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
             session
                 .tracks
@@ -856,6 +860,7 @@ impl Genie {
                 track::change(&mut session.tracks, member, Change::Overlay(base));
             }
         } else {
+            track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
         }
         if source.has_reads() {
@@ -969,6 +974,10 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "bdg",
                     "bedmethyl",
                 ],
+            )
+            .add_filter(
+                "Sample tables",
+                &["tsv", "csv", "txt", "panel", "fam", "ped"],
             )
             .add_filter("Reference sequences", &references)
     } else {

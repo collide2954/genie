@@ -10,7 +10,10 @@ use crate::shortcuts::Command;
 use crate::track::{Change, Toggle, Track};
 
 use super::hubs::Hubbing;
-use super::{Genie, Message, Paletting, Popup, Ranging, Regions, Renaming, Updating};
+use super::{
+    Arranging, Genie, Message, Paletting, Popup, Ranging, Regions, Renaming, Sampling, Session,
+    Updating, arranging_words,
+};
 
 fn read_actions(track: &Track) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
@@ -42,7 +45,53 @@ fn read_actions(track: &Track) -> Vec<Action> {
     actions
 }
 
-fn track_actions(track: &Track) -> Vec<Action> {
+/// The actions that group, sort and color the samples of a track by the fields of a table.
+fn sample_actions(track: &Track, fields: &[String]) -> Vec<Action> {
+    if track.source.samples().is_empty() {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    fields
+        .iter()
+        .flat_map(|field| {
+            [
+                Arranging::Group(field.clone()),
+                Arranging::Sort(field.clone()),
+                Arranging::Color(field.clone()),
+            ]
+        })
+        .map(|arranging| {
+            let words = arranging_words(&arranging);
+            Action::new(
+                words,
+                name,
+                Message::Samples(Sampling::Arrange(id, arranging)),
+            )
+        })
+        .collect()
+}
+
+/// The actions of the tracks of a session and of its sample table.
+fn tracks_actions(session: &Session) -> Vec<Action> {
+    let mut actions = Vec::new();
+    let fields = session
+        .samples
+        .as_ref()
+        .map_or(&[][..], |samples| samples.table.columns.as_slice());
+    if let Some(samples) = &session.samples {
+        actions.push(Action::new(
+            "Close the sample table",
+            samples.location.name(),
+            Message::Samples(Sampling::Close),
+        ));
+    }
+    for track in &session.tracks {
+        actions.extend(track_actions(track, fields));
+    }
+    actions
+}
+
+fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
     let change = move |change| Message::TrackChanged(id, change);
     let mut actions = vec![Action::new(
@@ -50,6 +99,7 @@ fn track_actions(track: &Track) -> Vec<Action> {
         name,
         Message::TrackSettings(id),
     )];
+    actions.extend(sample_actions(track, fields));
     let source = &track.source;
     if !source.has_signal() && !source.has_links() {
         actions.extend(
@@ -232,9 +282,7 @@ impl Genie {
                     Message::Hub(Hubbing::Show(index)),
                 ));
             }
-            for track in &session.tracks {
-                actions.extend(track_actions(track));
-            }
+            actions.extend(tracks_actions(session));
         }
         let recent_hubs = self
             .known_hubs

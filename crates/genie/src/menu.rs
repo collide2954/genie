@@ -6,7 +6,7 @@ use genie_render::signal::Style;
 use iced::widget::{Column, button, column, container, opaque, pin, row, space, text, text_input};
 use iced::{Alignment, Element, Length, Point, Size};
 
-use crate::app::{Filtering, Message, Ranging, Renaming};
+use crate::app::{Filtering, Message, Ranging, Renaming, Sampling, active, arranging_words};
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
@@ -84,7 +84,36 @@ pub fn height(track: &Track, links: usize) -> f32 {
         let rows = filter.rules.len() + usize::from(filter.label.is_some());
         HEADING_HEIGHT + rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
-    LINK_HEIGHT + SEPARATOR_HEIGHT + kind_height(track) + extra + rules
+    let arranged = active(track).len();
+    let samples = if arranged == 0 {
+        0.0
+    } else {
+        arranged as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
+    };
+    LINK_HEIGHT + SEPARATOR_HEIGHT + kind_height(track) + extra + rules + samples
+}
+
+/// The fields that group, sort and color the samples of a track, to turn them off.
+fn sample_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let arranged = active(track);
+    if arranged.is_empty() {
+        return Vec::new();
+    }
+    let id = track.id;
+    let mut items: Vec<Element<'a, Message>> = arranged
+        .into_iter()
+        .map(|arranging| {
+            let words = arranging_words(&arranging);
+            item(
+                words,
+                Message::Samples(Sampling::Arrange(id, arranging)),
+                true,
+                true,
+            )
+        })
+        .collect();
+    items.push(separator());
+    items
 }
 
 pub fn describe(rule: &Rule) -> String {
@@ -442,7 +471,9 @@ pub fn view<'a>(
         column![column(modes).spacing(1), separator()].spacing(1)
     };
     let settings = self::item("Track settings…", Message::TrackSettings(id), false, true);
-    let mut content = column![settings, separator(), kind].spacing(1);
+    let mut content = column![settings, separator(), kind]
+        .spacing(1)
+        .extend(sample_items(track));
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));
     } else if !track.source.has_variants() {

@@ -7,6 +7,7 @@ use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE};
 use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
+use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
 use genie_core::variant::Variant;
@@ -929,6 +930,10 @@ pub struct Track {
     pub modification: Option<String>,
     /// The file type and index that a track hub gave, kept so that sessions open it again.
     pub declared: Option<Declared>,
+    /// The fields of the sample table that group, sort and color the samples.
+    pub choice: Choice,
+    /// The order, the groups and the colors of the samples of the file.
+    pub arrangement: Arc<Arrangement>,
     /// The rows of the samples of the file, for genotypes and copy number segments.
     pub rows: Arc<Rows>,
     pub slot: Slot,
@@ -959,7 +964,8 @@ impl Track {
             min: 0.0,
             max: 100.0,
         });
-        let rows = Arc::new(Rows::plain(source.samples().len(), row_size(&source)));
+        let arrangement = Arrangement::plain(source.samples().len());
+        let rows = Arc::new(Rows::new(&arrangement, row_size(&source)));
         Self {
             id,
             name: source.name.clone(),
@@ -978,10 +984,26 @@ impl Track {
             filter: Filter::default(),
             modification: None,
             declared: None,
+            choice: Choice::default(),
+            arrangement: Arc::new(arrangement),
             rows,
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// Puts the samples in the order, the groups and the colors that the fields of `choice`
+    /// give them in a sample table, or in the order of the file without a table.
+    pub fn arrange(&mut self, table: Option<&Table>) {
+        let names = self.source.samples();
+        let arrangement = match table {
+            Some(table) if !self.choice.is_empty() => {
+                genie_core::samples::arrange(names, table, &self.choice)
+            }
+            _ => Arrangement::plain(names.len()),
+        };
+        self.rows = Arc::new(Rows::new(&arrangement, row_size(&self.source)));
+        self.arrangement = Arc::new(arrangement);
     }
 
     pub fn modification_names(&self) -> Vec<String> {
