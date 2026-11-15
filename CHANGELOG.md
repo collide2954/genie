@@ -73,6 +73,11 @@
 - **Group by this tag** groups the reads by the value of any tag, for example CB or PS, with up to 30 groups. **Color by this tag** gives the 5 most common values the track colors.
 - The read track menu hides reads under MAPQ 1, 10, 20 or 30, and shows secondary, supplementary and QC-failed reads on request. Sessions keep these settings.
 
+### Densities
+
+- Variant tracks wider than 1 Mb and feature tracks wider than 10 Mb show the number of variants or features per Mb. Before, they asked you to zoom in.
+- For a file with a tabix or CSI index from htslib, genie estimates the density from the index alone, also for large files on the web.
+
 ### Protein changes
 
 - A variant card shows the change of the variant on the transcripts of the open feature tracks in HGVS notation, for example "BRCA1 p.Arg1699Trp · c.5095C>T".

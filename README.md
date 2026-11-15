@@ -137,7 +137,7 @@ For GFF3 and GTF, sort by columns 1 and 4 and use `tabix -p gff`:
 sort -k1,1 -k4,4n genes.gtf | bgzip > genes.gtf.gz && tabix -p gff genes.gtf.gz
 ```
 
-genie shows bigBed features when the view is 10 Mb or less. Wider views show the feature density from the zoom levels of the file.
+genie shows features when the view is 10 Mb or less. Wider views show the density of the features: bigBed files from their zoom levels, other files as the number of features per Mb. For a file with a tabix or CSI index, genie estimates the density from the index, without reading the features. This needs an index from htslib (tabix, bcftools or samtools), which counts the records of each contig.
 
 To prepare a BAM track:
 
@@ -155,7 +155,7 @@ To prepare a large VCF track:
 bgzip calls.vcf && tabix -p vcf calls.vcf.gz
 ```
 
-genie shows variants when the view is 1 Mb or less.
+genie shows variants when the view is 1 Mb or less. Wider views show the number of variants per Mb, estimated from the index as for feature files. Put the pointer on the bars to see the density, for example "About 520 variants per Mb".
 
 To prepare a large bedGraph track:
 
