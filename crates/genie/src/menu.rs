@@ -11,7 +11,7 @@ use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
-use crate::track::{Change, Grouping, Toggle, Track};
+use crate::track::{Change, Grouping, Toggle, Track, tag_name};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
@@ -199,7 +199,7 @@ pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
 fn kind_height(track: &Track) -> f32 {
     let choices = modification_choices(track).len() as f32 * LINK_HEIGHT;
     if track.source.has_reads() {
-        READS_HEIGHT + choices
+        READS_HEIGHT + choices + tag_items(track) as f32 * LINK_HEIGHT
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
     } else if track.source.is_bedmethyl() {
@@ -375,8 +375,29 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
             item(label, Change::Group(grouping), options.group == grouping)
         }),
     );
+    if let Grouping::Tag(name) = options.group {
+        let change = Change::Group(Grouping::Tag(name));
+        let words = format!("Group by {}", tag_name(name));
+        items.push(self::item(
+            words,
+            Message::TrackChanged(id, change),
+            true,
+            true,
+        ));
+    }
+    if let Some(name) = options.color {
+        let words = format!("Color by {}", tag_name(name));
+        let change = Message::TrackChanged(id, Change::Color(name));
+        items.push(self::item(words, change, true, true));
+    }
     items.push(separator());
     items
+}
+
+/// The number of menu items for a tag that groups or colors the reads of a track.
+fn tag_items(track: &Track) -> usize {
+    usize::from(matches!(track.options.group, Grouping::Tag(_)))
+        + usize::from(track.options.color.is_some())
 }
 
 pub fn view<'a>(

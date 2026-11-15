@@ -510,6 +510,7 @@ impl Genie {
 
     pub(super) fn change_track(&mut self, id: u64, change: Change) -> Task<Message> {
         self.menu = None;
+        self.field = None;
         if change == Change::Remove {
             self.forget(id);
         }

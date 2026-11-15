@@ -940,7 +940,8 @@ fn read_lane(
         (slot.rows(pile), pile.groups.as_slice())
     };
     let top = above + pile.arc_height();
-    let reads = alignments::reads(viewport, &pile.reads, rows, groups, mode, track.plot.look);
+    let look = (track.plot.look, pile.hues.as_slice());
+    let reads = alignments::painted(viewport, &pile.reads, rows, groups, mode, look);
     lane.extend(reads.into_iter().map(|primitive| primitive.lowered(top)));
     lane
 }

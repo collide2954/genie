@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
@@ -221,6 +222,50 @@ pub enum Grouping {
     None,
     Phase,
     Strand,
+    /// The value of a tag, for example CB for the cell of a read.
+    Tag([u8; 2]),
+}
+
+/// The most groups of a tag before genie puts the smallest ones together.
+const TAG_GROUPS: usize = 30;
+
+/// The name of a tag as text, for example "CB".
+pub fn tag_name(name: [u8; 2]) -> String {
+    String::from_utf8_lossy(&name).into_owned()
+}
+
+/// A tag name of two letters or digits, such as NM or CB.
+pub fn tag(text: &str) -> Option<[u8; 2]> {
+    let bytes: [u8; 2] = text.trim().as_bytes().try_into().ok()?;
+    bytes.iter().all(u8::is_ascii_alphanumeric).then_some(bytes)
+}
+
+/// The text values of a tag, each with a number for its group.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Values {
+    names: Vec<String>,
+    numbers: HashMap<String, i64>,
+}
+
+impl Values {
+    fn add(&mut self, text: &str) {
+        if !self.numbers.contains_key(text) {
+            let number = i64::try_from(self.names.len()).unwrap_or(i64::MAX);
+            self.numbers.insert(text.to_owned(), number);
+            self.names.push(text.to_owned());
+        }
+    }
+
+    fn number(&self, text: &str) -> i64 {
+        self.numbers.get(text).copied().unwrap_or(-1)
+    }
+
+    fn name(&self, number: i64) -> &str {
+        usize::try_from(number)
+            .ok()
+            .and_then(|index| self.names.get(index))
+            .map_or("", String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +278,8 @@ pub struct Options {
     /// Reads with a lower MAPQ stay hidden.
     pub mapq: u8,
     pub kinds: Kinds,
+    /// The tag whose most common values color the reads.
+    pub color: Option<[u8; 2]>,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -270,6 +317,7 @@ impl Default for Options {
             methyl: Methyl::default(),
             mapq: 0,
             kinds: Kinds::default(),
+            color: None,
         }
     }
 }
@@ -358,48 +406,103 @@ pub struct Pile {
     pub count: usize,
     pub groups: Vec<(usize, String)>,
     pub grouping: Grouping,
+    /// The text values of the tag that groups the reads.
+    pub values: Values,
+    /// The hue of each read when the track colors reads by a tag, or nothing.
+    pub hues: Vec<Option<Hue>>,
 }
 
 pub type GroupKey = (u8, i64);
+/// The group of the reads of the smallest values when a tag has too many values.
+const OTHER: GroupKey = (3, 0);
 
-fn group_key(read: &Read, grouping: Grouping) -> GroupKey {
-    alignment_group(&read.alignment, grouping)
+fn group_key(read: &Read, grouping: Grouping, values: &Values) -> GroupKey {
+    alignment_group(&read.alignment, grouping, values)
 }
 
-fn alignment_group(alignment: &Alignment, grouping: Grouping) -> GroupKey {
+/// The group of a read: numbers of a tag in their order, then text values, then reads without
+/// the tag.
+fn alignment_group(alignment: &Alignment, grouping: Grouping, values: &Values) -> GroupKey {
     match grouping {
         Grouping::None => (0, 0),
         Grouping::Phase => alignment.tags.phase.map_or((1, 0), |phase| (0, phase)),
         Grouping::Strand => (u8::from(alignment.has(REVERSE)), 0),
+        Grouping::Tag(name) => match alignment.tags.get(name) {
+            None => (2, 0),
+            Some(text) => text
+                .parse::<i64>()
+                .map_or_else(|_| (1, values.number(text)), |number| (0, number)),
+        },
     }
 }
 
-fn group_label(grouping: Grouping, key: (u8, i64)) -> String {
+fn group_label(grouping: Grouping, key: (u8, i64), values: &Values) -> String {
     match (grouping, key) {
         (Grouping::Phase, (0, phase)) => format!("Haplotype {phase}"),
         (Grouping::Phase, _) => "No haplotype".to_owned(),
         (Grouping::Strand, (0, _)) => "Forward strand".to_owned(),
         (Grouping::Strand, _) => "Reverse strand".to_owned(),
+        (Grouping::Tag(name), (0, number)) => format!("{} {number}", tag_name(name)),
+        (Grouping::Tag(name), (1, number)) => {
+            format!("{} {}", tag_name(name), values.name(number))
+        }
+        (Grouping::Tag(name), (3, _)) => format!("Other {} values", tag_name(name)),
+        (Grouping::Tag(name), _) => format!("No {}", tag_name(name)),
         (Grouping::None, _) => String::new(),
+    }
+}
+
+/// Puts the reads of all but the largest groups of a tag in one group.
+fn fewer(keys: &mut [GroupKey]) {
+    let mut sizes: HashMap<GroupKey, usize> = HashMap::new();
+    for key in keys.iter() {
+        *sizes.entry(*key).or_default() += 1;
+    }
+    if sizes.len() <= TAG_GROUPS {
+        return;
+    }
+    let mut largest: Vec<(GroupKey, usize)> = sizes.into_iter().collect();
+    largest.sort_by(|(a, first), (b, second)| second.cmp(first).then(a.cmp(b)));
+    let kept: HashSet<GroupKey> = largest
+        .iter()
+        .take(TAG_GROUPS - 1)
+        .map(|(key, _)| *key)
+        .collect();
+    for key in keys.iter_mut() {
+        if !kept.contains(key) {
+            *key = OTHER;
+        }
     }
 }
 
 fn pack(
     reads: &[Read],
     members: &[usize],
-    grouping: Grouping,
+    (grouping, values): (Grouping, &Values),
 ) -> (Vec<usize>, Vec<(usize, String)>) {
     let extent = |&index: &usize| reads[index].extent;
     if grouping == Grouping::None {
         return (rows::pack(members, extent, READ_GAP), Vec::new());
     }
-    let keys: Vec<(u8, i64)> = members
+    let mut keys: Vec<(u8, i64)> = members
         .iter()
-        .map(|&index| group_key(&reads[index], grouping))
+        .map(|&index| group_key(&reads[index], grouping, values))
         .collect();
+    let tagged = matches!(grouping, Grouping::Tag(_));
+    if tagged {
+        fewer(&mut keys);
+    }
     let mut order = keys.clone();
     order.sort_unstable();
     order.dedup();
+    if tagged {
+        order.sort_by(|a, b| {
+            a.0.cmp(&b.0).then_with(|| match a.0 {
+                1 => values.name(a.1).cmp(values.name(b.1)),
+                _ => a.1.cmp(&b.1),
+            })
+        });
+    }
     let mut rows = vec![0; members.len()];
     let mut groups = Vec::new();
     let mut next = 0;
@@ -412,10 +515,36 @@ fn pack(
         for (&place, &row) in places.iter().zip(&layout) {
             rows[place] = next + row;
         }
-        groups.push((next, group_label(grouping, key)));
+        groups.push((next, group_label(grouping, key, values)));
         next += count(&layout);
     }
     (rows, groups)
+}
+
+/// The hue of each read by its value of a tag: the most common values get the hues of the
+/// tracks, the other reads get none.
+fn tag_hues(reads: &[Read], name: [u8; 2]) -> Vec<Option<Hue>> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for read in reads {
+        if let Some(value) = read.alignment.tags.get(name) {
+            *counts.entry(value).or_default() += 1;
+        }
+    }
+    let mut common: Vec<(&str, usize)> = counts.into_iter().collect();
+    common.sort_by(|(a, first), (b, second)| second.cmp(first).then(a.cmp(b)));
+    let chosen: Vec<&str> = common
+        .iter()
+        .take(Hue::ALL.len())
+        .map(|(value, _)| *value)
+        .collect();
+    reads
+        .iter()
+        .map(|read| {
+            let value = read.alignment.tags.get(name)?;
+            let place = chosen.iter().position(|known| *known == value)?;
+            Some(Hue::ALL[place])
+        })
+        .collect()
 }
 
 impl Annotation {
@@ -443,7 +572,7 @@ impl Pile {
                 span.start() <= visible.end() && span.end() >= visible.start()
             })
             .collect();
-        let (packed, groups) = pack(&self.reads, &shown, self.grouping);
+        let (packed, groups) = pack(&self.reads, &shown, (self.grouping, &self.values));
         let mut rows = vec![0; self.reads.len()];
         for (&index, &row) in shown.iter().zip(&packed) {
             rows[index] = row;
@@ -472,7 +601,7 @@ impl Pile {
 #[derive(Debug, PartialEq)]
 pub enum Content {
     Features(Annotation),
-    Reads(Pile),
+    Reads(Box<Pile>),
     Variants(Calls),
     Signal(Signal),
     Links(Vec<Interaction>),
@@ -495,6 +624,7 @@ pub struct Gather {
     junctions: Junctions,
     methylation: Tally<GroupKey>,
     sampler: Sampler,
+    values: Values,
 }
 
 impl Gather {
@@ -512,6 +642,7 @@ impl Gather {
             junctions: Junctions::default(),
             methylation: Tally::default(),
             sampler: Sampler::new(WINDOW, limit),
+            values: Values::default(),
         }
     }
 
@@ -519,7 +650,13 @@ impl Gather {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
-        let group = alignment_group(&alignment, self.options.group);
+        if let Grouping::Tag(name) = self.options.group
+            && let Some(text) = alignment.tags.get(name)
+            && text.parse::<i64>().is_err()
+        {
+            self.values.add(text);
+        }
+        let group = alignment_group(&alignment, self.options.group, &self.values);
         self.methylation.add(&alignment, group);
         self.sampler.push(alignment);
     }
@@ -556,6 +693,7 @@ impl Loaded {
             junctions,
             methylation,
             sampler,
+            values,
         } = gather;
         let methylation = methylation.finish(|position| {
             let index = usize::try_from(position.checked_sub(offset)?).ok()?;
@@ -573,8 +711,11 @@ impl Loaded {
             })
             .collect();
         let members: Vec<usize> = (0..reads.len()).collect();
-        let (rows, groups) = pack(&reads, &members, options.group);
+        let (rows, groups) = pack(&reads, &members, (options.group, &values));
         let count = count(&rows);
+        let hues = options
+            .color
+            .map_or_else(Vec::new, |name| tag_hues(&reads, name));
         let junctions = junctions
             .finish()
             .into_iter()
@@ -588,7 +729,7 @@ impl Loaded {
         Self {
             region,
             options,
-            content: Content::Reads(Pile {
+            content: Content::Reads(Box::new(Pile {
                 coverage,
                 reference,
                 offset,
@@ -599,7 +740,9 @@ impl Loaded {
                 count,
                 groups,
                 grouping: options.group,
-            }),
+                values,
+                hues,
+            })),
         }
     }
 
@@ -842,8 +985,8 @@ impl Track {
             .groups()
             .into_iter()
             .map(|key| {
-                let label =
-                    (pile.grouping != Grouping::None).then(|| group_label(pile.grouping, key));
+                let label = (pile.grouping != Grouping::None)
+                    .then(|| group_label(pile.grouping, key, &pile.values));
                 (key, (label, pile.methylation.sites(&name, key)))
             })
             .filter(|(_, (_, sites))| !sites.is_empty())
@@ -1055,6 +1198,8 @@ pub enum Change {
     Group(Grouping),
     /// The lowest MAPQ of the reads that show.
     Mapq(u8),
+    /// Color the reads by the values of a tag, or stop when the tag already colors them.
+    Color([u8; 2]),
     Up,
     Down,
     Remove,
@@ -1125,6 +1270,15 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Mapq(floor) => {
             let track = &mut tracks[position];
             track.options.mapq = floor;
+            track.forget();
+        }
+        Change::Color(name) => {
+            let track = &mut tracks[position];
+            track.options.color = if track.options.color == Some(name) {
+                None
+            } else {
+                Some(name)
+            };
             track.forget();
         }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
@@ -1738,9 +1892,9 @@ mod tests {
     use super::reads::Reads;
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded, Methyl,
-        Options, Plot, Prepared, SignalFile, Source, Toggle, Track, Typed, VariantFile, change,
-        contig_names, fits, hides, is_track, link_fields, load, lookup, names, neighbor, open,
-        open_bbi, open_typed, open_with, spans, step,
+        Options, Plot, Prepared, SignalFile, Source, TAG_GROUPS, Toggle, Track, Typed, VariantFile,
+        change, contig_names, fits, hides, is_track, link_fields, load, lookup, names, neighbor,
+        open, open_bbi, open_typed, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -1931,6 +2085,84 @@ mod tests {
             .collect();
         assert_eq!(labels, ["Forward strand", "Reverse strand"]);
         assert_eq!(pile.rows, [1, 0]);
+    }
+
+    fn tagged(start: u64, tags: &[(&[u8; 2], &str)]) -> Alignment {
+        let mut read = alignment(start, vec![(Op::Match, 10)]);
+        read.tags.all = tags
+            .iter()
+            .map(|(name, value)| (**name, (*value).to_owned()))
+            .collect();
+        read
+    }
+
+    #[test]
+    fn tag_groups_put_numbers_then_text_then_reads_without_the_tag() {
+        let reads = vec![
+            tagged(10, &[(b"CB", "TTG")]),
+            tagged(10, &[(b"CB", "12")]),
+            tagged(10, &[]),
+            tagged(10, &[(b"CB", "AAC")]),
+            tagged(10, &[(b"CB", "3")]),
+        ];
+        let options = Options {
+            group: Grouping::Tag(*b"CB"),
+            ..Options::default()
+        };
+        let loaded = piled(region(0, 100), reads, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let labels: Vec<&str> = pile
+            .groups
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .collect();
+        assert_eq!(labels, ["CB 3", "CB 12", "CB AAC", "CB TTG", "No CB"]);
+        let many: Vec<Alignment> = (0..40)
+            .map(|index| tagged(10, &[(b"CB", &format!("cell{index:02}"))]))
+            .collect();
+        let loaded = piled(region(0, 100), many, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        assert_eq!(pile.groups.len(), TAG_GROUPS);
+        assert_eq!(pile.groups.last().unwrap().1, "Other CB values");
+    }
+
+    #[test]
+    fn tag_colors_go_to_the_most_common_values() {
+        let mut reads: Vec<Alignment> = Vec::new();
+        for (value, count) in [("a", 1), ("b", 6), ("c", 5), ("d", 4), ("e", 3), ("f", 2)] {
+            reads.extend((0..count).map(|_| tagged(10, &[(b"XT", value)])));
+        }
+        reads.push(tagged(10, &[]));
+        let options = Options {
+            color: Some(*b"XT"),
+            downsample: false,
+            ..Options::default()
+        };
+        let loaded = piled(region(0, 100), reads, options);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let hue = |value: &str| {
+            pile.reads
+                .iter()
+                .zip(&pile.hues)
+                .find(|(read, _)| read.alignment.tags.get(*b"XT") == Some(value))
+                .and_then(|(_, hue)| *hue)
+        };
+        assert_eq!(hue("b"), Some(Hue::ALL[0]));
+        assert_eq!(hue("c"), Some(Hue::ALL[1]));
+        assert_eq!(hue("f"), Some(Hue::ALL[4]));
+        assert_eq!(hue("a"), None);
+        assert_eq!(pile.hues.len(), pile.reads.len());
+        let plain = piled(region(0, 100), vec![tagged(10, &[])], Options::default());
+        let Content::Reads(pile) = &plain.content else {
+            panic!("expected reads");
+        };
+        assert_eq!(pile.hues.len(), 0);
     }
 
     #[test]

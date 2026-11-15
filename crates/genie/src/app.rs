@@ -5024,6 +5024,28 @@ mod tests {
         assert!(shows(&genie, "Keep only 60"));
         assert!(shows(&genie, "At least"));
         assert!(!shows(&genie, "Label with this field"));
+        assert!(!shows(&genie, "Group by this tag"));
+        let tag = super::Choice {
+            track: 0,
+            label: "NM".to_owned(),
+            item: "1".to_owned(),
+            at: Point::new(10.0, 10.0),
+        };
+        let _ = genie.update(Message::Field(tag));
+        assert!(shows(&genie, "Group by this tag"));
+        let mut ui = simulator(genie.view());
+        ui.click("Color by this tag").unwrap();
+        let color = Message::TrackChanged(0, Change::Color(*b"NM"));
+        assert!(ui.into_messages().any(|message| message == color));
+        let _ = genie.update(color);
+        assert_eq!(
+            genie.session.as_ref().unwrap().tracks[0].options.color,
+            Some(*b"NM")
+        );
+        assert!(!shows(&genie, "Group by this tag"));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(20.5, 40.0)));
+        assert!(shows(&genie, "Color by NM"));
+        let _ = genie.update(Message::MenuDismissed);
         let rule = Rule {
             label: "MAPQ".to_owned(),
             test: Test::AtLeast(61.0),

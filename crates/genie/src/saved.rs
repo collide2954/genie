@@ -13,7 +13,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot};
+use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, tag, tag_name};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -339,7 +339,10 @@ fn options(section: &Section) -> Options {
         downsample: section.value("downsample") != Some("off"),
         group: section
             .value("group")
-            .and_then(|name| find(&GROUPS, name))
+            .and_then(|name| {
+                find(&GROUPS, name)
+                    .or_else(|| Some(Grouping::Tag(tag(name.strip_prefix("tag ")?)?)))
+            })
             .unwrap_or_default(),
         methyl: Methyl {
             code: 0,
@@ -354,6 +357,7 @@ fn options(section: &Section) -> Options {
             supplementary: section.value("supplementary") != Some("off"),
             failed: on("failed"),
         },
+        color: section.value("colorby").and_then(tag),
     }
 }
 
@@ -370,8 +374,13 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
     if !options.downsample {
         entries.push(("downsample", "off".to_owned()));
     }
-    if options.group != Grouping::None {
-        entries.push(("group", name(&GROUPS, options.group).to_owned()));
+    match options.group {
+        Grouping::None => {}
+        Grouping::Tag(tag) => entries.push(("group", format!("tag {}", tag_name(tag)))),
+        group => entries.push(("group", name(&GROUPS, group).to_owned())),
+    }
+    if let Some(tag) = options.color {
+        entries.push(("colorby", tag_name(tag)));
     }
     if options.methyl.separate {
         entries.push(("strands", "separate".to_owned()));
@@ -476,7 +485,19 @@ mod tests {
                 supplementary: false,
                 failed: true,
             },
+            color: Some(*b"NM"),
         }
+    }
+
+    #[test]
+    fn read_tracks_keep_their_tag_group_and_tag_colors() {
+        let text = saved().text(&base());
+        assert!(text.contains("colorby = NM"), "{text}");
+        let mut tagged = saved();
+        tagged.tracks[0].options.group = Grouping::Tag(*b"CB");
+        let text = tagged.text(&base());
+        assert!(text.contains("group = tag CB"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(tagged));
     }
 
     fn saved() -> Saved {

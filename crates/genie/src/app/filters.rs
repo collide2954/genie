@@ -2,6 +2,7 @@ use genie_formats::fields::{self, Rule, Test};
 use iced::widget::{Column, button, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
+use crate::track::{Change, Grouping, tag};
 use crate::{font, menu, style};
 
 use super::{Choice, Filtering, Genie, Message};
@@ -103,6 +104,24 @@ impl Genie {
                 chosen,
             ));
             height += SEPARATOR + ROW;
+        }
+        if let Some(name) = tag(&picked.label).filter(|_| track.source.has_reads()) {
+            let options = track.options;
+            let group = Message::TrackChanged(id, Change::Group(Grouping::Tag(name)));
+            let color = Message::TrackChanged(id, Change::Color(name));
+            content = content
+                .push(menu::separator())
+                .push(choice(
+                    "Group by this tag".to_owned(),
+                    group,
+                    options.group == Grouping::Tag(name),
+                ))
+                .push(choice(
+                    "Color by this tag".to_owned(),
+                    color,
+                    options.color == Some(name),
+                ));
+            height += SEPARATOR + 2.0 * ROW;
         }
         Some(menu::sized(
             content,
