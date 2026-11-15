@@ -124,6 +124,11 @@ fn is_sample_column(name: &str) -> bool {
 fn delimited(reader: impl BufRead) -> Result<Table, Error> {
     let mut section = Section::Table;
     let mut header: Option<(Vec<String>, char)> = None;
+    // Lines that start with # and can be the header, as in "#sample<tab>population". Two or
+    // more of them before the first other line are the lines of a cBioPortal file, and the
+    // first of them gives the names to show.
+    let mut candidates: Vec<(Vec<String>, char)> = Vec::new();
+    let mut shown: Option<Vec<String>> = None;
     let mut rows: Vec<Vec<String>> = Vec::new();
     lines(reader, |_, line| {
         if let Some(comment) = line.strip_prefix('#') {
@@ -135,7 +140,6 @@ fn delimited(reader: impl BufRead) -> Result<Table, Error> {
             {
                 section = Section::Other;
             } else if section == Section::Table && header.is_none() {
-                // A header line can start with #, as in "#sample<tab>population".
                 let found = delimiter(marker).filter(|&delimiter| {
                     delimiter == '\t'
                         || split(marker, delimiter)
@@ -143,7 +147,7 @@ fn delimited(reader: impl BufRead) -> Result<Table, Error> {
                             .is_some_and(|name| is_sample_column(name))
                 });
                 if let Some(delimiter) = found {
-                    header = Some((split(marker, delimiter), delimiter));
+                    candidates.push((split(marker, delimiter), delimiter));
                 }
             }
             return Ok(());
@@ -152,14 +156,27 @@ fn delimited(reader: impl BufRead) -> Result<Table, Error> {
             return Ok(());
         }
         match &header {
+            None if candidates.len() == 1 => {
+                let (names, delimiter) = candidates.remove(0);
+                rows.push(split(line, delimiter));
+                header = Some((names, delimiter));
+            }
             None => {
                 let delimiter = delimiter(line).unwrap_or('\t');
-                header = Some((split(line, delimiter), delimiter));
+                let names = split(line, delimiter);
+                shown = candidates
+                    .first()
+                    .map(|(first, _)| first.clone())
+                    .filter(|first| first.len() == names.len());
+                header = Some((names, delimiter));
             }
             Some((_, delimiter)) => rows.push(split(line, *delimiter)),
         }
         Ok(())
     })?;
+    if header.is_none() && !candidates.is_empty() {
+        header = Some(candidates.remove(0));
+    }
     let Some((mut names, _)) = header else {
         return Err(Error::Invalid(Reason::SampleTable));
     };
@@ -189,7 +206,13 @@ fn delimited(reader: impl BufRead) -> Result<Table, Error> {
             (name, others(fields))
         })
         .collect();
-    let columns = others(names);
+    let columns = others(match shown {
+        Some(mut shown) => {
+            shown.truncate(names.len());
+            shown
+        }
+        None => names,
+    });
     Ok(Table::new(columns, rows))
 }
 
@@ -322,6 +345,34 @@ mod tests {
         let marked = opened("#sample\tpop\n# a note\nS1\tEUR\n", "groups.tsv");
         assert_eq!(marked.columns, ["pop"]);
         assert_eq!(fields(&marked, "S1"), pairs(&[("pop", "EUR")]));
+    }
+
+    /// cBioPortal clinical files start with four # lines: the names to show, the descriptions,
+    /// the types and the priorities. The line after them is the header.
+    #[test]
+    fn cbioportal_files_take_the_header_after_their_four_lines_and_show_their_names() {
+        let text = "#Patient Identifier\tSample Identifier\tCancer Type\tTMB (nonsynonymous)\n\
+            #Identifier of a patient.\tA unique sample identifier.\tCancer type.\tTMB.\n\
+            #STRING\tSTRING\tSTRING\tNUMBER\n\
+            #1\t1\t1\t1\n\
+            PATIENT_ID\tSAMPLE_ID\tCANCER_TYPE\tTMB_NONSYNONYMOUS\n\
+            TCGA-OR-A5J1\tTCGA-OR-A5J1-01\tAdrenocortical Carcinoma\t0.6\n\
+            TCGA-OR-A5J2\tTCGA-OR-A5J2-01\tAdrenocortical Carcinoma\t1.1\n";
+        let table = opened(text, "data_clinical_sample.txt");
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.columns,
+            ["Patient Identifier", "Cancer Type", "TMB (nonsynonymous)"]
+        );
+        assert_eq!(
+            fields(&table, "TCGA-OR-A5J1-01"),
+            pairs(&[
+                ("Patient Identifier", "TCGA-OR-A5J1"),
+                ("Cancer Type", "Adrenocortical Carcinoma"),
+                ("TMB (nonsynonymous)", "0.6")
+            ])
+        );
+        assert!(table.is_number(2));
     }
 
     #[test]
