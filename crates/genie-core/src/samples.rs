@@ -5,7 +5,18 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 /// Values that mean that the table has no value, compared without case.
-const MISSING: [&str; 6] = ["", ".", "na", "n/a", "nan", "null"];
+const MISSING: [&str; 10] = [
+    "",
+    ".",
+    "na",
+    "n/a",
+    "nan",
+    "null",
+    "[not available]",
+    "[not applicable]",
+    "[unknown]",
+    "[not evaluated]",
+];
 
 /// A table with a row for each sample and a column for each field.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -405,6 +416,22 @@ mod tests {
         assert!(table.has("NA3") && !table.has("NA9") && !table.has(""));
         let names = ["NA1", "NA9", "NA3"].map(str::to_owned);
         assert_eq!(table.matches(&names), 2);
+    }
+
+    /// cBioPortal writes missing values in brackets.
+    #[test]
+    fn values_in_the_brackets_of_cbioportal_are_missing() {
+        let table = Table::new(
+            vec!["weight".to_owned(), "stage".to_owned()],
+            vec![
+                row("S1", &["[Not Available]", "[Unknown]"]),
+                row("S2", &["40", "[Not Applicable]"]),
+                row("S3", &["[Not Evaluated]", "II"]),
+            ],
+        );
+        assert_eq!(table.fields("S1"), Vec::<(String, String)>::new());
+        assert_eq!(table.value("S3", 1), Some("II"));
+        assert!(table.is_number(0));
     }
 
     #[test]
