@@ -734,6 +734,8 @@ pub struct Choice {
     pub label: String,
     pub item: String,
     pub at: Point,
+    /// True for a field of the sample table, false for a field of the file of the track.
+    pub sample: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1725,6 +1727,7 @@ mod tests {
             contig: "chr1".to_owned(),
             detail: crate::card::Detail::Feature(feature),
             at: Point::ORIGIN,
+            samples: Vec::new(),
             fields: Vec::new(),
             effects: crate::card::Changes::default(),
         });
@@ -5171,6 +5174,39 @@ mod tests {
     }
 
     #[test]
+    fn genotype_cards_list_the_fields_of_their_sample() {
+        let mut genie = with_sample_table();
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 28.0))));
+        assert!(shows(&genie, "NA2 · homozygous alternate"));
+        assert!(shows(&genie, "AFR"));
+        assert!(shows(&genie, "45"));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(20.5, 28.0)));
+        let text = genie.copy_text().unwrap();
+        assert!(text.contains("pop: AFR\nage: 45\nQuality: 50"), "{text}");
+        let field = super::Choice {
+            track: 0,
+            label: "pop".to_owned(),
+            item: "AFR".to_owned(),
+            at: Point::new(10.0, 10.0),
+            sample: true,
+        };
+        let _ = genie.update(Message::Field(field));
+        assert!(shows(&genie, "Sort by this field"));
+        assert!(!shows(&genie, "Keep only AFR"));
+        let mut ui = simulator(genie.view());
+        ui.click("Group by this field").unwrap();
+        for message in ui.into_messages().collect::<Vec<_>>() {
+            let _ = genie.update(message);
+        }
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.choice.group.as_deref(), Some("pop"));
+        let _ = genie.update(Message::CardClosed);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
+        assert!(shows(&genie, "rs20"));
+        assert!(!shows(&genie, "45"));
+    }
+
+    #[test]
     fn genotype_rows_under_group_bands_show_their_sample() {
         let mut genie = with_sample_table();
         arrange(&mut genie, Arranging::Group("pop".to_owned()));
@@ -5258,6 +5294,7 @@ mod tests {
             label: "MAPQ".to_owned(),
             item: "60".to_owned(),
             at: Point::new(10.0, 10.0),
+            sample: false,
         };
         let _ = genie.update(Message::Field(choice));
         assert!(shows(&genie, "Keep only 60"));
@@ -5269,6 +5306,7 @@ mod tests {
             label: "NM".to_owned(),
             item: "1".to_owned(),
             at: Point::new(10.0, 10.0),
+            sample: false,
         };
         let _ = genie.update(Message::Field(tag));
         assert!(shows(&genie, "Group by this tag"));

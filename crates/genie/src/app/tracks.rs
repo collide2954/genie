@@ -6,6 +6,7 @@ use std::time::SystemTime;
 
 use genie_core::methylation::Site;
 use genie_core::{Region, Span, Target, Viewport};
+use genie_formats::fields::Field;
 use genie_render::features::Mode;
 use genie_render::{alignments, features, links, segments, signal, variants};
 use iced::futures::channel::mpsc;
@@ -32,7 +33,7 @@ use super::orders::Answer;
 use super::view::{body_height, segment_range, signal_columns, signal_scale};
 use super::{
     Filtering, Genie, Lane, Message, Opening, Popup, Preparation, Preparing, Ranging, Renaming,
-    Status,
+    Session, Status,
 };
 
 pub(super) const TRACK_NAME: &str = "track-name";
@@ -528,6 +529,7 @@ impl Genie {
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[contig].name.clone(),
+            samples: sample_fields(session, &detail),
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
             fields,
@@ -873,6 +875,26 @@ impl Genie {
         );
         Task::batch([self.fetch_features(), names])
     }
+}
+
+/// The fields of the sample of a card in the sample table of the session.
+fn sample_fields(session: &Session, detail: &Detail) -> Vec<Field> {
+    let sample = match detail {
+        Detail::Variant {
+            sample: Some((name, _)),
+            ..
+        }
+        | Detail::Segment { sample: name, .. } => name.as_str(),
+        _ => return Vec::new(),
+    };
+    session.samples.as_ref().map_or_else(Vec::new, |samples| {
+        samples
+            .table
+            .fields(sample)
+            .into_iter()
+            .map(|(label, value)| Field { label, value })
+            .collect()
+    })
 }
 
 fn read_detail(

@@ -2,10 +2,10 @@ use genie_formats::fields::{self, Rule, Test};
 use iced::widget::{Column, button, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
-use crate::track::{Change, Grouping, tag};
+use crate::track::{Change, Grouping, Track, tag};
 use crate::{font, menu, style};
 
-use super::{Choice, Filtering, Genie, Message};
+use super::{Arranging, Choice, Filtering, Genie, Message, Sampling};
 
 const NUMBER: &str = "field-number";
 const WIDTH: f32 = 240.0;
@@ -39,6 +39,9 @@ impl Genie {
             .iter()
             .find(|track| track.id == picked.track)?;
         let id = picked.track;
+        if picked.sample {
+            return Some(self.sample_field_menu(picked, track));
+        }
         let add = |test| {
             Message::Filter(
                 id,
@@ -129,5 +132,42 @@ impl Genie {
             self.window,
             (WIDTH, height),
         ))
+    }
+
+    /// The menu of a field of the sample table: group, sort or color the samples by it.
+    fn sample_field_menu(&self, picked: &Choice, track: &Track) -> Element<'_, Message> {
+        let (field, wanted) = (&picked.label, &track.choice);
+        let is = |slot: &Option<String>| slot.as_deref() == Some(field.as_str());
+        let rows = [
+            (
+                "Group by this field",
+                Arranging::Group(field.clone()),
+                is(&wanted.group),
+            ),
+            (
+                "Sort by this field",
+                Arranging::Sort(field.clone()),
+                is(&wanted.sort),
+            ),
+            (
+                "Color by this field",
+                Arranging::Color(field.clone()),
+                is(&wanted.color),
+            ),
+        ];
+        let count = rows.len();
+        let content = Column::new()
+            .spacing(1)
+            .push(
+                container(text(field.clone()).size(11).style(style::muted))
+                    .padding([3, 8])
+                    .height(HEADING - 1.0),
+            )
+            .extend(rows.into_iter().map(|(words, arranging, chosen)| {
+                let message = Message::Samples(Sampling::Arrange(track.id, arranging));
+                choice(words.to_owned(), message, chosen)
+            }));
+        let height = HEADING + count as f32 * ROW + PADDING;
+        menu::sized(content, picked.at, self.window, (WIDTH, height))
     }
 }

@@ -536,6 +536,7 @@ impl Genie {
                 wrong: hit.mismatches.len(),
             },
             at: pointer.at,
+            samples: Vec::new(),
             fields: Vec::new(),
             effects: Changes::default(),
         })

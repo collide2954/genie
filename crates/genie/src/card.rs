@@ -85,6 +85,8 @@ pub struct Card {
     pub contig: String,
     pub detail: Detail,
     pub at: Point,
+    /// The fields of the sample of the card in the sample table.
+    pub samples: Vec<Field>,
     pub fields: Vec<Field>,
     pub effects: Changes,
 }
@@ -449,8 +451,9 @@ fn locus(card: &Card, span: Region) -> Locus {
 pub fn plain(card: &Card) -> String {
     let (title, span, lines) = content(&card.detail);
     let fields = card
-        .fields
+        .samples
         .iter()
+        .chain(&card.fields)
         .map(|field| format!("{}: {}", field.label, field.value));
     let parts = other_parts(&card.detail)
         .iter()
@@ -483,7 +486,9 @@ fn wrapped(text: &str, width: f32, character: f32) -> usize {
     text.chars().count().div_ceil(per_line).max(1)
 }
 
-fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
+/// The items of a field value, each with a menu of what genie can do with it. A field of the
+/// sample table is a `sample` field.
+fn items<'a>(track: u64, label: &str, value: &str, sample: bool) -> Element<'a, Message> {
     let parts: Vec<String> = fields::items(value).map(str::to_owned).collect();
     if parts.is_empty() {
         return text(value.to_owned())
@@ -509,6 +514,7 @@ fn items<'a>(track: u64, label: &str, value: &str) -> Element<'a, Message> {
                     label: label.clone(),
                     item: item.clone(),
                     at,
+                    sample,
                 })
             },
         ));
@@ -550,9 +556,14 @@ fn part_row<'a>(part: &Part, pinned: bool) -> Element<'a, Message> {
     .into()
 }
 
-fn field_row<'a>(track: Option<u64>, label: String, value: String) -> Element<'a, Message> {
+fn field_row<'a>(
+    track: Option<u64>,
+    label: String,
+    value: String,
+    sample: bool,
+) -> Element<'a, Message> {
     let cell = match track {
-        Some(track) => items(track, &label, &value),
+        Some(track) => items(track, &label, &value, sample),
         None => text(value)
             .size(11)
             .wrapping(WRAP)
@@ -607,32 +618,37 @@ fn scrolled(body: Element<'_, Message>, height: f32) -> Element<'_, Message> {
         .into()
 }
 
-pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
-    let (title, span, lines) = content(&card.detail);
-    let parts = other_parts(&card.detail);
-    let width = if card.fields.is_empty() && parts.is_empty() {
-        WIDTH
-    } else {
-        WIDE
-    };
-    let shown = if pinned {
-        card.fields.len()
-    } else {
-        card.fields.len().min(HOVER_FIELDS)
-    };
-    let hidden = card.fields.len() - shown;
-    let value_width = WIDE - 2.0 * PADDING - LABEL_WIDTH - FIELD_GAP;
-    let rows: Vec<(String, String)> = card.fields[..shown]
-        .iter()
-        .map(|field| {
+/// The fields of a card that show: all of them on a pinned card, and the first ones else.
+/// The fields of the sample come first, and each row says if it is a field of the sample.
+fn shown_fields(card: &Card, pinned: bool) -> (Vec<(String, String, bool)>, usize) {
+    let all = card.samples.len() + card.fields.len();
+    let shown = if pinned { all } else { all.min(HOVER_FIELDS) };
+    let samples = card.samples.iter().map(|field| (field, true));
+    let rows = samples
+        .chain(card.fields.iter().map(|field| (field, false)))
+        .take(shown)
+        .map(|(field, sample)| {
             let value = if pinned {
                 field.value.clone()
             } else {
                 short(&field.value)
             };
-            (field.label.clone(), value)
+            (field.label.clone(), value, sample)
         })
         .collect();
+    (rows, all - shown)
+}
+
+pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
+    let (title, span, lines) = content(&card.detail);
+    let parts = other_parts(&card.detail);
+    let width = if card.fields.is_empty() && card.samples.is_empty() && parts.is_empty() {
+        WIDTH
+    } else {
+        WIDE
+    };
+    let (rows, hidden) = shown_fields(card, pinned);
+    let value_width = WIDE - 2.0 * PADDING - LABEL_WIDTH - FIELD_GAP;
     let count = lines.len() + wrapped(&title, width - 2.0 * PADDING, TITLE_CHARACTER) - 1
         + card
             .effects
@@ -643,7 +659,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         + usize::from(hidden > 0)
         + rows
             .iter()
-            .map(|(label, value)| {
+            .map(|(label, value, _)| {
                 wrapped(label, LABEL_WIDTH, CHARACTER).max(wrapped(value, value_width, CHARACTER))
             })
             .sum::<usize>();
@@ -676,10 +692,9 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .others()
             .map(|line| text(line).size(11).style(style::muted).into()),
     )
-    .extend(
-        rows.into_iter()
-            .map(|(label, value)| field_row(pinned.then_some(card.track), label, value)),
-    )
+    .extend(rows.into_iter().map(|(label, value, sample)| {
+        field_row(pinned.then_some(card.track), label, value, sample)
+    }))
     .extend(parts.iter().map(|part| part_row(part, pinned)))
     .spacing(2);
     if hidden > 0 {
@@ -792,6 +807,7 @@ mod tests {
             at: Point::ORIGIN,
             fields: Vec::new(),
             effects: Changes::default(),
+            samples: Vec::new(),
         };
         assert_eq!(
             plain(&card(Strand::Forward, "GGATCC", 0)),
@@ -867,6 +883,7 @@ mod tests {
                 at: Point::ORIGIN,
                 fields: Vec::new(),
                 effects: Changes::default(),
+                samples: Vec::new(),
             };
             plain(&card)
         };
@@ -954,6 +971,7 @@ mod tests {
                 field("Highest DNase Z-score", "2.5"),
             ],
             effects: Changes::default(),
+            samples: Vec::new(),
         };
         assert_eq!(
             plain(&card),
@@ -981,6 +999,7 @@ mod tests {
                 lines: effects[..2].iter().map(|line| (*line).to_owned()).collect(),
                 others: 2,
             },
+            samples: Vec::new(),
         };
         let text = plain(&card);
         let lines: Vec<&str> = text.lines().collect();
@@ -1030,6 +1049,7 @@ mod tests {
             at: Point::ORIGIN,
             fields: Vec::new(),
             effects: Changes::default(),
+            samples: Vec::new(),
         };
         let window = Size::new(1280.0, 400.0);
         let bounds = |card: &Card, pinned: bool| {
@@ -1061,6 +1081,7 @@ mod tests {
             at: Point::new(100.0, 780.0),
             fields: vec![field(label, value)],
             effects: Changes::default(),
+            samples: Vec::new(),
         };
         let window = Size::new(1280.0, 800.0);
         for pinned in [false, true] {
