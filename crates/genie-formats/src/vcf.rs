@@ -8,6 +8,7 @@ use crate::annotations::{self, Layout};
 use crate::bgzf::Bgzf;
 use crate::features::Entry;
 use crate::fields::{self, Field};
+use crate::sv;
 use crate::tabix::Index;
 use crate::table::Table;
 use crate::text::lines;
@@ -149,6 +150,8 @@ pub fn parse<'a>(line: &'a str, layouts: &[Layout]) -> Result<Option<(&'a str, V
         None => Vec::new(),
     };
     let start = position.saturating_sub(1);
+    let span = extent(start, reference, info);
+    let first = alternates.split(',').next().unwrap_or_default();
     let (annotations, kept) = annotations::split(info, layouts);
     Ok(Some((
         contig,
@@ -158,13 +161,14 @@ pub fn parse<'a>(line: &'a str, layouts: &[Layout]) -> Result<Option<(&'a str, V
             } else {
                 id.to_owned()
             },
-            span: extent(start, reference, info),
+            span,
             reference: reference.to_owned(),
             alternates: alternates.split(',').map(str::to_owned).collect(),
             quality,
             filter: filter.to_owned(),
             info: cut(&kept),
             annotations,
+            structure: sv::structure(reference, first, info, span),
             calls,
         },
     )))
@@ -282,7 +286,7 @@ mod tests {
     use std::io::Cursor;
 
     use genie_core::Region;
-    use genie_core::variant::Call;
+    use genie_core::variant::{Call, Sv};
 
     use super::{extent, fields, header, names, parse, query, read_table};
     use crate::bgzf::Bgzf;
@@ -326,6 +330,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(variant.span, Region::between(9, 500));
+        let structure = variant.structure.unwrap();
+        assert_eq!(
+            (structure.kind, structure.length),
+            (Sv::Deletion, Some(490))
+        );
     }
 
     #[test]

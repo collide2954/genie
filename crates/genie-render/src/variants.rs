@@ -212,6 +212,7 @@ mod tests {
             filter: "PASS".to_owned(),
             info: String::new(),
             annotations: Annotations::default(),
+            structure: None,
             calls: calls.to_vec(),
         }
     }

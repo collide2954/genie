@@ -854,6 +854,7 @@ mod tests {
             filter: "PASS".to_owned(),
             info: info.to_owned(),
             annotations: Annotations::default(),
+            structure: None,
             calls: Vec::new(),
         }
     }

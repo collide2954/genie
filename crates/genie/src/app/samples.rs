@@ -368,6 +368,7 @@ mod tests {
             filter: "PASS".to_owned(),
             info: String::new(),
             annotations: Annotations::default(),
+            structure: None,
             calls: vec![
                 Call::Het,
                 Call::Reference,

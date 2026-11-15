@@ -84,6 +84,31 @@ pub struct Annotations {
     pub fields: Vec<(String, String)>,
 }
 
+/// The type of a structural variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sv {
+    Deletion,
+    Duplication,
+    Inversion,
+    Insertion,
+    CopyNumber,
+    Breakend,
+}
+
+/// What a VCF record says about a structural variant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Structure {
+    pub kind: Sv,
+    /// The number of bases that the variant changes, from SVLEN or from its span.
+    pub length: Option<u64>,
+    /// The contig and the position (from 0) of the other end of a breakend.
+    pub mate: Option<(String, u64)>,
+    /// The confidence intervals of the start and the end, in bases around them.
+    pub around: [Option<(i64, i64)>; 2],
+    /// False when the caller marks the variant as IMPRECISE.
+    pub precise: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub id: String,
@@ -94,6 +119,7 @@ pub struct Variant {
     pub filter: String,
     pub info: String,
     pub annotations: Annotations,
+    pub structure: Option<Structure>,
     pub calls: Vec<Call>,
 }
 
@@ -144,6 +170,7 @@ mod tests {
             filter: "PASS".to_owned(),
             info: String::new(),
             annotations: Annotations::default(),
+            structure: None,
             calls: Vec::new(),
         }
     }

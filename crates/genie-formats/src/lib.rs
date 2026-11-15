@@ -32,6 +32,7 @@ pub mod samples;
 pub mod seg;
 mod sidecar;
 pub mod sort;
+pub mod sv;
 pub mod tabix;
 pub mod table;
 mod text;
