@@ -26,7 +26,7 @@ use crate::reference;
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Change, Content, Pile, Source, Track};
+use crate::track::{self, Change, Content, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
 use super::view::{body_height, segment_range, signal_columns, signal_scale};
@@ -569,7 +569,6 @@ impl Genie {
         let length = viewport.length();
         let wanted = visible.expand(visible.len(), length);
         let step = track::step(viewport.scale());
-        let detail = track::detailed(visible);
         let reference = &session.reference;
         session
             .tracks
@@ -580,12 +579,18 @@ impl Genie {
                 track.slot_mut(panel).wanted = Some((contig, wanted));
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let (reference, rules) = (Arc::clone(reference), track.filter.rules.clone());
+                let detail = source.detailed(visible);
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        let scope = (step, detail, rules.as_slice());
+                        let scope = Scope {
+                            step,
+                            detail,
+                            rules: &rules,
+                            length,
+                        };
                         let result =
                             track::load_kept(&source, &name, wanted, options, scope, bases);
                         match &result {

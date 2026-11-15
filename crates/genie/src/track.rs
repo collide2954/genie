@@ -158,20 +158,45 @@ impl Source {
         }
     }
 
+    /// The widest view that shows data.
     pub fn span(&self) -> u64 {
         match &self.format {
             Format::Features(file) => file.span(),
-            Format::Variants(_) => VariantFile::SPAN,
+            Format::Variants(file) => file.span(),
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
             Format::Segments(_) => u64::MAX,
         }
     }
+
+    /// The widest view that shows the features or the variants of a file. Wider views show
+    /// their density, if the file can give one.
+    pub fn detail(&self) -> u64 {
+        match &self.format {
+            Format::Features(_) => FEATURE_SPAN,
+            Format::Variants(_) => VariantFile::SPAN,
+            _ => u64::MAX,
+        }
+    }
+
+    pub fn has_density(&self) -> bool {
+        self.detail() < self.span()
+    }
+
+    /// Whether a view shows the features or the variants, and not their density.
+    pub fn detailed(&self, visible: Region) -> bool {
+        visible.len() <= self.detail()
+    }
 }
 
-pub fn detailed(visible: Region) -> bool {
-    visible.len() <= FEATURE_SPAN
+/// The records of each part of a region, as densities per Mb.
+fn density(region: Region, step: u64, starts: impl IntoIterator<Item = u64>) -> Loaded {
+    let mut tally = genie_core::signal::Tally::new(region, step);
+    for start in starts {
+        tally.add(start);
+    }
+    Loaded::signal(region, tally.summaries(), step)
 }
 
 pub fn step(bases_per_pixel: f64) -> u64 {
@@ -1142,8 +1167,9 @@ impl Track {
             wanted == contig && region.start() <= visible.start() && visible.end() <= region.end()
         };
         let fits = |data: &Loaded| {
-            !self.source.is_bigbed()
-                || matches!(data.content, Content::Features(_)) == detailed(visible)
+            !self.source.has_density()
+                || matches!(data.content, Content::Features(_) | Content::Variants(_))
+                    == self.source.detailed(visible)
         };
         let loaded = slot
             .data(contig)
@@ -1651,14 +1677,23 @@ pub fn load(
     detail: bool,
     reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
-    load_kept(
-        source,
-        contig,
-        region,
-        options,
-        (step, detail, &[]),
-        reference,
-    )
+    let scope = Scope {
+        step,
+        detail,
+        rules: &[],
+        length: region.end(),
+    };
+    load_kept(source, contig, region, options, scope, reference)
+}
+
+/// How to load a region: the step of the summaries, whether to load the records or their
+/// density, the filter, and the length of the contig.
+#[derive(Debug, Clone, Copy)]
+pub struct Scope<'a> {
+    pub step: u64,
+    pub detail: bool,
+    pub rules: &'a [Rule],
+    pub length: u64,
 }
 
 /// Loads like `load`, and a zoomed-out bigBed density counts only the features that pass the
@@ -1668,23 +1703,18 @@ pub fn load_kept(
     contig: &str,
     region: Region,
     options: Options,
-    (step, detail, rules): (u64, bool, &[Rule]),
+    scope: Scope<'_>,
     reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let location = source.data();
     match &source.format {
-        Format::Features(file) => file.load(
-            location,
-            contig,
-            region,
-            step,
-            detail,
-            (rules, DENSITY_BUDGET),
-        ),
-        Format::Variants(file) => file.load(location, contig, region),
-        Format::Reads(file) => file.load(location, contig, region, (options, rules), reference),
+        Format::Features(file) => file.load(location, contig, region, scope, DENSITY_BUDGET),
+        Format::Variants(file) => file.load(location, contig, region, scope),
+        Format::Reads(file) => {
+            file.load(location, contig, region, (options, scope.rules), reference)
+        }
         Format::Signal(file) => {
-            let loaded = file.load(location, contig, region, step, options.methyl)?;
+            let loaded = file.load(location, contig, region, scope.step, options.methyl)?;
             Ok(Loaded { options, ..loaded })
         }
         Format::Links(file) => file.load(location, contig, region),
@@ -1892,9 +1922,9 @@ mod tests {
     use super::reads::Reads;
     use super::{
         Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded, Methyl,
-        Options, Plot, Prepared, SignalFile, Source, TAG_GROUPS, Toggle, Track, Typed, VariantFile,
-        change, contig_names, fits, hides, is_track, link_fields, load, lookup, names, neighbor,
-        open, open_bbi, open_typed, open_with, spans, step,
+        Options, Plot, Prepared, Scope, SignalFile, Source, TAG_GROUPS, Toggle, Track, Typed,
+        VariantFile, change, contig_names, fits, hides, is_track, link_fields, load, load_kept,
+        lookup, names, neighbor, open, open_bbi, open_typed, open_with, spans, step,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2422,7 +2452,7 @@ mod tests {
             scratch.file(&format!("calls.vcf.gz.{suffix}"), index);
             let source = open(path).unwrap();
             assert_eq!(source.samples(), ["S1", "S2", "S3"]);
-            assert_eq!(source.span(), 1_000_000);
+            assert_eq!(source.detail(), 1_000_000);
             let window = region(1_000, 60_000);
             let loaded = load(
                 &source,
@@ -2442,6 +2472,98 @@ mod tests {
             let names = names(&source, &assembly()).unwrap();
             assert!(names.find("rs1001").is_some() || names.find("rs1002").is_some());
         }
+    }
+
+    fn wide(source: &Source, window: Region, step: u64, length: u64) -> Loaded {
+        let scope = Scope {
+            step,
+            detail: false,
+            rules: &[],
+            length,
+        };
+        load_kept(
+            source,
+            "chr1",
+            window,
+            Options::default(),
+            scope,
+            no_reference,
+        )
+        .unwrap()
+    }
+
+    /// The records that densities per Mb stand for.
+    fn records(summaries: &[genie_core::signal::Summary]) -> f64 {
+        summaries
+            .iter()
+            .map(|summary| f64::from(summary.max) * summary.span.len() as f64 / 1e6)
+            .sum()
+    }
+
+    #[test]
+    fn vcf_files_show_a_density_when_the_view_is_wide() {
+        for suffix in ["tbi", "csi"] {
+            let scratch = Scratch::new(&format!("vcf-density-{suffix}"));
+            let data = std::fs::read(fixture("variants.vcf.gz")).unwrap();
+            let path = scratch.file("calls.vcf.gz", data);
+            let index = std::fs::read(fixture(&format!("variants.vcf.gz.{suffix}"))).unwrap();
+            scratch.file(&format!("calls.vcf.gz.{suffix}"), index);
+            let source = open(path).unwrap();
+            assert_eq!(source.span(), u64::MAX);
+            assert_eq!(source.detail(), 1_000_000);
+            assert!(source.has_density());
+            let loaded = wide(&source, region(0, 2_000_000), 16_384, 3_000_000);
+            let summaries = signal(&loaded);
+            let total = records(summaries);
+            assert!((total - 700.0).abs() < 1.0, "{suffix} {total}");
+            let far: Vec<_> = summaries
+                .iter()
+                .filter(|summary| summary.span.start() >= 1_100_000)
+                .copied()
+                .collect();
+            assert!(records(&far) < 1.0, "{suffix} {}", records(&far));
+        }
+        let scratch = Scratch::new("plain-vcf-density");
+        let text = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                    chr1\t20\t.\tA\tG\t.\tPASS\t.\n\
+                    chr1\t30\t.\tA\tG\t.\tPASS\t.\n\
+                    chr1\t2000001\t.\tA\tG\t.\tPASS\t.\n";
+        let source = open(scratch.file("calls.vcf", text)).unwrap();
+        assert_eq!(source.span(), u64::MAX);
+        let loaded = wide(&source, region(0, 4_000_000), 1_000_000, 4_000_000);
+        let densities: Vec<f32> = signal(&loaded).iter().map(|summary| summary.max).collect();
+        assert_eq!(densities, [2.0, 0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn feature_files_show_a_density_when_the_view_is_wide() {
+        let source = open(fixture("genes.bed.gz")).unwrap();
+        assert_eq!((source.span(), source.detail()), (u64::MAX, 10_000_000));
+        let window = region(0, 3_000_000);
+        let close = load(
+            &source,
+            "chr1",
+            window,
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        );
+        let Content::Features(annotation) = &close.unwrap().content else {
+            panic!("expected features");
+        };
+        let count = annotation.features.len() as f64;
+        let total = records(signal(&wide(&source, window, 65_536, 3_000_000)));
+        assert!(
+            count > 10.0 && (total - count).abs() < 1.0,
+            "{count} {total}"
+        );
+        let scratch = Scratch::new("plain-bed-density");
+        let text = "chr1\t10\t20\ta\nchr1\t1500000\t1500100\tb\nchr1\t1600000\t1600100\tc\n";
+        let source = open(scratch.file("marks.bed", text)).unwrap();
+        let loaded = wide(&source, region(0, 2_000_000), 1_000_000, 2_000_000);
+        let densities: Vec<f32> = signal(&loaded).iter().map(|summary| summary.max).collect();
+        assert_eq!(densities, [1.0, 2.0]);
     }
 
     #[test]
@@ -2691,8 +2813,14 @@ mod tests {
         }];
         let whole = region(0, 20_000);
         let density = |rules: &[Rule], budget| {
+            let scope = Scope {
+                step: 16,
+                detail: false,
+                rules,
+                length: 20_000,
+            };
             let loaded = file
-                .load(source.data(), "chr1", whole, 16, false, (rules, budget))
+                .load(source.data(), "chr1", whole, scope, budget)
                 .unwrap();
             let Content::Signal(signal) = loaded.content else {
                 panic!("expected a density");
@@ -3477,7 +3605,12 @@ mod tests {
         let source = open(fixture("reads.bam")).unwrap();
         let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
         let count = |rules: &[Rule]| {
-            let scope = (1, true, rules);
+            let scope = Scope {
+                step: 1,
+                detail: true,
+                rules,
+                length: 8_000,
+            };
             let loaded = super::load_kept(
                 &source,
                 "chr1",

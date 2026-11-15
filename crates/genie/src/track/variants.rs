@@ -1,13 +1,14 @@
 use std::io::BufReader;
 
 use genie_core::Region;
+use genie_core::signal::Tally;
 use genie_core::variant::Variant;
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::Entry;
 use genie_formats::table::Table;
 use genie_formats::{tabix, vcf};
 
-use super::{Loaded, PLAIN_LIMIT, is_compressed, plain, tabix_index};
+use super::{Loaded, PLAIN_LIMIT, Scope, density, is_compressed, plain, tabix_index};
 use crate::location::Location;
 
 #[derive(Debug)]
@@ -65,12 +66,35 @@ impl VariantFile {
         }
     }
 
+    /// The widest view that shows data: all views when the file can give a density.
+    pub fn span(&self) -> u64 {
+        match self {
+            Self::Indexed { index, .. } if !index.has_counts() => Self::SPAN,
+            _ => u64::MAX,
+        }
+    }
+
+    /// The variants of a region, or their density when the view is wider than `SPAN`.
     pub fn load(
         &self,
         location: &Location,
         contig: &str,
         region: Region,
+        scope: Scope<'_>,
     ) -> Result<Loaded, String> {
+        if !scope.detail {
+            return Ok(match self {
+                Self::Table { table, .. } => {
+                    density(region, scope.step, table.starts(contig, region))
+                }
+                Self::Indexed { index, .. } => {
+                    let tally = index
+                        .density(contig, region, scope.step, scope.length)
+                        .unwrap_or_else(|| Tally::new(region, scope.step));
+                    Loaded::signal(region, tally.summaries(), scope.step)
+                }
+            });
+        }
         let variants = self.variants(location, contig, region)?;
         Ok(Loaded::variants(region, variants, self.samples().len()))
     }

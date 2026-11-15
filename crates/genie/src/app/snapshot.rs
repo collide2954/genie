@@ -276,7 +276,7 @@ impl Genie {
         let (contig, viewport) = (session.contig, session.viewport);
         let reference = Arc::clone(&session.reference);
         let visible = viewport.visible();
-        let (step, detail) = (track::step(viewport.scale()), track::detailed(visible));
+        let step = track::step(viewport.scale());
         let jobs: Vec<_> = session
             .tracks
             .iter()
@@ -306,7 +306,12 @@ impl Genie {
         let length = viewport.length();
         for (id, source, name, (contig, region), options, rules) in jobs {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
-            let scope = (step, detail, rules.as_slice());
+            let scope = track::Scope {
+                step,
+                detail: source.detailed(visible),
+                rules: &rules,
+                length,
+            };
             let result =
                 track::load_kept(&source, &name, region, options, scope, bases).map(Arc::new);
             self.on_session(|session| session.accept((id, 0), contig, region, result));

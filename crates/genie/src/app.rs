@@ -1637,6 +1637,18 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
         assert!(shows(&genie, ZOOM_HINT));
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        assert!(!shows(&genie, VARIANT_HINT));
+        let uncounted = Arc::new(Source {
+            location: PathBuf::from("/data/calls.vcf.gz").into(),
+            name: "calls.vcf.gz".to_owned(),
+            data: None,
+            format: Format::Variants(VariantFile::Indexed {
+                index: Index::default(),
+                samples: Vec::new(),
+                infos: Vec::new(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(uncounted)));
         assert!(shows(&genie, VARIANT_HINT));
         let indexed = Format::Signal(SignalFile::BedGraph {
             index: Index::default(),

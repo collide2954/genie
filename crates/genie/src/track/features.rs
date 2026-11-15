@@ -1,13 +1,16 @@
 use std::io::BufReader;
 
+use genie_core::signal::Tally;
 use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Entry, Kind};
-use genie_formats::fields::{self, Rule};
+use genie_formats::fields;
 use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
-use super::{FEATURE_SPAN, Kept, Loaded, PLAIN_LIMIT, is_compressed, plain, tabix_index};
+use super::{
+    FEATURE_SPAN, Kept, Loaded, PLAIN_LIMIT, Scope, density, is_compressed, plain, tabix_index,
+};
 use crate::location::{Location, Reader};
 
 #[derive(Debug)]
@@ -50,10 +53,11 @@ impl FeatureFile {
         }
     }
 
+    /// The widest view that shows data: all views when the file can give a density.
     pub fn span(&self) -> u64 {
         match self {
-            Self::Indexed { .. } | Self::Table { .. } => FEATURE_SPAN,
-            Self::BigBed { .. } => u64::MAX,
+            Self::Indexed { index, .. } if !index.has_counts() => FEATURE_SPAN,
+            _ => u64::MAX,
         }
     }
 
@@ -75,10 +79,27 @@ impl FeatureFile {
         location: &Location,
         contig: &str,
         region: Region,
-        step: u64,
-        detail: bool,
-        (rules, budget): (&[Rule], u64),
+        scope: Scope<'_>,
+        budget: u64,
     ) -> Result<Loaded, String> {
+        let Scope {
+            step,
+            detail,
+            rules,
+            length,
+        } = scope;
+        match self {
+            Self::Table { table, .. } if !detail => {
+                return Ok(density(region, step, table.starts(contig, region)));
+            }
+            Self::Indexed { index, .. } if !detail => {
+                let tally = index
+                    .density(contig, region, step, length)
+                    .unwrap_or_else(|| Tally::new(region, step));
+                return Ok(Loaded::signal(region, tally.summaries(), step));
+            }
+            _ => {}
+        }
         if let Self::BigBed { index } = self
             && !detail
         {
