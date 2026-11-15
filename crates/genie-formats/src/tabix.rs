@@ -339,6 +339,12 @@ impl Index {
             .map_or_else(Vec::new, |id| self.references[id].chunks(region))
     }
 
+    /// Whether the index counts the records of its contigs, as indexes from htslib do. Only
+    /// then can it give densities.
+    pub fn has_counts(&self) -> bool {
+        self.references.iter().any(Bins::has_counts)
+    }
+
     /// An estimate of the records that start in each part of a region of a contig, from the
     /// index alone. `length` is the length of the contig.
     pub fn density(&self, name: &str, region: Region, step: u64, length: u64) -> Option<Tally> {
@@ -563,7 +569,12 @@ pub mod tests {
                 tally.total()
             );
             assert!(index.density("chrX", region(0, 100), 10, 100).is_none());
+            assert!(index.has_counts());
         }
+        let bins: Bins = &[(4681, &[(0, 100)])];
+        let bare = super::tests::index(BED, &["chr1"], &[(bins, &[0])]);
+        assert!(!bare.has_counts());
+        assert!(bare.density("chr1", region(0, 100), 10, 100).is_none());
     }
 
     #[test]

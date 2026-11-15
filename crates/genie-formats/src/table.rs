@@ -68,6 +68,20 @@ impl<T: Clone> Table<T> {
             .map(|(_, item)| item.clone())
             .collect()
     }
+
+    /// The starts of the rows that begin in a region, in order.
+    pub fn starts(&self, contig: &str, region: Region) -> Vec<u64> {
+        let Some(slot) = self.names.iter().position(|name| name == contig) else {
+            return Vec::new();
+        };
+        let items = &self.shelves[slot].items;
+        let first = items.partition_point(|(span, _)| span.start() < region.start());
+        items[first..]
+            .iter()
+            .map(|(span, _)| span.start())
+            .take_while(|start| *start < region.end())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -97,5 +111,17 @@ mod tests {
         assert_eq!(table.query("chr1", Region::between(25, 45)), ["long", "b"]);
         assert_eq!(table.query("chr1", Region::between(500, 600)), ["long"]);
         assert_eq!(table.query("chrX", Region::between(0, 10)), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn starts_count_the_rows_that_begin_in_a_region() {
+        let table = Table::new([
+            row("chr1", 0, 1_000, "long"),
+            row("chr1", 30, 40, "b"),
+            row("chr1", 10, 20, "a"),
+            row("chr1", 50, 60, "c"),
+        ]);
+        assert_eq!(table.starts("chr1", Region::between(5, 50)), [10, 30]);
+        assert_eq!(table.starts("chrX", Region::between(0, 10)), [] as [u64; 0]);
     }
 }

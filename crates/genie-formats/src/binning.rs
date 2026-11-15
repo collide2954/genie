@@ -496,6 +496,10 @@ impl Bins {
         }
     }
 
+    pub fn has_counts(&self) -> bool {
+        self.meta().is_some()
+    }
+
     /// An estimate of the records that start in each part of a region, from the index alone:
     /// the linear index of a TBI or BAI index, or the size of each bin of a CSI index. It needs
     /// the pseudo-bin that htslib adds to its indexes. `length` is the length of the contig.
