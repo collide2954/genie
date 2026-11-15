@@ -420,11 +420,77 @@ pub struct Look {
     pub mods: bool,
 }
 
-fn tint(read: &Read, look: Look) -> Paint {
+/// The color of a read when the track colors reads by a tag.
+#[derive(Debug, Clone, Copy)]
+enum Tagged {
+    Off,
+    Hue(Hue),
+    /// A read without one of the colored values.
+    Other,
+}
+
+/// The colored cells of the bases of a read that differ from the reference, and their letters
+/// when `letters` is true.
+fn mismatches(
+    viewport: Viewport,
+    read: &Read,
+    (top, size): (f32, f32),
+    letters: bool,
+) -> (Vec<Primitive>, Vec<Primitive>) {
+    let cell = cell(1.0 / viewport.scale());
+    let (mut cells, mut marks) = (Vec::new(), Vec::new());
+    for mismatch in read.parts.mismatches.iter().chain(&read.parts.clips) {
+        let base = Base::from_byte(mismatch.base);
+        let paint = if mismatch.quality < FADED_BELOW {
+            Paint::Faded(base)
+        } else {
+            Paint::Base(base)
+        };
+        let x = viewport.to_px(mismatch.position as f64) as f32;
+        cells.push(Primitive::Rect {
+            x,
+            y: top,
+            width: cell.max(1.0),
+            height: size,
+            paint,
+        });
+        if letters {
+            marks.push(Primitive::Text {
+                x: x + cell / 2.0,
+                y: top + size / 2.0,
+                content: Cow::Owned(char::from(mismatch.base).to_string()),
+                size: LETTER_SIZE,
+                paint: Paint::OnBase(base),
+                font: Font::MonoStrong,
+                align: Align::Center,
+            });
+        }
+    }
+    (cells, marks)
+}
+
+fn tagged(hues: &[Option<Hue>], index: usize) -> Tagged {
+    if hues.is_empty() {
+        return Tagged::Off;
+    }
+    hues.get(index)
+        .copied()
+        .flatten()
+        .map_or(Tagged::Other, Tagged::Hue)
+}
+
+fn tint(read: &Read, look: Look, tagged: Tagged) -> Paint {
     let strand = read.alignment.strand();
     let faint = read.alignment.mapq == 0;
+    let plain = Paint::Plain(if faint { Shade::Faded } else { Shade::Full });
     if look.mods {
-        return Paint::Plain(if faint { Shade::Faded } else { Shade::Full });
+        return plain;
+    }
+    match tagged {
+        Tagged::Hue(hue) if faint => return Paint::Tint(hue),
+        Tagged::Hue(hue) => return Paint::Pair(hue),
+        Tagged::Other => return plain,
+        Tagged::Off => {}
     }
     if faint {
         return Paint::Faint(strand);
@@ -484,11 +550,23 @@ pub fn reads(
     mode: Mode,
     look: Look,
 ) -> Vec<Primitive> {
+    painted(viewport, reads, rows, groups, mode, (look, &[]))
+}
+
+/// The reads like `reads`, with a hue for each read when the track colors reads by a tag. An
+/// empty list of hues keeps the colors of `look`.
+pub fn painted(
+    viewport: Viewport,
+    reads: &[Read],
+    rows: &[usize],
+    groups: &[(usize, String)],
+    mode: Mode,
+    (look, hues): (Look, &[Option<Hue>]),
+) -> Vec<Primitive> {
     let (row_height, offset, size) = shape(mode);
     let visible = viewport.visible();
     let width = viewport.width() as f32;
     let pixels = 1.0 / viewport.scale();
-    let cell = cell(pixels);
     let letters = pixels >= LETTERS_FROM && mode == Mode::Expanded;
     let px = |bp: u64| viewport.to_px(bp as f64) as f32;
     let bar = |region: Region, y: f32, height: f32, paint: Paint| {
@@ -504,13 +582,13 @@ pub fn reads(
     };
     let mut primitives = Vec::new();
     let mut marks = Vec::new();
-    for (read, &row) in reads.iter().zip(rows) {
+    for (index, (read, &row)) in reads.iter().zip(rows).enumerate() {
         let span = read.extent;
         if span.start() > visible.end() || span.end() < visible.start() {
             continue;
         }
         let top = row as f32 * row_height + offset + bands(row, groups);
-        let tint = tint(read, look);
+        let tint = tint(read, look, tagged(hues, index));
         for block in &read.parts.blocks {
             primitives.push(bar(*block, top, size, tint));
         }
@@ -531,43 +609,22 @@ pub fn reads(
         if look.mods {
             primitives.extend(modified(viewport, read, (top, size)));
         }
-        for mismatch in read.parts.mismatches.iter().chain(&read.parts.clips) {
-            let base = Base::from_byte(mismatch.base);
-            let paint = if mismatch.quality < FADED_BELOW {
-                Paint::Faded(base)
-            } else {
-                Paint::Base(base)
-            };
-            let x = px(mismatch.position);
-            primitives.push(Primitive::Rect {
-                x,
-                y: top,
-                width: cell.max(1.0),
-                height: size,
-                paint,
-            });
-            if letters {
-                marks.push(Primitive::Text {
-                    x: x + cell / 2.0,
-                    y: top + size / 2.0,
-                    content: Cow::Owned(char::from(mismatch.base).to_string()),
-                    size: LETTER_SIZE,
-                    paint: Paint::OnBase(base),
-                    font: Font::MonoStrong,
-                    align: Align::Center,
-                });
-            }
-        }
+        let (bases, letters) = mismatches(viewport, read, (top, size), letters);
+        primitives.extend(bases);
+        marks.extend(letters);
         if pixels >= 1.0 {
-            for (position, _) in &read.parts.insertions {
-                primitives.push(Primitive::Rect {
-                    x: px(*position) - 1.0,
-                    y: top,
-                    width: 2.0,
-                    height: size,
-                    paint: Paint::Insertion,
-                });
-            }
+            primitives.extend(
+                read.parts
+                    .insertions
+                    .iter()
+                    .map(|(position, _)| Primitive::Rect {
+                        x: px(*position) - 1.0,
+                        y: top,
+                        width: 2.0,
+                        height: size,
+                        paint: Paint::Insertion,
+                    }),
+            );
         }
     }
     for (index, (first, label)) in groups.iter().enumerate() {
@@ -1090,6 +1147,32 @@ mod tests {
                 .all(|(_, paint)| !matches!(paint, Paint::Modified(_)))
         );
         assert_eq!(plain[0].1, Paint::Strand(Strand::Forward));
+    }
+
+    #[test]
+    fn reads_of_colored_tag_values_take_their_hue_and_others_are_grey() {
+        let block = || read(10, 0, vec![(Op::Match, 10)], &[b'A'; 10]);
+        let mut repeat = block();
+        repeat.alignment.mapq = 0;
+        let shown = [block(), block(), repeat];
+        let hues = [Some(Hue::Green), None, Some(Hue::Green)];
+        let found = rects(&super::painted(
+            view(0, 100),
+            &shown,
+            &[0, 1, 2],
+            &[],
+            Mode::Expanded,
+            (PAIRS, &hues),
+        ));
+        let paints: Vec<Paint> = found.into_iter().map(|(_, paint)| paint).collect();
+        assert_eq!(
+            paints,
+            [
+                Paint::Pair(Hue::Green),
+                Paint::Plain(Shade::Full),
+                Paint::Tint(Hue::Green)
+            ]
+        );
     }
 
     #[test]
