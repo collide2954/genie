@@ -41,9 +41,21 @@ pub struct Entry {
 #[derive(Debug)]
 struct Layout {
     unknown: Vec<(u64, u64)>,
-    masked: Vec<(u64, u64)>,
+    masks: Masks,
     bases: u64,
 }
+
+/// Where the mask blocks of a sequence are in the file: their number, and the place of their
+/// starts. Their sizes follow the starts. A chromosome can have hundreds of thousands, so a
+/// fetch reads only the blocks near its region.
+#[derive(Debug, Clone, Copy)]
+struct Masks {
+    count: u64,
+    starts: u64,
+}
+
+/// The fewest and the most mask blocks that one read of a fetch takes.
+const WINDOW: (u64, u64) = (64, 4_096);
 
 #[derive(Debug)]
 pub struct TwoBit {
@@ -159,7 +171,9 @@ impl TwoBit {
             })
             .collect();
         apply(&layout.unknown, region, &mut bases, |base| *base = b'N');
-        apply(&layout.masked, region, &mut bases, u8::make_ascii_lowercase);
+        let length = self.entries[index].length;
+        let masked = self.masked(reader, layout.masks, region, length)?;
+        apply(&masked, region, &mut bases, u8::make_ascii_lowercase);
         Ok(bases)
     }
 
@@ -170,14 +184,126 @@ impl TwoBit {
         let entry = &self.entries[index];
         reader.seek(SeekFrom::Start(entry.offset + 4))?;
         let unknown = blocks(reader, self.order, entry.length)?;
-        let masked = blocks(reader, self.order, entry.length)?;
+        let count = u64::from(self.order.word(bytes(reader)?));
+        if count > entry.length {
+            return Err(Error::Invalid(Reason::BadBlockCount));
+        }
+        let starts = reader.stream_position()?;
+        reader.seek(SeekFrom::Start(starts + 8 * count))?;
         let _reserved: [u8; 4] = bytes(reader)?;
         let layout = Arc::new(Layout {
             unknown,
-            masked,
+            masks: Masks { count, starts },
             bases: reader.stream_position()?,
         });
         Ok(Arc::clone(self.layouts[index].get_or_init(|| layout)))
+    }
+
+    /// The mask blocks that touch a region. A search in the starts finds the first block, and
+    /// reads in windows that grow take the blocks from there to the end of the region.
+    fn masked(
+        &self,
+        reader: &mut (impl Read + Seek),
+        masks: Masks,
+        region: Region,
+        length: u64,
+    ) -> Result<Vec<(u64, u64)>, Error> {
+        if masks.count == 0 {
+            return Ok(Vec::new());
+        }
+        let before = self.starts_before(reader, masks, region.start(), length)?;
+        let mut index = before.saturating_sub(1);
+        let mut take = WINDOW.0;
+        let mut found = Vec::new();
+        while index < masks.count {
+            let take_now = take.min(masks.count - index);
+            let starts = self.words_at(reader, masks.starts + 4 * index, take_now)?;
+            let sizes =
+                self.words_at(reader, masks.starts + 4 * (masks.count + index), take_now)?;
+            for (start, size) in starts.into_iter().zip(sizes) {
+                if start >= region.end() {
+                    return Ok(found);
+                }
+                if start + size > region.start() {
+                    found.push((start, start + size));
+                }
+            }
+            index += take_now;
+            take = (take * 2).min(WINDOW.1);
+        }
+        Ok(found)
+    }
+
+    /// The number of mask blocks that start before a position. The search starts where the
+    /// position would be if the blocks were spread evenly, widens its steps until it holds
+    /// the answer, and then halves them.
+    fn starts_before(
+        &self,
+        reader: &mut (impl Read + Seek),
+        masks: Masks,
+        position: u64,
+        length: u64,
+    ) -> Result<u64, Error> {
+        let count = masks.count;
+        let mut start = |index: u64| -> Result<u64, Error> {
+            Ok(self.words_at(reader, masks.starts + 4 * index, 1)?[0])
+        };
+        let share = u128::from(count) * u128::from(position) / u128::from(length.max(1));
+        let guess = u64::try_from(share).unwrap_or(count).min(count - 1);
+        let (mut low, mut high);
+        let mut step = 1;
+        if start(guess)? < position {
+            low = guess + 1;
+            loop {
+                let probe = guess.saturating_add(step);
+                if probe >= count {
+                    high = count;
+                    break;
+                }
+                if start(probe)? >= position {
+                    high = probe;
+                    break;
+                }
+                low = probe + 1;
+                step *= 2;
+            }
+        } else {
+            high = guess;
+            loop {
+                let Some(probe) = guess.checked_sub(step) else {
+                    low = 0;
+                    break;
+                };
+                if start(probe)? < position {
+                    low = probe + 1;
+                    break;
+                }
+                high = probe;
+                step *= 2;
+            }
+        }
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if start(middle)? < position {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        Ok(low)
+    }
+
+    fn words_at(
+        &self,
+        reader: &mut (impl Read + Seek),
+        offset: u64,
+        count: u64,
+    ) -> Result<Vec<u64>, Error> {
+        reader.seek(SeekFrom::Start(offset))?;
+        let size = usize::try_from(count * 4).map_err(|_| Error::Invalid(Reason::BadBlockCount))?;
+        let mut raw = vec![0; size];
+        reader.read_exact(&mut raw)?;
+        Ok(words(&raw, self.order).collect())
     }
 }
 
@@ -429,6 +555,58 @@ mod tests {
         let bytes = encode(&[("chr1", "ACgtaCGnnA")], &PLAIN);
         assert_eq!(fetch(&bytes, 0, 0, 10), "ACgtaCGnnA");
         assert_eq!(fetch(&bytes, 0, 3, 8), "taCGn");
+    }
+
+    /// Counts the bytes that a reader gives.
+    struct Counted<R> {
+        inner: R,
+        read: usize,
+    }
+
+    impl<R: std::io::Read> std::io::Read for Counted<R> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.inner.read(buffer)?;
+            self.read += count;
+            Ok(count)
+        }
+    }
+
+    impl<R: std::io::Seek> std::io::Seek for Counted<R> {
+        fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(to)
+        }
+    }
+
+    /// A long sequence, as a chromosome in a genome on the web, has many mask blocks. A fetch
+    /// reads only the mask blocks near its region.
+    #[test]
+    fn fetches_read_only_the_mask_blocks_near_their_region() {
+        let bases: String = (0..200_000)
+            .map(|index| if index % 10 < 2 { 'a' } else { 'C' })
+            .collect();
+        let bytes = encode(&[("chr1", &bases)], &PLAIN);
+        let mut reader = Counted {
+            inner: Cursor::new(&bytes),
+            read: 0,
+        };
+        let file = TwoBit::read(&mut reader).unwrap();
+        for (start, end) in [
+            (99_995, 100_013),
+            (0, 25),
+            (199_990, 200_000),
+            (12_345, 12_351),
+            (0, 200_000),
+        ] {
+            reader.read = 0;
+            let found = file
+                .fetch(&mut reader, 0, Region::between(start, end))
+                .unwrap();
+            let wanted = &bases.as_bytes()[start as usize..end as usize];
+            assert_eq!(found, wanted, "{start}-{end}");
+            if end - start < 100 {
+                assert!(reader.read < 2_000, "{start}-{end}: {} bytes", reader.read);
+            }
+        }
     }
 
     #[test]
