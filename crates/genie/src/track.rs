@@ -2994,10 +2994,20 @@ mod tests {
         for (contig, name, start, end) in [(0, "chr1", 10_000, 14_000), (1, "chr2", 0, 3_000)] {
             let window = region(start, end);
             let bases = |window: Region| reference.fetch(contig, window);
+            let without_edits = |mut loaded: Loaded| {
+                if let Content::Reads(pile) = &mut loaded.content {
+                    for read in &mut pile.reads {
+                        let tags = &mut read.alignment.tags.all;
+                        tags.retain(|(name, _)| !matches!(name, b"NM" | b"MD"));
+                        tags.sort();
+                    }
+                }
+                loaded
+            };
             let from_cram = load(&cram, name, window, Options::default(), 1, true, bases);
             let from_bam = load(&bam, name, window, Options::default(), 1, true, bases);
-            let from_cram = from_cram.unwrap();
-            assert_eq!(from_cram, from_bam.unwrap(), "{name}");
+            let from_cram = without_edits(from_cram.unwrap());
+            assert_eq!(from_cram, without_edits(from_bam.unwrap()), "{name}");
             let Content::Reads(pile) = &from_cram.content else {
                 panic!("expected reads");
             };

@@ -277,29 +277,56 @@ fn long_cigar<'a>(
     real.unwrap_or(cigar)
 }
 
+/// The longest text of a tag that a read keeps for its card.
+const TAG_TEXT: usize = 160;
+/// Tags that genie shows in other ways: modifications and the other parts of split reads.
+const SHOWN_ELSEWHERE: [[u8; 2]; 6] = [*b"MM", *b"Mm", *b"ML", *b"Ml", *b"MN", *b"SA"];
+
+/// The value of a small tag as text: a character, a number or a short string.
+fn small(kind: u8, value: &[u8]) -> Option<String> {
+    match kind {
+        b'A' => value.first().map(|letter| char::from(*letter).to_string()),
+        b'f' => Some(f32::from_le_bytes([value[0], value[1], value[2], value[3]]).to_string()),
+        b'Z' => {
+            let text = value.strip_suffix(&[0]).unwrap_or(value);
+            (text.len() <= TAG_TEXT).then(|| String::from_utf8_lossy(text).into_owned())
+        }
+        _ => integer(kind, value).map(|number| number.to_string()),
+    }
+}
+
 pub(crate) fn tags(aux: &[u8], bases: &[u8], reverse: bool, clipped: bool) -> Tags {
     let mut tags = Tags::default();
     let (mut mm, mut ml, mut mn) = (None, None, None);
-    walk(aux, |key, kind, value| match key {
-        [b'H', b'P'] => tags.phase = integer(kind, value),
-        [b'R', b'G'] if kind == b'Z' => {
-            let text = value.strip_suffix(&[0]).unwrap_or(value);
-            tags.group = Some(String::from_utf8_lossy(text).into_owned());
+    walk(aux, |key, kind, value| {
+        if !SHOWN_ELSEWHERE.contains(&key)
+            && let Some(text) = small(kind, value)
+        {
+            tags.all.push((key, text));
         }
-        [b'S', b'A'] if kind == b'Z' => {
-            let text = value.strip_suffix(&[0]).unwrap_or(value);
-            tags.parts = parts(&String::from_utf8_lossy(text));
-        }
-        [b'X', b'S'] if kind == b'A' => tags.xs = strand(value),
-        [b't', b's'] if kind == b'A' => tags.ts = strand(value),
-        [b'M', b'M' | b'm'] if kind == b'Z' => mm = Some(value.strip_suffix(&[0]).unwrap_or(value)),
-        [b'M', b'L' | b'l'] if kind == b'B' => {
-            if let [b'C', _, _, _, _, chances @ ..] = value {
-                ml = Some(chances);
+        match key {
+            [b'H', b'P'] => tags.phase = integer(kind, value),
+            [b'R', b'G'] if kind == b'Z' => {
+                let text = value.strip_suffix(&[0]).unwrap_or(value);
+                tags.group = Some(String::from_utf8_lossy(text).into_owned());
             }
+            [b'S', b'A'] if kind == b'Z' => {
+                let text = value.strip_suffix(&[0]).unwrap_or(value);
+                tags.parts = parts(&String::from_utf8_lossy(text));
+            }
+            [b'X', b'S'] if kind == b'A' => tags.xs = strand(value),
+            [b't', b's'] if kind == b'A' => tags.ts = strand(value),
+            [b'M', b'M' | b'm'] if kind == b'Z' => {
+                mm = Some(value.strip_suffix(&[0]).unwrap_or(value));
+            }
+            [b'M', b'L' | b'l'] if kind == b'B' => {
+                if let [b'C', _, _, _, _, chances @ ..] = value {
+                    ml = Some(chances);
+                }
+            }
+            [b'M', b'N'] => mn = integer(kind, value),
+            _ => {}
         }
-        [b'M', b'N'] => mn = integer(kind, value),
-        _ => {}
     });
     let fits = mn.map_or(!clipped, |length| {
         usize::try_from(length).ok() == Some(bases.len())
@@ -457,8 +484,50 @@ pub mod tests {
             bases: bases.as_bytes().to_vec(),
             qualities: vec![30; bases.len()],
             mate: None,
-            tags: genie_core::alignment::Tags::default(),
+            tags: genie_core::alignment::Tags {
+                all: vec![(*b"NM", "0".to_owned())],
+                ..genie_core::alignment::Tags::default()
+            },
         }
+    }
+
+    #[test]
+    fn small_tags_keep_their_text_and_long_or_shown_ones_stay_out() {
+        let mut aux = Vec::new();
+        aux.extend(b"NMC\x03");
+        aux.extend(b"XSA+");
+        aux.extend(b"ASs");
+        aux.extend((-12_i16).to_le_bytes());
+        aux.extend(b"ZFf");
+        aux.extend(1.5_f32.to_le_bytes());
+        aux.extend(b"CBZAAACCTG-1\x00");
+        aux.extend(b"MMZC+m,0;\x00");
+        aux.extend(b"MLBC\x01\x00\x00\x00\xC8");
+        aux.extend(b"XLZ");
+        aux.extend([b'x'; 200]);
+        aux.push(0);
+        aux.extend(b"HPi\x02\x00\x00\x00");
+        let tags = super::tags(&aux, b"CA", false, false);
+        let all: Vec<(String, &str)> = tags
+            .all
+            .iter()
+            .map(|(name, value)| (String::from_utf8_lossy(name).into_owned(), value.as_str()))
+            .collect();
+        let expected = [
+            ("NM", "3"),
+            ("XS", "+"),
+            ("AS", "-12"),
+            ("ZF", "1.5"),
+            ("CB", "AAACCTG-1"),
+            ("HP", "2"),
+        ];
+        let expected: Vec<(String, &str)> = expected
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), *value))
+            .collect();
+        assert_eq!(all, expected);
+        assert_eq!(tags.get(*b"CB"), Some("AAACCTG-1"));
+        assert_eq!(tags.phase, Some(2));
     }
 
     #[test]

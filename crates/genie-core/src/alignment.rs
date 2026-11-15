@@ -74,6 +74,18 @@ pub struct Tags {
     pub xs: Option<Strand>,
     pub ts: Option<Strand>,
     pub mods: Modifications,
+    /// The small tags of the read as text, in file order, for its card, filters and groups.
+    pub all: Vec<([u8; 2], String)>,
+}
+
+impl Tags {
+    /// The value of a tag as text, for example `get(*b"NM")`.
+    pub fn get(&self, name: [u8; 2]) -> Option<&str> {
+        self.all
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +360,13 @@ impl Filter {
     pub fn showing(self, flags: u16) -> Self {
         Self {
             hidden: self.hidden & !flags,
+        }
+    }
+
+    #[must_use]
+    pub fn hiding(self, flags: u16) -> Self {
+        Self {
+            hidden: self.hidden | flags,
         }
     }
 

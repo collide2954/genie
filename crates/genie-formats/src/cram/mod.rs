@@ -491,8 +491,22 @@ mod tests {
         reads
     }
 
+    /// A read with its tags in name order and without NM and MD. htslib leaves NM and MD out of
+    /// most CRAM records and makes them again on reading, and it puts RG at the end; genie does
+    /// not make NM and MD.
+    fn comparable(read: &Alignment) -> Alignment {
+        let mut read = read.clone();
+        read.tags
+            .all
+            .retain(|(name, _)| !matches!(name, b"NM" | b"MD"));
+        read.tags.all.sort();
+        read
+    }
+
     /// The first read that differs, with the fields that differ, to keep failures short.
     fn difference(found: &[Alignment], expected: &[Alignment]) -> Option<String> {
+        let found: Vec<Alignment> = found.iter().map(comparable).collect();
+        let expected: Vec<Alignment> = expected.iter().map(comparable).collect();
         if found.len() != expected.len() {
             return Some(format!(
                 "{} reads, expected {}",
@@ -502,7 +516,7 @@ mod tests {
         }
         let (index, (read, wanted)) = found
             .iter()
-            .zip(expected)
+            .zip(&expected)
             .enumerate()
             .find(|(_, (read, wanted))| read != wanted)?;
         let text = |bases: &[u8]| String::from_utf8_lossy(bases).into_owned();
