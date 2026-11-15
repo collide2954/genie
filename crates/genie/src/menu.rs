@@ -22,6 +22,7 @@ const SIGNAL_HEIGHT: f32 = 271.5;
 const HEADING_HEIGHT: f32 = 21.0;
 const LINK_HEIGHT: f32 = 22.6;
 const SEPARATOR_HEIGHT: f32 = 8.0;
+const SWATCHES_HEIGHT: f32 = 24.0;
 const FILTER_WIDTH: f32 = 260.0;
 pub const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
@@ -213,6 +214,39 @@ pub fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         .collect()
 }
 
+/// The normalizations of a Hi-C map, and observed/expected ratios.
+pub fn contact_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let (names, place) = track
+        .source
+        .normalizations(track.options.contacts.normalization);
+    let mut items: Vec<Element<'a, Message>> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            let label = if name == genie_formats::hic::NONE {
+                "No normalization".to_owned()
+            } else {
+                format!("{name} normalization")
+            };
+            let change = Change::Normalization(u8::try_from(index).ok()?);
+            Some(item(
+                label,
+                Message::TrackChanged(track.id, change),
+                index == place,
+                true,
+            ))
+        })
+        .collect();
+    items.push(item(
+        "Observed/expected",
+        Message::TrackChanged(track.id, Change::Ratio),
+        track.options.contacts.ratio,
+        true,
+    ));
+    items.push(separator());
+    items
+}
+
 pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     let mut items = modification_items(track);
     items.push(item(
@@ -237,6 +271,9 @@ fn kind_height(track: &Track) -> f32 {
         SIGNAL_HEIGHT
     } else if track.source.has_links() {
         COLORED_HEIGHT - 3.0 * LINK_HEIGHT - SEPARATOR_HEIGHT
+    } else if track.source.has_contacts() {
+        let choices = track.source.normalizations(None).0.len() as f32 + 1.0;
+        FEATURES_HEIGHT - SWATCHES_HEIGHT - SEPARATOR_HEIGHT + (choices - 3.0) * LINK_HEIGHT
     } else if track.source.has_segments() {
         FEATURES_HEIGHT + 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_colors() {
@@ -459,6 +496,8 @@ pub fn view<'a>(
         signal_items(track, range)
     } else if track.source.has_links() {
         column![]
+    } else if track.source.has_contacts() {
+        column(contact_items(track)).spacing(1)
     } else if track.source.has_segments() {
         column![
             column(modes).spacing(1),
@@ -476,7 +515,7 @@ pub fn view<'a>(
         .extend(sample_items(track));
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));
-    } else if !track.source.has_variants() {
+    } else if !track.source.has_variants() && !track.source.has_contacts() {
         if track.source.has_colors() {
             content = content.push(item(
                 "Use file colors",

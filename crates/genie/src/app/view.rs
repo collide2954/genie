@@ -4,8 +4,8 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, features, links, matches, overview, ruler, samples, segments, sequence, signal,
-    translation, variants,
+    alignments, contacts, features, links, matches, overview, ruler, samples, segments, sequence,
+    signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -95,6 +95,7 @@ impl Genie {
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
                     Some(Content::Links(links)) => features += links.len(),
                     Some(Content::Segments(copies)) => features += copies.segments.len(),
+                    Some(Content::Contacts(contacts)) => values += contacts.map.contacts.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
                     None => {}
@@ -793,7 +794,9 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
                 .filter(|link| link.span().overlaps(visible))
                 .count(),
         ),
-        Content::Reads(_) | Content::Signal(_) | Content::Segments(_) => None,
+        Content::Reads(_) | Content::Signal(_) | Content::Segments(_) | Content::Contacts(_) => {
+            None
+        }
     }
 }
 
@@ -929,6 +932,10 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             let primitives =
                 segments::scene(viewport, &copies.segments, names, mode, range, &track.rows);
             Body::Scene(primitives, shape.height)
+        }
+        Some(Content::Contacts(contacts)) => {
+            let height = track.height.unwrap_or(shape.height);
+            Body::Scene(contacts::scene(viewport, &contacts.map, height), height)
         }
         Some(Content::Features(annotation)) => {
             let packed;
@@ -1294,8 +1301,10 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         }
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
+        Some(Content::Contacts(_)) => Shape::plain(contacts::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
+        None if track.source.has_contacts() => Shape::plain(contacts::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
 }

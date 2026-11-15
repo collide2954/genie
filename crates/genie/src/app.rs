@@ -3696,6 +3696,7 @@ mod tests {
             plot: crate::track::Plot::default(),
             filter: crate::track::Filter::default(),
             modification: None,
+            normalization: None,
             declared: None,
             choice: genie_core::samples::Choice::default(),
         };
@@ -3784,6 +3785,7 @@ mod tests {
                 plot: crate::track::Plot::default(),
                 filter: crate::track::Filter::default(),
                 modification: None,
+                normalization: None,
                 declared: None,
                 choice: genie_core::samples::Choice::default(),
             }],
@@ -5116,6 +5118,64 @@ mod tests {
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(shows(&genie, "Move up"));
         assert!(!shows(&genie, "Show duplicates"));
+    }
+
+    #[test]
+    fn hovering_a_contact_map_shows_the_pair_of_bins() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../genie-formats/tests/data/contacts.hic");
+        let mut genie = opened();
+        let source = crate::track::open(path).unwrap();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(source))));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let map = genie_core::contact::ContactMap {
+            bin: 100,
+            contacts: vec![(2, 4, 20.0)],
+            ratio: false,
+        };
+        let contacts = crate::track::Contacts {
+            map,
+            step: 4,
+            normalization: "KR".to_owned(),
+        };
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::contacts(region, contacts))),
+        );
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(350.0, 30.0))));
+        for line in [
+            "Contact",
+            "Bins 201-300 and 401-500",
+            "Distance 200 bp · 100 bp bins",
+            "Contacts 20",
+            "Normalization KR",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(10.0, 10.0)));
+        for line in [
+            "No normalization",
+            "KR normalization",
+            "SCALE normalization",
+            "Observed/expected",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        let _ = genie.update(Message::TrackChanged(id, Change::Normalization(1)));
+        let _ = genie.update(Message::TrackChanged(id, Change::Ratio));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let showing = crate::track::Showing {
+            normalization: Some(1),
+            ratio: true,
+        };
+        assert_eq!(track.options.contacts, showing);
+        assert_eq!(track.normalization().as_deref(), Some("KR"));
     }
 
     #[test]

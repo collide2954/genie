@@ -9,14 +9,14 @@ use genie_core::variant::Variant;
 use genie_core::{Region, Span, Target, Viewport};
 use genie_formats::fields::Field;
 use genie_render::features::Mode;
-use genie_render::{alignments, features, links, segments, signal, variants};
+use genie_render::{alignments, contacts, features, links, segments, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
 use iced::widget::operation;
 use iced::{Point, Task};
 
-use crate::card::{Card, Changes, Detail};
+use crate::card::{Card, Changes, Detail, Pair};
 use crate::genome;
 use crate::location::Location;
 use crate::paths;
@@ -502,6 +502,21 @@ impl Genie {
                     column: track.source.segment_column().to_owned(),
                 }
             }
+            Content::Contacts(found) => {
+                let map = &found.map;
+                let height = track.height.unwrap_or(contacts::HEIGHT);
+                let (first, second) = contacts::hit(viewport, map, height, x, y)?;
+                let bin = |at: u32| {
+                    let start = u64::from(at) * map.bin;
+                    Region::between(start, start + map.bin)
+                };
+                Detail::Contact(Pair {
+                    bins: [bin(first), bin(second)],
+                    value: map.value(first, second),
+                    ratio: map.ratio,
+                    normalization: found.normalization.clone(),
+                })
+            }
         };
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
@@ -512,7 +527,8 @@ impl Genie {
             | Detail::Methylation { .. }
             | Detail::Signal { .. }
             | Detail::Match { .. }
-            | Detail::Segment { .. } => Vec::new(),
+            | Detail::Segment { .. }
+            | Detail::Contact(_) => Vec::new(),
         };
         Some(Card {
             track: id,
@@ -1009,6 +1025,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) {
     track.plot = found.plot;
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());
+    track.set_normalization(found.normalization.as_deref());
     track.declared.clone_from(&found.declared);
     track.choice.clone_from(&found.choice);
 }
@@ -1052,6 +1069,7 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "seg",
                     "cns",
                     "cnr",
+                    "hic",
                 ],
             )
             .add_filter(

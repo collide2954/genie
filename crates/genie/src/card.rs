@@ -79,6 +79,19 @@ pub enum Detail {
         /// The name of the value column of the file, for example seg.mean or log2.
         column: String,
     },
+    Contact(Pair),
+}
+
+/// A pair of bins of a Hi-C map.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pair {
+    pub bins: [Region; 2],
+    /// The value of the contact, if the map has one.
+    pub value: Option<f32>,
+    /// Whether the value is a ratio of observed to expected contacts.
+    pub ratio: bool,
+    /// The normalization of the value, NONE for counts as they are.
+    pub normalization: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -473,7 +486,34 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             segment,
             column,
         } => (sample.clone(), segment.span, segment_lines(segment, column)),
+        Detail::Contact(pair) => contact_content(pair),
     }
+}
+
+/// The bins, the distance and the value of a pair of bins of a Hi-C map.
+fn contact_content(pair: &Pair) -> (String, Region, Vec<String>) {
+    let [first, second] = pair.bins;
+    let place =
+        |region: Region| format!("{}-{}", grouped(region.start() + 1), grouped(region.end()));
+    let distance = second.start().abs_diff(first.start());
+    let mut lines = vec![
+        format!("Bins {} and {}", place(first), place(second)),
+        format!(
+            "Distance {} bp · {} bp bins",
+            grouped(distance),
+            grouped(first.len())
+        ),
+        match (pair.value, pair.ratio) {
+            (None, _) => "No contacts".to_owned(),
+            (Some(value), true) => format!("Observed/expected {}", amount(f64::from(value))),
+            (Some(value), false) => format!("Contacts {}", amount(f64::from(value))),
+        },
+    ];
+    let normalization = &pair.normalization;
+    if normalization != genie_formats::hic::NONE && !normalization.is_empty() {
+        lines.push(format!("Normalization {normalization}"));
+    }
+    ("Contact".to_owned(), first.hull(second), lines)
 }
 
 fn segment_lines(segment: &Segment, column: &str) -> Vec<String> {

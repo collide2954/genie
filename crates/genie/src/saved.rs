@@ -14,7 +14,9 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, tag, tag_name};
+use crate::track::{
+    Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, Showing, tag, tag_name,
+};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -63,6 +65,8 @@ pub struct SavedTrack {
     pub plot: Plot,
     pub filter: Filter,
     pub modification: Option<String>,
+    /// The normalization that somebody chose for a Hi-C map.
+    pub normalization: Option<String>,
     pub declared: Option<Declared>,
     /// The fields of the sample table that group, sort and color the samples of the track.
     pub choice: Choice,
@@ -81,6 +85,7 @@ impl SavedTrack {
             plot: Plot::default(),
             filter: Filter::default(),
             modification: None,
+            normalization: None,
             declared: None,
             choice: Choice::default(),
         }
@@ -148,6 +153,7 @@ impl Saved {
                         label: section.value("label").map(str::to_owned),
                     },
                     modification: section.value("methylation").map(str::to_owned),
+                    normalization: section.value("normalization").map(str::to_owned),
                     declared: section.value("type").map(|kind| Declared {
                         kind: kind.to_owned(),
                         index: section.value("index").map(|text| read(text, base)),
@@ -239,6 +245,9 @@ impl Saved {
             }
             if let Some(name) = &track.modification {
                 entries.push(("methylation", name.clone()));
+            }
+            if let Some(name) = &track.normalization {
+                entries.push(("normalization", name.clone()));
             }
             if !track.plot.colors {
                 entries.push(("colors", "off".to_owned()));
@@ -392,6 +401,10 @@ fn options(section: &Section) -> Options {
             failed: on("failed"),
         },
         color: section.value("colorby").and_then(tag),
+        contacts: Showing {
+            normalization: None,
+            ratio: on("ratio"),
+        },
     }
 }
 
@@ -415,6 +428,9 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
     }
     if let Some(tag) = options.color {
         entries.push(("colorby", tag_name(tag)));
+    }
+    if options.contacts.ratio {
+        entries.push(("ratio", on()));
     }
     if options.methyl.separate {
         entries.push(("strands", "separate".to_owned()));
@@ -477,7 +493,7 @@ mod tests {
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot};
+    use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, Showing};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -505,6 +521,16 @@ mod tests {
         assert_eq!(text.matches("keep =").count(), 1, "{text}");
     }
 
+    fn ratios() -> Options {
+        Options {
+            contacts: Showing {
+                normalization: None,
+                ratio: true,
+            },
+            ..Options::default()
+        }
+    }
+
     fn read_options() -> Options {
         Options {
             duplicates: true,
@@ -522,6 +548,7 @@ mod tests {
                 failed: true,
             },
             color: Some(*b"NM"),
+            contacts: Showing::default(),
         }
     }
 
@@ -563,6 +590,7 @@ mod tests {
                     },
                     filter: Filter::default(),
                     modification: Some("5hmC".to_owned()),
+                    normalization: None,
                     declared: Some(Declared {
                         kind: "bam".to_owned(),
                         index: Some(Location::File(base().join("index").join("reads.bai"))),
@@ -576,7 +604,7 @@ mod tests {
                     mode: None,
                     hue: Hue::Vermillion,
                     height: None,
-                    options: Options::default(),
+                    options: ratios(),
                     plot: Plot::default(),
                     filter: Filter {
                         rules: vec![
@@ -588,6 +616,7 @@ mod tests {
                         label: Some("Gene symbol".to_owned()),
                     },
                     modification: None,
+                    normalization: Some("KR".to_owned()),
                     declared: None,
                     choice: Choice {
                         group: Some("super_pop".to_owned()),

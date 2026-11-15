@@ -128,6 +128,7 @@ impl Genie {
                     plot: track.plot,
                     filter: track.filter.clone(),
                     modification: track.modification.clone(),
+                    normalization: track.normalization(),
                     declared: track.declared.clone(),
                     choice: track.choice.clone(),
                 })

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE};
+use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
@@ -24,6 +25,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::{Location, Reader};
 
+mod contacts;
 mod features;
 mod links;
 pub(crate) mod reads;
@@ -31,6 +33,7 @@ mod segments;
 mod signal;
 mod variants;
 
+pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
 pub use links::LinkFile;
 pub use reads::ReadFile;
@@ -55,6 +58,7 @@ pub enum Format {
     Signal(SignalFile),
     Links(LinkFile),
     Segments(SegmentFile),
+    Contacts(ContactFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +94,19 @@ impl Source {
             Format::Signal(file) => file.contigs(),
             Format::Links(file) => file.contigs(),
             Format::Segments(file) => file.contigs(),
+            Format::Contacts(file) => file.contigs(),
+        }
+    }
+
+    pub fn has_contacts(&self) -> bool {
+        matches!(self.format, Format::Contacts(_))
+    }
+
+    /// The normalizations of a Hi-C file, and the place of the one that a choice shows.
+    pub fn normalizations(&self, choice: Option<u8>) -> (&[String], usize) {
+        match &self.format {
+            Format::Contacts(file) => (file.normalizations(), file.normalization(choice)),
+            _ => (&[], 0),
         }
     }
 
@@ -168,7 +185,7 @@ impl Source {
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
-            Format::Segments(_) => u64::MAX,
+            Format::Segments(_) | Format::Contacts(_) => u64::MAX,
         }
     }
 
@@ -319,6 +336,7 @@ pub struct Options {
     pub kinds: Kinds,
     /// The tag whose most common values color the reads.
     pub color: Option<[u8; 2]>,
+    pub contacts: Showing,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -357,6 +375,7 @@ impl Default for Options {
             mapq: 0,
             kinds: Kinds::default(),
             color: None,
+            contacts: Showing::default(),
         }
     }
 }
@@ -645,6 +664,16 @@ pub enum Content {
     Signal(Signal),
     Links(Vec<Interaction>),
     Segments(Copies),
+    Contacts(Contacts),
+}
+
+/// The contacts of a Hi-C map, the step that chose the size of its bins, and the normalization
+/// of its values.
+#[derive(Debug, PartialEq)]
+pub struct Contacts {
+    pub map: ContactMap,
+    pub step: u64,
+    pub normalization: String,
 }
 
 /// The copy number segments of a region, and the number of samples of the file.
@@ -801,6 +830,14 @@ impl Loaded {
         }
     }
 
+    pub fn contacts(region: Region, contacts: Contacts) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Contacts(contacts),
+        }
+    }
+
     pub fn segments(region: Region, segments: Vec<Segment>, samples: usize) -> Self {
         Self {
             region,
@@ -857,13 +894,14 @@ impl Loaded {
             Content::Reads(pile) => pile.count,
             Content::Variants(calls) => calls.samples,
             Content::Segments(copies) => copies.samples,
-            Content::Signal(_) | Content::Links(_) => 0,
+            Content::Signal(_) | Content::Links(_) | Content::Contacts(_) => 0,
         }
     }
 
     fn step(&self) -> u64 {
         match &self.content {
             Content::Signal(signal) => signal.step,
+            Content::Contacts(contacts) => contacts.step,
             _ => 1,
         }
     }
@@ -1030,6 +1068,21 @@ impl Track {
         }
     }
 
+    /// The name of the normalization that somebody chose for a Hi-C map.
+    pub fn normalization(&self) -> Option<String> {
+        let place = self.options.contacts.normalization?;
+        let (names, _) = self.source.normalizations(Some(place));
+        names.get(usize::from(place)).cloned()
+    }
+
+    /// Chooses a normalization of a Hi-C map by its name, as a session keeps it.
+    pub fn set_normalization(&mut self, name: Option<&str>) {
+        let (names, _) = self.source.normalizations(None);
+        self.options.contacts.normalization = name
+            .and_then(|name| names.iter().position(|known| known == name))
+            .and_then(|place| u8::try_from(place).ok());
+    }
+
     pub fn set_modification(&mut self, name: Option<String>) {
         let codes = self.source.modifications();
         let code = name
@@ -1142,7 +1195,10 @@ impl Track {
                         .collect(),
                 )
             }
-            Content::Reads(_) | Content::Signal(_) | Content::Segments(_) => return None,
+            Content::Reads(_)
+            | Content::Signal(_)
+            | Content::Segments(_)
+            | Content::Contacts(_) => return None,
         };
         Some(Arc::new(Loaded {
             region: data.region,
@@ -1275,6 +1331,10 @@ pub enum Change {
     Mapq(u8),
     /// Color the reads by the values of a tag, or stop when the tag already colors them.
     Color([u8; 2]),
+    /// Normalize a Hi-C map with the normalization at this place in the list of the file.
+    Normalization(u8),
+    /// Show ratios of observed to expected contacts instead of counts, or go back.
+    Ratio,
     Up,
     Down,
     Remove,
@@ -1356,6 +1416,16 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             };
             track.forget();
         }
+        Change::Normalization(place) => {
+            let track = &mut tracks[position];
+            track.options.contacts.normalization = Some(place);
+            track.forget();
+        }
+        Change::Ratio => {
+            let track = &mut tracks[position];
+            track.options.contacts.ratio = !track.options.contacts.ratio;
+            track.forget();
+        }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
         Change::Down if position + 1 < tracks.len() => tracks.swap(position, position + 1),
         Change::Up | Change::Down => {}
@@ -1422,11 +1492,19 @@ pub fn is_track(location: &Location) -> bool {
         || is_bigbed(&name)
         || is_bedpe(&name)
         || is_segments(&name)
+        || is_hic(&name)
         || Kind::of(&name).is_some()
 }
 
 pub fn is_bedpe(name: &str) -> bool {
     inner_extension(name, &["bedpe"])
+}
+
+/// True for the Hi-C files of Juicer.
+pub fn is_hic(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("hic"))
 }
 
 /// True for copy number segment files: SEG, and `CNVkit` `.cns` and `.cnr`.
@@ -1588,6 +1666,8 @@ pub fn open_with(
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
+    } else if is_hic(&name) {
+        Format::Contacts(ContactFile::open(reading, &name)?)
     } else if is_bedpe(&name) || is_loop_list(reading) {
         Format::Links(LinkFile::open(reading, &name)?)
     } else if is_segments(&name) {
@@ -1802,6 +1882,10 @@ pub fn load_kept(
         }
         Format::Links(file) => file.load(location, contig, region),
         Format::Segments(file) => Ok(file.load(contig, region)),
+        Format::Contacts(file) => {
+            let loaded = file.load(location, contig, region, (scope.step, options.contacts))?;
+            Ok(Loaded { options, ..loaded })
+        }
     }
 }
 
@@ -1881,9 +1965,11 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
     match &source.format {
         Format::Features(file) => file.spans(source.data(), contig, region),
         Format::Variants(file) => file.spans(source.data(), contig, region),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => {
-            Ok(Vec::new())
-        }
+        Format::Reads(_)
+        | Format::Signal(_)
+        | Format::Links(_)
+        | Format::Segments(_)
+        | Format::Contacts(_) => Ok(Vec::new()),
     }
 }
 
@@ -1910,7 +1996,11 @@ fn kept(
             .filter(|variant| fields::passes(rules, &variant_fields(source, variant)))
             .map(|variant| variant.span)
             .collect(),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => Vec::new(),
+        Format::Reads(_)
+        | Format::Signal(_)
+        | Format::Links(_)
+        | Format::Segments(_)
+        | Format::Contacts(_) => Vec::new(),
     })
 }
 
@@ -1942,7 +2032,11 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
                     .collect()
             })
             .unwrap_or_default(),
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => Vec::new(),
+        Format::Reads(_)
+        | Format::Signal(_)
+        | Format::Links(_)
+        | Format::Segments(_)
+        | Format::Contacts(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -1972,7 +2066,11 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
     let entries = match &source.format {
         Format::Features(file) => file.names(source.data())?,
         Format::Variants(file) => file.names(source.data())?,
-        Format::Reads(_) | Format::Signal(_) | Format::Links(_) | Format::Segments(_) => {
+        Format::Reads(_)
+        | Format::Signal(_)
+        | Format::Links(_)
+        | Format::Segments(_)
+        | Format::Contacts(_) => {
             return Ok(Names::default());
         }
     };
@@ -2004,10 +2102,10 @@ mod tests {
 
     use super::reads::Reads;
     use super::{
-        Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded, Methyl,
-        Options, Plot, Prepared, Scope, SignalFile, Source, TAG_GROUPS, Toggle, Track, Typed,
-        VariantFile, change, contig_names, fits, hides, is_track, link_fields, load, load_kept,
-        lookup, names, neighbor, open, open_bbi, open_typed, open_with, spans, step,
+        Change, Contacts, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded,
+        Methyl, Options, Plot, Prepared, Scope, Showing, SignalFile, Source, TAG_GROUPS, Toggle,
+        Track, Typed, VariantFile, change, contig_names, fits, hides, is_track, link_fields, load,
+        load_kept, lookup, names, neighbor, open, open_bbi, open_typed, open_with, spans, step,
         variant_fields,
     };
     use crate::location::Location;
@@ -2680,6 +2778,64 @@ mod tests {
                 .unwrap()
                 .contig,
             0
+        );
+    }
+
+    fn contact_map(source: &Source, step: u64, contacts: Showing) -> Contacts {
+        let options = Options {
+            contacts,
+            ..Options::default()
+        };
+        let loaded = load(
+            source,
+            "chr1",
+            region(0, 3_000),
+            options,
+            step,
+            true,
+            no_reference,
+        );
+        let Content::Contacts(found) = loaded.unwrap().content else {
+            panic!("expected contacts");
+        };
+        found
+    }
+
+    #[test]
+    fn hic_files_open_as_contact_maps() {
+        let source = open(fixture("contacts.hic")).unwrap();
+        assert!(source.has_contacts());
+        assert_eq!(source.contigs(), ["chr1", "chr2"]);
+        let names = ["NONE".to_owned(), "KR".to_owned(), "SCALE".to_owned()];
+        assert_eq!(source.normalizations(None), (&names[..], 2));
+        assert_eq!(source.normalizations(Some(1)), (&names[..], 1));
+        let best = contact_map(&source, 4, Showing::default());
+        assert_eq!((best.map.bin, best.normalization.as_str()), (100, "KR"));
+        assert_eq!(best.map.contacts.len(), 9);
+        assert_eq!(best.map.value(0, 0), Some(1.0));
+        let counts = Showing {
+            normalization: Some(0),
+            ratio: false,
+        };
+        assert_eq!(contact_map(&source, 4, counts).map.value(7, 10), Some(11.0));
+        let ratios = contact_map(
+            &source,
+            4,
+            Showing {
+                ratio: true,
+                ..counts
+            },
+        )
+        .map;
+        assert!(ratios.ratio);
+        assert_eq!(
+            (ratios.value(0, 0), ratios.value(7, 10)),
+            (Some(0.25), Some(22.0))
+        );
+        let coarse = contact_map(&source, 64, Showing::default());
+        assert_eq!(
+            (coarse.map.bin, coarse.normalization.as_str()),
+            (1_000, "SCALE")
         );
     }
 
@@ -3993,7 +4149,7 @@ mod tests {
         assert_eq!(
             error,
             "The file calls.bcf is not a BED, GFF3, GTF, bigBed, VCF, BAM, CRAM, bigWig, bedGraph, \
-             bedMethyl, BEDPE, bigInteract or copy number file."
+             bedMethyl, BEDPE, bigInteract, Hi-C or copy number file."
         );
     }
 

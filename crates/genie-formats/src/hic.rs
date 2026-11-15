@@ -237,6 +237,20 @@ impl Hic {
         Ok(found)
     }
 
+    fn vector(&self, kind: &str, chromosome: usize, bin: u32) -> Option<&Vector> {
+        self.vectors.iter().find(|vector| {
+            vector.kind == kind
+                && usize::try_from(vector.chromosome).is_ok_and(|found| found == chromosome)
+                && vector.unit == BP
+                && vector.bin == i64::from(bin)
+        })
+    }
+
+    /// Whether the file has the normalization vector of a chromosome at a bin size.
+    pub fn has_norm(&self, kind: &str, chromosome: usize, bin: u32) -> bool {
+        self.vector(kind, chromosome, bin).is_some()
+    }
+
     /// The normalization vector of a chromosome at a bin size: one value for each bin.
     pub fn norm(
         &self,
@@ -245,12 +259,7 @@ impl Hic {
         chromosome: usize,
         bin: u32,
     ) -> Result<Option<Vec<f64>>, Error> {
-        let Some(vector) = self.vectors.iter().find(|vector| {
-            vector.kind == kind
-                && usize::try_from(vector.chromosome).is_ok_and(|found| found == chromosome)
-                && vector.unit == BP
-                && vector.bin == i64::from(bin)
-        }) else {
+        let Some(vector) = self.vector(kind, chromosome, bin) else {
             return Ok(None);
         };
         let mut input = Input::new(reader);
@@ -947,6 +956,7 @@ pub(crate) mod tests {
             let scale = hic.norm(&mut reader, "SCALE", 1, 1_000).unwrap().unwrap();
             assert_eq!(scale, [2.0; 10]);
             assert_eq!(hic.norm(&mut reader, "KR", 2, 100).unwrap(), None);
+            assert!(hic.has_norm("KR", 1, 100) && !hic.has_norm("SCALE", 1, 100));
             let plain = hic.expected(&mut reader, NONE, 1, 100).unwrap().unwrap();
             assert_eq!(plain, [4.0, 2.0, 1.0, 0.5], "{version}");
             let other = hic.expected(&mut reader, NONE, 2, 100).unwrap().unwrap();
@@ -955,6 +965,15 @@ pub(crate) mod tests {
             assert_eq!(balanced, [1.0, 0.5]);
             assert_eq!(hic.expected(&mut reader, "VC", 1, 100).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn the_fixture_is_the_test_file_of_version_9() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/contacts.hic");
+        if std::env::var_os("GENIE_WRITE_FIXTURES").is_some() {
+            std::fs::write(&path, file(9)).unwrap();
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), file(9));
     }
 
     #[test]
