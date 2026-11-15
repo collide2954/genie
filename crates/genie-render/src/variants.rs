@@ -1,16 +1,24 @@
-use genie_core::Viewport;
-use genie_core::variant::{Call, Kind, Variant};
+use std::collections::HashSet;
+
+use genie_core::interaction::Interaction;
+use genie_core::variant::{Call, Kind, Structure, Sv, Variant};
+use genie_core::{Region, Viewport};
 
 use crate::features::Mode;
+use crate::links;
 use crate::samples::Rows;
-use crate::scene::{Allele, Base, Paint, Primitive, Shade};
+use crate::scene::{Allele, Base, Hue, Paint, Primitive, Shade};
 
 pub const SITE_HEIGHT: f32 = 12.0;
 pub const LIMIT: usize = 100;
 pub const GROUP_LIMIT: usize = 300;
+/// The height of the lane of breakend arcs above the sites.
+pub const BREAKEND_HEIGHT: f32 = 40.0;
 
 const REACH: f32 = 3.0;
 const NARROWEST: f32 = 3.0;
+/// The height of the ends of a whisker over a confidence interval.
+const WHISKER: f32 = 5.0;
 
 pub fn fit(samples: usize) -> Mode {
     if samples <= LIMIT {
@@ -33,6 +41,15 @@ fn shape(mode: Mode) -> (f32, f32, f32) {
 }
 
 fn allele(variant: &Variant) -> Allele {
+    if let Some(structure) = &variant.structure {
+        return match structure.kind {
+            Sv::Deletion => Allele::Deletion,
+            Sv::Duplication => Allele::Duplication,
+            Sv::Inversion => Allele::Inversion,
+            Sv::Insertion => Allele::Insertion,
+            Sv::CopyNumber | Sv::Breakend => Allele::Other,
+        };
+    }
     match variant.kind() {
         Kind::Snv(base) => Allele::Base(Base::from_byte(base)),
         Kind::Insertion => Allele::Insertion,
@@ -119,6 +136,14 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
                 height: SITE_HEIGHT - 2.0,
                 paint: Paint::Allele(allele, shade),
             });
+            if let Some(structure) = &variant.structure {
+                primitives.extend(whiskers(
+                    viewport,
+                    span,
+                    structure,
+                    Paint::Allele(allele, shade),
+                ));
+            }
         }
         for (index, part) in members.iter().enumerate() {
             let call = strongest(
@@ -151,6 +176,109 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
         );
     }
     primitives
+}
+
+/// Lines over the confidence intervals of the start and the end of a structural variant.
+fn whiskers(
+    viewport: Viewport,
+    span: Region,
+    structure: &Structure,
+    paint: Paint,
+) -> Vec<Primitive> {
+    let px = |position: f64| viewport.to_px(position) as f32;
+    let middle = SITE_HEIGHT / 2.0;
+    let mut found = Vec::new();
+    for (at, around) in [span.start(), span.end()].into_iter().zip(structure.around) {
+        let Some((low, high)) = around else {
+            continue;
+        };
+        let (left, right) = (px(at as f64 + low as f64), px(at as f64 + high as f64));
+        if right - left < 2.0 {
+            continue;
+        }
+        found.push(Primitive::Rect {
+            x: left,
+            y: middle - 0.5,
+            width: right - left,
+            height: 1.0,
+            paint,
+        });
+        for x in [left, right - 1.0] {
+            found.push(Primitive::Rect {
+                x,
+                y: middle - WHISKER / 2.0,
+                width: 1.0,
+                height: WHISKER,
+                paint,
+            });
+        }
+    }
+    found
+}
+
+fn joined(variant: &Variant) -> Option<&(String, u64)> {
+    match &variant.structure {
+        Some(Structure {
+            kind: Sv::Breakend,
+            mate: Some(mate),
+            ..
+        }) => Some(mate),
+        _ => None,
+    }
+}
+
+/// The height of the lane of breakend arcs: none when no variant is a breakend.
+pub fn breakend_height(variants: &[Variant]) -> f32 {
+    if variants.iter().any(|variant| joined(variant).is_some()) {
+        BREAKEND_HEIGHT
+    } else {
+        0.0
+    }
+}
+
+/// The breakends of a region as links: an arc to the other end on the same contig, or a stub
+/// to another contig. Two breakends that join each other give one arc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Breakends {
+    pub links: Vec<Interaction>,
+    /// The variant of each link.
+    pub variants: Vec<usize>,
+}
+
+impl Breakends {
+    pub fn new(variants: &[Variant], contig: &str) -> Self {
+        let mut links = Vec::new();
+        let mut owners = Vec::new();
+        let mut seen = HashSet::new();
+        for (index, variant) in variants.iter().enumerate() {
+            let Some((other, position)) = joined(variant) else {
+                continue;
+            };
+            let here = Region::between(variant.span.start(), variant.span.start() + 1);
+            let there = Region::between(*position, position + 1);
+            let elsewhere = (other != contig).then(|| other.clone());
+            let mut link = Interaction::new(here, there, elsewhere);
+            if link.elsewhere.is_none() && !seen.insert((link.near.start(), link.far.start())) {
+                continue;
+            }
+            link.name.clone_from(&variant.id);
+            links.push(link);
+            owners.push(index);
+        }
+        Self {
+            links,
+            variants: owners,
+        }
+    }
+
+    pub fn scene(&self, viewport: Viewport, hue: Hue) -> Vec<Primitive> {
+        links::scene(viewport, &self.links, (hue, false), BREAKEND_HEIGHT)
+    }
+
+    /// The variant of the arc or the stub under a point of the lane.
+    pub fn hit(&self, viewport: Viewport, x: f32, y: f32) -> Option<usize> {
+        links::hit(viewport, &self.links, BREAKEND_HEIGHT, x, y).map(|index| self.variants[index])
+    }
 }
 
 pub fn hit(
@@ -186,13 +314,15 @@ pub fn hit(
 #[cfg(test)]
 mod tests {
     use genie_core::samples::{Arrangement, Group, Tint};
-    use genie_core::variant::{Annotations, Call, Variant};
+    use genie_core::variant::{Annotations, Call, Structure, Sv, Variant};
     use genie_core::{Region, Viewport};
 
-    use super::{SITE_HEIGHT, group, hit, row_height, scene};
+    use super::{
+        BREAKEND_HEIGHT, Breakends, SITE_HEIGHT, breakend_height, group, hit, row_height, scene,
+    };
     use crate::features::Mode;
     use crate::samples::{GROUP_GAP, Rows, STRIP};
-    use crate::scene::{Allele, Base, Paint, Primitive, Shade};
+    use crate::scene::{Allele, Base, Hue, Paint, Primitive, Shade};
 
     fn plain(samples: usize) -> Rows {
         Rows::plain(samples, group(samples))
@@ -265,6 +395,93 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    fn sv(
+        span: (u64, u64),
+        kind: Sv,
+        around: [Option<(i64, i64)>; 2],
+        mate: Option<(&str, u64)>,
+    ) -> Variant {
+        let mut found = variant(span.0, "N", "<SV>", &[]);
+        found.span = Region::between(span.0, span.1);
+        found.structure = Some(Structure {
+            kind,
+            length: None,
+            mate: mate.map(|(contig, position)| (contig.to_owned(), position)),
+            around,
+            precise: true,
+        });
+        found
+    }
+
+    #[test]
+    fn structural_variants_have_their_colors_and_whiskers() {
+        let sites = [
+            sv((10, 20), Sv::Duplication, [None, None], None),
+            sv((30, 40), Sv::Inversion, [None, None], None),
+            sv((50, 70), Sv::Deletion, [Some((-4, 4)), Some((0, 0))], None),
+            sv((80, 81), Sv::Breakend, [None, None], Some(("chr2", 500))),
+        ];
+        let found = rects(&scene(view(0, 100), &sites, Mode::Collapsed, &plain(0)));
+        let deletion = Paint::Allele(Allele::Deletion, Shade::Full);
+        assert_eq!(
+            found,
+            [
+                (
+                    [10.0, 1.0, 9.0, 10.0],
+                    Paint::Allele(Allele::Duplication, Shade::Full)
+                ),
+                (
+                    [30.0, 1.0, 9.0, 10.0],
+                    Paint::Allele(Allele::Inversion, Shade::Full)
+                ),
+                ([50.0, 1.0, 19.0, 10.0], deletion),
+                ([46.0, 5.5, 8.0, 1.0], deletion),
+                ([46.0, 3.5, 1.0, 5.0], deletion),
+                ([53.0, 3.5, 1.0, 5.0], deletion),
+                (
+                    [79.0, 1.0, 3.0, 10.0],
+                    Paint::Allele(Allele::Other, Shade::Full)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn breakends_link_their_two_ends_once() {
+        let sites = [
+            sv((100, 101), Sv::Breakend, [None, None], Some(("chr1", 900))),
+            sv((900, 901), Sv::Breakend, [None, None], Some(("chr1", 100))),
+            sv((300, 301), Sv::Breakend, [None, None], Some(("chr7", 12))),
+            sv((600, 700), Sv::Deletion, [None, None], None),
+        ];
+        assert!((breakend_height(&sites) - BREAKEND_HEIGHT).abs() < f32::EPSILON);
+        assert!(breakend_height(&sites[3..]).abs() < f32::EPSILON);
+        let breakends = Breakends::new(&sites, "chr1");
+        assert_eq!(breakends.variants, [0, 2]);
+        let ends: Vec<(Region, Region)> = breakends
+            .links
+            .iter()
+            .map(|link| (link.near, link.far))
+            .collect();
+        assert_eq!(
+            ends,
+            [
+                (Region::between(100, 101), Region::between(900, 901)),
+                (Region::between(300, 301), Region::between(12, 13)),
+            ]
+        );
+        assert_eq!(breakends.links[1].elsewhere.as_deref(), Some("chr7"));
+        let viewport = view(0, 1_000);
+        let arcs = breakends.scene(viewport, Hue::Blue);
+        assert!(
+            arcs.iter()
+                .any(|primitive| matches!(primitive, Primitive::Arc { .. }))
+        );
+        assert_eq!(breakends.hit(viewport, 50.05, 3.0), Some(0));
+        assert_eq!(breakends.hit(viewport, 30.0, 30.0), Some(2));
+        assert_eq!(breakends.hit(viewport, 70.0, 30.0), None);
     }
 
     #[test]

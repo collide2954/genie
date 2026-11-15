@@ -5,7 +5,7 @@ use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
 use genie_core::signal::Bin;
-use genie_core::variant::{Annotation, Call, Variant};
+use genie_core::variant::{Annotation, Call, Structure, Sv, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use genie_formats::fields::{self, Field};
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -293,7 +293,34 @@ fn allele(text: &str) -> String {
     format!("{start}… ({} bp)", grouped(text.len() as u64))
 }
 
+/// What a structural variant does, for example "Deletion · 490 bp" or "Breakend · other end
+/// chr2:321,682".
+fn structure_line(structure: &Structure) -> String {
+    let kind = match structure.kind {
+        Sv::Deletion => "Deletion",
+        Sv::Duplication => "Duplication",
+        Sv::Inversion => "Inversion",
+        Sv::Insertion => "Insertion",
+        Sv::CopyNumber => "Copy number change",
+        Sv::Breakend => "Breakend",
+    };
+    let mut parts = vec![kind.to_owned()];
+    if let Some(length) = structure.length {
+        parts.push(format!("{} bp", grouped(length)));
+    }
+    if let Some((contig, position)) = &structure.mate {
+        parts.push(format!("other end {contig}:{}", grouped(position + 1)));
+    }
+    if !structure.precise {
+        parts.push("imprecise".to_owned());
+    }
+    parts.join(" · ")
+}
+
 pub fn change(variant: &Variant) -> String {
+    if let Some(structure) = &variant.structure {
+        return structure_line(structure);
+    }
     let alternates: Vec<String> = variant
         .alternates
         .iter()
@@ -808,7 +835,7 @@ mod tests {
         Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, Mate, Op, PAIRED, REVERSE, SECOND, Tags,
     };
     use genie_core::signal::Bin;
-    use genie_core::variant::{Annotation, Annotations, Call, Impact, Variant};
+    use genie_core::variant::{Annotation, Annotations, Call, Impact, Structure, Sv, Variant};
     use genie_core::{Feature, Region, Strand};
     use genie_formats::fields::Field;
     use iced::{Point, Size};
@@ -897,6 +924,26 @@ mod tests {
         let long = site(&"ACGT".repeat(10), &["A"], None, ".");
         assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
         assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");
+    }
+
+    #[test]
+    fn structural_variants_say_what_they_change() {
+        let structure = |kind, length, mate: Option<(&str, u64)>, precise| Structure {
+            kind,
+            length,
+            mate: mate.map(|(contig, position)| (contig.to_owned(), position)),
+            around: [None, None],
+            precise,
+        };
+        let mut deletion = site("N", &["<DEL>"], None, ".");
+        deletion.structure = Some(structure(Sv::Deletion, Some(2_345), None, false));
+        assert_eq!(change(&deletion), "Deletion · 2,345 bp · imprecise");
+        let mut breakend = site("G", &["G]chr2:321682]"], None, ".");
+        breakend.structure = Some(structure(Sv::Breakend, None, Some(("chr2", 321_681)), true));
+        assert_eq!(change(&breakend), "Breakend · other end chr2:321,682");
+        let mut copies = site("A", &["<CN0>"], None, ".");
+        copies.structure = Some(structure(Sv::CopyNumber, None, None, true));
+        assert_eq!(change(&copies), "Copy number change");
     }
 
     #[test]

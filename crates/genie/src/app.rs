@@ -1296,7 +1296,7 @@ mod tests {
 
     use genie_core::samples::Table;
     use genie_core::signal::Summary;
-    use genie_core::variant::{Annotations, Call, Variant};
+    use genie_core::variant::{Annotations, Call, Structure, Sv, Variant};
     use genie_core::{Band, Feature, Names, Region, Stain, Strand};
     use genie_formats::fai::FaiRecord;
     use genie_formats::features::Kind;
@@ -5116,6 +5116,35 @@ mod tests {
         let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
         assert!(shows(&genie, "Move up"));
         assert!(!shows(&genie, "Show duplicates"));
+    }
+
+    #[test]
+    fn breakends_draw_arcs_above_the_sites() {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let region = Region::between(0, 1_000);
+        let mut breakend = site(100, vec![Call::Het, Call::Alternate]);
+        breakend.id = "bnd_1".to_owned();
+        breakend.structure = Some(Structure {
+            kind: Sv::Breakend,
+            length: None,
+            mate: Some(("chr1".to_owned(), 300)),
+            around: [None, None],
+            precise: true,
+        });
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let variants = vec![site(20, vec![Call::Het, Call::Alternate]), breakend];
+        let loaded = Loaded::variants(region, variants, 2);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let band = genie_render::variants::BREAKEND_HEIGHT;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 3.0))));
+        assert!(shows(&genie, "bnd_1"));
+        assert!(shows(&genie, "Breakend · other end chr1:301"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, band + 5.0))));
+        assert!(shows(&genie, "rs20"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, band + 28.0))));
+        assert!(shows(&genie, "NA2 · homozygous alternate"));
     }
 
     #[test]

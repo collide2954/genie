@@ -48,6 +48,8 @@ pub enum Allele {
     Base(Base),
     Insertion,
     Deletion,
+    Duplication,
+    Inversion,
     Other,
 }
 

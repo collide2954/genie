@@ -904,7 +904,18 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             signal_body(session, track, panel, &data.summaries, height)
         }
         Some(Content::Variants(calls)) => {
-            let primitives = variants::scene(viewport, &calls.variants, mode, &track.rows);
+            let arcs = variants::breakend_height(&calls.variants);
+            let mut primitives = if arcs > 0.0 {
+                let name = &session.reference.assembly.contigs()[contig].name;
+                variants::Breakends::new(&calls.variants, name).scene(viewport, track.hue)
+            } else {
+                Vec::new()
+            };
+            primitives.extend(
+                variants::scene(viewport, &calls.variants, mode, &track.rows)
+                    .into_iter()
+                    .map(|primitive| primitive.lowered(arcs)),
+            );
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Links(found)) => {
@@ -1225,12 +1236,14 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Variants(calls)) => {
+            let arcs = variants::breakend_height(&calls.variants);
             if mode == features::Mode::Collapsed || calls.samples == 0 {
-                return Shape::plain(variants::SITE_HEIGHT);
+                return Shape::plain(arcs + variants::SITE_HEIGHT);
             }
             let row_height = variants::row_height(mode);
             let rows = &track.rows;
-            let fixed = variants::SITE_HEIGHT + 1.0 + rows.groups.len() as f32 * samples::GROUP_GAP;
+            let fixed =
+                arcs + variants::SITE_HEIGHT + 1.0 + rows.groups.len() as f32 * samples::GROUP_GAP;
             Shape {
                 height: fixed + rows.len() as f32 * row_height,
                 rows: rows.len(),

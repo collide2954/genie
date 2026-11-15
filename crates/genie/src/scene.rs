@@ -150,6 +150,8 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
                 Allele::Base(base) => data.bases[base as usize],
                 Allele::Insertion => data.insertion,
                 Allele::Deletion => tokens.muted,
+                Allele::Duplication => data.hues[Hue::Vermillion as usize],
+                Allele::Inversion => data.hues[Hue::Green as usize],
                 Allele::Other => tokens.text,
             };
             match shade {

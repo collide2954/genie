@@ -460,9 +460,18 @@ impl Genie {
                 read_detail(track, panel, contig, pile, viewport, mode, (x, y))?
             }
             Content::Variants(calls) => {
-                let rows = &track.rows;
-                let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, y)?;
-                variant_detail(track, calls.variants[index].clone(), line)
+                let arcs = variants::breakend_height(&calls.variants);
+                if y < arcs {
+                    let name = &session.reference.assembly.contigs()[contig].name;
+                    let breakends = variants::Breakends::new(&calls.variants, name);
+                    let index = breakends.hit(viewport, x, y)?;
+                    variant_detail(track, calls.variants[index].clone(), None)
+                } else {
+                    let rows = &track.rows;
+                    let (index, line) =
+                        variants::hit(viewport, &calls.variants, mode, rows, x, y - arcs)?;
+                    variant_detail(track, calls.variants[index].clone(), line)
+                }
             }
             Content::Signal(data) => {
                 if let Some(detail) = site_detail(track, viewport, &data.sites, x) {
