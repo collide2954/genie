@@ -34,8 +34,8 @@ use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
 use super::{
-    Genie, Lane, Message, PANEL_GAP, Paneling, Popup, Preparation, Preparing, Renaming, Session,
-    Status, Suggestion, Sweep,
+    Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation, Preparing, Renaming,
+    Session, Status, Suggestion, Sweep,
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -202,14 +202,19 @@ impl Genie {
             .and(self.indexing.as_ref())
             .map(|(name, percent)| indexing(name, *percent))
             .or_else(|| self.download_text());
-        let notice = self.notice.as_ref().map(|notice| notice.text.as_str());
+        let notice = self.notice.as_ref();
         if progress.is_some() || notice.is_some() {
             layers = layers.push(toasts(progress, notice));
         }
         let panel = || {
             (self.popup == Some(Popup::Settings)).then(|| {
                 let inset = chrome::settings_inset(Controls::CURRENT);
-                settings::panel(self.settings, inset, self.store())
+                let updates = settings::Updates {
+                    automatic: self.checks.automatic,
+                    line: self.version_line(),
+                    download: matches!(self.release, crate::update::State::Available(_)),
+                };
+                settings::panel(self.settings, inset, self.store(), updates)
             })
         };
         if let Some(menu) = self
@@ -1374,7 +1379,7 @@ fn preparing_lane(item: &Preparing) -> Element<'_, Message> {
     .into()
 }
 
-fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, Message> {
+fn toasts<'a>(progress: Option<String>, notice: Option<&'a Notice>) -> Element<'a, Message> {
     let card = |content: Element<'a, Message>| {
         container(content)
             .max_width(360)
@@ -1389,8 +1394,16 @@ fn toasts<'a>(progress: Option<String>, notice: Option<&'a str>) -> Element<'a, 
             .padding(0)
             .style(style::ghost)
             .on_press(Message::NoticeDismissed);
+        let action = notice.action.as_ref().map(|(label, message)| {
+            button(text(label.as_str()).size(12))
+                .padding([2, 8])
+                .style(style::primary)
+                .on_press(message.clone())
+        });
         card(
-            row![text(notice).size(12).width(Length::Fill), close]
+            row![text(notice.text.as_str()).size(12).width(Length::Fill)]
+                .push(action)
+                .push(close)
                 .spacing(8)
                 .align_y(Alignment::Center)
                 .into(),

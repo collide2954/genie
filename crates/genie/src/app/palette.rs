@@ -10,7 +10,7 @@ use crate::shortcuts::Command;
 use crate::track::{Change, Toggle, Track};
 
 use super::hubs::Hubbing;
-use super::{Genie, Message, Paletting, Popup, Ranging, Regions, Renaming};
+use super::{Genie, Message, Paletting, Popup, Ranging, Regions, Renaming, Updating};
 
 fn read_actions(track: &Track) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
@@ -186,6 +186,7 @@ impl Genie {
             Action::new("Keys and mouse", "F1", Message::Command(Command::Help)),
             Action::new("Settings", "", Message::ToggleSettings),
             Action::new("Change the theme", "", Message::CycleAppearance),
+            Action::new("Check for updates", "", Message::Update(Updating::Check)),
         ];
         if let Some(session) = &self.session {
             let command = Message::Command;

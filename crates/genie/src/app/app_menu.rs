@@ -9,12 +9,12 @@ use crate::shortcuts::Command;
 use crate::style;
 
 use super::hubs::Hubbing;
-use super::{Genie, Message, Popup};
+use super::{Genie, Message, Popup, Updating};
 
 const WIDTH: f32 = 200.0;
 const RECENT_WIDTH: f32 = 280.0;
 const ROW: f32 = 24.0;
-const ROWS: f32 = 9.0;
+const ROWS: f32 = 10.0;
 /// The place of the Recent row in the menu, from the top.
 const RECENT_ROW: f32 = 3.0;
 const SEPARATORS: f32 = 2.0;
@@ -133,6 +133,15 @@ impl Genie {
             ))
             .push(hover(
                 menu::item("Settings", Message::ToggleSettings, false, true),
+                false,
+            ))
+            .push(hover(
+                menu::item(
+                    "Check for updates…",
+                    Message::Update(Updating::Check),
+                    false,
+                    true,
+                ),
                 false,
             ))
     }

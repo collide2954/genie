@@ -42,6 +42,7 @@ mod tiles;
 mod timer;
 mod track;
 mod track_dialog;
+mod update;
 
 use std::process::ExitCode;
 

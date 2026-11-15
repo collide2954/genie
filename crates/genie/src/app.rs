@@ -32,7 +32,7 @@ use crate::shortcuts::{self, Command};
 use crate::theme;
 use crate::tiles::{Key, Tiles};
 use crate::track::{self, Change, Loaded, Prepared, Source, Track};
-use crate::{font, paths, timer};
+use crate::{font, paths, timer, update};
 
 mod address;
 mod app_menu;
@@ -53,10 +53,12 @@ pub mod snapshot;
 mod track_settings;
 mod tracks;
 mod ucsc;
+mod updates;
 mod view;
 
 use orders::Answer;
 use tracks::pick;
+pub(crate) use updates::Updating;
 
 const INITIAL_WIDTH: f32 = 1_000.0;
 const FADE: Duration = Duration::from_secs(4);
@@ -126,6 +128,8 @@ pub struct Genie {
     /// The hubs to read once the next reference opens, and whether to show each one.
     hubs_next: Vec<(Location, bool)>,
     known_hubs: Hubs,
+    checks: update::Checks,
+    release: update::State,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +215,8 @@ impl Default for Genie {
             hub_adding: Vec::new(),
             hubs_next: Vec::new(),
             known_hubs: Hubs::default(),
+            checks: update::Checks::default(),
+            release: update::State::default(),
         }
     }
 }
@@ -228,6 +234,8 @@ struct Notice {
     id: u64,
     text: String,
     fades: bool,
+    /// A button next to the text: its label and its message.
+    action: Option<(String, Message)>,
 }
 
 #[derive(Debug, Default)]
@@ -673,6 +681,7 @@ pub enum Message {
     Cache(Caching),
     Find(find::Finding),
     Hub(hubs::Hubbing),
+    Update(updates::Updating),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -845,6 +854,10 @@ impl Genie {
         let mut genie = Self {
             recent: folder.as_deref().map(Recent::load).unwrap_or_default(),
             known_hubs: folder.as_deref().map(Hubs::load).unwrap_or_default(),
+            checks: folder
+                .as_deref()
+                .map(update::Checks::load)
+                .unwrap_or_default(),
             settings: folder.as_deref().map(Settings::load).unwrap_or_default(),
             last: folder
                 .as_deref()
@@ -861,9 +874,14 @@ impl Genie {
             })
             .collect();
         let open = genie.launch(files);
+        let check = if genie.checks.due(update::now()) {
+            genie.check_updates(false)
+        } else {
+            Task::none()
+        };
         (
             genie,
-            Task::batch([system::theme().map(Message::SystemModeChanged), open]),
+            Task::batch([system::theme().map(Message::SystemModeChanged), open, check]),
         )
     }
 
@@ -940,10 +958,7 @@ impl Genie {
             Message::Picked(Some(path)) => return self.open(Location::File(path)),
             Message::Reopen(location) => return self.open(location),
             Message::Picked(None) => {}
-            Message::NamesLoaded(id, names) => {
-                let names = names.unwrap_or_default();
-                self.on_session(|session| session.name(id, names));
-            }
+            Message::NamesLoaded(id, names) => self.names_loaded(id, names),
             Message::Looked(found, error) => return self.looked(found, error),
             Message::FileHovered => self.hovering = true,
             Message::FileHoverEnded => self.hovering = false,
@@ -988,6 +1003,7 @@ impl Genie {
             Message::Cache(event) => return self.caching(event),
             Message::Find(finding) => return self.find(finding),
             Message::Hub(hubbing) => return self.hubbing(hubbing),
+            Message::Update(updating) => return self.updating(updating),
             Message::Lane(id, lane) => self.lane(id, lane),
             Message::RestoreLast => return self.restore_last(),
             Message::Strip(pointer) => self.strip = pointer,
@@ -1029,6 +1045,11 @@ impl Genie {
             Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
+    }
+
+    fn names_loaded(&mut self, id: u64, names: Result<Arc<Names>, String>) {
+        let names = names.unwrap_or_default();
+        self.on_session(|session| session.name(id, names));
     }
 
     fn on_session(&mut self, change: impl FnOnce(&mut Session)) {
@@ -1094,11 +1115,16 @@ impl Genie {
     }
 
     fn show(&mut self, text: String, fades: bool) -> u64 {
+        self.show_with(text, fades, None)
+    }
+
+    fn show_with(&mut self, text: String, fades: bool, action: Option<(String, Message)>) -> u64 {
         self.notices += 1;
         self.notice = Some(Notice {
             id: self.notices,
             text,
             fades,
+            action,
         });
         self.notices
     }
@@ -2505,6 +2531,10 @@ mod tests {
             ("Export image…", Message::Command(Command::Export)),
             ("Keys and mouse…", Message::Command(Command::Help)),
             ("Settings", Message::ToggleSettings),
+            (
+                "Check for updates…",
+                Message::Update(super::Updating::Check),
+            ),
         ];
         for (label, _) in &items {
             ui.click(*label).unwrap();

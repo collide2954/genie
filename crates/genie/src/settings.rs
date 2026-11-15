@@ -7,7 +7,7 @@ use genie_formats::ini::{self, Section};
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length, Padding};
 
-use crate::app::{Caching, Message};
+use crate::app::{Caching, Message, Updating};
 use crate::chrome::BAR_HEIGHT;
 use crate::theme::Appearance;
 use crate::{font, style};
@@ -15,7 +15,6 @@ use crate::{font, style};
 pub const FILE: &str = "settings.ini";
 const SECTION: &str = "settings";
 pub const SCALES: [u16; 5] = [90, 100, 110, 125, 150];
-const VERSION: &str = concat!("genie ", env!("CARGO_PKG_VERSION"));
 const KILO: u64 = 1 << 10;
 const MEGA: u64 = 1 << 20;
 const GIGA: u64 = 1 << 30;
@@ -181,7 +180,56 @@ impl Settings {
     }
 }
 
-pub fn panel<'a>(settings: Settings, inset: f32, store: Store) -> Element<'a, Message> {
+/// The switch for checks at start with a Check now button, and the version line with a
+/// Download button when a newer release exists.
+fn update_rows<'a>(updates: Updates) -> (Element<'a, Message>, Element<'a, Message>) {
+    let switch = |label: &'a str, on: bool| {
+        button(text(label).size(12))
+            .padding([3, 8])
+            .style(if updates.automatic == on {
+                style::chosen
+            } else {
+                style::ghost
+            })
+            .on_press(Message::Update(Updating::Automatic(on)))
+    };
+    let checks = row![
+        switch("On", true),
+        switch("Off", false),
+        button(text("Check now").size(12))
+            .padding([3, 8])
+            .style(style::ghost)
+            .on_press(Message::Update(Updating::Check)),
+    ]
+    .spacing(2);
+    let version = row![text(updates.line).size(11).style(style::muted)]
+        .push(updates.download.then(|| {
+            button(text("Download").size(11))
+                .padding([1, 6])
+                .style(style::primary)
+                .on_press(Message::Update(Updating::Open))
+        }))
+        .spacing(6)
+        .align_y(Alignment::Center);
+    (checks.into(), version.into())
+}
+
+/// What the settings panel shows about updates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Updates {
+    pub automatic: bool,
+    /// The version of genie and what genie knows about a newer release.
+    pub line: String,
+    /// True when a newer release exists.
+    pub download: bool,
+}
+
+pub fn panel<'a>(
+    settings: Settings,
+    inset: f32,
+    store: Store,
+    updates: Updates,
+) -> Element<'a, Message> {
     let choice = |label: &'a str, setting: Setting, chosen: bool| -> Element<'a, Message> {
         button(text(label).size(12))
             .padding([3, 8])
@@ -242,6 +290,7 @@ pub fn panel<'a>(settings: Settings, inset: f32, store: Store) -> Element<'a, Me
     ]
     .spacing(2)
     .align_y(Alignment::Center);
+    let (checks, version) = update_rows(updates);
     let content = column![
         text("Settings").font(font::UI_STRONG).size(12),
         line("UI scale", scale.into()),
@@ -249,7 +298,8 @@ pub fn panel<'a>(settings: Settings, inset: f32, store: Store) -> Element<'a, Me
         line("Motion", switch(Setting::Motion, settings.motion).into()),
         line("Commands", switch(Setting::Port, settings.port).into()),
         line("Cache", cache.into()),
-        text(VERSION).size(11).style(style::muted),
+        line("Updates", checks),
+        version,
     ]
     .spacing(8);
     let card = container(content)
