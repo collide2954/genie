@@ -1484,6 +1484,30 @@ fn is_bed(name: &str) -> bool {
     Kind::of(name) == Some(Kind::Bed)
 }
 
+/// The first lines of a text file, plain or compressed, at most `count`. A file that genie
+/// cannot read has none.
+pub fn head(location: &Location, count: usize) -> Vec<String> {
+    let Ok(file) = location.open() else {
+        return Vec::new();
+    };
+    let reader: Box<dyn BufRead> = if is_compressed(&location.name()) {
+        Box::new(BufReader::new(gzip::Reader::new(BufReader::new(file))))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+    reader.lines().take(count).map_while(Result::ok).collect()
+}
+
+/// True for a loop list in a text file, as Juicer and `HiCCUPS` write it: its first line is a
+/// header such as `chr1 x1 x2 chr2 y1 y2 color o`.
+pub fn is_loop_list(location: &Location) -> bool {
+    inner_extension(&location.name(), &["txt"])
+        && head(location, SNIFF_LINES)
+            .iter()
+            .find(|line| !line.trim().is_empty())
+            .is_some_and(|line| genie_formats::bedpe::is_loop_list(line))
+}
+
 fn sniffs_methyl(location: &Location) -> bool {
     let Ok(file) = location.open() else {
         return false;
@@ -1564,7 +1588,7 @@ pub fn open_with(
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
-    } else if is_bedpe(&name) {
+    } else if is_bedpe(&name) || is_loop_list(reading) {
         Format::Links(LinkFile::open(reading, &name)?)
     } else if is_segments(&name) {
         Format::Segments(SegmentFile::open(reading, &name)?)
@@ -3394,6 +3418,18 @@ mod tests {
             .iter()
             .map(|summary| (summary.span.start(), (summary.sum * 10.0).round() / 10.0))
             .collect()
+    }
+
+    /// Juicer and `HiCCUPS` write their loops to `.txt` files, so their header line tells them.
+    #[test]
+    fn loop_lists_in_text_files_open_as_links() {
+        let scratch = Scratch::new("loop-lists");
+        let text = "chr1\tx1\tx2\tchr2\ty1\ty2\tcolor\to\n1\t10\t20\t1\t50\t60\t0,0,255\t5\n";
+        let source = open(scratch.file("GM12878_looplist.txt", text)).unwrap();
+        assert!(source.has_links());
+        assert_eq!(source.contigs(), ["1"]);
+        let other = open(scratch.file("notes.txt", "some words\n"));
+        assert!(other.is_err());
     }
 
     #[test]
