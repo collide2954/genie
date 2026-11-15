@@ -320,6 +320,20 @@ mod tests {
     }
 
     #[test]
+    fn sessions_keep_the_whole_genome_view() {
+        let mut genie = genie();
+        go(&mut genie, "All");
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.locus.as_deref(), Some("All"));
+        let reference = Arc::clone(&genie.session.as_ref().unwrap().reference);
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference)));
+        assert_eq!(restored.session.as_ref().unwrap().locus(), "All");
+        assert_eq!(panels(&restored).len(), 3);
+    }
+
+    #[test]
     fn chromosome_names_show_where_they_fit() {
         assert_eq!(super::name("chr21", 18.0).as_deref(), Some("21"));
         assert_eq!(super::name("chr1", 100.0).as_deref(), Some("1"));

@@ -62,6 +62,10 @@ impl Genie {
             return;
         }
         session.reading = saved.reading;
+        let genome = saved.locus.as_deref().is_some_and(|locus| {
+            super::whole::is_genome(locus)
+                && session.reference.assembly.find(locus.trim()).is_none()
+        });
         let targets: Option<Vec<_>> = saved.locus.as_deref().and_then(|locus| {
             locus
                 .split_whitespace()
@@ -69,6 +73,9 @@ impl Genie {
                 .collect()
         });
         match targets.as_deref() {
+            _ if genome => {
+                session.enter_genome(self.width);
+            }
             Some([target]) => {
                 let length = session.reference.assembly.contigs()[target.contig].length;
                 session.contig = target.contig;
