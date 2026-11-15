@@ -103,6 +103,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Interaction track | bigInteract (`.bb`); BEDPE (`.bedpe`, plain or gzip, up to 50 MB) |
 | Copy number track | SEG (`.seg`, as from TCGA, DNAcopy or GISTIC); CNVkit (`.cns`, `.cnr`); GATK ModelSegments (`.seg`). Plain or gzip, up to 50 MB |
+| Sample table | Tab or comma separated text with a header line (`.tsv`, `.csv`, `.txt`, `.panel` from the 1000 Genomes Project); IGV sample information files; PLINK `.fam` and `.ped`. Plain or gzip, up to 64 MB |
 | Session | genie session (`.genie`) |
 
 Open a genome or a reference sequence first. Then open tracks or drop them on the window.
@@ -288,9 +289,24 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
 - If a track has more than 200,000 shapes to draw in the view, it shows "There is too much to draw here. Zoom in." in place of the data.
 
+## Sample groups
+
+A sample table gives facts about the samples of variant and copy number tracks, for example the population, the sex or the phenotype. genie uses the table to put the rows of the samples in groups, to sort them and to color them.
+
+- Open a sample table as you open a track: open the file or drop it on the window. genie reads tab or comma separated files with a header line (`.tsv`, `.csv`, `.txt`, and the `.panel` files of the 1000 Genomes Project), IGV sample information files (the `#sampleTable` part) and PLINK `.fam` and `.ped` files. The column with the name `sample`, `ID` or `IID` has the sample names. If there is no such column, the first column has them. The other columns are the fields. A `.txt` file that starts with a `hub` line opens as a track hub.
+- For a PLINK file, the fields are the family, the father, the mother, the sex (male or female) and the phenotype (affected or unaffected, or the number of a quantitative phenotype).
+- One table applies to all tracks of the session that have its samples. A notice tells how many samples of the open tracks are in the table. Open a different table to replace it. **Close the sample table** in the palette removes it.
+- Put the pointer on a genotype row or a copy number row to see the fields of its sample in the card. Click the row to keep the card open. Then click a field value, and click **Group by this field**, **Sort by this field** or **Color by this field**.
+- A group shows the rows of one value together, under a band with the value and the number of samples, for example "EUR · 503 samples". Numbers come in order, then text values. A track shows at most 30 groups: the samples of the other values go together as "Other ... values". After them come the samples without a value ("No ...") and the samples that are not in the table ("Not in the sample table").
+- Sort puts the rows of each group in order: numbers from the smallest, text from A to Z, and samples without a value last.
+- Color gives each row a strip at the left. The 8 most common values get 8 colors, and the other values are grey. For a field of numbers, the strip goes from light grey for the smallest number to blue for the largest.
+- While a field groups a variant track, the card of a site shows the frequency of the other alleles (AF) in each group and the number of called alleles, for example "EUR · AF 0.12 · 1,006 alleles". genie counts two alleles for each called sample. The card shows up to 10 groups.
+- The track menu shows the fields in use, for example **Group samples by pop**. Click one to stop. The palette has **Group samples by**, **Sort samples by** and **Color samples by** for each field and each track.
+- If each row of a big cohort shows a group of samples, all samples of a row are in the same group.
+
 ## Sessions
 
-To save the reference, the tracks (with their names, colors, ranges and overlays), the view, the regions and the track hubs as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
+To save the reference, the tracks (with their names, colors, ranges, overlays and sample fields), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
 
 If a file is in the folder of the session file, the session file has its path relative to that folder.
 

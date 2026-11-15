@@ -90,6 +90,13 @@
 - genie names substitutions, new stop codons, frameshifts, and deletions and insertions that keep the frame. A variant near an exon edge shows "splice site". A variant out of the coding sequence shows its place, for example 5′ UTR or intron.
 - The card shows up to 3 transcripts, with the protein changes first, and the number of the other transcripts.
 
+### Sample groups
+
+- genie opens sample tables: tab or comma separated files with a header line, the `.panel` files of the 1000 Genomes Project, IGV sample information files, and PLINK `.fam` and `.ped` files. One table applies to all variant and copy number tracks of the session.
+- Genotype and copy number cards show the fields of their sample. Click a field to group, sort or color the rows by it. A group has a band with its value and its number of samples. A strip at the left of each row shows the 8 most common values in 8 colors, or a ramp from grey to blue for numbers.
+- While a field groups a variant track, the card of a site shows the allele frequency of each group, for example "EUR · AF 0.12 · 1,006 alleles".
+- The track menu and the palette turn the fields on and off. Sessions keep the table and the fields of each track.
+
 ### Packages
 
 - The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.
@@ -97,6 +104,7 @@
 ### Fixes
 
 - A card breaks a word that is too long for one line, for example a long variant name. Before, the word went past the edge of the card.
+- The Open dialog lists copy number files (`.seg`, `.cns`, `.cnr`) and BEDPE files with the tracks.
 
 ## 0.2.0
 
