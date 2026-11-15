@@ -1,7 +1,7 @@
 use std::io::BufReader;
 
 use genie_core::Region;
-use genie_core::alignment::{Alignment, DUPLICATE, Filter};
+use genie_core::alignment::{Alignment, DUPLICATE, Filter, QC_FAIL, SECONDARY, SUPPLEMENTARY};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::cram::{Cram, crai};
 use genie_formats::fields::{self, Rule};
@@ -24,6 +24,25 @@ pub enum Reads {
 pub struct ReadFile {
     pub index: Reads,
     pub contigs: Vec<String>,
+}
+
+/// The flags that hide reads: the default ones, less the kinds that the options show.
+fn flags(options: Options) -> Filter {
+    let mut filter = Filter::default();
+    for (shown, flag) in [
+        (options.duplicates, DUPLICATE),
+        (options.kinds.secondary, SECONDARY),
+        (options.kinds.failed, QC_FAIL),
+    ] {
+        if shown {
+            filter = filter.showing(flag);
+        }
+    }
+    if options.kinds.supplementary {
+        filter
+    } else {
+        filter.hiding(SUPPLEMENTARY)
+    }
 }
 
 fn first_opening(candidates: Vec<Location>) -> Option<crate::location::Reader> {
@@ -117,13 +136,10 @@ impl ReadFile {
             .iter()
             .position(|known| known == contig)
             .ok_or_else(|| format!("The file has no contig {contig}."))?;
-        let filter = if options.duplicates {
-            Filter::default().showing(DUPLICATE)
-        } else {
-            Filter::default()
-        };
+        let filter = flags(options);
         let keeps = |alignment: &Alignment| {
             filter.keeps(alignment)
+                && alignment.mapq >= options.mapq
                 && (rules.is_empty() || fields::passes(rules, &super::read_fields(alignment)))
         };
         let mut gather = Gather::new(region, id, options);

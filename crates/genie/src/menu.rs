@@ -16,7 +16,7 @@ use crate::track::{Change, Grouping, Toggle, Track};
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
 const COLORED_HEIGHT: f32 = 290.5;
-const READS_HEIGHT: f32 = 386.5;
+const READS_HEIGHT: f32 = 500.1;
 const VARIANTS_HEIGHT: f32 = 234.5;
 const SIGNAL_HEIGHT: f32 = 271.5;
 const HEADING_HEIGHT: f32 = 21.0;
@@ -34,11 +34,42 @@ pub const GROUPS: [(&str, Grouping); 2] = [
     ("Group by phase", Grouping::Phase),
     ("Group by strand", Grouping::Strand),
 ];
-pub const TOGGLES: [(&str, Toggle); 3] = [
+pub const TOGGLES: [(&str, Toggle); 6] = [
     ("Show duplicates", Toggle::Duplicates),
     ("Show soft clips", Toggle::Clips),
     ("Down-sample", Toggle::Downsample),
+    ("Show secondary reads", Toggle::Secondary),
+    ("Show supplementary reads", Toggle::Supplementary),
+    ("Show QC-failed reads", Toggle::Failed),
 ];
+/// The lowest MAPQ that a read track can ask for.
+pub const MAPQ_FLOORS: [(&str, u8); 5] = [("0", 0), ("1", 1), ("10", 10), ("20", 20), ("30", 30)];
+
+/// A row that sets the lowest MAPQ of the reads that show.
+pub fn mapq_row<'a>(track: &Track) -> Element<'a, Message> {
+    let (id, floor) = (track.id, track.options.mapq);
+    let choices = MAPQ_FLOORS.map(|(label, value)| {
+        button(text(label).size(12).wrapping(text::Wrapping::None))
+            .padding([3, 4])
+            .style(if value == floor {
+                style::chosen
+            } else {
+                style::ghost
+            })
+            .on_press(Message::TrackChanged(id, Change::Mapq(value)))
+            .into()
+    });
+    row![text("MAPQ ≥").size(12).wrapping(text::Wrapping::None)]
+        .push(space::horizontal())
+        .extend(choices)
+        .spacing(1)
+        .padding(iced::Padding {
+            left: 8.0,
+            ..iced::Padding::ZERO
+        })
+        .align_y(Alignment::Center)
+        .into()
+}
 
 pub fn height(track: &Track, links: usize) -> f32 {
     let extra = if links == 0 {
@@ -326,6 +357,8 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
         .map(|(label, toggle)| item(label, Change::Toggle(toggle), options.is_on(toggle)))
         .into_iter()
         .collect();
+    items.push(mapq_row(track));
+    items.push(separator());
     items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
     items.push(item("Color by modification", Change::Mods, look.mods));
     items.extend(modification_items(track));

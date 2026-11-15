@@ -7,7 +7,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::{Drafting, Lane, Message, Ranging};
 use crate::icon::{self, Icon};
-use crate::menu::{self, GROUPS, MODES, STYLES, TOGGLES};
+use crate::menu::{self, GROUPS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
 use crate::track::{Change, Track};
 use crate::{font, style};
 
@@ -96,10 +96,24 @@ fn read_lines<'a>(track: &Track) -> Vec<Element<'a, Message>> {
             options.group == grouping,
         )
     });
-    let mut lines = vec![
-        line("Reads", choices(toggles)),
-        line("Colors", choices(colors)),
-    ];
+    let mut lines =
+        vec![
+            line(
+                "Reads",
+                Column::new().spacing(2).extend(
+                    toggles
+                        .chunks(3)
+                        .map(|part| choices(part.iter().cloned()).into()),
+                ),
+            ),
+            line(
+                "MAPQ ≥",
+                choices(MAPQ_FLOORS.map(|(label, floor)| {
+                    (label, change(Change::Mapq(floor)), options.mapq == floor)
+                })),
+            ),
+            line("Colors", choices(colors)),
+        ];
     let modifications = menu::modification_items(track);
     if !modifications.is_empty() {
         lines.push(line("Show", Row::new().spacing(2).extend(modifications)));

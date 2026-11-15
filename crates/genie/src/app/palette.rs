@@ -3,7 +3,7 @@ use iced::{Element, Task};
 
 use crate::chrome::{self, keys};
 use crate::genome;
-use crate::menu::{GROUPS, MODES, STYLES, TOGGLES};
+use crate::menu::{GROUPS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
 use crate::palette::{self, Action, State};
 use crate::recent::Entry;
 use crate::shortcuts::Command;
@@ -11,6 +11,36 @@ use crate::track::{Change, Toggle, Track};
 
 use super::hubs::Hubbing;
 use super::{Genie, Message, Paletting, Popup, Ranging, Regions, Renaming};
+
+fn read_actions(track: &Track) -> Vec<Action> {
+    let (id, name) = (track.id, track.name.as_str());
+    let change = move |change| Message::TrackChanged(id, change);
+    let mut actions: Vec<Action> = TOGGLES
+        .map(|(label, toggle)| Action::new(label, name, change(Change::Toggle(toggle))))
+        .into();
+    actions.extend(MAPQ_FLOORS.map(|(label, floor)| {
+        let words = if floor == 0 {
+            "Show reads of any MAPQ".to_owned()
+        } else {
+            format!("Hide reads under MAPQ {label}")
+        };
+        Action::new(words, name, change(Change::Mapq(floor)))
+    }));
+    actions.push(Action::new(
+        "Color unusual pairs",
+        name,
+        change(Change::Pairs),
+    ));
+    actions.push(Action::new(
+        "Color by modification",
+        name,
+        change(Change::Mods),
+    ));
+    actions.extend(
+        GROUPS.map(|(label, grouping)| Action::new(label, name, change(Change::Group(grouping)))),
+    );
+    actions
+}
 
 fn track_actions(track: &Track) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
@@ -27,23 +57,7 @@ fn track_actions(track: &Track) -> Vec<Action> {
         );
     }
     if source.has_reads() {
-        actions.extend(
-            TOGGLES.map(|(label, toggle)| Action::new(label, name, change(Change::Toggle(toggle)))),
-        );
-        actions.push(Action::new(
-            "Color unusual pairs",
-            name,
-            change(Change::Pairs),
-        ));
-        actions.push(Action::new(
-            "Color by modification",
-            name,
-            change(Change::Mods),
-        ));
-        actions
-            .extend(GROUPS.map(|(label, grouping)| {
-                Action::new(label, name, change(Change::Group(grouping)))
-            }));
+        actions.extend(read_actions(track));
     }
     if source.has_signal() {
         actions.extend(

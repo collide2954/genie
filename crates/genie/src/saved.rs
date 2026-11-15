@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use genie_formats::fields::{self, Rule, Test};
 use genie_formats::http::Url;
 use genie_formats::ini::{self, Document, Section};
+
 use genie_render::alignments::Look;
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
@@ -12,7 +13,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
-use crate::track::{Declared, Filter, Grouping, Methyl, Options, Plot};
+use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot};
 
 pub const EXTENSION: &str = "genie";
 const MODES: [(&str, Mode); 3] = [
@@ -99,7 +100,6 @@ impl Saved {
         let tracks = document
             .sections("track")
             .filter_map(|section| {
-                let on = |key| section.value(key) == Some("on");
                 Some(SavedTrack {
                     location: read(section.value("file")?, base),
                     name: section.value("name").map(str::to_owned),
@@ -113,19 +113,7 @@ impl Saved {
                         .and_then(|name| find(&HUES, name))
                         .unwrap_or_default(),
                     height: section.value("height").and_then(|text| text.parse().ok()),
-                    options: Options {
-                        duplicates: on("duplicates"),
-                        clips: on("clips"),
-                        downsample: section.value("downsample") != Some("off"),
-                        group: section
-                            .value("group")
-                            .and_then(|name| find(&GROUPS, name))
-                            .unwrap_or_default(),
-                        methyl: Methyl {
-                            code: 0,
-                            separate: section.value("strands") == Some("separate"),
-                        },
-                    },
+                    options: options(section),
                     plot: Plot {
                         style: if section.value("style") == Some("line") {
                             Style::Line
@@ -212,21 +200,7 @@ impl Saved {
             if let Some(height) = track.height {
                 entries.push(("height", height.to_string()));
             }
-            if track.options.duplicates {
-                entries.push(("duplicates", "on".to_owned()));
-            }
-            if track.options.clips {
-                entries.push(("clips", "on".to_owned()));
-            }
-            if !track.options.downsample {
-                entries.push(("downsample", "off".to_owned()));
-            }
-            if track.options.group != Grouping::None {
-                entries.push(("group", name(&GROUPS, track.options.group).to_owned()));
-            }
-            if track.options.methyl.separate {
-                entries.push(("strands", "separate".to_owned()));
-            }
+            entries.extend(option_entries(track.options));
             if track.plot.style == Style::Line {
                 entries.push(("style", "line".to_owned()));
             }
@@ -356,6 +330,67 @@ fn find<T: Copy>(table: &[(&str, T)], name: &str) -> Option<T> {
         .map(|(_, value)| *value)
 }
 
+/// The read and methylation options of a track section.
+fn options(section: &Section) -> Options {
+    let on = |key| section.value(key) == Some("on");
+    Options {
+        duplicates: on("duplicates"),
+        clips: on("clips"),
+        downsample: section.value("downsample") != Some("off"),
+        group: section
+            .value("group")
+            .and_then(|name| find(&GROUPS, name))
+            .unwrap_or_default(),
+        methyl: Methyl {
+            code: 0,
+            separate: section.value("strands") == Some("separate"),
+        },
+        mapq: section
+            .value("mapq")
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(0),
+        kinds: Kinds {
+            secondary: on("secondary"),
+            supplementary: section.value("supplementary") != Some("off"),
+            failed: on("failed"),
+        },
+    }
+}
+
+/// The entries of the read and methylation options that differ from the defaults.
+fn option_entries(options: Options) -> Vec<(&'static str, String)> {
+    let on = || "on".to_owned();
+    let mut entries = Vec::new();
+    if options.duplicates {
+        entries.push(("duplicates", on()));
+    }
+    if options.clips {
+        entries.push(("clips", on()));
+    }
+    if !options.downsample {
+        entries.push(("downsample", "off".to_owned()));
+    }
+    if options.group != Grouping::None {
+        entries.push(("group", name(&GROUPS, options.group).to_owned()));
+    }
+    if options.methyl.separate {
+        entries.push(("strands", "separate".to_owned()));
+    }
+    if options.mapq > 0 {
+        entries.push(("mapq", options.mapq.to_string()));
+    }
+    if options.kinds.secondary {
+        entries.push(("secondary", on()));
+    }
+    if !options.kinds.supplementary {
+        entries.push(("supplementary", "off".to_owned()));
+    }
+    if options.kinds.failed {
+        entries.push(("failed", on()));
+    }
+    entries
+}
+
 fn rule(key: &str, entry: &str) -> Option<Rule> {
     let (label, value) = entry.split_once(':')?;
     let value = value.trim();
@@ -397,7 +432,7 @@ mod tests {
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Declared, Filter, Grouping, Methyl, Options, Plot};
+    use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -425,6 +460,25 @@ mod tests {
         assert_eq!(text.matches("keep =").count(), 1, "{text}");
     }
 
+    fn read_options() -> Options {
+        Options {
+            duplicates: true,
+            clips: true,
+            downsample: false,
+            group: Grouping::Phase,
+            methyl: Methyl {
+                code: 0,
+                separate: true,
+            },
+            mapq: 20,
+            kinds: Kinds {
+                secondary: true,
+                supplementary: false,
+                failed: true,
+            },
+        }
+    }
+
     fn saved() -> Saved {
         Saved {
             reference: Location::File(base().join("data").join("ref.fa.gz")),
@@ -442,16 +496,7 @@ mod tests {
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
-                    options: Options {
-                        duplicates: true,
-                        clips: true,
-                        downsample: false,
-                        group: Grouping::Phase,
-                        methyl: Methyl {
-                            code: 0,
-                            separate: true,
-                        },
-                    },
+                    options: read_options(),
                     plot: Plot {
                         look: Look {
                             pairs: false,
@@ -587,6 +632,20 @@ mod tests {
     fn sessions_read_back_what_they_write() {
         let saved = saved();
         assert_eq!(Saved::parse(&saved.text(&base()), &base()), Ok(saved));
+    }
+
+    #[test]
+    fn read_tracks_keep_their_quick_filters() {
+        let text = saved().text(&base());
+        for line in [
+            "mapq = 20",
+            "secondary = on",
+            "supplementary = off",
+            "failed = on",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+        assert_eq!(text.matches("mapq =").count(), 1, "{text}");
     }
 
     #[test]

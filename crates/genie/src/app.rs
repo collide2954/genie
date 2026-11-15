@@ -4389,6 +4389,27 @@ mod tests {
     }
 
     #[test]
+    fn read_menus_set_a_mapq_floor_and_show_more_kinds_of_reads() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(20.5, 200.0)));
+        for text in [
+            "MAPQ ≥",
+            "Show secondary reads",
+            "Show supplementary reads",
+            "Show QC-failed reads",
+        ] {
+            assert!(shows(&genie, text), "{text}");
+        }
+        let mut ui = simulator(genie.view());
+        ui.click("20").unwrap();
+        let floor = Message::TrackChanged(0, Change::Mapq(20));
+        assert!(ui.into_messages().any(|message| message == floor));
+        let _ = genie.update(floor);
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.options.mapq, 20);
+    }
+
+    #[test]
     fn read_menus_sort_at_the_clicked_base() {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackMenu(0, Point::new(20.5, 200.0)));
@@ -4532,7 +4553,7 @@ mod tests {
             with_filtered(),
         ];
         for mut genie in tracks {
-            let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+            let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
             let session = genie.session.as_ref().unwrap();
             let links = super::view::links(session, &session.tracks[0]).1.len();
             let expected = menu::height(&session.tracks[0], links);

@@ -230,6 +230,28 @@ pub struct Options {
     pub downsample: bool,
     pub group: Grouping,
     pub methyl: Methyl,
+    /// Reads with a lower MAPQ stay hidden.
+    pub mapq: u8,
+    pub kinds: Kinds,
+}
+
+/// The kinds of reads that show besides primary reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Kinds {
+    pub secondary: bool,
+    pub supplementary: bool,
+    /// Reads that failed the quality checks of the sequencer (flag 0x200).
+    pub failed: bool,
+}
+
+impl Default for Kinds {
+    fn default() -> Self {
+        Self {
+            secondary: false,
+            supplementary: true,
+            failed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -246,6 +268,8 @@ impl Default for Options {
             downsample: true,
             group: Grouping::None,
             methyl: Methyl::default(),
+            mapq: 0,
+            kinds: Kinds::default(),
         }
     }
 }
@@ -280,6 +304,9 @@ pub enum Toggle {
     Clips,
     Downsample,
     Join,
+    Secondary,
+    Supplementary,
+    Failed,
 }
 
 impl Options {
@@ -291,6 +318,9 @@ impl Options {
             Toggle::Clips => &mut options.clips,
             Toggle::Downsample => &mut options.downsample,
             Toggle::Join => &mut options.methyl.separate,
+            Toggle::Secondary => &mut options.kinds.secondary,
+            Toggle::Supplementary => &mut options.kinds.supplementary,
+            Toggle::Failed => &mut options.kinds.failed,
         };
         *flag = !*flag;
         options
@@ -302,6 +332,9 @@ impl Options {
             Toggle::Clips => self.clips,
             Toggle::Downsample => self.downsample,
             Toggle::Join => !self.methyl.separate,
+            Toggle::Secondary => self.kinds.secondary,
+            Toggle::Supplementary => self.kinds.supplementary,
+            Toggle::Failed => self.kinds.failed,
         }
     }
 }
@@ -1020,6 +1053,8 @@ pub enum Change {
     Colors,
     Sort(usize, u64),
     Group(Grouping),
+    /// The lowest MAPQ of the reads that show.
+    Mapq(u8),
     Up,
     Down,
     Remove,
@@ -1085,6 +1120,11 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Toggle(toggle) => {
             let track = &mut tracks[position];
             track.options = track.options.toggled(toggle);
+            track.forget();
+        }
+        Change::Mapq(floor) => {
+            let track = &mut tracks[position];
+            track.options.mapq = floor;
             track.forget();
         }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
@@ -1697,8 +1737,8 @@ mod tests {
 
     use super::reads::Reads;
     use super::{
-        Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Loaded, Methyl, Options,
-        Plot, Prepared, SignalFile, Source, Toggle, Track, Typed, VariantFile, change,
+        Change, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded, Methyl,
+        Options, Plot, Prepared, SignalFile, Source, Toggle, Track, Typed, VariantFile, change,
         contig_names, fits, hides, is_track, link_fields, load, lookup, names, neighbor, open,
         open_bbi, open_typed, open_with, spans, step,
     };
@@ -3114,6 +3154,67 @@ mod tests {
                 .iter()
                 .all(|read| !read.alignment.has(DUPLICATE | QC_FAIL | SECONDARY))
         );
+    }
+
+    #[test]
+    fn quick_filters_show_or_hide_kinds_of_reads_and_low_mapq() {
+        let source = open(fixture("reads.bam")).unwrap();
+        let reference = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let reads = |options: Options| {
+            let loaded = load(
+                &source,
+                "chr1",
+                region(0, 50_000),
+                options,
+                1,
+                true,
+                reference,
+            )
+            .unwrap();
+            let Content::Reads(pile) = loaded.content else {
+                panic!("expected reads");
+            };
+            pile.reads
+        };
+        let plain = Options {
+            downsample: false,
+            ..Options::default()
+        };
+        let count = |options: Options, flag: u16| {
+            reads(options)
+                .iter()
+                .filter(|read| read.alignment.has(flag))
+                .count()
+        };
+        assert_eq!(count(plain, SECONDARY), 0);
+        assert_eq!(count(plain, QC_FAIL), 0);
+        let shown = Options {
+            kinds: Kinds {
+                secondary: true,
+                failed: true,
+                ..Kinds::default()
+            },
+            ..plain
+        };
+        assert!(count(shown, SECONDARY) > 0);
+        assert!(count(shown, QC_FAIL) > 0);
+        let all = reads(plain).len();
+        let floor = |mapq| {
+            reads(Options { mapq, ..plain })
+                .iter()
+                .all(|read| read.alignment.mapq >= mapq)
+        };
+        assert!(floor(30));
+        assert!(reads(Options { mapq: 255, ..plain }).len() < all);
+        let without = Options {
+            kinds: Kinds {
+                supplementary: false,
+                ..Kinds::default()
+            },
+            ..plain
+        };
+        let supplementary = genie_core::alignment::SUPPLEMENTARY;
+        assert_eq!(count(without, supplementary), 0);
     }
 
     #[test]
