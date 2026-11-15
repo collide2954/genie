@@ -84,6 +84,8 @@ pub struct Card {
     pub detail: Detail,
     pub at: Point,
     pub fields: Vec<Field>,
+    /// The changes of a variant on the transcripts at it, one line each.
+    pub effects: Vec<String>,
 }
 
 fn strand(strand: Strand) -> Option<&'static str> {
@@ -416,6 +418,7 @@ pub fn plain(card: &Card) -> String {
     [title, locus(card, span).to_string()]
         .into_iter()
         .chain(lines)
+        .chain(card.effects.iter().cloned())
         .chain(fields)
         .chain(parts)
         .collect::<Vec<_>>()
@@ -591,6 +594,11 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         })
         .collect();
     let count = lines.len() + wrapped(&title, width - 2.0 * PADDING, TITLE_CHARACTER) - 1
+        + card
+            .effects
+            .iter()
+            .map(|line| wrapped(line, width - 2.0 * PADDING, CHARACTER))
+            .sum::<usize>()
         + parts.len()
         + usize::from(hidden > 0)
         + rows
@@ -617,6 +625,11 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .wrapping(WRAP)
             .into()
     }))
+    .extend(
+        card.effects
+            .iter()
+            .map(|line| text(line.clone()).size(11).wrapping(WRAP).into()),
+    )
     .extend(
         rows.into_iter()
             .map(|(label, value)| field_row(pinned.then_some(card.track), label, value)),
@@ -732,6 +745,7 @@ mod tests {
             },
             at: Point::ORIGIN,
             fields: Vec::new(),
+            effects: Vec::new(),
         };
         assert_eq!(
             plain(&card(Strand::Forward, "GGATCC", 0)),
@@ -863,11 +877,64 @@ mod tests {
                 field("Class", "pELS"),
                 field("Highest DNase Z-score", "2.5"),
             ],
+            effects: Vec::new(),
         };
         assert_eq!(
             plain(&card),
             "geneA\nchr1:10-20\n11 bp · forward strand\nCoding 12-15\nClass: pELS\nHighest DNase Z-score: 2.5"
         );
+    }
+
+    #[test]
+    fn variant_cards_show_the_effects_on_transcripts() {
+        let effects = [
+            "BRCA1 p.Arg1699Trp · c.5095C>T",
+            "BRCA1 splice site · c.5074+1G>A",
+            "+2 more transcripts",
+        ];
+        let card = Card {
+            track: 1,
+            contig: "chr17".to_owned(),
+            detail: Detail::Variant {
+                variant: site("C", &["T"], None, "."),
+                sample: None,
+            },
+            at: Point::new(100.0, 780.0),
+            fields: vec![field("DP", "10")],
+            effects: effects.iter().map(|line| (*line).to_owned()).collect(),
+        };
+        let text = plain(&card);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines[2..],
+            ["C > T", effects[0], effects[1], effects[2], "DP: 10"]
+        );
+        let window = Size::new(1280.0, 800.0);
+        for pinned in [false, true] {
+            let mut ui = simulator(view(&card, pinned, window));
+            let edge = ui.find(selector::id("card")).unwrap().bounds();
+            assert!(edge.y + edge.height <= card.at.y, "{pinned} {edge:?}");
+            for line in effects {
+                let shown = ui.find(line).unwrap().bounds();
+                assert!(
+                    shown.y + shown.height <= edge.y + edge.height,
+                    "{line} {pinned}"
+                );
+            }
+        }
+        let tall = Card {
+            effects: (0..100)
+                .map(|index| format!("T{index} p.Arg3His"))
+                .collect(),
+            at: Point::new(100.0, 100.0),
+            ..card
+        };
+        let window = Size::new(1280.0, 400.0);
+        let edge = simulator(view(&tall, true, window))
+            .find(selector::id("card"))
+            .unwrap()
+            .bounds();
+        assert!(edge.height <= 400.0 - 8.0, "{edge:?}");
     }
 
     #[test]
@@ -879,6 +946,7 @@ mod tests {
             detail: Detail::Feature(feature),
             at: Point::ORIGIN,
             fields: Vec::new(),
+            effects: Vec::new(),
         };
         let window = Size::new(1280.0, 400.0);
         let bounds = |card: &Card, pinned: bool| {
@@ -909,6 +977,7 @@ mod tests {
             detail: Detail::Feature(Feature::new(title, region(9, 20), Strand::Forward)),
             at: Point::new(100.0, 780.0),
             fields: vec![field(label, value)],
+            effects: Vec::new(),
         };
         let window = Size::new(1280.0, 800.0);
         for pinned in [false, true] {

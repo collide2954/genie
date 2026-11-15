@@ -505,6 +505,7 @@ impl Genie {
             detail,
             at: Point::new(pointer.at.x, pointer.at.y - self.scroll),
             fields,
+            effects: Vec::new(),
         })
     }
 

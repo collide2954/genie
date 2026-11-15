@@ -537,6 +537,7 @@ impl Genie {
             },
             at: pointer.at,
             fields: Vec::new(),
+            effects: Vec::new(),
         })
     }
 

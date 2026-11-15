@@ -1675,6 +1675,7 @@ mod tests {
             detail: crate::card::Detail::Feature(feature),
             at: Point::ORIGIN,
             fields: Vec::new(),
+            effects: Vec::new(),
         });
         assert_eq!(
             genie.copy_text().as_deref(),
