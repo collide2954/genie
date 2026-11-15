@@ -1270,7 +1270,8 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Segments(copies)) => {
             let rows = track.rows.len().max(1);
             let row_height = segments::row_height(mode, copies.samples);
-            let fixed = track.rows.groups.len() as f32 * samples::GROUP_GAP;
+            let fixed =
+                segments::top(&track.rows) + track.rows.groups.len() as f32 * samples::GROUP_GAP;
             Shape {
                 height: fixed + rows as f32 * row_height,
                 rows,

@@ -22,6 +22,17 @@ const THINNEST: f32 = 1.0;
 const NAME_SIZE: f32 = 9.0;
 const NAME_INSET: f32 = 4.0;
 const REACH: f64 = 1.0;
+/// The space above the first band of grouped rows, for the name of the track.
+pub const NAME_ROOM: f32 = 14.0;
+
+/// The space above the first row: room for the name of the track when the rows have groups.
+pub fn top(rows: &Rows) -> f32 {
+    if rows.groups.is_empty() {
+        0.0
+    } else {
+        NAME_ROOM
+    }
+}
 
 /// Expanded rows show the names, so they start with few samples.
 pub fn fit(samples: usize) -> Mode {
@@ -99,6 +110,13 @@ pub fn scene(
         );
     }
     primitives.extend(rows.marks(row, gap));
+    let room = top(rows);
+    if room > 0.0 {
+        primitives = primitives
+            .into_iter()
+            .map(|primitive| primitive.lowered(room))
+            .collect();
+    }
     primitives
 }
 
@@ -111,7 +129,7 @@ pub fn hit(
     rows: &Rows,
     (x, y): (f32, f32),
 ) -> Option<usize> {
-    let place = rows.at(y, row_height(mode, samples))?;
+    let place = rows.at(y - top(rows), row_height(mode, samples))?;
     let sample = *rows.members.get(place)?.first()?;
     let position = viewport.to_bp(f64::from(x));
     let reach = REACH * viewport.scale();
@@ -128,7 +146,7 @@ mod tests {
     use genie_core::segment::Segment;
     use genie_core::{Region, Viewport};
 
-    use super::{change, fit, hit, row_height, scene};
+    use super::{NAME_ROOM, change, fit, hit, row_height, scene, top};
     use crate::features::Mode;
     use crate::samples::{GROUP_GAP, Rows, STRIP};
     use crate::scene::{Paint, Primitive};
@@ -226,8 +244,11 @@ mod tests {
         assert_eq!(at(250.0, 40.0), None);
     }
 
+    /// Grouped rows start under room for the name of the track, so that the name does not
+    /// cover the band of the first group.
     #[test]
     fn grouped_samples_sit_under_the_band_of_their_group() {
+        let room = NAME_ROOM;
         let segments = [segment(0, 100, 300, 1.5), segment(1, 200, 900, -0.75)];
         let names = ["tumor".to_owned(), "normal".to_owned()];
         let arrangement = Arrangement {
@@ -265,8 +286,8 @@ mod tests {
         assert_eq!(
             rects,
             [
-                (100.0, 2.0 * GROUP_GAP + 12.0, Paint::Change(100)),
-                (200.0, GROUP_GAP, Paint::Change(-50))
+                (100.0, room + 2.0 * GROUP_GAP + 12.0, Paint::Change(100)),
+                (200.0, room + GROUP_GAP, Paint::Change(-50))
             ]
         );
         let labels: Vec<(String, f32)> = drawn
@@ -279,22 +300,32 @@ mod tests {
         assert_eq!(
             labels,
             [
-                ("normal".to_owned(), GROUP_GAP + 5.5),
-                ("tumor".to_owned(), 2.0 * GROUP_GAP + 17.5)
+                ("normal".to_owned(), room + GROUP_GAP + 5.5),
+                ("tumor".to_owned(), room + 2.0 * GROUP_GAP + 17.5)
             ]
         );
         let strips = drawn
             .iter()
             .filter(|primitive| matches!(primitive, Primitive::Rect { x, .. } if *x < 1.0))
             .count();
-        let bands = drawn
+        let bands: Vec<f32> = drawn
             .iter()
-            .filter(|primitive| matches!(primitive, Primitive::Text { .. }))
-            .count();
-        assert_eq!((strips, bands), (2, 2));
+            .filter_map(|primitive| match primitive {
+                Primitive::Text { y, .. } => Some(*y),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(strips, 2);
+        assert_eq!(
+            bands,
+            [room + GROUP_GAP / 2.0, room + 12.0 + 1.5 * GROUP_GAP]
+        );
+        assert!((top(&rows) - room).abs() < f32::EPSILON);
+        assert!(top(&Rows::plain(2, 1)).abs() < f32::EPSILON);
         let at = |y| hit(view(), &segments, 2, Mode::Expanded, &rows, (250.0, y));
         assert_eq!(at(5.0), None);
-        assert_eq!(at(GROUP_GAP + 5.0), Some(1));
-        assert_eq!(at(2.0 * GROUP_GAP + 17.0), Some(0));
+        assert_eq!(at(room + 5.0), None);
+        assert_eq!(at(room + GROUP_GAP + 5.0), Some(1));
+        assert_eq!(at(room + 2.0 * GROUP_GAP + 17.0), Some(0));
     }
 }
