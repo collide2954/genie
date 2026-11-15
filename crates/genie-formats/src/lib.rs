@@ -1,3 +1,4 @@
+pub mod annotations;
 pub mod bai;
 pub mod bam;
 pub mod bbi;

@@ -3,6 +3,7 @@ use std::io::BufReader;
 use genie_core::Region;
 use genie_core::signal::Tally;
 use genie_core::variant::Variant;
+use genie_formats::annotations::{self, Layout};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::Entry;
 use genie_formats::table::Table;
@@ -17,6 +18,8 @@ pub enum VariantFile {
         index: tabix::Index,
         samples: Vec<String>,
         infos: Vec<(String, String)>,
+        /// The INFO fields that hold annotations, for example CSQ from VEP.
+        layouts: Vec<Layout>,
     },
     Table {
         table: Table<Variant>,
@@ -43,6 +46,7 @@ impl VariantFile {
         Ok(Self::Indexed {
             index,
             samples: header.samples,
+            layouts: annotations::layouts(&header.infos),
             infos: header.infos,
         })
     }
@@ -117,9 +121,10 @@ impl VariantFile {
     ) -> Result<Vec<Variant>, String> {
         match self {
             Self::Table { table, .. } => Ok(table.query(contig, region)),
-            Self::Indexed { index, .. } => {
+            Self::Indexed { index, layouts, .. } => {
                 let mut reader = Bgzf::new(location.open()?);
-                vcf::query(index, &mut reader, contig, region).map_err(|error| error.to_string())
+                vcf::query(index, &mut reader, contig, region, layouts)
+                    .map_err(|error| error.to_string())
             }
         }
     }

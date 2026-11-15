@@ -71,6 +71,7 @@ fn remote_vcf_queries_equal_local_ones() {
         &mut Bgzf::new(files.open("variants.vcf.gz")),
         "chr2",
         region,
+        &[],
     )
     .unwrap();
     let local = vcf::query(
@@ -78,6 +79,7 @@ fn remote_vcf_queries_equal_local_ones() {
         &mut Bgzf::new(File::open(data("variants.vcf.gz")).unwrap()),
         "chr2",
         region,
+        &[],
     )
     .unwrap();
     assert_ne!(local.len(), 0);

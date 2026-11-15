@@ -341,7 +341,7 @@ mod tests {
 
     use genie_core::Region;
     use genie_core::samples::{Arrangement, Group};
-    use genie_core::variant::{Call, Variant};
+    use genie_core::variant::{Annotations, Call, Variant};
 
     use super::{Text, classify, group_lines, is_table, is_text, read};
     use crate::location::Location;
@@ -367,6 +367,7 @@ mod tests {
             quality: None,
             filter: "PASS".to_owned(),
             info: String::new(),
+            annotations: Annotations::default(),
             calls: vec![
                 Call::Het,
                 Call::Reference,

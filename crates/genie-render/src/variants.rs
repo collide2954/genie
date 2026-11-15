@@ -186,7 +186,7 @@ pub fn hit(
 #[cfg(test)]
 mod tests {
     use genie_core::samples::{Arrangement, Group, Tint};
-    use genie_core::variant::{Call, Variant};
+    use genie_core::variant::{Annotations, Call, Variant};
     use genie_core::{Region, Viewport};
 
     use super::{SITE_HEIGHT, group, hit, row_height, scene};
@@ -211,6 +211,7 @@ mod tests {
             quality: None,
             filter: "PASS".to_owned(),
             info: String::new(),
+            annotations: Annotations::default(),
             calls: calls.to_vec(),
         }
     }

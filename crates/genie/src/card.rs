@@ -750,7 +750,7 @@ mod tests {
         Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, Mate, Op, PAIRED, REVERSE, SECOND, Tags,
     };
     use genie_core::signal::Bin;
-    use genie_core::variant::{Call, Variant};
+    use genie_core::variant::{Annotations, Call, Variant};
     use genie_core::{Feature, Region, Strand};
     use genie_formats::fields::Field;
     use iced::{Point, Size};
@@ -795,6 +795,7 @@ mod tests {
             quality,
             filter: "PASS".to_owned(),
             info: info.to_owned(),
+            annotations: Annotations::default(),
             calls: Vec::new(),
         }
     }

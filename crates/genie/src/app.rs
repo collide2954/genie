@@ -1296,7 +1296,7 @@ mod tests {
 
     use genie_core::samples::Table;
     use genie_core::signal::Summary;
-    use genie_core::variant::{Call, Variant};
+    use genie_core::variant::{Annotations, Call, Variant};
     use genie_core::{Band, Feature, Names, Region, Stain, Strand};
     use genie_formats::fai::FaiRecord;
     use genie_formats::features::Kind;
@@ -1686,6 +1686,7 @@ mod tests {
                 index: Index::default(),
                 samples: Vec::new(),
                 infos: Vec::new(),
+                layouts: Vec::new(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(uncounted)));
@@ -4727,6 +4728,7 @@ mod tests {
             quality: Some(50.0),
             filter: "PASS".to_owned(),
             info: "DP=12".to_owned(),
+            annotations: Annotations::default(),
             calls,
         }
     }

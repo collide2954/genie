@@ -37,6 +37,53 @@ pub enum Kind {
     Complex,
 }
 
+/// How much a change matters to a transcript, as Ensembl VEP and `SnpEff` rank it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Impact {
+    #[default]
+    Modifier,
+    Low,
+    Moderate,
+    High,
+}
+
+impl Impact {
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::High => "HIGH",
+            Self::Moderate => "MODERATE",
+            Self::Low => "LOW",
+            Self::Modifier => "MODIFIER",
+        }
+    }
+}
+
+/// What a tool such as VEP, `SnpEff` or bcftools csq says that an allele does to a transcript.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Annotation {
+    pub allele: String,
+    pub consequences: Vec<String>,
+    pub impact: Impact,
+    pub gene: String,
+    pub transcript: String,
+    pub biotype: String,
+    /// The change on the transcript, for example c.5095C>T.
+    pub coding: String,
+    /// The change on the protein, for example p.Arg1699Trp.
+    pub protein: String,
+}
+
+/// The annotations of a variant in its file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Annotations {
+    /// The most severe annotations, the most severe first.
+    pub first: Vec<Annotation>,
+    /// The number of the other annotations.
+    pub others: usize,
+    /// Fields that list the values of all annotations, then the other columns of the first.
+    pub fields: Vec<(String, String)>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub id: String,
@@ -46,6 +93,7 @@ pub struct Variant {
     pub quality: Option<f32>,
     pub filter: String,
     pub info: String,
+    pub annotations: Annotations,
     pub calls: Vec<Call>,
 }
 
@@ -83,7 +131,7 @@ impl Variant {
 
 #[cfg(test)]
 mod tests {
-    use super::{Call, Kind, Variant};
+    use super::{Annotations, Call, Kind, Variant};
     use crate::Region;
 
     fn variant(reference: &str, alternates: &[&str]) -> Variant {
@@ -95,6 +143,7 @@ mod tests {
             quality: None,
             filter: "PASS".to_owned(),
             info: String::new(),
+            annotations: Annotations::default(),
             calls: Vec::new(),
         }
     }

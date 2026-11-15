@@ -4,6 +4,7 @@ use std::str::Split;
 use genie_core::Region;
 use genie_core::variant::{Call, Variant};
 
+use crate::annotations::{self, Layout};
 use crate::bgzf::Bgzf;
 use crate::features::Entry;
 use crate::fields::{self, Field};
@@ -112,7 +113,9 @@ pub fn header(mut reader: impl BufRead) -> Result<Header, Error> {
     }
 }
 
-pub fn parse(line: &str) -> Result<Option<(&str, Variant)>, Reason> {
+/// The contig and the variant of a record. The annotations of the `layouts` leave the INFO and
+/// go into the variant.
+pub fn parse<'a>(line: &'a str, layouts: &[Layout]) -> Result<Option<(&'a str, Variant)>, Reason> {
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
     }
@@ -146,6 +149,7 @@ pub fn parse(line: &str) -> Result<Option<(&str, Variant)>, Reason> {
         None => Vec::new(),
     };
     let start = position.saturating_sub(1);
+    let (annotations, kept) = annotations::split(info, layouts);
     Ok(Some((
         contig,
         Variant {
@@ -159,7 +163,8 @@ pub fn parse(line: &str) -> Result<Option<(&str, Variant)>, Reason> {
             alternates: alternates.split(',').map(str::to_owned).collect(),
             quality,
             filter: filter.to_owned(),
-            info: cut(info),
+            info: cut(&kept),
+            annotations,
             calls,
         },
     )))
@@ -170,10 +175,11 @@ pub fn query<R: Read + Seek>(
     reader: &mut Bgzf<R>,
     contig: &str,
     region: Region,
+    layouts: &[Layout],
 ) -> Result<Vec<Variant>, Error> {
     let mut variants = Vec::new();
     index.query(reader, contig, region, |line| {
-        if let Some((_, variant)) = parse(line).map_err(Error::Invalid)? {
+        if let Some((_, variant)) = parse(line, layouts).map_err(Error::Invalid)? {
             variants.push(variant);
         }
         Ok(())
@@ -184,6 +190,7 @@ pub fn query<R: Read + Seek>(
 pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Error> {
     let mut samples = Vec::new();
     let mut infos = Vec::new();
+    let mut layouts = None;
     let mut rows = Vec::new();
     lines(reader, |number, line| {
         if line.starts_with("##") {
@@ -194,7 +201,8 @@ pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Erro
             samples = line.split('\t').skip(9).map(str::to_owned).collect();
             return Ok(());
         }
-        let parsed = parse(line).map_err(|reason| Error::Format {
+        let layouts = layouts.get_or_insert_with(|| annotations::layouts(&infos));
+        let parsed = parse(line, layouts).map_err(|reason| Error::Format {
             line: number,
             reason,
         })?;
@@ -286,7 +294,7 @@ mod tests {
     #[test]
     fn parses_sites_with_genotypes() {
         let line = "chr1\t100\trs1\tA\tG,T\t50.5\tPASS\tDP=10;AF=0.5\tDP:GT\t12:0/1\t9:1/1\t0:./.";
-        let (contig, variant) = parse(line).unwrap().unwrap();
+        let (contig, variant) = parse(line, &[]).unwrap().unwrap();
         assert_eq!(contig, "chr1");
         assert_eq!(variant.span, Region::between(99, 100));
         assert_eq!(variant.id, "rs1");
@@ -300,7 +308,7 @@ mod tests {
 
     #[test]
     fn sites_without_samples_or_values() {
-        let (_, variant) = parse("chr2\t5\t.\tC\tT\t.\t.\t.").unwrap().unwrap();
+        let (_, variant) = parse("chr2\t5\t.\tC\tT\t.\t.\t.", &[]).unwrap().unwrap();
         assert_eq!(variant.id, "");
         assert_eq!(variant.quality, None);
         assert_eq!(variant.calls, []);
@@ -314,7 +322,7 @@ mod tests {
             Region::between(9, 500)
         );
         assert_eq!(extent(9, "A", "END=3"), Region::between(9, 10));
-        let (_, variant) = parse("chr1\t10\t.\tA\t<DEL>\t.\t.\tEND=500")
+        let (_, variant) = parse("chr1\t10\t.\tA\t<DEL>\t.\t.\tEND=500", &[])
             .unwrap()
             .unwrap();
         assert_eq!(variant.span, Region::between(9, 500));
@@ -322,14 +330,43 @@ mod tests {
 
     #[test]
     fn skips_headers_and_reports_bad_lines() {
-        assert_eq!(parse("#CHROM\tPOS"), Ok(None));
-        assert_eq!(parse(""), Ok(None));
-        assert_eq!(parse("chr1\tx\t.\tA\tG\t.\t.\t."), Err(Reason::BadNumber));
+        assert_eq!(parse("#CHROM\tPOS", &[]), Ok(None));
+        assert_eq!(parse("", &[]), Ok(None));
+        assert_eq!(
+            parse("chr1\tx\t.\tA\tG\t.\t.\t.", &[]),
+            Err(Reason::BadNumber)
+        );
         for quality in ["low", "nan", "NaN", "inf", "-infinity"] {
             let line = format!("chr1\t10\t.\tA\tG\t{quality}\t.\t.");
-            assert_eq!(parse(&line), Err(Reason::BadNumber), "{quality}");
+            assert_eq!(parse(&line, &[]), Err(Reason::BadNumber), "{quality}");
         }
-        assert_eq!(parse("chr1\t10\t.\tA"), Err(Reason::MissingField));
+        assert_eq!(parse("chr1\t10\t.\tA", &[]), Err(Reason::MissingField));
+    }
+
+    #[test]
+    fn annotations_leave_the_info_and_go_into_the_variant() {
+        let csq = "C|intron_variant|MODIFIER|GENEB,".repeat(30);
+        let text = format!(
+            "##fileformat=VCFv4.2\n\
+             ##INFO=<ID=CSQ,Number=.,Type=String,Description=\"Consequence annotations from \
+             Ensembl VEP. Format: Allele|Consequence|IMPACT|SYMBOL\">\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+             chr1\t10\t.\tT\tC\t.\tPASS\tDP=4;CSQ={csq}C|stop_gained|HIGH|GENEA;AF=0.5\n"
+        );
+        let (header, table) = read_table(Cursor::new(text.as_bytes())).unwrap();
+        let found = table.query("chr1", Region::between(0, 100));
+        let variant = &found[0];
+        assert_eq!(variant.info, "DP=4;AF=0.5");
+        let first = &variant.annotations.first;
+        assert_eq!((first[0].gene.as_str(), first.len()), ("GENEA", 3));
+        assert_eq!(variant.annotations.others, 28);
+        let layouts = crate::annotations::layouts(&header.infos);
+        let line = text.lines().last().unwrap();
+        let (_, parsed) = parse(line, &layouts).unwrap().unwrap();
+        assert_eq!(&parsed, variant);
+        let (_, bare) = parse(line, &[]).unwrap().unwrap();
+        assert_eq!(bare.info, "DP=4;…");
+        assert_eq!(bare.annotations.first, []);
     }
 
     #[test]
@@ -339,7 +376,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(";");
         let line = format!("chr1\t10\t.\tA\tG\t.\t.\t{info}");
-        let (_, variant) = parse(&line).unwrap().unwrap();
+        let (_, variant) = parse(&line, &[]).unwrap().unwrap();
         let kept = variant.info.strip_suffix(";…").unwrap();
         assert!(kept.len() <= 400, "{}", kept.len());
         assert!(kept.ends_with('1'), "{kept}");
@@ -478,7 +515,7 @@ mod tests {
         let bins: Bins = &[(4681, &[(0, end)])];
         let index = index(VCF, &["chr1"], &[(bins, &[0])]);
         let mut reader = Bgzf::new(Cursor::new(file(&[text.as_bytes()])));
-        let found = query(&index, &mut reader, "chr1", Region::between(12, 20)).unwrap();
+        let found = query(&index, &mut reader, "chr1", Region::between(12, 20), &[]).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].span, Region::between(9, 13));
     }

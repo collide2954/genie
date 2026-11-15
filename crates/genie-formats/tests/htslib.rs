@@ -480,7 +480,7 @@ fn every_fixture_variant_parses() {
     let whole = Region::new(0, WHOLE).unwrap();
     assert_eq!(table.query("chr1", whole).len(), 700);
     let index = variant_index("csi");
-    let found = vcf::query(&index, &mut reader("variants.vcf.gz"), "chr2", whole).unwrap();
+    let found = vcf::query(&index, &mut reader("variants.vcf.gz"), "chr2", whole, &[]).unwrap();
     assert_eq!(found.len(), 700);
     assert!(found.iter().any(|variant| variant.span.len() > 500));
 }
