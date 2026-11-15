@@ -54,6 +54,8 @@
 - Arcs with an end outside the view go past the edge. A link to another chromosome shows as a stub.
 - The card of a link shows its two ends, the distance, the value and the other fields. BEDPE header lines name the fields.
 - The arcs use the colors of the file, or the track color.
+- genie opens the loop lists of Juicer and HiCCUPS (`.txt`, also compressed and on the web). The header line names all fields, and the `color` column gives the color of each arc.
+- genie opens bigInteract files with the older names of the ends (`region1` and `region2`).
 
 ### Copy number
 
@@ -87,7 +89,10 @@
 ### Protein changes
 
 - A variant card shows the change of the variant on the transcripts of the open feature tracks in HGVS notation, for example "BRCA1 p.Arg1699Trp · c.5095C>T".
-- genie names substitutions, new stop codons, frameshifts, and deletions and insertions that keep the frame. A variant near an exon edge shows "splice site". A variant out of the coding sequence shows its place, for example 5′ UTR or intron.
+- genie names substitutions, new stop codons, frameshifts, and deletions and insertions that keep the frame. A variant near an exon edge shows "splice site". A variant out of the coding sequence shows its place and its c. position, for example "5′ UTR · c.-14G>A" or "intron · c.92+5G>A".
+- A deletion of whole exons shows "exon deletion", and a deletion of the whole transcript shows "transcript deletion".
+- As HGVS asks, genie moves an insertion or a deletion in a repeat to the 3′ end of the transcript, and names an insertion of the bases before it as a duplication, for example "c.417dup" or "p.Lys2dup".
+- A change of the stop codon shows the extension, for example "p.Ter148GluextTer?". An allele with unknown bases (N) shows "p.?".
 - The card shows up to 3 transcripts, with the protein changes first, and the number of the other transcripts.
 
 ### Sample groups
@@ -96,6 +101,8 @@
 - Genotype and copy number cards show the fields of their sample. Click a field to group, sort or color the rows by it. A group has a band with its value and its number of samples. A strip at the left of each row shows the 8 most common values in 8 colors, or a ramp from grey to blue for numbers.
 - While a field groups a variant track, the card of a site shows the allele frequency of each group, for example "EUR · AF 0.12 · 1,006 alleles".
 - The track menu and the palette turn the fields on and off. Sessions keep the table and the fields of each track.
+- genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
+- genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
 ### Packages
 
@@ -105,6 +112,12 @@
 
 - A card breaks a word that is too long for one line, for example a long variant name. Before, the word went past the edge of the card.
 - The Open dialog lists copy number files (`.seg`, `.cns`, `.cnr`) and BEDPE files with the tracks.
+- For a genome on the web, genie reads only the repeat masks of the 2bit file near the view. Before, the first bases of each human chromosome read 2 to 3.5 MB of masks.
+- A track that loads while you zoom in loads again for the new view. Before, a feature track could keep the density of the wide view.
+- If two INFO descriptions give the same short label, the variant card shows the INFO IDs, for example `AF_EUR` and `AF_EUR_unrel`.
+- Old bigBed files without a count of BED fields open. Before, they failed with "A number is not valid".
+- The names of files on the web show their escaped characters, for example `+` for `%2B`.
+- The message for a file that genie cannot open lists all track types.
 
 ## 0.2.0
 
