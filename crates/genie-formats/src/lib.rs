@@ -27,6 +27,7 @@ pub mod ini;
 pub mod md5;
 pub mod png;
 pub mod remote;
+pub mod samples;
 pub mod seg;
 mod sidecar;
 pub mod sort;

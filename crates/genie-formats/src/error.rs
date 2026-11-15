@@ -46,6 +46,7 @@ pub enum Reason {
     CramNewCodec,
     CramReference,
     SegmentHeader,
+    SampleTable,
 }
 
 impl fmt::Display for Error {
@@ -110,6 +111,9 @@ impl fmt::Display for Reason {
             Self::CramReference => "the reference is not the reference of the CRAM file here",
             Self::SegmentHeader => {
                 "the header line does not name the chromosome, start and end columns"
+            }
+            Self::SampleTable => {
+                "the file has no header line with sample names and fields, or no samples"
             }
         })
     }
