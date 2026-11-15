@@ -21,6 +21,7 @@ pub mod gff;
 pub mod gtf;
 pub mod gzi;
 pub mod gzip;
+pub mod hic;
 pub mod http;
 pub mod hub;
 pub mod icon;

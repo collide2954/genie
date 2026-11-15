@@ -47,6 +47,8 @@ pub enum Reason {
     CramReference,
     SegmentHeader,
     SampleTable,
+    NotHic,
+    HicVersion,
 }
 
 impl fmt::Display for Error {
@@ -115,6 +117,8 @@ impl fmt::Display for Reason {
             Self::SampleTable => {
                 "the file has no header line with sample names and fields, or no samples"
             }
+            Self::NotHic => "the file is not a Hi-C file of Juicer",
+            Self::HicVersion => "genie reads Hi-C files of version 6 to 9",
         })
     }
 }
