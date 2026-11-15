@@ -62,6 +62,11 @@
 - Up to 20 samples show their names. More samples get thinner rows, down to 1 px.
 - The card of a segment shows its sample, its length, its markers and its value.
 
+### Updates
+
+- At start, genie asks GitHub for the newest release, at most once a day. A notice with a **Download** button opens the release page when a newer version exists.
+- **Check for updates…** in the genie menu and the palette, and **Check now** in the settings, check at once. The settings show the version and the result, and turn the checks at start off.
+
 ### Read tags and filters
 
 - Read cards list MAPQ, the insert size of a pair and the small tags of the read as fields. Click a field to keep or hide reads by its value, or to keep reads with at least or at most a number.

@@ -348,6 +348,14 @@ with socket.create_connection(("127.0.0.1", 60151)) as connection:
 
 The gear button opens the settings: UI scale (90 % to 150 %), density, motion and the port for [commands from other programs](#commands-from-other-programs). genie keeps the settings and the theme in its configuration folder.
 
+## Updates
+
+When genie starts, it asks GitHub for the newest release, at most once a day. If a newer version exists, a notice says so. Click **Download** to open the release page in your browser, then install the new version as usual.
+
+- The check sends one request to api.github.com. The request contains the version of genie. genie sends no other data.
+- To stop the checks at start, open the settings and set **Updates** to **Off**. **Check now** in the settings, **Check for updates…** in the genie menu and the palette always check.
+- The settings show the version and the result of the last check, for example "genie 0.2.0 · Up to date".
+
 ## Diagnostics
 
 genie writes warnings to stderr. To see more, set `GENIE_LOG` to `info`, `debug` or `trace`:
