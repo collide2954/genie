@@ -99,6 +99,11 @@ impl Feature {
     pub fn coding(&self) -> Option<Region> {
         self.coding
     }
+
+    /// Whether the file gives the blocks of the feature, for example its exons.
+    pub(crate) fn has_blocks(&self) -> bool {
+        !self.blocks.is_empty()
+    }
 }
 
 #[cfg(test)]

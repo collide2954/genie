@@ -225,6 +225,18 @@ impl Coding {
     }
 }
 
+/// Whether a feature is a transcript with a coding sequence: it has a strand, exons or a
+/// coding part that is not all of it, and whole codons. The coding part of a plain interval,
+/// for example from a BED file with 6 columns, is all of the interval.
+pub fn readable(transcript: &Feature) -> bool {
+    let Some(coding) = transcript.coding() else {
+        return false;
+    };
+    let shaped = transcript.has_blocks() || coding != transcript.span();
+    let length = Coding::new(transcript, coding).length;
+    transcript.strand() != Strand::Unknown && shaped && length >= 3 && length.is_multiple_of(3)
+}
+
 /// The effect of a variant on a transcript with a coding part. `bases` gives the reference
 /// bases of a region of the contig.
 pub fn effect(
@@ -232,6 +244,9 @@ pub fn effect(
     (position, reference, alternate): (u64, &[u8], &[u8]),
     bases: &mut dyn FnMut(Region) -> Option<Vec<u8>>,
 ) -> Option<Effect> {
+    if !readable(transcript) {
+        return None;
+    }
     let coding = transcript.coding()?;
     let edit = Edit::new(position, reference, alternate);
     if edit.deleted.is_empty() && edit.inserted.is_empty() {
@@ -407,7 +422,7 @@ fn coding_change(numbers: &Coding, edit: &Edit) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Effect, effect};
+    use super::{Effect, effect, readable};
     use crate::codon::complement;
     use crate::{Feature, Region, Strand};
 
@@ -528,5 +543,24 @@ mod tests {
             (Some("c.25+1T>C"), Some("p.?"), Some("splice site"))
         );
         assert_eq!(reverse(228, "C", "A").place, Some("5′ UTR"));
+    }
+
+    #[test]
+    fn only_transcripts_with_a_strand_and_whole_codons_have_effects() {
+        assert!(readable(&transcript(Strand::Forward)));
+        assert!(readable(&transcript(Strand::Reverse)));
+        assert!(!readable(&transcript(Strand::Unknown)));
+        assert!(!readable(&transcript(Strand::Forward).with_coding(None)));
+        let partial = transcript(Strand::Forward).with_coding(Some(Region::between(106, 225)));
+        assert!(!readable(&partial));
+        let interval = Feature::new("ENHANCER", Region::between(100, 160), Strand::Forward);
+        assert!(!readable(&interval));
+        let exon = interval.with_blocks(vec![Region::between(100, 160)]);
+        assert!(readable(&exon));
+        let genome = genome(Strand::Forward);
+        let mut bases =
+            |region: Region| Some(genome[region.start() as usize..region.end() as usize].to_vec());
+        let unknown = transcript(Strand::Unknown);
+        assert_eq!(effect(&unknown, (111, b"C", b"T"), &mut bases), None);
     }
 }
