@@ -5,7 +5,7 @@ use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
 use genie_core::signal::Bin;
-use genie_core::variant::{Call, Variant};
+use genie_core::variant::{Annotation, Call, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use genie_formats::fields::{self, Field};
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -115,6 +115,52 @@ impl Changes {
     fn all(&self) -> impl Iterator<Item = String> + '_ {
         self.lines.iter().cloned().chain(self.others())
     }
+}
+
+/// One line for each of the first annotations of a variant in its file, and the line that
+/// counts the other annotations.
+fn annotations(detail: &Detail) -> (Vec<String>, Option<String>) {
+    let Detail::Variant { variant, .. } = detail else {
+        return (Vec::new(), None);
+    };
+    let alleles = variant.alternates.len() > 1;
+    let lines = variant
+        .annotations
+        .first
+        .iter()
+        .map(|annotation| annotation_line(annotation, alleles))
+        .collect();
+    let others = match variant.annotations.others {
+        0 => None,
+        1 => Some("+1 more annotation".to_owned()),
+        count => Some(format!("+{count} more annotations")),
+    };
+    (lines, others)
+}
+
+/// The gene, the consequences, the impact and the changes of an annotation, for example
+/// `BRCA1 · missense_variant · MODERATE · ENST00000357654.9:c.5095C>T · p.Arg1699Trp`.
+fn annotation_line(annotation: &Annotation, allele: bool) -> String {
+    let mut parts = Vec::new();
+    if allele && !annotation.allele.is_empty() {
+        parts.push(format!("Allele {}", annotation.allele));
+    }
+    if !annotation.gene.is_empty() {
+        parts.push(annotation.gene.clone());
+    }
+    parts.push(annotation.consequences.join(", "));
+    parts.push(annotation.impact.word().to_owned());
+    let change: Vec<&str> = [annotation.transcript.as_str(), annotation.coding.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect();
+    if !change.is_empty() {
+        parts.push(change.join(":"));
+    }
+    if !annotation.protein.is_empty() {
+        parts.push(annotation.protein.clone());
+    }
+    parts.join(" · ")
 }
 
 fn strand(strand: Strand) -> Option<&'static str> {
@@ -465,10 +511,13 @@ pub fn plain(card: &Card) -> String {
     let parts = other_parts(&card.detail)
         .iter()
         .map(|part| format!("{PART}: {}", part_words(part)));
+    let (notes, others) = annotations(&card.detail);
     [title, locus(card, span).to_string()]
         .into_iter()
         .chain(lines)
         .chain(card.effects.all())
+        .chain(notes)
+        .chain(others)
         .chain(fields)
         .chain(parts)
         .collect::<Vec<_>>()
@@ -655,11 +704,14 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
         WIDE
     };
     let (rows, hidden) = shown_fields(card, pinned);
+    let (notes, others) = annotations(&card.detail);
     let value_width = WIDE - 2.0 * PADDING - LABEL_WIDTH - FIELD_GAP;
     let count = lines.len() + wrapped(&title, width - 2.0 * PADDING, TITLE_CHARACTER) - 1
         + card
             .effects
             .all()
+            .chain(notes.iter().cloned())
+            .chain(others.iter().cloned())
             .map(|line| wrapped(&line, width - 2.0 * PADDING, CHARACTER))
             .sum::<usize>()
         + parts.len()
@@ -699,6 +751,12 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .others()
             .map(|line| text(line).size(11).style(style::muted).into()),
     )
+    .extend(
+        notes
+            .into_iter()
+            .map(|line| text(line).size(11).wrapping(WRAP).into()),
+    )
+    .extend(others.map(|line| text(line).size(11).style(style::muted).into()))
     .extend(rows.into_iter().map(|(label, value, sample)| {
         field_row(pinned.then_some(card.track), label, value, sample)
     }))
@@ -750,7 +808,7 @@ mod tests {
         Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, Mate, Op, PAIRED, REVERSE, SECOND, Tags,
     };
     use genie_core::signal::Bin;
-    use genie_core::variant::{Annotations, Call, Variant};
+    use genie_core::variant::{Annotation, Annotations, Call, Impact, Variant};
     use genie_core::{Feature, Region, Strand};
     use genie_formats::fields::Field;
     use iced::{Point, Size};
@@ -1046,6 +1104,98 @@ mod tests {
             .unwrap()
             .bounds();
         assert!(edge.height <= 400.0 - 8.0, "{edge:?}");
+    }
+
+    fn annotation(gene: &str, consequence: &str, impact: Impact, changes: [&str; 2]) -> Annotation {
+        Annotation {
+            allele: "T".to_owned(),
+            consequences: consequence.split('&').map(str::to_owned).collect(),
+            impact,
+            gene: gene.to_owned(),
+            transcript: format!("{gene}-201"),
+            biotype: "protein_coding".to_owned(),
+            coding: changes[0].to_owned(),
+            protein: changes[1].to_owned(),
+        }
+    }
+
+    #[test]
+    fn variant_cards_show_the_annotations_of_the_file() {
+        let mut variant = site("C", &["T"], None, ".");
+        variant.annotations = Annotations {
+            first: vec![
+                annotation(
+                    "BRCA1",
+                    "missense_variant",
+                    Impact::Moderate,
+                    ["c.5095C>T", "p.Arg1699Trp"],
+                ),
+                annotation(
+                    "NBR2",
+                    "intron_variant&non_coding_transcript_variant",
+                    Impact::Modifier,
+                    ["", ""],
+                ),
+            ],
+            others: 3,
+            fields: Vec::new(),
+        };
+        let lines = [
+            "BRCA1 · missense_variant · MODERATE · BRCA1-201:c.5095C>T · p.Arg1699Trp",
+            "NBR2 · intron_variant, non_coding_transcript_variant · MODIFIER · NBR2-201",
+            "+3 more annotations",
+        ];
+        let card = Card {
+            track: 1,
+            contig: "chr17".to_owned(),
+            detail: Detail::Variant {
+                variant,
+                sample: None,
+                groups: Vec::new(),
+            },
+            at: Point::new(100.0, 780.0),
+            fields: vec![field("DP", "10")],
+            effects: Changes::default(),
+            samples: Vec::new(),
+        };
+        let text = plain(&card);
+        let shown: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            shown[2..],
+            ["C > T", lines[0], lines[1], lines[2], "DP: 10"]
+        );
+        let window = Size::new(1280.0, 800.0);
+        for pinned in [false, true] {
+            let mut ui = simulator(view(&card, pinned, window));
+            let edge = ui.find(selector::id("card")).unwrap().bounds();
+            assert!(edge.y + edge.height <= card.at.y, "{pinned} {edge:?}");
+            for line in lines {
+                let found = ui.find(line).unwrap().bounds();
+                assert!(
+                    found.y + found.height <= edge.y + edge.height,
+                    "{line} {pinned}"
+                );
+            }
+        }
+        let Detail::Variant { mut variant, .. } = card.detail else {
+            unreachable!();
+        };
+        variant.alternates.push("G".to_owned());
+        variant.annotations.others = 1;
+        let both = Card {
+            detail: Detail::Variant {
+                variant,
+                sample: None,
+                groups: Vec::new(),
+            },
+            ..card
+        };
+        let text = plain(&both);
+        assert!(
+            text.contains("\nAllele T · BRCA1 · missense_variant"),
+            "{text}"
+        );
+        assert!(text.contains("\n+1 more annotation\n"), "{text}");
     }
 
     #[test]

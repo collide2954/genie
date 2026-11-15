@@ -1736,6 +1736,16 @@ pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
             value: variant.filter.clone(),
         });
     }
+    found.extend(
+        variant
+            .annotations
+            .fields
+            .iter()
+            .map(|(label, value)| Field {
+                label: label.clone(),
+                value: value.clone(),
+            }),
+    );
     found.extend(vcf::fields(&variant.info, file.infos()));
     found
 }
@@ -1998,6 +2008,7 @@ mod tests {
         Options, Plot, Prepared, Scope, SignalFile, Source, TAG_GROUPS, Toggle, Track, Typed,
         VariantFile, change, contig_names, fits, hides, is_track, link_fields, load, load_kept,
         lookup, names, neighbor, open, open_bbi, open_typed, open_with, spans, step,
+        variant_fields,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2670,6 +2681,64 @@ mod tests {
                 .contig,
             0
         );
+    }
+
+    #[test]
+    fn variant_fields_list_the_annotations_for_the_filters() {
+        let scratch = Scratch::new("annotated-vcf");
+        let text = "##INFO=<ID=CSQ,Number=.,Type=String,Description=\"Consequence annotations \
+                    from Ensembl VEP. Format: Allele|Consequence|IMPACT|SYMBOL|SIFT\">\n\
+                    #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                    chr1\t20\t.\tC\tT\t.\tPASS\tDP=5;CSQ=T|stop_gained|HIGH|GENEA|deleterious(0)\n\
+                    chr1\t30\t.\tC\tT\t.\tPASS\tDP=6;CSQ=T|intron_variant|MODIFIER|GENEB|\n";
+        let source = open(scratch.file("calls.vcf", text)).unwrap();
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 100),
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        )
+        .unwrap();
+        let Content::Variants(calls) = &loaded.content else {
+            panic!("expected variants");
+        };
+        let shown: Vec<(String, String)> = variant_fields(&source, &calls.variants[0])
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        let pairs: Vec<(&str, &str)> = shown
+            .iter()
+            .map(|(label, value)| (label.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("Filter", "PASS"),
+                ("Consequence", "stop_gained"),
+                ("Impact", "HIGH"),
+                ("Gene", "GENEA"),
+                ("CSQ SIFT", "deleterious(0)"),
+                ("DP", "5"),
+            ]
+        );
+        let high = Rule {
+            label: "Impact".to_owned(),
+            test: Test::Keep("HIGH".to_owned()),
+        };
+        let kept: Vec<bool> = calls
+            .variants
+            .iter()
+            .map(|variant| {
+                genie_formats::fields::passes(
+                    std::slice::from_ref(&high),
+                    &variant_fields(&source, variant),
+                )
+            })
+            .collect();
+        assert_eq!(kept, [true, false]);
     }
 
     fn signal(loaded: &Loaded) -> &[genie_core::signal::Summary] {
