@@ -2,6 +2,7 @@ pub mod alignments;
 pub mod contacts;
 pub mod features;
 pub mod links;
+pub mod manhattan;
 pub mod matches;
 pub mod overview;
 pub mod rows;
