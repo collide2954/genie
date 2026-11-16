@@ -37,6 +37,8 @@ mod settings;
 mod shortcuts;
 mod style;
 mod svg;
+#[cfg(test)]
+mod sweep;
 mod table;
 mod theme;
 mod tiles;
