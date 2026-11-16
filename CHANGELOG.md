@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Sashimi plots
+
+- **Sashimi plot** in the menu of a read track shows its coverage as an area and its splice junctions as arcs above and below the area, each with its number of reads.
+- **Arcs ≥** hides the junctions with few reads. **Shared scale** gives the Sashimi plots of several samples one range. Export image saves the plots as PNG or SVG.
+
 ### Variant table
 
 - **Variant table** in the menu of a variant track shows its variants in view in a table under the tracks. Each field is a column: the alleles, the counts of the calls, Quality, Filter, the annotations and the INFO fields.

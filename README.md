@@ -314,6 +314,17 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - **Export TSV** saves the rows in their order, with all columns, as a tab-separated file.
 - If the view is too wide to show the variants, the table asks you to zoom in.
 
+## Sashimi plots
+
+A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.
+
+- Right-click a read track and click **Sashimi plot**. The track then shows the coverage as an area in the color of the track, and each splice junction as an arc with its number of reads. The first junction is above the coverage, the next one is below it, and so on, so that near arcs do not hide each other. A thicker arc has more reads.
+- **Arcs ≥** in the track menu hides the junctions with fewer reads, for example 5 or 10.
+- To compare samples, show each read track as a Sashimi plot, give each track a different color, and turn on **Shared scale** in the menu of each track. The tracks then use the same range of coverage.
+- Put the pointer on an arc to see its junction: the position, the reads, the strand and the length of the intron.
+- To save the plots as an image, push Ctrl+E (Cmd+E on macOS), then save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.
+- Click **Sashimi plot** again to see the reads. Sessions keep the Sashimi plot, the **Arcs ≥** setting and the shared scale of each track.
+
 ## Liftover
 
 A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the `liftOver` folder of each genome, for example `hg19ToHg38.over.chain.gz`.
