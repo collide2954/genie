@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Primer pairs
+
+- **Primers** in the find bar finds the PCR products of a forward and a reverse primer on the two strands, up to 4,000 bp long. The 5 bases at the 3′ end of each primer must match.
+- In the lane, a product is a line with a block for each primer. Enter goes to the next product, and its card shows its length, its strand, its mismatches and its primers.
+
 ### Sashimi plots
 
 - **Sashimi plot** in the menu of a read track shows its coverage as an area and its splice junctions as arcs above and below the area, each with its number of reads.

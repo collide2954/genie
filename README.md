@@ -221,6 +221,14 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Put the pointer on a match to see its locus, its strand, its mismatches and its bases as they read on its strand. Wrong bases are lower case. Click to keep the card open.
 - genie finds sequences when the view is 10 Mb or less, and shows up to 100,000 matches. Push Escape or click × to close the find bar.
 
+### Primer pairs
+
+- Click **Primers** in the find bar to find the PCR products of a primer pair, as an in-silico PCR. Type the forward primer and the reverse primer, each from its 5′ end to its 3′ end. Each primer needs 12 bases or more.
+- A product starts at the forward primer on one strand and ends at the reverse primer on the other strand. genie finds the products on the two strands of the reference, up to 4,000 bp long. In the lane, a product is a line with a block for each primer and arrows for its strand.
+- **Mismatches** allows 1, 2 or 3 wrong bases in each primer. The 5 bases at the 3′ end of each primer must match, because the polymerase extends from there.
+- Push Enter and Shift+Enter to go to the next and the previous product. Put the pointer on a product to see its locus, its length, its strand, its mismatches and its primers.
+- Click **Bases** to find one sequence again.
+
 ## Several loci
 
 - Type two to four loci in the locus box, with a space between them, for example `BRCA1 BRCA2`. genie shows the loci side by side in panels of equal width.
