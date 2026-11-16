@@ -455,6 +455,12 @@ In a debug build, F12 shows the time of each update and view, the frame time and
 cargo test --workspace
 ```
 
+The tests give cut and damaged copies of each test file to the readers: 3 copies of each file. Each reader must give an error or data, and must not panic or hang. The full sweep makes about 24 copies of each file and takes a few minutes:
+
+```bash
+cargo test -p genie --bin genie sweep -- --ignored
+```
+
 ## Crates
 
 | Crate | Contents |

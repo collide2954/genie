@@ -183,6 +183,9 @@
 - Old bigBed files without a count of BED fields open. Before, they failed with "A number is not valid".
 - The names of files on the web show their escaped characters, for example `+` for `%2B`.
 - The message for a file that genie cannot open lists all track types.
+- genie checks the CRC of each block of a file compressed with bgzip. A damaged block gives an error. Before, a damaged BAM file could give wrong reads, and genie could stop for minutes on a read with a very long CIGAR.
+- genie rejects a BAM read whose CIGAR does not fit the length of its bases, as htslib does.
+- A test gives cut and damaged copies of all test files to all readers. Each reader must give an error or data, and must not stop or hang.
 
 ## 0.2.0
 
