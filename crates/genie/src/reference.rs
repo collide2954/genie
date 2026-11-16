@@ -328,7 +328,7 @@ mod tests {
             bytes.extend(length.to_le_bytes());
             bytes.extend((!length).to_le_bytes());
             bytes.extend(part);
-            bytes.extend([0; 4]);
+            bytes.extend(genie_formats::crc::update(0, part).to_le_bytes());
             bytes.extend(u32::from(length).to_le_bytes());
         }
         bytes

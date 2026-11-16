@@ -7,7 +7,7 @@ use miniz_oxide::inflate::core::{DecompressorOxide, decompress};
 use miniz_oxide::inflate::stream::{self, InflateState};
 use miniz_oxide::{DataFormat, MZFlush, MZStatus};
 
-use crate::png::{crc, crc_continue};
+use crate::png::crc;
 use crate::{Error, Reason};
 
 const MAGIC: [u8; 3] = [31, 139, 8];
@@ -92,7 +92,7 @@ impl<R: BufRead> Reader<R> {
         let result = stream::inflate(&mut self.state, input, &mut self.output, MZFlush::None);
         self.inner.consume(result.bytes_consumed);
         let written = result.bytes_written;
-        self.check = crc_continue(self.check, &self.output[..written]);
+        self.check = crate::crc::update(self.check, &self.output[..written]);
         self.size = self.size.wrapping_add(written as u32);
         self.filled = written;
         match result.status {

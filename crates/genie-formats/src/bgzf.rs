@@ -162,6 +162,11 @@ impl<R: Read> Bgzf<R> {
         if status != TINFLStatus::Done || written != length {
             return Err(invalid(Reason::BadBlock));
         }
+        let footer = &self.compressed[self.compressed.len() - FOOTER..];
+        let check = u32::from_le_bytes([footer[0], footer[1], footer[2], footer[3]]);
+        if crate::crc::update(0, &self.block) != check {
+            return Err(invalid(Reason::BadBlock));
+        }
         self.offset = self.next;
         self.next += size as u64;
         self.position = 0;
@@ -276,7 +281,7 @@ pub mod tests {
         let mut block = vec![31, 139, 8, 4, 0, 0, 0, 0, 0, 255, 6, 0, b'B', b'C', 2, 0];
         block.extend(size.to_le_bytes());
         block.extend(compressed);
-        block.extend([0; 4]);
+        block.extend(crate::crc::update(0, data).to_le_bytes());
         block.extend(u32::try_from(data.len()).unwrap().to_le_bytes());
         block
     }
@@ -376,6 +381,22 @@ pub mod tests {
     #[test]
     fn empty_written_files_hold_only_the_end_block() {
         assert_eq!(Writer::new(Vec::new()).finish().unwrap(), END);
+    }
+
+    #[test]
+    fn blocks_whose_check_is_wrong_are_damaged() {
+        let mut bytes = file(&[b"hello ", b"world\n"]);
+        let mut text = String::new();
+        Bgzf::new(Cursor::new(bytes.clone()))
+            .read_to_string(&mut text)
+            .unwrap();
+        assert_eq!(text, "hello world\n");
+        let first = block(b"hello ").len();
+        bytes[first - 8] ^= 1;
+        let error = Bgzf::new(Cursor::new(bytes))
+            .read_to_end(&mut Vec::new())
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidData);
     }
 
     #[test]

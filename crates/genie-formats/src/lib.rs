@@ -13,6 +13,7 @@ pub mod chain;
 pub mod columns;
 pub mod contigs;
 pub mod cram;
+pub mod crc;
 pub mod cytoband;
 mod error;
 pub mod fai;

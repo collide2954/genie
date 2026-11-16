@@ -4,7 +4,6 @@ use miniz_oxide::deflate::compress_to_vec_zlib;
 
 const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
 const LEVEL: u8 = 6;
-const TABLE: [u32; 256] = table();
 
 pub fn write(mut writer: impl Write, width: u32, height: u32, rgba: &[u8]) -> io::Result<()> {
     let stride = width as usize * 4;
@@ -40,38 +39,11 @@ fn chunk(writer: &mut impl Write, kind: [u8; 4], data: &[u8]) -> io::Result<()> 
     writer.write_all(&crc(&[&kind, data]).to_be_bytes())
 }
 
+/// The CRC-32 of the parts one after the other.
 pub(crate) fn crc(parts: &[&[u8]]) -> u32 {
     parts
         .iter()
-        .fold(0, |check, part| crc_continue(check, part))
-}
-
-pub(crate) fn crc_continue(previous: u32, data: &[u8]) -> u32 {
-    let mut crc = !previous;
-    for byte in data {
-        crc = TABLE[((crc ^ u32::from(*byte)) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    !crc
-}
-
-const fn table() -> [u32; 256] {
-    let mut table = [0; 256];
-    let mut index = 0;
-    while index < 256 {
-        let mut value = index as u32;
-        let mut bit = 0;
-        while bit < 8 {
-            value = if value & 1 == 1 {
-                0xEDB8_8320 ^ (value >> 1)
-            } else {
-                value >> 1
-            };
-            bit += 1;
-        }
-        table[index] = value;
-        index += 1;
-    }
-    table
+        .fold(0, |check, part| crate::crc::update(check, part))
 }
 
 #[cfg(test)]
