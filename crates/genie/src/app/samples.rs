@@ -44,12 +44,14 @@ pub enum Sampling {
     Checked(Location, Text),
 }
 
-/// What a `.txt` file is, from its first lines.
+/// What a `.txt` or a table file is, from its first lines and its index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Text {
     Hub,
     Loops,
     Table,
+    /// A table compressed with bgzip that has a tabix index: a track.
+    Columns,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,10 +83,14 @@ pub(super) fn is_text(location: &Location) -> bool {
     extension(location).is_some_and(|extension| extension == "txt")
 }
 
-/// What a text file is: a loop list when its first line is a loop list header, a track hub
-/// when its first line that is not a comment starts with "hub", and else a sample table. A
-/// file that genie cannot read is a hub, so that the hub says why it does not open.
+/// What a text file is: a track when it is compressed and has a tabix index, a loop list when
+/// its first line is a loop list header, a track hub when its first line that is not a comment
+/// starts with "hub", and else a sample table. A file that genie cannot read is a hub, so that
+/// the hub says why it does not open.
 pub(super) fn classify(location: &Location) -> Text {
+    if track::is_compressed(&location.name()) && track::has_index(location) {
+        return Text::Columns;
+    }
     let head = track::head(location, 50);
     let mut lines = head
         .iter()
@@ -223,7 +229,7 @@ impl Genie {
     fn open_text(&mut self, location: Location, text: Text) -> Task<Message> {
         match text {
             Text::Hub => self.open_hub(location, true),
-            Text::Loops => self.open_track(location),
+            Text::Loops | Text::Columns => self.open_track(location),
             Text::Table => self.open_samples(location),
         }
     }
@@ -441,6 +447,16 @@ mod tests {
         assert_eq!(classify(&loops), Text::Loops);
         assert_eq!(classify(&clinical), Text::Table);
         assert_eq!(classify(&named("missing.txt")), Text::Hub);
+        let packed = |text: &str| {
+            let mut writer = genie_formats::bgzf::Writer::new(Vec::new());
+            std::io::Write::write_all(&mut writer, text.as_bytes()).unwrap();
+            writer.finish().unwrap()
+        };
+        let scores = Location::File(scratch.file("scores.tsv.gz", packed("1\t101\t8.5\n")));
+        scratch.file("scores.tsv.gz.tbi", "index");
+        assert_eq!(classify(&scores), Text::Columns);
+        let groups = scratch.file("groups.tsv.gz", packed("sample\tpop\nS1\tEUR\n"));
+        assert_eq!(classify(&Location::File(groups)), Text::Table);
     }
 
     #[test]

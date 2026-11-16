@@ -11,7 +11,7 @@ use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
-use crate::track::{Change, Grouping, Toggle, Track, tag_name};
+use crate::track::{Change, Format, Grouping, Pick, Toggle, Track, tag_name};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
@@ -247,6 +247,41 @@ pub fn contact_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     items
 }
 
+/// The columns of numbers of a table with a tabix index, and its rows.
+pub fn column_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let Format::Columns(file) = &track.source.format else {
+        return Vec::new();
+    };
+    let shown = file.shown(track.options.table);
+    let change = |pick| Message::TrackChanged(track.id, Change::Column(pick));
+    let mut items: Vec<Element<'a, Message>> = file
+        .columns
+        .numbers
+        .iter()
+        .filter_map(|&column| {
+            let name = file.columns.names.get(column)?;
+            let pick = Pick::Column(u16::try_from(column).ok()?);
+            Some(item(
+                format!("Show {name}"),
+                change(pick),
+                shown == Some(column),
+                true,
+            ))
+        })
+        .collect();
+    items.push(item("Show rows", change(Pick::Rows), shown.is_none(), true));
+    items.push(separator());
+    items
+}
+
+/// The number of the column items of a table.
+fn column_choices(track: &Track) -> usize {
+    match &track.source.format {
+        Format::Columns(file) => file.columns.numbers.len() + 1,
+        _ => 0,
+    }
+}
+
 pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     let mut items = modification_items(track);
     items.push(item(
@@ -274,6 +309,8 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_contacts() {
         let choices = track.source.normalizations(None).0.len() as f32 + 1.0;
         FEATURES_HEIGHT - SWATCHES_HEIGHT - SEPARATOR_HEIGHT + (choices - 3.0) * LINK_HEIGHT
+    } else if track.source.has_columns() {
+        FEATURES_HEIGHT + column_choices(track) as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_segments() {
         FEATURES_HEIGHT + 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_colors() {
@@ -498,6 +535,11 @@ pub fn view<'a>(
         column![]
     } else if track.source.has_contacts() {
         column(contact_items(track)).spacing(1)
+    } else if track.source.has_columns() {
+        column(column_items(track))
+            .push(column(modes).spacing(1))
+            .push(separator())
+            .spacing(1)
     } else if track.source.has_segments() {
         column![
             column(modes).spacing(1),

@@ -25,6 +25,7 @@ use genie_render::signal::{Scale, Style};
 
 use crate::location::{Location, Reader};
 
+mod columns;
 mod contacts;
 mod features;
 mod links;
@@ -33,6 +34,7 @@ mod segments;
 mod signal;
 mod variants;
 
+pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
 pub use links::LinkFile;
@@ -59,6 +61,7 @@ pub enum Format {
     Links(LinkFile),
     Segments(SegmentFile),
     Contacts(ContactFile),
+    Columns(ColumnFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,11 +98,16 @@ impl Source {
             Format::Links(file) => file.contigs(),
             Format::Segments(file) => file.contigs(),
             Format::Contacts(file) => file.contigs(),
+            Format::Columns(file) => file.contigs(),
         }
     }
 
     pub fn has_contacts(&self) -> bool {
         matches!(self.format, Format::Contacts(_))
+    }
+
+    pub fn has_columns(&self) -> bool {
+        matches!(self.format, Format::Columns(_))
     }
 
     /// The normalizations of a Hi-C file, and the place of the one that a choice shows.
@@ -186,6 +194,7 @@ impl Source {
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
             Format::Segments(_) | Format::Contacts(_) => u64::MAX,
+            Format::Columns(_) => FEATURE_SPAN,
         }
     }
 
@@ -337,6 +346,8 @@ pub struct Options {
     /// The tag whose most common values color the reads.
     pub color: Option<[u8; 2]>,
     pub contacts: Showing,
+    /// What a table with a tabix index shows.
+    pub table: Pick,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -376,6 +387,7 @@ impl Default for Options {
             kinds: Kinds::default(),
             color: None,
             contacts: Showing::default(),
+            table: Pick::default(),
         }
     }
 }
@@ -429,6 +441,19 @@ impl Options {
             Toggle::Failed => &mut options.kinds.failed,
         };
         *flag = !*flag;
+        options
+    }
+
+    /// The options after a change of what a Hi-C map or a table shows.
+    #[must_use]
+    pub fn changed(self, change: Change) -> Self {
+        let mut options = self;
+        match change {
+            Change::Normalization(place) => options.contacts.normalization = Some(place),
+            Change::Ratio => options.contacts.ratio = !options.contacts.ratio,
+            Change::Column(pick) => options.table = pick,
+            _ => {}
+        }
         options
     }
 
@@ -1335,6 +1360,8 @@ pub enum Change {
     Normalization(u8),
     /// Show ratios of observed to expected contacts instead of counts, or go back.
     Ratio,
+    /// Show a column of numbers of a table, or its rows.
+    Column(Pick),
     Up,
     Down,
     Remove,
@@ -1416,14 +1443,9 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             };
             track.forget();
         }
-        Change::Normalization(place) => {
+        Change::Normalization(_) | Change::Ratio | Change::Column(_) => {
             let track = &mut tracks[position];
-            track.options.contacts.normalization = Some(place);
-            track.forget();
-        }
-        Change::Ratio => {
-            let track = &mut tracks[position];
-            track.options.contacts.ratio = !track.options.contacts.ratio;
+            track.options = track.options.changed(change);
             track.forget();
         }
         Change::Up if position > 0 => tracks.swap(position, position - 1),
@@ -1499,6 +1521,14 @@ pub fn is_track(location: &Location) -> bool {
 
 pub fn is_bedpe(name: &str) -> bool {
     inner_extension(name, &["bedpe"])
+}
+
+/// True when a tabix index (`.tbi` or `.csi`) is next to the file. For a file on the web,
+/// this asks the server.
+pub fn has_index(location: &Location) -> bool {
+    [".tbi", ".csi"]
+        .into_iter()
+        .any(|suffix| location.with_suffix(suffix).open().is_ok())
 }
 
 /// True for the Hi-C files of Juicer.
@@ -1684,6 +1714,11 @@ pub fn open_with(
         Format::Signal(SignalFile::open_methyl(reading, &name, index)?)
     } else if is_signal(&name) {
         Format::Signal(SignalFile::open(reading, &name, index)?)
+    } else if Kind::of(&name).is_none()
+        && is_compressed(&name)
+        && (index.is_some() || has_index(reading))
+    {
+        Format::Columns(ColumnFile::open(reading, &name, index)?)
     } else {
         Format::Features(FeatureFile::open(reading, &name, index)?)
     };
@@ -1777,6 +1812,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
                 Kind::Gff | Kind::Gtf => gff::fields(feature.extra()),
             }
         }
+        Format::Columns(file) => file.fields(feature.extra()),
         _ => Vec::new(),
     }
 }
@@ -1898,6 +1934,10 @@ pub fn load_kept(
             let loaded = file.load(location, contig, region, (scope.step, options.contacts))?;
             Ok(Loaded { options, ..loaded })
         }
+        Format::Columns(file) => {
+            let loaded = file.load(location, contig, region, (scope.step, options.table))?;
+            Ok(Loaded { options, ..loaded })
+        }
     }
 }
 
@@ -1981,7 +2021,8 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         | Format::Signal(_)
         | Format::Links(_)
         | Format::Segments(_)
-        | Format::Contacts(_) => Ok(Vec::new()),
+        | Format::Contacts(_)
+        | Format::Columns(_) => Ok(Vec::new()),
     }
 }
 
@@ -2012,7 +2053,8 @@ fn kept(
         | Format::Signal(_)
         | Format::Links(_)
         | Format::Segments(_)
-        | Format::Contacts(_) => Vec::new(),
+        | Format::Contacts(_)
+        | Format::Columns(_) => Vec::new(),
     })
 }
 
@@ -2048,7 +2090,8 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
         | Format::Signal(_)
         | Format::Links(_)
         | Format::Segments(_)
-        | Format::Contacts(_) => Vec::new(),
+        | Format::Contacts(_)
+        | Format::Columns(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -2082,7 +2125,8 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
         | Format::Signal(_)
         | Format::Links(_)
         | Format::Segments(_)
-        | Format::Contacts(_) => {
+        | Format::Contacts(_)
+        | Format::Columns(_) => {
             return Ok(Names::default());
         }
     };
@@ -2115,10 +2159,10 @@ mod tests {
     use super::reads::Reads;
     use super::{
         Change, Contacts, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded,
-        Methyl, Options, Plot, Prepared, Scope, Showing, SignalFile, Source, TAG_GROUPS, Toggle,
-        Track, Typed, VariantFile, change, contig_names, fits, hides, is_track, link_fields, load,
-        load_kept, lookup, names, neighbor, open, open_bbi, open_typed, open_with, spans, step,
-        variant_fields,
+        Methyl, Options, Pick, Plot, Prepared, Scope, Showing, SignalFile, Source, TAG_GROUPS,
+        Toggle, Track, Typed, VariantFile, change, contig_names, feature_fields, fits, hides,
+        is_track, link_fields, load, load_kept, lookup, names, neighbor, open, open_bbi,
+        open_typed, open_with, spans, step, variant_fields,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -2812,6 +2856,68 @@ mod tests {
             .into_iter()
             .map(|variant| variant.id)
             .collect()
+    }
+
+    #[test]
+    fn tabix_tables_show_a_column_or_their_rows() {
+        let scratch = Scratch::new("tabix-table");
+        let text = "#Chrom\tPos\tRef\tAlt\tRawScore\tPHRED\n\
+                    1\t101\tT\tA\t0.7\t8.5\n1\t101\tT\tC\t0.8\t9.5\n1\t102\tA\tG\t0.6\t7.5\n";
+        let mut writer = genie_formats::bgzf::Writer::new(Vec::new());
+        std::io::Write::write_all(&mut writer, text.as_bytes()).unwrap();
+        let data = writer.finish().unwrap();
+        let layout = tabix::Layout::generic([1, 2, 2]);
+        let index = tabix::build(std::io::Cursor::new(&data), layout, false).unwrap();
+        let path = scratch.file("scores.tsv.gz", &data);
+        scratch.file("scores.tsv.gz.tbi", &index);
+        let source = open(path).unwrap();
+        assert!(source.has_columns());
+        assert_eq!(source.contigs(), ["1"]);
+        let shown = |pick| {
+            let options = Options {
+                table: pick,
+                ..Options::default()
+            };
+            load(
+                &source,
+                "1",
+                region(0, 1_000),
+                options,
+                1,
+                true,
+                no_reference,
+            )
+            .unwrap()
+            .content
+        };
+        let Content::Signal(scores) = shown(Pick::Auto) else {
+            panic!("expected a signal");
+        };
+        let highest: Vec<f32> = scores.summaries.iter().map(|summary| summary.max).collect();
+        assert_eq!(highest, [8.5, 9.5, 7.5]);
+        let Content::Signal(raw) = shown(Pick::Column(4)) else {
+            panic!("expected a signal");
+        };
+        assert!((raw.summaries[0].max - 0.7).abs() < f32::EPSILON);
+        let Content::Features(rows) = shown(Pick::Rows) else {
+            panic!("expected features");
+        };
+        assert_eq!(rows.features.len(), 3);
+        assert_eq!(rows.features[0].name(), "T");
+        let fields: Vec<(String, String)> = feature_fields(&source, &rows.features[1])
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        let wanted = [
+            ("Ref", "T"),
+            ("Alt", "C"),
+            ("RawScore", "0.8"),
+            ("PHRED", "9.5"),
+        ];
+        assert_eq!(
+            fields,
+            wanted.map(|(label, value)| (label.to_owned(), value.to_owned()))
+        );
     }
 
     #[test]

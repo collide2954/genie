@@ -15,7 +15,7 @@ use genie_render::signal::{Scale, Style};
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
 use crate::track::{
-    Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, Showing, tag, tag_name,
+    Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing, tag, tag_name,
 };
 
 pub const EXTENSION: &str = "genie";
@@ -405,6 +405,15 @@ fn options(section: &Section) -> Options {
             normalization: None,
             ratio: on("ratio"),
         },
+        table: match section.value("column") {
+            Some("rows") => Pick::Rows,
+            Some(text) => text
+                .parse::<u16>()
+                .ok()
+                .and_then(|column| column.checked_sub(1))
+                .map_or(Pick::Auto, Pick::Column),
+            None => Pick::Auto,
+        },
     }
 }
 
@@ -431,6 +440,11 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
     }
     if options.contacts.ratio {
         entries.push(("ratio", on()));
+    }
+    match options.table {
+        Pick::Auto => {}
+        Pick::Column(column) => entries.push(("column", (u32::from(column) + 1).to_string())),
+        Pick::Rows => entries.push(("column", "rows".to_owned())),
     }
     if options.methyl.separate {
         entries.push(("strands", "separate".to_owned()));
@@ -493,7 +507,7 @@ mod tests {
     use super::{Saved, SavedRegion, SavedTrack, is_session};
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
-    use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Plot, Showing};
+    use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing};
 
     fn base() -> PathBuf {
         PathBuf::from("/work/project")
@@ -527,6 +541,7 @@ mod tests {
                 normalization: None,
                 ratio: true,
             },
+            table: Pick::Column(5),
             ..Options::default()
         }
     }
@@ -549,6 +564,7 @@ mod tests {
             },
             color: Some(*b"NM"),
             contacts: Showing::default(),
+            table: Pick::Rows,
         }
     }
 

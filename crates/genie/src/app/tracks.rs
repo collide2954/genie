@@ -747,10 +747,10 @@ impl Genie {
         if let Some(declared) = self.restored_type(&location) {
             return self.open_restored(location, declared);
         }
-        if super::samples::is_table(&location) {
+        if super::samples::is_table(&location) && !track::is_compressed(&location.name()) {
             return self.open_samples(location);
         }
-        if super::samples::is_text(&location) {
+        if super::samples::is_table(&location) || super::samples::is_text(&location) {
             return self.open_any_text(location);
         }
         if track::is_track(&location) {
