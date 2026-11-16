@@ -13,9 +13,11 @@ pub const ARCS: f32 = 40.0;
 pub const COVERAGE: f32 = 60.0;
 pub const HEIGHT: f32 = 2.0 * ARCS + COVERAGE;
 const COUNT_SIZE: f32 = 9.0;
-const COUNT_GAP: f32 = 5.0;
+/// The space between a count and the edge of its arc.
+const COUNT_GAP: f32 = 2.0;
 const LOW_RISE: f32 = 8.0;
-const HIGH_RISE: f32 = ARCS - COUNT_SIZE - COUNT_GAP - 2.0;
+/// The highest rise that leaves room for the count of the widest arc in the band.
+const HIGH_RISE: f32 = ARCS - COUNT_SIZE - 5.0;
 const RANGE_SIZE: f32 = 10.0;
 const REACH: f32 = 2.0;
 
@@ -146,10 +148,11 @@ pub fn scene(
         let words = junctions[at].count.to_string();
         let half = words.len() as f32 * COUNT_SIZE * 0.3;
         let peak = base - rise;
+        let offset = COUNT_SIZE / 2.0 + arc_width(junctions[at].count) / 2.0 + COUNT_GAP;
         let y = if rise > 0.0 {
-            peak - COUNT_GAP
+            peak - offset
         } else {
-            peak + COUNT_GAP
+            peak + offset
         };
         let x = f32::midpoint(from, to);
         let crowded = placed.iter().any(|&(left, top, other)| {
@@ -328,10 +331,12 @@ mod tests {
         assert_eq!(above.4, Paint::Hue(Hue::Green));
         let counts = texts(&primitives);
         assert_eq!(counts.len(), 2);
+        // A count keeps a pixel between its edge and the edge of its arc: the arc of 2 reads is
+        // 1.5 pixels wide, and the arc of 12 reads 2.79 pixels.
         assert_eq!((counts[0].0.as_str(), counts[0].1), ("2", 25.0));
-        assert!(counts[0].2 < ARCS - above.3);
+        assert!(counts[0].2 + 4.5 <= ARCS - above.3 - 0.75 - 1.0);
         assert_eq!((counts[1].0.as_str(), counts[1].1), ("12", 45.0));
-        assert!(counts[1].2 > ARCS + COVERAGE - below.3);
+        assert!(counts[1].2 - 4.5 >= ARCS + COVERAGE - below.3 + 1.39 + 1.0);
         assert!(counts.iter().all(|(_, _, y)| *y > 0.0 && *y < HEIGHT));
         let at = |x, y| hit(view(0, 100), &junctions, 2, x, y);
         assert_eq!(at(25.0, ARCS - above.3), Some(2));
