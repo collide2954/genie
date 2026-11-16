@@ -3,7 +3,7 @@ use iced::{Element, Task};
 
 use crate::chrome::{self, keys};
 use crate::genome;
-use crate::menu::{GROUPS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
+use crate::menu::{GROUPS, JUNCTION_FLOORS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
 use crate::palette::{self, Action, State};
 use crate::recent::Entry;
 use crate::shortcuts::Command;
@@ -42,6 +42,14 @@ fn read_actions(track: &Track) -> Vec<Action> {
     actions.extend(
         GROUPS.map(|(label, grouping)| Action::new(label, name, change(Change::Group(grouping)))),
     );
+    actions.push(Action::new("Sashimi plot", name, change(Change::Sashimi)));
+    if track.plot.sashimi {
+        actions.extend(JUNCTION_FLOORS.map(|(label, floor)| {
+            let words = format!("Show the arcs with {label} or more reads");
+            Action::new(words, name, change(Change::JunctionReads(floor)))
+        }));
+        actions.push(Action::new("Shared scale", name, change(Change::Link)));
+    }
     actions
 }
 

@@ -8,6 +8,7 @@ pub mod overview;
 pub mod rows;
 pub mod ruler;
 pub mod samples;
+pub mod sashimi;
 pub mod scene;
 pub mod segments;
 pub mod sequence;

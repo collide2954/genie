@@ -4372,9 +4372,17 @@ mod tests {
     }
 
     fn add_reads(genie: &mut Genie, reads: Vec<genie_core::alignment::Alignment>) {
+        add_named_reads(genie, "reads.bam", reads);
+    }
+
+    fn add_named_reads(
+        genie: &mut Genie,
+        name: &str,
+        reads: Vec<genie_core::alignment::Alignment>,
+    ) {
         let source = Arc::new(Source {
-            location: PathBuf::from("/data/reads.bam").into(),
-            name: "reads.bam".to_owned(),
+            location: PathBuf::from(format!("/data/{name}")).into(),
+            name: name.to_owned(),
             data: None,
             format: Format::Reads(ReadFile {
                 index: crate::track::reads::Reads::Bam(genie_formats::bai::Index::default()),
@@ -4383,7 +4391,7 @@ mod tests {
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let region = Region::between(0, 1_000);
-        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
         track.slot.wanted = Some((0, region));
         let mut gather = crate::track::Gather::new(region, 0, Options::default());
         for read in reads {
@@ -4529,6 +4537,12 @@ mod tests {
         genie
     }
 
+    fn with_sashimi() -> Genie {
+        let mut genie = with_spliced();
+        let _ = genie.update(Message::TrackChanged(0, Change::Sashimi));
+        genie
+    }
+
     #[test]
     fn hovering_a_junction_shows_its_reads() {
         let mut genie = with_spliced();
@@ -4547,6 +4561,76 @@ mod tests {
         let below = genie_render::alignments::JUNCTION_HEIGHT + 5.0;
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(15.0, below))));
         assert!(shows(&genie, "CIGAR 10M50N10M"));
+    }
+
+    /// The labels and the arcs of the Sashimi plot of a track.
+    fn sashimi(genie: &Genie, at: usize) -> (Vec<String>, usize, f32) {
+        use genie_render::scene::Primitive;
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[at];
+        let (shapes, _) = super::view::shapes(session, track, false);
+        let super::view::Body::Scene(primitives, height) =
+            super::view::body(session, track, 0, shapes[0], false)
+        else {
+            panic!("expected a Sashimi plot");
+        };
+        let words = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Label { content, .. } | Primitive::Text { content, .. } => {
+                    Some(content.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let arcs = primitives
+            .iter()
+            .filter(|primitive| matches!(primitive, Primitive::Arc { .. }))
+            .count();
+        (words, arcs, height.max(shapes[0].height))
+    }
+
+    #[test]
+    fn sashimi_plots_show_coverage_and_junction_counts() {
+        use genie_render::sashimi::{ARCS, HEIGHT};
+        let mut genie = with_spliced();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Sashimi plot"));
+        assert!(!shows(&genie, "Arcs ≥"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Sashimi));
+        assert_eq!(
+            sashimi(&genie, 0),
+            (vec!["0-2".to_owned(), "2".to_owned()], 1, HEIGHT)
+        );
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(45.0, ARCS - 24.0))));
+        for line in ["Splice junction", "2 reads · forward strand"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Arcs ≥"));
+        assert!(shows(&genie, "Shared scale"));
+        let words = "Show the arcs with 5 or more reads";
+        assert!(palette_shows(&mut genie, "arcs 5 more", words));
+        let _ = genie.update(Message::TrackChanged(0, Change::JunctionReads(5)));
+        assert_eq!(sashimi(&genie, 0), (vec!["0-2".to_owned()], 0, HEIGHT));
+    }
+
+    #[test]
+    fn sashimi_plots_can_share_one_scale() {
+        let mut genie = opened();
+        add_reads(&mut genie, vec![spliced("one"), spliced("two")]);
+        let deep = ["a", "b", "c", "d"].map(|name| read(name, 10)).to_vec();
+        add_named_reads(&mut genie, "deep.bam", deep);
+        for id in [0, 1] {
+            let _ = genie.update(Message::TrackChanged(id, Change::Sashimi));
+        }
+        assert_eq!(sashimi(&genie, 0).0[0], "0-2");
+        assert_eq!(sashimi(&genie, 1).0[0], "0-4");
+        for id in [0, 1] {
+            let _ = genie.update(Message::TrackChanged(id, Change::Link));
+        }
+        assert_eq!(sashimi(&genie, 0).0[0], "0-4");
+        assert_eq!(sashimi(&genie, 1).0[0], "0-4");
     }
 
     #[test]
@@ -4863,6 +4947,7 @@ mod tests {
             with_bedmethyl(),
             with_filtered(),
             with_lifted(),
+            with_sashimi(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));

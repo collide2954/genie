@@ -415,6 +415,10 @@ pub struct Plot {
     pub look: Look,
     pub colors: bool,
     pub range: Option<Scale>,
+    /// Whether a read track shows a Sashimi plot: its coverage and its splice junctions.
+    pub sashimi: bool,
+    /// The fewest reads of a splice junction that the Sashimi plot of a read track shows.
+    pub junction_reads: u32,
 }
 
 impl Default for Plot {
@@ -428,6 +432,8 @@ impl Default for Plot {
             },
             colors: true,
             range: None,
+            sashimi: false,
+            junction_reads: 1,
         }
     }
 }
@@ -1408,6 +1414,10 @@ pub enum Change {
     Link,
     Pairs,
     Mods,
+    /// Show the reads of a track as a Sashimi plot, or show the reads again.
+    Sashimi,
+    /// The fewest reads of a splice junction that a Sashimi plot shows.
+    JunctionReads(u32),
     Modification(usize),
     Colors,
     Sort(usize, u64),
@@ -1452,6 +1462,11 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             let look = &mut tracks[position].plot.look;
             look.mods = !look.mods;
         }
+        Change::Sashimi => {
+            let plot = &mut tracks[position].plot;
+            plot.sashimi = !plot.sashimi;
+        }
+        Change::JunctionReads(reads) => tracks[position].plot.junction_reads = reads.max(1),
         Change::Modification(index) => {
             let track = &mut tracks[position];
             if let Some(name) = track.modification_names().get(index).cloned() {
@@ -2452,6 +2467,19 @@ mod tests {
         let (rows, count, groups) = pile.packed(region(30, 100));
         assert_eq!((rows[4], count), (0, 1));
         assert_eq!(groups, [(0, "Haplotype 1".to_owned())]);
+    }
+
+    #[test]
+    fn read_tracks_turn_into_sashimi_plots() {
+        let mut tracks = three();
+        assert!(!tracks[1].plot.sashimi);
+        assert_eq!(tracks[1].plot.junction_reads, 1);
+        change(&mut tracks, 1, Change::Sashimi);
+        change(&mut tracks, 1, Change::JunctionReads(5));
+        assert!(tracks[1].plot.sashimi);
+        assert_eq!(tracks[1].plot.junction_reads, 5);
+        change(&mut tracks, 1, Change::Sashimi);
+        assert!(!tracks[1].plot.sashimi);
     }
 
     #[test]

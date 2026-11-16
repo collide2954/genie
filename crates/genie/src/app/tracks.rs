@@ -10,7 +10,9 @@ use genie_core::variant::Variant;
 use genie_core::{Region, Span, Target, Viewport};
 use genie_formats::fields::Field;
 use genie_render::features::Mode;
-use genie_render::{alignments, contacts, features, links, manhattan, segments, signal, variants};
+use genie_render::{
+    alignments, contacts, features, links, manhattan, sashimi, segments, signal, variants,
+};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
@@ -462,6 +464,11 @@ impl Genie {
                 let index =
                     features::hit(viewport, &annotation.features, &annotation.rows, mode, x, y)?;
                 Detail::Feature(annotation.features[index].clone())
+            }
+            Content::Reads(pile) if track.plot.sashimi => {
+                let least = track.plot.junction_reads;
+                let index = sashimi::hit(viewport, &pile.junctions, least, x, y)?;
+                Detail::Junction(pile.junctions[index])
             }
             Content::Reads(pile) => {
                 read_detail(track, panel, contig, pile, viewport, mode, (x, y))?

@@ -4,8 +4,8 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, contacts, features, links, manhattan, matches, overview, ruler, samples, segments,
-    sequence, signal, translation, variants,
+    alignments, contacts, features, links, manhattan, matches, overview, ruler, samples, sashimi,
+    segments, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -971,27 +971,64 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             );
             Body::Scene(primitives, shape.height)
         }
-        Some(Content::Reads(pile)) => {
-            let coverage = alignments::coverage(
-                viewport,
-                &pile.coverage,
-                |at| pile.base(at),
-                alignments::COVERAGE_HEIGHT,
-            );
-            let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
-            let shown = mode != features::Mode::Collapsed
-                || !pile.junctions.is_empty()
-                || lanes_height(track, pile) > 0.0;
-            let reads = shown.then(|| {
-                (
-                    read_lane(track, panel, pile, viewport, mode, repack),
-                    height,
-                )
-            });
-            Body::Reads { coverage, reads }
-        }
+        Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
         None => Body::Space(EMPTY_HEIGHT),
     }
+}
+
+/// The coverage and the reads of a read track, or its Sashimi plot.
+fn reads_body(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    pile: &Pile,
+    (shape, repack): (Shape, bool),
+) -> Body {
+    let (contig, viewport) = session.view(panel);
+    if track.plot.sashimi {
+        let top = sashimi_top(session, track, panel);
+        let look = (track.hue, track.plot.junction_reads, top);
+        let primitives = sashimi::scene(viewport, &pile.coverage, &pile.junctions, look);
+        return Body::Scene(primitives, sashimi::HEIGHT);
+    }
+    let mode = track.mode_at(panel, contig);
+    let coverage = alignments::coverage(
+        viewport,
+        &pile.coverage,
+        |at| pile.base(at),
+        alignments::COVERAGE_HEIGHT,
+    );
+    let height = shape.height - alignments::COVERAGE_HEIGHT - 1.0;
+    let shown = mode != features::Mode::Collapsed
+        || !pile.junctions.is_empty()
+        || lanes_height(track, pile) > 0.0;
+    let reads = shown.then(|| {
+        (
+            read_lane(track, panel, pile, viewport, mode, repack),
+            height,
+        )
+    });
+    Body::Reads { coverage, reads }
+}
+
+/// The depth at the top of the Sashimi plot of a read track: the deepest coverage in view of the
+/// track, or of all the Sashimi plots with a shared scale.
+fn sashimi_top(session: &Session, track: &Track, panel: usize) -> u32 {
+    let (contig, viewport) = session.view(panel);
+    let depth = |track: &Track| match track.slot(panel).data(contig).map(|data| &data.content) {
+        Some(Content::Reads(pile)) => sashimi::deepest(viewport, &pile.coverage),
+        _ => 0,
+    };
+    if !track.plot.linked {
+        return depth(track);
+    }
+    session
+        .tracks
+        .iter()
+        .filter(|other| other.plot.sashimi && other.plot.linked)
+        .map(depth)
+        .max()
+        .unwrap_or(0)
 }
 
 /// The dots of a GWAS track. `faint` gives a lighter color to the dots of every second
@@ -1287,6 +1324,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 row_height,
             }
         }
+        Some(Content::Reads(_)) if track.plot.sashimi => Shape::plain(sashimi::HEIGHT),
         Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
             let above = lanes_height(track, pile) + pile.arc_height();
             if above > 0.0 {

@@ -146,6 +146,11 @@ impl Saved {
                         },
                         colors: section.value("colors") != Some("off"),
                         range: section.value("range").and_then(range),
+                        sashimi: section.value("sashimi") == Some("on"),
+                        junction_reads: section
+                            .value("junction reads")
+                            .and_then(|text| text.parse().ok())
+                            .unwrap_or(1),
                     },
                     filter: Filter {
                         rules: section
@@ -281,6 +286,12 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if track.plot.look.mods {
         entries.push(("modifications", "on".to_owned()));
+    }
+    if track.plot.sashimi {
+        entries.push(("sashimi", "on".to_owned()));
+    }
+    if track.plot.junction_reads > 1 {
+        entries.push(("junction reads", track.plot.junction_reads.to_string()));
     }
     if let Some(name) = &track.modification {
         entries.push(("methylation", name.clone()));
@@ -731,6 +742,18 @@ mod tests {
         }
         assert_eq!(text.matches("[hub]").count(), 2, "{text}");
         assert_eq!(text.matches("index =").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn read_tracks_keep_their_sashimi_plots() {
+        let mut sashimi = saved();
+        sashimi.tracks[0].plot.sashimi = true;
+        sashimi.tracks[0].plot.junction_reads = 5;
+        let text = sashimi.text(&base());
+        assert!(text.contains("sashimi = on"), "{text}");
+        assert!(text.contains("junction reads = 5"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(sashimi));
+        assert!(!saved().text(&base()).contains("sashimi"));
     }
 
     #[test]

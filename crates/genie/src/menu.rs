@@ -74,6 +74,36 @@ pub fn mapq_row<'a>(track: &Track) -> Element<'a, Message> {
         .into()
 }
 
+/// The fewest reads of the splice junctions that a Sashimi plot shows as arcs.
+pub const JUNCTION_FLOORS: [(&str, u32); 5] =
+    [("1", 1), ("2", 2), ("5", 5), ("10", 10), ("50", 50)];
+
+/// A row that sets the fewest reads of the junctions that a Sashimi plot shows.
+fn junction_row<'a>(track: &Track) -> Element<'a, Message> {
+    let (id, floor) = (track.id, track.plot.junction_reads);
+    let choices = JUNCTION_FLOORS.map(|(label, value)| {
+        button(text(label).size(12).wrapping(text::Wrapping::None))
+            .padding([3, 4])
+            .style(if value == floor {
+                style::chosen
+            } else {
+                style::ghost
+            })
+            .on_press(Message::TrackChanged(id, Change::JunctionReads(value)))
+            .into()
+    });
+    row![text("Arcs ≥").size(12).wrapping(text::Wrapping::None)]
+        .push(space::horizontal())
+        .extend(choices)
+        .spacing(1)
+        .padding(iced::Padding {
+            left: 8.0,
+            ..iced::Padding::ZERO
+        })
+        .align_y(Alignment::Center)
+        .into()
+}
+
 pub fn height(track: &Track, links: usize) -> f32 {
     let extra = if links == 0 {
         0.0
@@ -311,7 +341,8 @@ pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
 fn kind_height(track: &Track) -> f32 {
     let choices = modification_choices(track).len() as f32 * LINK_HEIGHT;
     if track.source.has_reads() {
-        READS_HEIGHT + choices + tag_items(track) as f32 * LINK_HEIGHT
+        let sashimi = if track.plot.sashimi { 3.0 } else { 1.0 };
+        READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi) * LINK_HEIGHT
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
     } else if track.source.is_bedmethyl() {
@@ -479,6 +510,11 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
     items.push(item("Color by modification", Change::Mods, look.mods));
     items.extend(modification_items(track));
+    items.push(item("Sashimi plot", Change::Sashimi, track.plot.sashimi));
+    if track.plot.sashimi {
+        items.push(junction_row(track));
+        items.push(item("Shared scale", Change::Link, track.plot.linked));
+    }
     items.push(separator());
     items.push(self::item(
         format!("Sort by base at {}", grouped(place.base + 1)),

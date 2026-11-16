@@ -7,7 +7,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::{Drafting, Lane, Message, Ranging};
 use crate::icon::{self, Icon};
-use crate::menu::{self, GROUPS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
+use crate::menu::{self, GROUPS, JUNCTION_FLOORS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
 use crate::track::{Change, Track};
 use crate::{font, style};
 
@@ -119,6 +119,19 @@ fn read_lines<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         lines.push(line("Show", Row::new().spacing(2).extend(modifications)));
     }
     lines.push(line("Group", choices(groups)));
+    let plot = track.plot;
+    let mut sashimi = vec![("Sashimi plot", change(Change::Sashimi), plot.sashimi)];
+    if plot.sashimi {
+        sashimi.push(("Shared scale", change(Change::Link), plot.linked));
+    }
+    lines.push(line("Sashimi", choices(sashimi)));
+    if plot.sashimi {
+        let floors = JUNCTION_FLOORS.map(|(label, floor)| {
+            let chosen = plot.junction_reads == floor;
+            (label, change(Change::JunctionReads(floor)), chosen)
+        });
+        lines.push(line("Arcs ≥", choices(floors)));
+    }
     lines
 }
 
