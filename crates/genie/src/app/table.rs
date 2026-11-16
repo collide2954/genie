@@ -329,7 +329,9 @@ impl Genie {
         .align_y(Alignment::Center)
         .padding([4, 8]);
         let body = match rows {
-            Some((built, order, widths)) if !order.is_empty() => grid(table, built, order, widths),
+            Some((built, order, widths)) if !order.is_empty() => {
+                grid(table, built, (order, widths), self.width)
+            }
             _ => {
                 let hint = table.hint.unwrap_or(NONE_IN_VIEW);
                 container(text(hint).size(11).style(style::muted))
@@ -348,13 +350,15 @@ impl Genie {
     }
 }
 
+/// The rows of a table under a row of column names. The rows fill the width of the panel, so
+/// that the scroll bar is at its right edge when the columns are narrower.
 fn grid<'a>(
     table: &VariantTable,
     built: &'a Table,
-    order: &[usize],
-    widths: &[f32],
+    (order, widths): (&[usize], &[f32]),
+    panel: f32,
 ) -> Element<'a, Message> {
-    let total: f32 = widths.iter().sum();
+    let total = widths.iter().sum::<f32>().max(panel);
     let head = row(built
         .columns
         .iter()
@@ -399,6 +403,7 @@ fn grid<'a>(
         }));
         let chosen = table.chosen == Some(line.span);
         button(cells)
+            .width(Length::Fill)
             .padding(0)
             .style(if chosen { style::chosen } else { style::ghost })
             .on_press(Message::Table(Tabling::Go(at)))
