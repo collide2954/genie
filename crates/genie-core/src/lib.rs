@@ -16,6 +16,7 @@ pub mod modification;
 mod names;
 mod number;
 mod order;
+pub mod pcr;
 pub mod pileup;
 mod region;
 pub mod samples;

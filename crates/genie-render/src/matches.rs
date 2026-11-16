@@ -138,6 +138,89 @@ pub fn scene(viewport: Viewport, hits: &[Hit], current: Option<Region>) -> Vec<P
     primitives
 }
 
+/// The PCR products of two primers: a line over each product, with a block for the primer at each
+/// end and arrows for its strand. `ends` gives the lengths of the primers at the left end and at
+/// the right end of a product on a strand.
+pub fn products(
+    viewport: Viewport,
+    hits: &[Hit],
+    current: Option<Region>,
+    ends: impl Fn(Strand) -> (u32, u32),
+) -> Vec<Primitive> {
+    let visible = viewport.visible();
+    let width = viewport.width() as f32;
+    let per_base = 1.0 / viewport.scale();
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let first = hits.partition_point(|hit| hit.span.end() <= visible.start());
+    let mut primitives = Vec::new();
+    let mut underline = None;
+    for hit in hits[first..]
+        .iter()
+        .take_while(|hit| hit.span.start() < visible.end())
+    {
+        let (start, end) = (hit.span.start(), hit.span.end());
+        let paint = if hit.mismatches.is_empty() {
+            EXACT
+        } else {
+            NEAR
+        };
+        let (from, to) = bar(px(start), px(end), width, NARROWEST);
+        primitives.push(Primitive::Rect {
+            x: from,
+            y: BODY_TOP + (BODY_HEIGHT - LINE_HEIGHT) / 2.0,
+            width: to - from,
+            height: LINE_HEIGHT,
+            paint,
+        });
+        let (head, tail) = ends(hit.strand);
+        let inner = (start + u64::from(head), end.saturating_sub(u64::from(tail)));
+        for (left, right) in [(start, inner.0), (inner.1, end)] {
+            let (from, to) = bar(px(left), px(right), width, NARROWEST);
+            primitives.push(Primitive::Rect {
+                x: from,
+                y: BODY_TOP,
+                width: to - from,
+                height: BODY_HEIGHT,
+                paint,
+            });
+        }
+        if hit.strand != Strand::Unknown {
+            let (left, right) = (px(inner.0).max(0.0), px(inner.1).min(width));
+            arrows(
+                &mut primitives,
+                left,
+                right,
+                hit.strand == Strand::Forward,
+                paint,
+            );
+        }
+        if per_base >= MARKS_FROM {
+            for offset in &hit.mismatches {
+                let at = start + u64::from(*offset);
+                primitives.push(Primitive::Rect {
+                    x: px(at),
+                    y: BODY_TOP,
+                    width: per_base as f32,
+                    height: BODY_HEIGHT,
+                    paint: WRONG,
+                });
+            }
+        }
+        if current == Some(hit.span) {
+            let (from, to) = bar(px(start), px(end), width, UNDERLINE);
+            underline = Some(Primitive::Rect {
+                x: from,
+                y: LINE_TOP,
+                width: to - from,
+                height: LINE_HEIGHT,
+                paint: Paint::Accent,
+            });
+        }
+    }
+    primitives.extend(underline);
+    primitives
+}
+
 fn distance(span: Region, position: f64) -> f64 {
     let (start, end) = (span.start() as f64, span.end() as f64);
     if position < start {
@@ -168,7 +251,7 @@ mod tests {
     use genie_core::search::Hit;
     use genie_core::{Region, Strand, Viewport};
 
-    use super::{hit, scene};
+    use super::{hit, products, scene};
     use crate::scene::{Hue, Paint, Primitive};
 
     fn found(start: u64, end: u64, strand: Strand, mismatches: &[u32]) -> Hit {
@@ -296,6 +379,42 @@ mod tests {
             found(500, 520, Strand::Forward, &[]),
         ];
         assert_eq!(rects(&scene(view(400, 600, 200.0), &hits, None)).len(), 1);
+    }
+
+    #[test]
+    fn products_draw_their_primers_as_blocks_on_a_line() {
+        let ends = |strand| {
+            if strand == Strand::Reverse {
+                (8, 12)
+            } else {
+                (12, 8)
+            }
+        };
+        let hits = [found(10, 90, Strand::Forward, &[])];
+        let primitives = products(view(0, 100, 100.0), &hits, None, ends);
+        assert_eq!(
+            rects(&primitives),
+            [
+                (10.0, 6.0, 80.0, 2.0, Paint::Hue(Hue::Blue)),
+                (10.0, 3.0, 12.0, 8.0, Paint::Hue(Hue::Blue)),
+                (82.0, 3.0, 8.0, 8.0, Paint::Hue(Hue::Blue)),
+            ]
+        );
+        let arrows = chevrons(&primitives);
+        assert_eq!(arrows.len(), 3);
+        assert!(
+            arrows
+                .iter()
+                .all(|(x, forward, _)| *forward && *x > 22.0 && *x < 82.0)
+        );
+        let back = [found(10, 90, Strand::Reverse, &[3])];
+        let current = Some(Region::between(10, 90));
+        let drawn = rects(&products(view(0, 100, 100.0), &back, current, ends));
+        assert_eq!(drawn[1], (10.0, 3.0, 8.0, 8.0, Paint::Tint(Hue::Blue)));
+        assert_eq!(drawn[2], (78.0, 3.0, 12.0, 8.0, Paint::Tint(Hue::Blue)));
+        assert_eq!(drawn.last(), Some(&(10.0, 12.0, 80.0, 2.0, Paint::Accent)));
+        let close = rects(&products(view(0, 50, 200.0), &back, None, ends));
+        assert!(close.contains(&(52.0, 3.0, 4.0, 8.0, Paint::Hue(Hue::Vermillion))));
     }
 
     #[test]

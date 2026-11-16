@@ -73,6 +73,14 @@ pub enum Detail {
         bases: String,
         wrong: usize,
     },
+    /// A PCR product of two primers. Its strand is forward when the forward primer is at its left.
+    Product {
+        forward: String,
+        reverse: String,
+        span: Region,
+        strand: Strand,
+        wrong: usize,
+    },
     Link(Interaction),
     Segment {
         sample: String,
@@ -397,6 +405,36 @@ fn signal_content(span: Region, bin: Bin, unit: Option<&str>) -> (String, Region
     (title, span, range.into_iter().collect())
 }
 
+/// The length, the strand and the mismatches of a sequence match or of a PCR product, for example
+/// "6 bp · reverse strand · 1 mismatch". `exact` names a match without mismatches.
+fn sequence_facts(span: Region, strand: Strand, (wrong, exact): (usize, &str)) -> String {
+    let strands = match strand {
+        Strand::Forward => "forward strand",
+        Strand::Reverse => "reverse strand",
+        Strand::Unknown => "both strands",
+    };
+    let fit = match wrong {
+        0 => exact.to_owned(),
+        1 => "1 mismatch".to_owned(),
+        count => format!("{count} mismatches"),
+    };
+    format!("{} bp · {strands} · {fit}", grouped(span.len()))
+}
+
+/// The card of a PCR product: its size, its strand, its mismatches and its primers.
+fn product_content(
+    (forward, reverse): (&str, &str),
+    span: Region,
+    (strand, wrong): (Strand, usize),
+) -> (String, Region, Vec<String>) {
+    let lines = vec![
+        sequence_facts(span, strand, (wrong, "exact primers")),
+        format!("Forward {forward}"),
+        format!("Reverse {reverse}"),
+    ];
+    ("PCR product".to_owned(), span, lines)
+}
+
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
         Detail::Signal { span, bin, unit } => signal_content(*span, *bin, *unit),
@@ -467,19 +505,16 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             bases,
             wrong,
         } => {
-            let strands = match strand {
-                Strand::Forward => "forward strand",
-                Strand::Reverse => "reverse strand",
-                Strand::Unknown => "both strands",
-            };
-            let fit = match wrong {
-                0 => "exact match".to_owned(),
-                1 => "1 mismatch".to_owned(),
-                count => format!("{count} mismatches"),
-            };
-            let facts = format!("{} bp · {strands} · {fit}", grouped(span.len()));
+            let facts = sequence_facts(*span, *strand, (*wrong, "exact match"));
             (pattern.clone(), *span, vec![facts, bases.clone()])
         }
+        Detail::Product {
+            forward,
+            reverse,
+            span,
+            strand,
+            wrong,
+        } => product_content((forward, reverse), *span, (*strand, *wrong)),
         Detail::Link(link) => {
             let title = if link.name.is_empty() {
                 "Link".to_owned()
@@ -976,6 +1011,34 @@ mod tests {
         assert_eq!(
             plain(&card(Strand::Unknown, "GcAtCC", 2)),
             "GGATCC\nchr1:11-16\n6 bp · both strands · 2 mismatches\nGcAtCC"
+        );
+    }
+
+    #[test]
+    fn product_cards_give_the_size_the_strand_and_the_primers() {
+        let card = |strand, wrong| Card {
+            track: u64::MAX,
+            contig: "chr1".to_owned(),
+            detail: Detail::Product {
+                forward: "ACGTTGCAGGTC".to_owned(),
+                reverse: "TTGACCGATGCA".to_owned(),
+                span: region(10, 102),
+                strand,
+                wrong,
+            },
+            at: Point::ORIGIN,
+            fields: Vec::new(),
+            effects: Changes::default(),
+            samples: Vec::new(),
+        };
+        let primers = "Forward ACGTTGCAGGTC\nReverse TTGACCGATGCA";
+        assert_eq!(
+            plain(&card(Strand::Forward, 0)),
+            format!("PCR product\nchr1:11-102\n92 bp · forward strand · exact primers\n{primers}")
+        );
+        assert_eq!(
+            plain(&card(Strand::Reverse, 2)),
+            format!("PCR product\nchr1:11-102\n92 bp · reverse strand · 2 mismatches\n{primers}")
         );
     }
 

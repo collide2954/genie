@@ -531,6 +531,7 @@ impl Genie {
             | Detail::Methylation { .. }
             | Detail::Signal { .. }
             | Detail::Match { .. }
+            | Detail::Product { .. }
             | Detail::Segment { .. }
             | Detail::Contact(_) => Vec::new(),
         };

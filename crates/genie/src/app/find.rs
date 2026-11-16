@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use genie_core::pcr::{self, PrimerError, Primers};
 use genie_core::search::{
     self, Found, Hit, MOST_MISMATCHES, Pattern, PatternError, Reach, Scanned,
 };
@@ -17,6 +18,7 @@ use crate::{font, style};
 use super::{Genie, Message, Session};
 
 pub(super) const FIELD: &str = "find";
+const REVERSE_FIELD: &str = "find-reverse";
 pub(super) const LANE: u64 = u64::MAX;
 pub(super) const BAR_HEIGHT: f32 = 28.0;
 const LIMIT: u64 = 10_000_000;
@@ -26,12 +28,18 @@ const HITS: usize = 100_000;
 const CHUNK: u64 = 2_000_000;
 const BUDGET: u64 = 20_000_000;
 const FIELD_WIDTH: f32 = 240.0;
+const PRIMER_WIDTH: f32 = 200.0;
 const BUTTON: f32 = 20.0;
 const TOO_WIDE: &str = "Zoom in to 10 Mb or less to find a sequence.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Finding {
+    /// The bases to find, or the forward primer.
     Edit(String),
+    /// The reverse primer.
+    Reverse(String),
+    /// Find the products of two primers, or go back to bases.
+    Primers(bool),
     Mismatches(u8),
     Submit,
     Step(bool),
@@ -68,14 +76,54 @@ struct Resume {
 
 enum Step {
     Show(usize, Region),
-    Scan(Pattern, usize, u64),
+    Scan(Query, usize, u64),
+}
+
+/// What the bar finds: bases, or the PCR products of two primers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Query {
+    Bases(Pattern),
+    Primers(Primers),
+}
+
+impl Query {
+    fn find(&self, bases: &[u8], start: u64, mismatches: u8) -> Found {
+        match self {
+            Self::Bases(pattern) => search::find(pattern, bases, start, mismatches, HITS),
+            Self::Primers(primers) => pcr::products(primers, bases, start, mismatches, HITS),
+        }
+    }
+
+    fn scan(
+        &self,
+        mismatches: u8,
+        reach: Reach,
+        fetch: impl FnMut(Region) -> Result<Vec<u8>, String>,
+    ) -> Result<Scanned, String> {
+        match self {
+            Self::Bases(pattern) => search::scan(pattern, mismatches, reach, fetch),
+            Self::Primers(primers) => pcr::scan(primers, mismatches, reach, fetch),
+        }
+    }
+
+    /// The bases at the end of a searched region where a match can start but not end.
+    fn tail(&self) -> u64 {
+        match self {
+            Self::Bases(pattern) => pattern.len() as u64 - 1,
+            Self::Primers(_) => pcr::LONGEST,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub(super) struct Finder {
     text: String,
+    /// The reverse primer, when the bar finds the products of two primers.
+    reverse: String,
+    /// Whether the bar finds the products of a forward and a reverse primer.
+    primers: bool,
     mismatches: u8,
-    pattern: Option<Pattern>,
+    query: Option<Query>,
     error: Option<String>,
     generation: u64,
     panels: Vec<Option<(u64, Arc<Searched>)>>,
@@ -99,13 +147,30 @@ impl Finder {
     }
 
     fn parse(&mut self) {
-        let parsed = Pattern::parse(&self.text)
-            .and_then(|pattern| pattern.check(self.mismatches).map(|()| pattern));
-        (self.pattern, self.error) = match parsed {
-            Ok(pattern) => (Some(pattern), None),
-            Err(PatternError::Empty) => (None, None),
-            Err(error) => (None, Some(error.to_string())),
+        (self.query, self.error) = if self.primers {
+            match Primers::parse(&self.text, &self.reverse, self.mismatches) {
+                Ok(primers) => (Some(Query::Primers(primers)), None),
+                Err(PrimerError::Empty) => (None, None),
+                Err(error) => (None, Some(error.to_string())),
+            }
+        } else {
+            let parsed = Pattern::parse(&self.text)
+                .and_then(|pattern| pattern.check(self.mismatches).map(|()| pattern));
+            match parsed {
+                Ok(pattern) => (Some(Query::Bases(pattern)), None),
+                Err(PatternError::Empty) => (None, None),
+                Err(error) => (None, Some(error.to_string())),
+            }
         };
+    }
+
+    /// The word for one match and for more than one.
+    fn nouns(&self) -> (&'static str, &'static str) {
+        if self.primers {
+            ("product", "products")
+        } else {
+            ("match", "matches")
+        }
     }
 
     fn restart(&mut self) {
@@ -126,14 +191,14 @@ impl Finder {
     }
 }
 
-pub fn search_bases(
-    pattern: &Pattern,
+pub(super) fn search_bases(
+    query: &Query,
     mismatches: u8,
     contig: usize,
     region: Region,
     bases: Arc<[u8]>,
 ) -> Searched {
-    let found = search::find(pattern, &bases, region.start(), mismatches, HITS);
+    let found = query.find(&bases, region.start(), mismatches);
     Searched {
         contig,
         region,
@@ -181,6 +246,18 @@ impl Genie {
                     finder.text = text;
                 }
                 return self.restart_finder();
+            }
+            Finding::Reverse(text) => {
+                if let Some(finder) = &mut self.finder {
+                    finder.reverse = text;
+                }
+                return self.restart_finder();
+            }
+            Finding::Primers(primers) => {
+                if let Some(finder) = &mut self.finder {
+                    finder.primers = primers;
+                }
+                return Task::batch([self.restart_finder(), operation::focus(FIELD)]);
             }
             Finding::Mismatches(count) => {
                 if let Some(finder) = &mut self.finder {
@@ -247,7 +324,7 @@ impl Genie {
         let (Some(finder), Some(session)) = (&mut self.finder, &self.session) else {
             return Task::none();
         };
-        let Some(pattern) = finder.pattern.clone() else {
+        let Some(query) = finder.query.clone() else {
             return Task::none();
         };
         let count = session.count();
@@ -279,14 +356,14 @@ impl Genie {
                 .map_or_else(|| visible.expand(margin, length), |(region, _)| *region);
             finder.wanted[panel] = Some((contig, region));
             let (generation, mismatches) = (finder.generation, finder.mismatches);
-            let (reference, pattern) = (Arc::clone(&session.reference), pattern.clone());
+            let (reference, query) = (Arc::clone(&session.reference), query.clone());
             tasks.push(Task::perform(
                 async move {
                     let bases: Arc<[u8]> = match cached {
                         Some((_, bases)) => bases,
                         None => reference.fetch(contig, region)?.into(),
                     };
-                    let searched = search_bases(&pattern, mismatches, contig, region, bases);
+                    let searched = search_bases(&query, mismatches, contig, region, bases);
                     Ok::<_, String>(Arc::new(searched))
                 },
                 move |result| Message::Find(Finding::Searched(generation, panel, result)),
@@ -326,7 +403,7 @@ impl Genie {
 
     fn plan_step(&self, forward: bool) -> Option<Step> {
         let (finder, session) = (self.finder.as_ref()?, self.session.as_ref()?);
-        let pattern = finder.pattern.clone()?;
+        let query = finder.query.clone()?;
         if finder.scanning {
             return None;
         }
@@ -336,7 +413,7 @@ impl Genie {
             .resume
             .filter(|resume| resume.visit == visit && resume.forward == forward)
         {
-            return Some(Step::Scan(pattern, resume.contig, resume.from));
+            return Some(Step::Scan(query, resume.contig, resume.from));
         }
         let anchor = match finder.current {
             Some((seen, at, span)) if seen == visit && at == contig => span.start(),
@@ -347,7 +424,7 @@ impl Genie {
             .filter(|searched| searched.region.contains(anchor))
         else {
             let from = if forward { anchor + 1 } else { anchor };
-            return Some(Step::Scan(pattern, contig, from));
+            return Some(Step::Scan(query, contig, from));
         };
         let hits = &searched.found.hits;
         let next = if forward {
@@ -358,7 +435,7 @@ impl Genie {
         if let Some(hit) = next {
             return Some(Step::Show(contig, hit.span));
         }
-        let tail = pattern.len() as u64 - 1;
+        let tail = query.tail();
         let from = if !forward {
             searched.region.start().min(anchor)
         } else if searched.found.complete {
@@ -368,22 +445,20 @@ impl Genie {
                 .map_or(anchor + 1, |hit| hit.span.start() + 1)
                 .max(anchor + 1)
         };
-        Some(Step::Scan(pattern, contig, from))
+        Some(Step::Scan(query, contig, from))
     }
 
     fn step_match(&mut self, forward: bool) -> Task<Message> {
         match self.plan_step(forward) {
             Some(Step::Show(contig, span)) => self.show_match(contig, span),
-            Some(Step::Scan(pattern, contig, from)) => {
-                self.scan_from(&pattern, contig, from, forward)
-            }
+            Some(Step::Scan(query, contig, from)) => self.scan_from(&query, contig, from, forward),
             None => Task::none(),
         }
     }
 
     fn scan_from(
         &mut self,
-        pattern: &Pattern,
+        query: &Query,
         contig: usize,
         from: u64,
         forward: bool,
@@ -402,18 +477,17 @@ impl Genie {
         finder.scanning = true;
         finder.note = None;
         let (generation, mismatches) = (finder.generation, finder.mismatches);
-        let (reference, pattern) = (Arc::clone(&session.reference), pattern.clone());
+        let (reference, query) = (Arc::clone(&session.reference), query.clone());
         Task::perform(
             async move {
-                search::scan(&pattern, mismatches, reach, |region| {
-                    reference.fetch(contig, region)
-                })
-                .map(|scanned| Swept {
-                    contig,
-                    forward,
-                    from,
-                    scanned,
-                })
+                query
+                    .scan(mismatches, reach, |region| reference.fetch(contig, region))
+                    .map(|scanned| Swept {
+                        contig,
+                        forward,
+                        from,
+                        scanned,
+                    })
             },
             move |result| Message::Find(Finding::Scanned(generation, result)),
         )
@@ -441,6 +515,7 @@ impl Genie {
         let contigs = session.reference.assembly.contigs();
         let here = &contigs[swept.contig];
         let reached = swept.scanned.reached;
+        let (noun, _) = finder.nouns();
         let push = if swept.forward {
             "Enter"
         } else {
@@ -460,7 +535,7 @@ impl Genie {
             let other = &contigs[next];
             let text = if swept.forward {
                 format!(
-                    "No match from {}:{} to the end of {}. Push {push} to go on in {}.",
+                    "No {noun} from {}:{} to the end of {}. Push {push} to go on in {}.",
                     here.name,
                     grouped(swept.from + 1),
                     here.name,
@@ -468,7 +543,7 @@ impl Genie {
                 )
             } else {
                 format!(
-                    "No match from the start of {} to {}:{}. Push {push} to go on in {}.",
+                    "No {noun} from the start of {} to {}:{}. Push {push} to go on in {}.",
                     here.name,
                     here.name,
                     grouped(swept.from),
@@ -482,7 +557,7 @@ impl Genie {
                 name: here.name.clone(),
                 span: Span::Region(Region::between(swept.from, reached)),
             };
-            let text = format!("No match in {locus}. Push {push} again to search on.");
+            let text = format!("No {noun} in {locus}. Push {push} again to search on.");
             (text, swept.contig, reached)
         };
         finder.note = Some(note);
@@ -525,16 +600,26 @@ impl Genie {
         let offset = usize::try_from(hit.span.start() - searched.region.start()).ok()?;
         let length = usize::try_from(hit.span.len()).ok()?;
         let bases = searched.bases.get(offset..offset + length)?;
-        Some(Card {
-            track: LANE,
-            contig: session.reference.assembly.contigs()[contig].name.clone(),
-            detail: Detail::Match {
-                pattern: finder.pattern.as_ref()?.text().to_owned(),
+        let detail = match finder.query.as_ref()? {
+            Query::Bases(pattern) => Detail::Match {
+                pattern: pattern.text().to_owned(),
                 span: hit.span,
                 strand: hit.strand,
                 bases: match_bases(bases, hit),
                 wrong: hit.mismatches.len(),
             },
+            Query::Primers(primers) => Detail::Product {
+                forward: primers.forward.text().to_owned(),
+                reverse: primers.reverse.text().to_owned(),
+                span: hit.span,
+                strand: hit.strand,
+                wrong: hit.mismatches.len(),
+            },
+        };
+        Some(Card {
+            track: LANE,
+            contig: session.reference.assembly.contigs()[contig].name.clone(),
+            detail,
             at: pointer.at,
             samples: Vec::new(),
             fields: Vec::new(),
@@ -546,9 +631,10 @@ impl Genie {
         if let Some(error) = &finder.error {
             return (error.clone(), true);
         }
-        if finder.pattern.is_none() {
+        if finder.query.is_none() {
             return (String::new(), false);
         }
+        let (noun, nouns) = finder.nouns();
         if let Some(error) = &finder.failed {
             return (format!("genie cannot read the sequence. {error}"), true);
         }
@@ -574,7 +660,7 @@ impl Genie {
         };
         if !searched.found.complete {
             let most = grouped(HITS as u64);
-            return (format!("More than {most} matches. Zoom in."), false);
+            return (format!("More than {most} {nouns}. Zoom in."), false);
         }
         let shown: Vec<&Hit> = searched
             .found
@@ -587,27 +673,61 @@ impl Genie {
             .filter(|(seen, at, _)| *seen == session.visit() && *at == contig)
             .and_then(|(_, _, span)| shown.iter().position(|hit| hit.span == span));
         let words = match (shown.len(), current) {
-            (0, _) => "No match in view. Push Enter to find the next one.".to_owned(),
+            (0, _) => format!("No {noun} in view. Push Enter to find the next one."),
             (count, Some(index)) => {
-                format!("Match {} of {} in view", index + 1, grouped(count as u64))
+                let first = noun[..1].to_uppercase() + &noun[1..];
+                let count = grouped(count as u64);
+                format!("{first} {} of {count} in view", index + 1)
             }
-            (1, None) => "1 match in view".to_owned(),
-            (count, None) => format!("{} matches in view", grouped(count as u64)),
+            (1, None) => format!("1 {noun} in view"),
+            (count, None) => format!("{} {nouns} in view", grouped(count as u64)),
         };
         (words, false)
     }
 
+    /// The fields of the bar: the bases, or the forward and the reverse primer.
+    fn find_fields(finder: &Finder) -> Element<'_, Message> {
+        let field = |placeholder: &str, value: &str, width: f32| {
+            text_input(placeholder, value)
+                .font(font::MONO)
+                .size(12)
+                .padding([3, 8])
+                .width(width)
+                .style(style::locus)
+                .on_submit(Message::Find(Finding::Submit))
+        };
+        if !finder.primers {
+            return field("Bases, for example GGATCC", &finder.text, FIELD_WIDTH)
+                .id(FIELD)
+                .on_input(|text| Message::Find(Finding::Edit(text)))
+                .into();
+        }
+        row![
+            field("Forward primer", &finder.text, PRIMER_WIDTH)
+                .id(FIELD)
+                .on_input(|text| Message::Find(Finding::Edit(text))),
+            field("Reverse primer", &finder.reverse, PRIMER_WIDTH)
+                .id(REVERSE_FIELD)
+                .on_input(|text| Message::Find(Finding::Reverse(text))),
+        ]
+        .spacing(4)
+        .into()
+    }
+
     pub(super) fn find_bar(&self) -> Option<Element<'_, Message>> {
         let finder = self.finder.as_ref()?;
-        let input = text_input("Bases, for example GGATCC", &finder.text)
-            .id(FIELD)
-            .font(font::MONO)
-            .size(12)
-            .padding([3, 8])
-            .width(FIELD_WIDTH)
-            .style(style::locus)
-            .on_input(|text| Message::Find(Finding::Edit(text)))
-            .on_submit(Message::Find(Finding::Submit));
+        let mode = |label: &'static str, primers: bool| {
+            button(text(label).size(11))
+                .padding([2, 7])
+                .style(if finder.primers == primers {
+                    style::chosen
+                } else {
+                    style::ghost
+                })
+                .on_press(Message::Find(Finding::Primers(primers)))
+        };
+        let modes = row![mode("Bases", false), mode("Primers", true)].spacing(2);
+        let input = Self::find_fields(finder);
         let mut choices = row![text("Mismatches").size(11).style(style::muted)]
             .spacing(2)
             .align_y(Alignment::Center);
@@ -632,17 +752,23 @@ impl Genie {
         let below = tooltip::Position::Bottom;
         let previous = Message::Find(Finding::Step(false));
         let next = Message::Find(Finding::Step(true));
+        let (noun, _) = finder.nouns();
         let bar = row![
             text("Find").size(11).style(style::muted),
+            modes,
             input,
             choices,
             status,
             chrome::tip(
                 small(Icon::Back, previous),
-                "Previous match (Shift+Enter)",
+                format!("Previous {noun} (Shift+Enter)"),
                 below
             ),
-            chrome::tip(small(Icon::Forward, next), "Next match (Enter)", below),
+            chrome::tip(
+                small(Icon::Forward, next),
+                format!("Next {noun} (Enter)"),
+                below
+            ),
             chrome::tip(
                 small(Icon::Close, Message::Find(Finding::Close)),
                 "Close (Escape)",
@@ -681,7 +807,13 @@ impl Genie {
             .and_then(|finder| finder.current)
             .filter(|(_, at, _)| panel == 0 && *at == contig)
             .map(|(_, _, span)| span);
-        let lane = scene::view(matches::scene(viewport, hits, current), matches::HEIGHT)
+        let primitives = match finder.and_then(|finder| finder.query.as_ref()) {
+            Some(Query::Primers(primers)) => {
+                matches::products(viewport, hits, current, |strand| primers.ends(strand))
+            }
+            _ => matches::scene(viewport, hits, current),
+        };
+        let lane = scene::view(primitives, matches::HEIGHT)
             .on_hover(move |pointer| Message::Find(Finding::Hover(panel, pointer)))
             .on_click(move |pointer| Message::Find(Finding::Click(panel, pointer)));
         container(lane).id(format!("find-lane-{panel}")).into()
@@ -700,7 +832,7 @@ mod tests {
     use iced::keyboard::Modifiers;
     use iced_test::{selector, simulator};
 
-    use super::{Finding, LANE, Swept, TOO_WIDE, search_bases};
+    use super::{Finding, LANE, Query, Swept, TOO_WIDE, search_bases};
     use crate::app::{Genie, Message};
     use crate::card;
     use crate::reference::Reference;
@@ -753,8 +885,8 @@ mod tests {
             let offset = (at - region.start()) as usize;
             bases[offset..offset + site.len()].copy_from_slice(site.as_bytes());
         }
-        let pattern = finder.pattern.as_ref().unwrap();
-        let searched = search_bases(pattern, finder.mismatches, contig, region, bases.into());
+        let query = finder.query.as_ref().unwrap();
+        let searched = search_bases(query, finder.mismatches, contig, region, bases.into());
         let message = Finding::Searched(finder.generation, panel, Ok(Arc::new(searched)));
         let _ = genie.update(Message::Find(message));
     }
@@ -965,7 +1097,8 @@ mod tests {
         );
         let place = Region::between(95_000, 95_020);
         let pattern = Pattern::parse(&primer).unwrap();
-        let forward = search_bases(&pattern, 0, 0, region, Arc::clone(&bases));
+        let query = Query::Bases(pattern.clone());
+        let forward = search_bases(&query, 0, 0, region, Arc::clone(&bases));
         assert!(
             forward
                 .found
@@ -973,18 +1106,34 @@ mod tests {
                 .iter()
                 .any(|hit| hit.span == place && hit.strand == Strand::Forward)
         );
-        let flipped: String = primer
-            .bytes()
-            .rev()
-            .map(|base| char::from(codon::complement(base)))
-            .collect();
-        let reverse = search_bases(&Pattern::parse(&flipped).unwrap(), 0, 0, region, bases);
+        let flip = |bases: &[u8]| -> String {
+            bases
+                .iter()
+                .rev()
+                .map(|base| char::from(codon::complement(*base)))
+                .collect()
+        };
+        let flipped = Query::Bases(Pattern::parse(&flip(primer.as_bytes())).unwrap());
+        let reverse = search_bases(&flipped, 0, 0, region, Arc::clone(&bases));
         assert!(
             reverse
                 .found
                 .hits
                 .iter()
                 .any(|hit| hit.span == place && hit.strand == Strand::Reverse)
+        );
+        let back = flip(&bases[25_300..25_320]);
+        let primers = Query::Primers(genie_core::pcr::Primers::parse(&primer, &back, 0).unwrap());
+        let products = search_bases(&primers, 0, 0, region, Arc::clone(&bases));
+        assert!(
+            products
+                .found
+                .hits
+                .iter()
+                .any(|hit| hit.span == Region::between(95_000, 95_320)
+                    && hit.strand == Strand::Forward),
+            "{:?}",
+            products.found.hits
         );
         let reach = Reach {
             from: 0,
@@ -996,6 +1145,52 @@ mod tests {
         let scanned =
             search::scan(&pattern, 0, reach, |window| reference.fetch(0, window)).unwrap();
         assert_eq!(scanned.hit.map(|hit| hit.span), Some(place));
+    }
+
+    #[test]
+    fn primer_pairs_find_their_pcr_products() {
+        let mut genie = genie(&[10_000]);
+        go(&mut genie, "chr1:1-1,000");
+        let _ = genie.update(Message::Command(Command::Find));
+        assert!(shows(&genie, "Primers"));
+        let _ = genie.update(Message::Find(Finding::Primers(true)));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("find-reverse"))
+                .is_ok()
+        );
+        let _ = genie.update(Message::Find(Finding::Edit("ACGTTGCAGGTC".to_owned())));
+        assert!(shows(&genie, "Type the reverse primer too."));
+        let _ = genie.update(Message::Find(Finding::Reverse("TTGACCGATGCA".to_owned())));
+        answer(
+            &mut genie,
+            0,
+            &[(600, "ACGTTGCAGGTC"), (800, "TGCATCGGTCAA")],
+        );
+        assert!(shows(&genie, "1 product in view"));
+        let (_, viewport) = genie.session.as_ref().unwrap().view(0);
+        let x = viewport.to_px(700.0) as f32;
+        let pointer = Pointer {
+            local: Point::new(x, 6.0),
+            at: Point::new(x, 120.0),
+        };
+        let _ = genie.update(Message::Find(Finding::Hover(0, Some(pointer))));
+        let hover = genie.hover.as_ref().expect("a card");
+        assert_eq!(
+            card::plain(hover),
+            "PCR product\nchr1:601-812\n212 bp · forward strand · exact primers\n\
+             Forward ACGTTGCAGGTC\nReverse TTGACCGATGCA"
+        );
+        let _ = genie.update(Message::Find(Finding::Submit));
+        assert!((center(&genie) - 706.5).abs() < 1e-6, "{}", center(&genie));
+        assert!(shows(&genie, "Product 1 of 1 in view"));
+        let _ = genie.update(Message::Find(Finding::Primers(false)));
+        assert!(
+            simulator(genie.view())
+                .find(selector::id("find-reverse"))
+                .is_err()
+        );
+        assert_eq!(genie.finder.as_ref().unwrap().text, "ACGTTGCAGGTC");
     }
 
     #[test]
