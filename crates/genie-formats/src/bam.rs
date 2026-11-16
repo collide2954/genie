@@ -187,6 +187,10 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
         })
         .collect::<Result<_, Error>>()?;
     let cigar = long_cigar(cigar, length, || &bytes[fields.at..]);
+    let flags = short(14);
+    if !fits(&cigar, length, flags) {
+        return Err(bad());
+    }
     let packed = fields.take(length.div_ceil(2))?;
     let bases: Vec<u8> = (0..length)
         .map(|index| {
@@ -213,7 +217,6 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
             start,
             insert: i64::from(int(28)),
         });
-    let flags = short(14);
     let clipped = cigar.iter().any(|(op, _)| *op == Op::HardClip);
     let tags = tags(&bytes[fields.at..], &bases, flags & REVERSE != 0, clipped);
     let alignment = Alignment {
@@ -228,6 +231,20 @@ fn decode(bytes: &[u8]) -> Result<(i32, Alignment), Error> {
         tags,
     };
     Ok((int(0), alignment))
+}
+
+/// Whether a CIGAR reads as many bases as the read has, as htslib checks. An unmapped read and a
+/// read without bases have nothing to check.
+fn fits(cigar: &[(Op, u32)], length: usize, flags: u16) -> bool {
+    if cigar.is_empty() || length == 0 || flags & UNMAPPED != 0 {
+        return true;
+    }
+    let read: u64 = cigar
+        .iter()
+        .filter(|(op, _)| op.consumes_read())
+        .map(|(_, count)| u64::from(*count))
+        .sum();
+    read == length as u64
 }
 
 fn integer(kind: u8, value: &[u8]) -> Option<i64> {
@@ -600,6 +617,25 @@ pub mod tests {
         let mut reader = Cursor::new(sized(short));
         let (_, read) = record(&mut reader, &mut Vec::new()).unwrap().unwrap();
         assert_eq!(read.cigar, [(Op::Match, 17)]);
+    }
+
+    #[test]
+    fn cigars_that_do_not_fit_the_bases_are_errors() {
+        let decoded = |bytes: Vec<u8>| record(&mut Cursor::new(bytes), &mut Vec::new());
+        let fits = read(40, "fits", 0, &[(4, 0), (2, 1)], "ACGTAC");
+        assert!(decoded(fits).unwrap().is_some());
+        let damaged = read(
+            40,
+            "damaged",
+            0,
+            &[(34_603_008, 1), (201_326_592, 0)],
+            "ACGTAC",
+        );
+        assert!(decoded(damaged).is_err());
+        let unmapped = read(40, "unmapped", 4, &[(10, 0)], "ACGTAC");
+        assert!(decoded(unmapped).unwrap().is_some());
+        let without_bases = read(40, "star", 0, &[(10, 0)], "");
+        assert!(decoded(without_bases).unwrap().is_some());
     }
 
     #[test]
