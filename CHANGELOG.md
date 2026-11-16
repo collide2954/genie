@@ -104,6 +104,13 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### GWAS tracks
+
+- genie opens GWAS summary statistics as Manhattan plots: of the GWAS Catalog, PLINK 2, REGENIE, SAIGE and BOLT-LMM. genie knows them by their header line or by their names (`.glm.*`, `.regenie`).
+- A dot shows the -log10 p of each variant. A line marks 5×10⁻⁸, and the dots over it are vermillion. The whole-genome view shows all chromosomes, with a lighter color for every second one.
+- The card of a dot shows its row, for example its rsID, alleles, beta and p-value.
+- genie reads only the part in view of a file with a tabix index, and all of a file without an index up to 1 GB.
+
 ### Table tracks
 
 - genie opens tab-separated tables with a tabix index as table tracks, for example the CADD scores. The header line names the columns.
