@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### BCF files
+
+- genie opens BCF files, the binary VCF files of bcftools, with their CSI index, from your computer and from the web. They have all the features of VCF tracks: genotypes, cards, filters, annotations, structural variants, densities from the index and sample groups.
+- A BCF file without an index opens if it is 50 MB or less.
+
 ### Hi-C contact maps
 
 - genie opens the `.hic` files of Juicer (versions 6 to 9) as Hi-C tracks, also from the web and from track hubs (type `hic`). The contacts show as a triangle over the diagonal, from light grey to vermillion.

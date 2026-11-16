@@ -99,7 +99,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
 | Alignment track | BAM; CRAM 3.0 and 3.1 |
-| Variant track | VCF (plain, gzip or bgzip). genie does not read BCF. |
+| Variant track | VCF (plain, gzip or bgzip); BCF (`.bcf`) with its CSI index (`.bcf.csi`) |
 | Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Interaction track | bigInteract (`.bb`); BEDPE (`.bedpe`, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (`.txt`, plain or gzip) |
 | Hi-C track | Juicer `.hic`, versions 6 to 9 |
@@ -120,6 +120,7 @@ bgzip genome.fa && samtools faidx genome.fa.gz
 If a track file has an index next to it (`.tbi`, `.csi`, `.bai` or `.crai`), genie uses that index. If the file has no index, genie prepares the file in its cache folder:
 
 - A sorted BAM file, a CRAM file or a sorted bgzip file gets an index. genie does not copy the file.
+- A BCF file without its CSI index opens if it is 50 MB or less: genie reads all of it. Index larger BCF files with `bcftools index`.
 - A plain or gzip file gets a copy compressed with bgzip, and an index. Plain files up to 50 MB open directly, without a copy.
 - A file that is not sorted by position gets a sorted copy, for example a GTF file from GENCODE or Ensembl, or a BAM file from an aligner. genie sorts on disk, so the size of the file is not limited by memory.
 
