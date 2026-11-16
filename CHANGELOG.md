@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Table tracks
+
+- genie opens tab-separated tables with a tabix index as table tracks, for example the CADD scores. The header line names the columns.
+- A table track shows a column of numbers as a signal, at first the last one. The track menu selects a different column, or shows the rows as features with all their columns in the card. Sessions keep the choice.
+
 ### BCF files
 
 - genie opens BCF files, the binary VCF files of bcftools, with their CSI index, from your computer and from the web. They have all the features of VCF tracks: genotypes, cards, filters, annotations, structural variants, densities from the index and sample groups.
