@@ -43,6 +43,15 @@ impl Layout {
         columns: [1, 2, 0],
     };
 
+    /// A table with the contig, the start and the end in these columns (from 1), with
+    /// positions counted from 1, as `tabix -s -b -e` indexes it.
+    pub fn generic(columns: [usize; 3]) -> Self {
+        Self {
+            format: GENERIC,
+            columns,
+        }
+    }
+
     pub fn place(self, line: &str) -> Option<(&str, u64, u64)> {
         let line = line.trim_end_matches(['\n', '\r']);
         let [name_at, start_at, end_at] = self.columns;
@@ -335,6 +344,22 @@ impl Index {
 
     pub fn names(&self) -> &[String] {
         &self.names
+    }
+
+    /// The columns (from 1) of the contig, the start and the end of the records; 0 for no end
+    /// column.
+    pub fn columns(&self) -> [usize; 3] {
+        self.columns
+    }
+
+    /// The first character of the header lines, usually `#`.
+    pub fn meta(&self) -> u8 {
+        self.meta
+    }
+
+    /// The contig and the span of a record, as the index finds them.
+    pub fn place<'a>(&self, line: &'a str) -> Option<(&'a str, Region)> {
+        self.locate(line)
     }
 
     /// The index with the contig names of a BCF header, for a CSI index without names, as

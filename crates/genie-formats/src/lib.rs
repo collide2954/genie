@@ -9,6 +9,7 @@ pub mod bedmethyl;
 pub mod bedpe;
 pub mod bgzf;
 mod binning;
+pub mod columns;
 pub mod contigs;
 pub mod cram;
 pub mod cytoband;
