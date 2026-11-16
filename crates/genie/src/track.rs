@@ -1487,6 +1487,7 @@ pub fn is_track(location: &Location) -> bool {
     is_bam(&name)
         || is_cram(&name)
         || is_vcf(&name)
+        || is_bcf(&name)
         || is_signal(&name)
         || is_bedmethyl(&name)
         || is_bigbed(&name)
@@ -1540,6 +1541,13 @@ fn inner_extension(name: &str, wanted: &[&str]) -> bool {
 
 pub fn is_vcf(name: &str) -> bool {
     inner_extension(name, &["vcf"])
+}
+
+/// True for BCF, the binary form of VCF.
+pub fn is_bcf(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("bcf"))
 }
 
 pub fn is_bigwig(name: &str) -> bool {
@@ -1662,7 +1670,7 @@ pub fn open_with(
     let index = index.as_ref();
     let format = if is_bam(&name) || is_cram(&name) {
         Format::Reads(ReadFile::open(reading, &name, index)?)
-    } else if is_vcf(&name) {
+    } else if is_vcf(&name) || is_bcf(&name) {
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
@@ -2783,6 +2791,50 @@ mod tests {
                 .contig,
             0
         );
+    }
+
+    fn variant_ids(source: &Source, contig: &str) -> Vec<String> {
+        let loaded = load(
+            source,
+            contig,
+            region(0, 10_000),
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        )
+        .unwrap();
+        let Content::Variants(calls) = loaded.content else {
+            panic!("expected variants");
+        };
+        calls
+            .variants
+            .into_iter()
+            .map(|variant| variant.id)
+            .collect()
+    }
+
+    #[test]
+    fn bcf_files_open_as_variant_tracks() {
+        let source = open(fixture("calls.bcf")).unwrap();
+        assert!(matches!(
+            source.format,
+            Format::Variants(VariantFile::Bcf { .. })
+        ));
+        assert_eq!(source.contigs(), ["chr1", "chr2"]);
+        assert_eq!(source.samples(), ["A", "B"]);
+        assert_eq!(variant_ids(&source, "chr1"), ["rs1", "", "sv1"]);
+        assert_eq!(variant_ids(&source, "chr2"), ["rs4"]);
+        let found = names(&source, &assembly()).unwrap();
+        assert_eq!(found.find("rs4").unwrap().contig, 1);
+        let scratch = Scratch::new("bcf-alone");
+        let alone = scratch.file("alone.bcf", fs::read(fixture("calls.bcf")).unwrap());
+        let whole = open(alone).unwrap();
+        assert!(matches!(
+            whole.format,
+            Format::Variants(VariantFile::Table { .. })
+        ));
+        assert_eq!(variant_ids(&whole, "chr1"), ["rs1", "", "sv1"]);
     }
 
     fn contact_map(source: &Source, step: u64, contacts: Showing) -> Contacts {
@@ -4150,11 +4202,11 @@ mod tests {
 
     #[test]
     fn rejects_files_that_are_not_tracks() {
-        let error = open(PathBuf::from("/data/calls.bcf")).unwrap_err();
+        let error = open(PathBuf::from("/data/notes.docx")).unwrap_err();
         assert_eq!(
             error,
-            "The file calls.bcf is not a BED, GFF3, GTF, bigBed, VCF, BAM, CRAM, bigWig, bedGraph, \
-             bedMethyl, BEDPE, bigInteract, Hi-C or copy number file."
+            "The file notes.docx is not a BED, GFF3, GTF, bigBed, VCF, BCF, BAM, CRAM, bigWig, \
+             bedGraph, bedMethyl, BEDPE, bigInteract, Hi-C or copy number file."
         );
     }
 

@@ -1056,6 +1056,7 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "gff3",
                     "gtf",
                     "vcf",
+                    "bcf",
                     "bam",
                     "cram",
                     "bw",

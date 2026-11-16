@@ -33,7 +33,7 @@ impl FeatureFile {
     pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
         let kind = Kind::of(name).ok_or_else(|| {
             format!(
-                "The file {name} is not a BED, GFF3, GTF, bigBed, VCF, BAM, CRAM, bigWig, \
+                "The file {name} is not a BED, GFF3, GTF, bigBed, VCF, BCF, BAM, CRAM, bigWig, \
                  bedGraph, bedMethyl, BEDPE, bigInteract, Hi-C or copy number file."
             )
         })?;
