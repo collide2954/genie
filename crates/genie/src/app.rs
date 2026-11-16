@@ -5121,6 +5121,30 @@ mod tests {
     }
 
     #[test]
+    fn hovering_a_gwas_dot_shows_its_row() {
+        let scratch = crate::scratch::Scratch::new("app-gwas");
+        let text = "chromosome\tbase_pair_location\tbeta\tp_value\trsid\n\
+                    chr1\t500\t0.1\t5e-9\trs1\nchr1\t600\t-0.02\t0.2\trs2\n";
+        let path = scratch.file("height.tsv", text);
+        let mut genie = opened();
+        let source = crate::track::open(path).unwrap();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(source))));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let options = crate::track::Options::default();
+        let loaded = crate::track::load(&track.source, "chr1", region, options, 1, true, |_| {
+            Err(String::new())
+        })
+        .unwrap();
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(499.5, 4.0))));
+        for line in ["rs1", "-log10 p 8.301 · p 5.0e-9", "beta", "0.1"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+    }
+
+    #[test]
     fn hovering_a_contact_map_shows_the_pair_of_bins() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../genie-formats/tests/data/contacts.hic");

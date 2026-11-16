@@ -50,8 +50,9 @@ pub enum Text {
     Hub,
     Loops,
     Table,
-    /// A table compressed with bgzip that has a tabix index: a track.
-    Columns,
+    /// A track: GWAS summary statistics, or a table compressed with bgzip that has a tabix
+    /// index.
+    Track,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,15 +84,22 @@ pub(super) fn is_text(location: &Location) -> bool {
     extension(location).is_some_and(|extension| extension == "txt")
 }
 
-/// What a text file is: a track when it is compressed and has a tabix index, a loop list when
-/// its first line is a loop list header, a track hub when its first line that is not a comment
-/// starts with "hub", and else a sample table. A file that genie cannot read is a hub, so that
-/// the hub says why it does not open.
+/// What a text file is: a track when it is compressed and has a tabix index or when its header
+/// names the columns of GWAS summary statistics, a loop list when its first line is a loop list
+/// header, a track hub when its first line that is not a comment starts with "hub", and else a
+/// sample table. A file that genie cannot read is a hub, so that the hub says why it does not
+/// open.
 pub(super) fn classify(location: &Location) -> Text {
     if track::is_compressed(&location.name()) && track::has_index(location) {
-        return Text::Columns;
+        return Text::Track;
     }
     let head = track::head(location, 50);
+    let header = head
+        .iter()
+        .find(|line| !line.trim().is_empty() && !line.starts_with("##"));
+    if header.is_some_and(|line| genie_formats::gwas::Layout::sniff(line).is_some()) {
+        return Text::Track;
+    }
     let mut lines = head
         .iter()
         .map(|line| line.trim())
@@ -229,7 +237,7 @@ impl Genie {
     fn open_text(&mut self, location: Location, text: Text) -> Task<Message> {
         match text {
             Text::Hub => self.open_hub(location, true),
-            Text::Loops | Text::Columns => self.open_track(location),
+            Text::Loops | Text::Track => self.open_track(location),
             Text::Table => self.open_samples(location),
         }
     }
@@ -454,9 +462,14 @@ mod tests {
         };
         let scores = Location::File(scratch.file("scores.tsv.gz", packed("1\t101\t8.5\n")));
         scratch.file("scores.tsv.gz.tbi", "index");
-        assert_eq!(classify(&scores), Text::Columns);
+        assert_eq!(classify(&scores), Text::Track);
         let groups = scratch.file("groups.tsv.gz", packed("sample\tpop\nS1\tEUR\n"));
         assert_eq!(classify(&Location::File(groups)), Text::Table);
+        let gwas = file(
+            "height.tsv",
+            "chromosome\tbase_pair_location\tp_value\trsid\n1\t1000\t5e-9\trs1\n",
+        );
+        assert_eq!(classify(&gwas), Text::Track);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE};
+use genie_core::association::Association;
 use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
 use genie_core::methylation::{Methylation, Site, Tally};
@@ -28,6 +29,7 @@ use crate::location::{Location, Reader};
 mod columns;
 mod contacts;
 mod features;
+mod gwas;
 mod links;
 pub(crate) mod reads;
 mod segments;
@@ -37,6 +39,7 @@ mod variants;
 pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
+pub use gwas::GwasFile;
 pub use links::LinkFile;
 pub use reads::ReadFile;
 pub use segments::SegmentFile;
@@ -62,6 +65,7 @@ pub enum Format {
     Segments(SegmentFile),
     Contacts(ContactFile),
     Columns(ColumnFile),
+    Gwas(GwasFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,7 +103,12 @@ impl Source {
             Format::Segments(file) => file.contigs(),
             Format::Contacts(file) => file.contigs(),
             Format::Columns(file) => file.contigs(),
+            Format::Gwas(file) => file.contigs(),
         }
+    }
+
+    pub fn has_associations(&self) -> bool {
+        matches!(self.format, Format::Gwas(_))
     }
 
     pub fn has_contacts(&self) -> bool {
@@ -195,6 +204,7 @@ impl Source {
             Format::Links(file) => file.span(),
             Format::Segments(_) | Format::Contacts(_) => u64::MAX,
             Format::Columns(_) => FEATURE_SPAN,
+            Format::Gwas(file) => file.span(),
         }
     }
 
@@ -690,6 +700,7 @@ pub enum Content {
     Links(Vec<Interaction>),
     Segments(Copies),
     Contacts(Contacts),
+    Associations(Vec<Association>),
 }
 
 /// The contacts of a Hi-C map, the step that chose the size of its bins, and the normalization
@@ -855,6 +866,14 @@ impl Loaded {
         }
     }
 
+    pub fn associations(region: Region, associations: Vec<Association>) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Associations(associations),
+        }
+    }
+
     pub fn contacts(region: Region, contacts: Contacts) -> Self {
         Self {
             region,
@@ -919,7 +938,10 @@ impl Loaded {
             Content::Reads(pile) => pile.count,
             Content::Variants(calls) => calls.samples,
             Content::Segments(copies) => copies.samples,
-            Content::Signal(_) | Content::Links(_) | Content::Contacts(_) => 0,
+            Content::Signal(_)
+            | Content::Links(_)
+            | Content::Contacts(_)
+            | Content::Associations(_) => 0,
         }
     }
 
@@ -1223,7 +1245,8 @@ impl Track {
             Content::Reads(_)
             | Content::Signal(_)
             | Content::Segments(_)
-            | Content::Contacts(_) => return None,
+            | Content::Contacts(_)
+            | Content::Associations(_) => return None,
         };
         Some(Arc::new(Loaded {
             region: data.region,
@@ -1516,11 +1539,37 @@ pub fn is_track(location: &Location) -> bool {
         || is_bedpe(&name)
         || is_segments(&name)
         || is_hic(&name)
+        || is_gwas_name(&name)
         || Kind::of(&name).is_some()
 }
 
 pub fn is_bedpe(name: &str) -> bool {
     inner_extension(name, &["bedpe"])
+}
+
+/// True for the names of the GWAS files of PLINK 2 (`.glm.linear`, `.glm.logistic`, …) and
+/// REGENIE (`.regenie`), and for `.sumstats` files, also compressed.
+pub fn is_gwas_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let stem = lower
+        .strip_suffix(".gz")
+        .or_else(|| lower.strip_suffix(".bgz"))
+        .unwrap_or(&lower);
+    stem.contains(".glm.") || stem.ends_with(".regenie") || stem.ends_with(".sumstats")
+}
+
+/// True for GWAS summary statistics: by the name of the file, or by a header line that names
+/// the chromosome, the position and the p-value. For a file on the web, this reads its first
+/// lines.
+pub fn is_gwas(location: &Location, name: &str) -> bool {
+    if is_gwas_name(name) {
+        return true;
+    }
+    Kind::of(name).is_none()
+        && head(location, 20)
+            .iter()
+            .find(|line| !line.trim().is_empty() && !line.starts_with("##"))
+            .is_some_and(|line| genie_formats::gwas::Layout::sniff(line).is_some())
 }
 
 /// True when a tabix index (`.tbi` or `.csi`) is next to the file. For a file on the web,
@@ -1714,6 +1763,8 @@ pub fn open_with(
         Format::Signal(SignalFile::open_methyl(reading, &name, index)?)
     } else if is_signal(&name) {
         Format::Signal(SignalFile::open(reading, &name, index)?)
+    } else if is_gwas(reading, &name) {
+        Format::Gwas(GwasFile::open(reading, &name, index)?)
     } else if Kind::of(&name).is_none()
         && is_compressed(&name)
         && (index.is_some() || has_index(reading))
@@ -1938,6 +1989,15 @@ pub fn load_kept(
             let loaded = file.load(location, contig, region, (scope.step, options.table))?;
             Ok(Loaded { options, ..loaded })
         }
+        Format::Gwas(file) => file.load(location, contig, region),
+    }
+}
+
+/// The fields of the row of an association for its card.
+pub fn association_fields(source: &Source, association: &Association) -> Vec<Field> {
+    match (&source.format, &association.row) {
+        (Format::Gwas(file), Some(row)) => file.fields(row),
+        _ => Vec::new(),
     }
 }
 
@@ -2022,7 +2082,8 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         | Format::Links(_)
         | Format::Segments(_)
         | Format::Contacts(_)
-        | Format::Columns(_) => Ok(Vec::new()),
+        | Format::Columns(_)
+        | Format::Gwas(_) => Ok(Vec::new()),
     }
 }
 
@@ -2054,7 +2115,8 @@ fn kept(
         | Format::Links(_)
         | Format::Segments(_)
         | Format::Contacts(_)
-        | Format::Columns(_) => Vec::new(),
+        | Format::Columns(_)
+        | Format::Gwas(_) => Vec::new(),
     })
 }
 
@@ -2091,7 +2153,8 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
         | Format::Links(_)
         | Format::Segments(_)
         | Format::Contacts(_)
-        | Format::Columns(_) => Vec::new(),
+        | Format::Columns(_)
+        | Format::Gwas(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -2126,7 +2189,8 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
         | Format::Links(_)
         | Format::Segments(_)
         | Format::Contacts(_)
-        | Format::Columns(_) => {
+        | Format::Columns(_)
+        | Format::Gwas(_) => {
             return Ok(Names::default());
         }
     };
@@ -2856,6 +2920,78 @@ mod tests {
             .into_iter()
             .map(|variant| variant.id)
             .collect()
+    }
+
+    const GWAS: &str = "chromosome\tbase_pair_location\teffect_allele\tother_allele\tbeta\t\
+                        p_value\trsid\n\
+                        1\t1000\tA\tG\t0.1\t5e-9\trs1\n1\t2000\tC\tT\t-0.02\t0.2\trs2\n\
+                        2\t500\tG\tA\t0.3\t1e-4\trs3\n";
+
+    fn associations(source: &Source, contig: &str) -> Vec<(u64, bool, Option<String>)> {
+        let loaded = load(
+            source,
+            contig,
+            region(0, 10_000),
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        )
+        .unwrap();
+        let Content::Associations(found) = loaded.content else {
+            panic!("expected associations");
+        };
+        found
+            .into_iter()
+            .map(|found| {
+                (
+                    found.position,
+                    found.value > 7.3,
+                    found.row.map(String::from),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn gwas_files_open_whole_or_with_their_index() {
+        let scratch = Scratch::new("gwas");
+        let plain = open(scratch.file("height.tsv", GWAS)).unwrap();
+        assert!(plain.has_associations());
+        assert_eq!(plain.contigs(), ["1", "2"]);
+        let found = associations(&plain, "1");
+        assert_eq!(found.len(), 2);
+        assert_eq!((found[0].0, found[0].1), (999, true));
+        let row = found[0].2.clone().unwrap();
+        let association = genie_core::association::Association {
+            position: 999,
+            value: 8.3,
+            row: Some(row.into()),
+        };
+        let labels: Vec<String> = super::association_fields(&plain, &association)
+            .into_iter()
+            .map(|field| field.label)
+            .collect();
+        assert_eq!(
+            labels,
+            ["effect_allele", "other_allele", "beta", "p_value", "rsid"]
+        );
+        let mut writer = genie_formats::bgzf::Writer::new(Vec::new());
+        std::io::Write::write_all(&mut writer, GWAS.as_bytes()).unwrap();
+        let data = writer.finish().unwrap();
+        let layout = tabix::Layout::generic([1, 2, 2]).skipping(1);
+        let index = tabix::build(std::io::Cursor::new(&data), layout, false).unwrap();
+        let path = scratch.file("height.tsv.gz", &data);
+        scratch.file("height.tsv.gz.tbi", &index);
+        let indexed = open(path).unwrap();
+        assert!(matches!(
+            indexed.format,
+            Format::Gwas(super::GwasFile::Indexed { .. })
+        ));
+        assert_eq!(associations(&indexed, "2").len(), 1);
+        assert!(super::is_track(
+            &PathBuf::from("/data/run.glm.linear").into()
+        ));
     }
 
     #[test]

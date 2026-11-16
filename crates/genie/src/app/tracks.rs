@@ -4,12 +4,13 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::SystemTime;
 
+use genie_core::association::Association;
 use genie_core::methylation::Site;
 use genie_core::variant::Variant;
 use genie_core::{Region, Span, Target, Viewport};
 use genie_formats::fields::Field;
 use genie_render::features::Mode;
-use genie_render::{alignments, contacts, features, links, segments, signal, variants};
+use genie_render::{alignments, contacts, features, links, manhattan, segments, signal, variants};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
 use iced::time::Instant;
@@ -502,27 +503,17 @@ impl Genie {
                     column: track.source.segment_column().to_owned(),
                 }
             }
-            Content::Contacts(found) => {
-                let map = &found.map;
-                let height = track.height.unwrap_or(contacts::HEIGHT);
-                let (first, second) = contacts::hit(viewport, map, height, x, y)?;
-                let bin = |at: u32| {
-                    let start = u64::from(at) * map.bin;
-                    Region::between(start, start + map.bin)
-                };
-                Detail::Contact(Pair {
-                    bins: [bin(first), bin(second)],
-                    value: map.value(first, second),
-                    ratio: map.ratio,
-                    normalization: found.normalization.clone(),
-                })
-            }
+            Content::Associations(found) => association_detail(track, found, viewport, (x, y))?,
+            Content::Contacts(found) => contact_detail(track, found, viewport, (x, y))?,
         };
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
             Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
             Detail::Link(link) => track::link_fields(&track.source, link),
             Detail::Read { read, .. } => track::read_fields(read),
+            Detail::Association { association, .. } => {
+                track::association_fields(&track.source, association)
+            }
             Detail::Junction(_)
             | Detail::Methylation { .. }
             | Detail::Signal { .. }
@@ -747,9 +738,6 @@ impl Genie {
         if let Some(declared) = self.restored_type(&location) {
             return self.open_restored(location, declared);
         }
-        if super::samples::is_table(&location) && !track::is_compressed(&location.name()) {
-            return self.open_samples(location);
-        }
         if super::samples::is_table(&location) || super::samples::is_text(&location) {
             return self.open_any_text(location);
         }
@@ -943,6 +931,68 @@ fn variant_detail(track: &Track, variant: Variant, line: Option<usize>) -> Detai
         sample,
         groups,
     }
+}
+
+/// The association of the dot under a point of a GWAS track.
+fn association_detail(
+    track: &Track,
+    found: &[Association],
+    viewport: Viewport,
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    let height = track.height.unwrap_or(manhattan::HEIGHT);
+    let index = manhattan::hit(viewport, found, height, x, y)?;
+    let association = found[index].clone();
+    let fields = track::association_fields(&track.source, &association);
+    Some(Detail::Association {
+        name: association_name(&fields),
+        association,
+    })
+}
+
+/// The pair of bins under a point of a Hi-C track.
+fn contact_detail(
+    track: &Track,
+    found: &track::Contacts,
+    viewport: Viewport,
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    let map = &found.map;
+    let height = track.height.unwrap_or(contacts::HEIGHT);
+    let (first, second) = contacts::hit(viewport, map, height, x, y)?;
+    let bin = |at: u32| {
+        let start = u64::from(at) * map.bin;
+        Region::between(start, start + map.bin)
+    };
+    Some(Detail::Contact(Pair {
+        bins: [bin(first), bin(second)],
+        value: map.value(first, second),
+        ratio: map.ratio,
+        normalization: found.normalization.clone(),
+    }))
+}
+
+/// The name of the variant of a row of GWAS summary statistics, from its fields: its rsID or
+/// its ID, if the row has one.
+fn association_name(fields: &[Field]) -> String {
+    const NAMES: [&str; 7] = [
+        "rsid",
+        "hm_rsid",
+        "id",
+        "snp",
+        "markerid",
+        "variant_id",
+        "markername",
+    ];
+    NAMES
+        .iter()
+        .find_map(|wanted| {
+            fields
+                .iter()
+                .find(|field| field.label.eq_ignore_ascii_case(wanted) && field.value != "NA")
+        })
+        .map(|field| field.value.clone())
+        .unwrap_or_default()
 }
 
 /// The fields of the sample of a card in the sample table of the session.

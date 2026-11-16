@@ -1,6 +1,7 @@
 use genie_core::alignment::{
     Alignment, FIRST, MATE_REVERSE, MATE_UNMAPPED, PAIRED, Part, REVERSE, SECOND,
 };
+use genie_core::association::Association;
 use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
@@ -80,6 +81,12 @@ pub enum Detail {
         column: String,
     },
     Contact(Pair),
+    /// A row of GWAS summary statistics.
+    Association {
+        association: Association,
+        /// The name of the variant in its row, for example its rsID.
+        name: String,
+    },
 }
 
 /// A pair of bins of a Hi-C map.
@@ -487,7 +494,22 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             column,
         } => (sample.clone(), segment.span, segment_lines(segment, column)),
         Detail::Contact(pair) => contact_content(pair),
+        Detail::Association { association, name } => association_content(association, name),
     }
+}
+
+/// The -log10 p and the p-value of a row of GWAS summary statistics.
+fn association_content(association: &Association, name: &str) -> (String, Region, Vec<String>) {
+    let value = f64::from(association.value);
+    let p = 10_f64.powf(-value);
+    let line = format!("-log10 p {} · p {p:.1e}", amount(value));
+    let title = if name.is_empty() {
+        "Association".to_owned()
+    } else {
+        name.to_owned()
+    };
+    let span = Region::between(association.position, association.position + 1);
+    (title, span, vec![line])
 }
 
 /// The bins, the distance and the value of a pair of bins of a Hi-C map.

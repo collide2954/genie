@@ -4,8 +4,8 @@ use genie_core::pileup::sort_rows;
 use genie_core::{Region, Viewport, grouped};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, contacts, features, links, matches, overview, ruler, samples, segments, sequence,
-    signal, translation, variants,
+    alignments, contacts, features, links, manhattan, matches, overview, ruler, samples, segments,
+    sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -96,6 +96,7 @@ impl Genie {
                     Some(Content::Links(links)) => features += links.len(),
                     Some(Content::Segments(copies)) => features += copies.segments.len(),
                     Some(Content::Contacts(contacts)) => values += contacts.map.contacts.len(),
+                    Some(Content::Associations(found)) => sites += found.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
                     None => {}
@@ -794,9 +795,11 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
                 .filter(|link| link.span().overlaps(visible))
                 .count(),
         ),
-        Content::Reads(_) | Content::Signal(_) | Content::Segments(_) | Content::Contacts(_) => {
-            None
-        }
+        Content::Reads(_)
+        | Content::Signal(_)
+        | Content::Segments(_)
+        | Content::Contacts(_)
+        | Content::Associations(_) => None,
     }
 }
 
@@ -937,6 +940,10 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             let height = track.height.unwrap_or(shape.height);
             Body::Scene(contacts::scene(viewport, &contacts.map, height), height)
         }
+        Some(Content::Associations(found)) => {
+            let faint = session.genome && panel % 2 == 1;
+            manhattan_body(viewport, found, track, (shape.height, faint))
+        }
         Some(Content::Features(annotation)) => {
             let packed;
             let rows = if repack {
@@ -976,6 +983,19 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         }
         None => Body::Space(EMPTY_HEIGHT),
     }
+}
+
+/// The dots of a GWAS track. `faint` gives a lighter color to the dots of every second
+/// chromosome of the whole-genome view.
+fn manhattan_body(
+    viewport: Viewport,
+    found: &[genie_core::association::Association],
+    track: &Track,
+    (height, faint): (f32, bool),
+) -> Body {
+    let height = track.height.unwrap_or(height);
+    let primitives = manhattan::scene(viewport, found, height, (track.hue, faint));
+    Body::Scene(primitives, height)
 }
 
 fn read_lane(
@@ -1302,9 +1322,11 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
         Some(Content::Contacts(_)) => Shape::plain(contacts::HEIGHT),
+        Some(Content::Associations(_)) => Shape::plain(manhattan::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None if track.source.has_contacts() => Shape::plain(contacts::HEIGHT),
+        None if track.source.has_associations() => Shape::plain(manhattan::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
 }
