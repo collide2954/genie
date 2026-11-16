@@ -39,6 +39,7 @@ impl Columns {
         let mut header: Option<Vec<String>> = None;
         let mut rows: Vec<Vec<String>> = Vec::new();
         let mut bytes = Vec::new();
+        let mut skipped = 0;
         while rows.len() < SAMPLE {
             bytes.clear();
             if reader.read_until(b'\n', &mut bytes)? == 0 {
@@ -46,7 +47,9 @@ impl Columns {
             }
             let text = String::from_utf8_lossy(&bytes);
             let line = text.trim_end_matches(['\n', '\r']);
-            if line.starts_with(meta) {
+            let skip = skipped < index.skip();
+            skipped += 1;
+            if line.starts_with(meta) || skip {
                 let names = line.trim_start_matches(meta).split('\t');
                 header = Some(names.map(|name| name.trim().to_owned()).collect());
             } else if !line.trim().is_empty() {

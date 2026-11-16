@@ -21,6 +21,7 @@ pub mod fields;
 pub mod genepred;
 pub mod gff;
 pub mod gtf;
+pub mod gwas;
 pub mod gzi;
 pub mod gzip;
 pub mod hic;

@@ -27,20 +27,25 @@ const LENGTH_MARGIN: u64 = 256;
 pub struct Layout {
     format: u32,
     columns: [usize; 3],
+    /// The header lines at the start that do not start with `#`.
+    skip: usize,
 }
 
 impl Layout {
     pub const BED: Self = Self {
         format: ZERO_BASED,
         columns: [1, 2, 3],
+        skip: 0,
     };
     pub const GFF: Self = Self {
         format: GENERIC,
         columns: [1, 4, 5],
+        skip: 0,
     };
     pub const VCF: Self = Self {
         format: VCF,
         columns: [1, 2, 0],
+        skip: 0,
     };
 
     /// A table with the contig, the start and the end in these columns (from 1), with
@@ -49,7 +54,14 @@ impl Layout {
         Self {
             format: GENERIC,
             columns,
+            skip: 0,
         }
+    }
+
+    /// The layout with header lines at the start, as `tabix -S` indexes them.
+    #[must_use]
+    pub fn skipping(self, skip: usize) -> Self {
+        Self { skip, ..self }
     }
 
     pub fn place(self, line: &str) -> Option<(&str, u64, u64)> {
@@ -98,7 +110,7 @@ impl Layout {
         for column in self.columns {
             put(&mut bytes, column);
         }
-        for value in [usize::from(META), 0, text.len()] {
+        for value in [usize::from(META), self.skip, text.len()] {
             put(&mut bytes, value);
         }
         bytes.extend(text);
@@ -178,7 +190,9 @@ impl Indexer {
     pub fn add(&mut self, line: &str, end: u64) -> Result<(), Error> {
         self.line += 1;
         let text = line.trim_end_matches(['\n', '\r']);
-        let header = text.is_empty() || text.as_bytes().first() == Some(&META);
+        let header = text.is_empty()
+            || text.as_bytes().first() == Some(&META)
+            || self.line <= self.layout.skip as u64;
         if header && self.csi && self.layout == Layout::VCF {
             self.longest = self.longest.max(contig_length(text));
         }
@@ -289,6 +303,8 @@ pub struct Index {
     vcf: bool,
     columns: [usize; 3],
     meta: u8,
+    /// The header lines at the start of the file that do not start with `meta`.
+    skip: usize,
     names: Vec<String>,
     references: Vec<Bins>,
 }
@@ -337,9 +353,16 @@ impl Index {
             vcf: settings.format & 0xFFFF == VCF,
             columns: settings.columns,
             meta: settings.meta,
+            skip: settings.skip,
             names: settings.names,
             references,
         })
+    }
+
+    /// The number of header lines at the start of the file that do not start with the meta
+    /// character, as `tabix -S` gives it.
+    pub fn skip(&self) -> usize {
+        self.skip
     }
 
     pub fn names(&self) -> &[String] {
@@ -459,6 +482,7 @@ struct Settings {
     format: u32,
     columns: [usize; 3],
     meta: u8,
+    skip: usize,
     names: Vec<String>,
 }
 
@@ -471,7 +495,7 @@ impl Settings {
             read_count(reader)?,
         ];
         let meta = read_u32(reader)? as u8;
-        read_count(reader)?;
+        let skip = read_count(reader)?;
         let length = read_count(reader)?;
         let mut text = Vec::new();
         reader.take(length as u64).read_to_end(&mut text)?;
@@ -483,6 +507,7 @@ impl Settings {
             format,
             columns,
             meta,
+            skip,
             names,
         })
     }
