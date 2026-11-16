@@ -49,6 +49,8 @@ pub enum Reason {
     SampleTable,
     NotHic,
     HicVersion,
+    NotBcf,
+    BadBcf,
 }
 
 impl fmt::Display for Error {
@@ -119,6 +121,8 @@ impl fmt::Display for Reason {
             }
             Self::NotHic => "the file is not a Hi-C file of Juicer",
             Self::HicVersion => "genie reads Hi-C files of version 6 to 9",
+            Self::NotBcf => "the file is not a BCF file of version 2",
+            Self::BadBcf => "a BCF record is not valid",
         })
     }
 }

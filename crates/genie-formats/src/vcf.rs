@@ -264,7 +264,7 @@ fn field<'a>(fields: &mut Split<'a, char>) -> Result<&'a str, Reason> {
     fields.next().ok_or(Reason::MissingField)
 }
 
-fn cut(info: &str) -> String {
+pub(crate) fn cut(info: &str) -> String {
     if info.len() <= INFO_LIMIT {
         return info.to_owned();
     }

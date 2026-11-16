@@ -2,6 +2,7 @@ pub mod annotations;
 pub mod bai;
 pub mod bam;
 pub mod bbi;
+pub mod bcf;
 pub mod bed;
 pub mod bedgraph;
 pub mod bedmethyl;

@@ -304,14 +304,19 @@ impl Index {
                 let length = read_count(&mut reader)?;
                 let mut aux = Vec::new();
                 reader.by_ref().take(length as u64).read_to_end(&mut aux)?;
-                if aux.is_empty() || aux.len() != length {
+                if aux.len() != length {
                     return Err(Error::Invalid(Reason::BadIndex));
                 }
-                let settings = Settings::read(&mut aux.as_slice())?;
                 let references = (0..read_count(&mut reader)?)
                     .map(|_| Bins::read_csi(&mut reader, scheme))
                     .collect::<Result<Vec<_>, _>>()?;
-                (settings, references)
+                if aux.is_empty() {
+                    return Ok(Self {
+                        references,
+                        ..Self::default()
+                    });
+                }
+                (Settings::read(&mut aux.as_slice())?, references)
             }
             _ => return Err(Error::Invalid(Reason::NotTabix)),
         };
@@ -330,6 +335,19 @@ impl Index {
 
     pub fn names(&self) -> &[String] {
         &self.names
+    }
+
+    /// The index with the contig names of a BCF header, for a CSI index without names, as
+    /// bcftools writes for BCF files.
+    pub fn named(mut self, names: &[String]) -> Result<Self, Error> {
+        if self.names.is_empty() {
+            let count = self.references.len();
+            if names.len() < count {
+                return Err(Error::Invalid(Reason::BadIndex));
+            }
+            self.names = names[..count].to_vec();
+        }
+        Ok(self)
     }
 
     pub fn chunks(&self, name: &str, region: Region) -> Vec<Chunk> {
@@ -778,9 +796,19 @@ pub mod tests {
     }
 
     #[test]
-    fn csi_without_tabix_settings_is_rejected() {
-        let result = Index::read(Cursor::new(csi(14, 5, &[], &[])));
-        assert!(matches!(result, Err(Error::Invalid(Reason::BadIndex))));
+    fn csi_without_tabix_settings_takes_the_names_of_a_bcf_header() {
+        let bins: CsiBins = &[(4681, 0, &[(0, 1 << 16)])];
+        let bare = Index::read(Cursor::new(csi(14, 5, &[], &[bins]))).unwrap();
+        assert_eq!(bare.names().len(), 0);
+        let contigs = ["chr1".to_owned(), "chr2".to_owned()];
+        let named = bare.named(&contigs).unwrap();
+        assert_eq!(named.names(), ["chr1"]);
+        assert_eq!(named.chunks("chr1", region(0, 100)).len(), 1);
+        let short = Index::read(Cursor::new(csi(14, 5, &[], &[bins]))).unwrap();
+        assert!(matches!(
+            short.named(&[]),
+            Err(Error::Invalid(Reason::BadIndex))
+        ));
     }
 
     #[test]
