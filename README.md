@@ -304,6 +304,16 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
 - If a track has more than 200,000 shapes to draw in the view, it shows "There is too much to draw here. Zoom in." in place of the data.
 
+## Variant table
+
+- Right-click a variant track and click **Variant table** to see its variants in a table under the tracks. The palette has **Show the variant table**. Click the item again, or click ×, to close the table.
+- The table has a row for each variant in view of the first locus. The columns are the chromosome, the position, the ID, the reference allele, the alternate alleles, the number of heterozygous and homozygous alternate calls (if the file has samples), Quality, Filter, the annotation fields and the INFO fields. If the track has a filter, the table shows only the variants that the filter keeps.
+- Click a column name to sort the rows by that column: numbers in order, then text. Click again to reverse the order, and a third time to show the order of the file again. Empty cells are always last.
+- Type in **Find in the table** to show only the rows with a cell that contains the text. The search ignores letter case.
+- Click a row to go to its variant.
+- **Export TSV** saves the rows in their order, with all columns, as a tab-separated file.
+- If the view is too wide to show the variants, the table asks you to zoom in.
+
 ## Liftover
 
 A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the `liftOver` folder of each genome, for example `hg19ToHg38.over.chain.gz`.

@@ -104,6 +104,11 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Variant table
+
+- **Variant table** in the menu of a variant track shows its variants in view in a table under the tracks. Each field is a column: the alleles, the counts of the calls, Quality, Filter, the annotations and the INFO fields.
+- Click a column name to sort the rows, type to find rows, and click a row to go to its variant. **Export TSV** saves the rows.
+
 ### Liftover
 
 - **Lift over…** in the track menu moves the data of a track from a different assembly to the assembly in view with a UCSC chain file, for example `hg19ToHg38.over.chain.gz`. It works for feature, variant, signal, interaction, copy number, table and GWAS tracks.
