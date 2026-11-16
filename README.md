@@ -243,6 +243,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Click the bookmark button to show the region list. Push Ctrl+D (Cmd+D on macOS) to add the view to the list, or hold Shift and drag on the ruler to add a range.
 - Click a region to go to it. Double-click a region to change its name, then push Enter.
 - Import BED and Export BED read and write the list as a BED file. genie reads plain BED files up to 50 MB. It does not import regions on contigs that are not in the reference.
+- **Lift…** moves the regions from a different assembly to the assembly in view with a chain file (see [Liftover](#liftover)).
 - Regions show as bands under the ruler. Put the pointer on a band to see its name, and click the band to go to the region.
 
 ## Copy
@@ -303,6 +304,18 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
 - If a track has more than 200,000 shapes to draw in the view, it shows "There is too much to draw here. Zoom in." in place of the data.
 
+## Liftover
+
+A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the `liftOver` folder of each genome, for example `hg19ToHg38.over.chain.gz`.
+
+- Right-click a track and click **Lift over…**. Then open a chain file from the assembly of the track to the assembly in view, plain or compressed with gzip. The chain file and the data file can name the chromosomes differently, for example `chr1` and `1`.
+- genie reads only the parts of the data file that align with the view. Each feature, variant, value, link, segment and dot goes to its place in view: the span from its first to its last aligned base, on the chain that aligns the most of its bases. If that chain aligns less than half of its bases, genie does not show it. Exons and coding parts move with their feature. If the chain aligns the two assemblies on opposite strands, a feature changes its strand, and a variant shows the reverse complement of its alleles.
+- The locus box finds the feature names and the variant IDs of a lifted track at their new places.
+- genie cannot lift read tracks and Hi-C tracks. A lifted track does not have **Next feature** and **Previous feature**.
+- Click **Remove lift** in the track menu to show the data at its own places again.
+- Sessions keep the chain file of each track. genie reads the chain file again before it shows the track.
+- Click **Lift…** under the region list to move the regions from the places of a different assembly to the places of the assembly in view, for example after you import a BED file of hg19 regions into an hg38 session. A region that the chains do not move leaves the list, and a notice gives the number. If the chains move none of the regions, the list does not change.
+
 ## Sample groups
 
 A sample table gives facts about the samples of variant and copy number tracks, for example the population, the sex or the phenotype. genie uses the table to put the rows of the samples in groups, to sort them and to color them.
@@ -322,7 +335,7 @@ A sample table gives facts about the samples of variant and copy number tracks, 
 
 ## Sessions
 
-To save the reference, the tracks (with their names, colors, ranges, overlays and sample fields), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
+To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
 
 If a file is in the folder of the session file, the session file has its path relative to that folder.
 

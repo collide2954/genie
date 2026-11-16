@@ -104,6 +104,13 @@
 - genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as `[Not Available]` count as missing.
 - genie reads the first lines of a `.txt` file to know if it is a track hub, a loop list or a sample table, also for a file on the web.
 
+### Liftover
+
+- **Lift over…** in the track menu moves the data of a track from a different assembly to the assembly in view with a UCSC chain file, for example `hg19ToHg38.over.chain.gz`. It works for feature, variant, signal, interaction, copy number, table and GWAS tracks.
+- Features keep their exons and coding parts. On a chain to the opposite strand, features change strand and variants show the reverse complement of their alleles.
+- The locus box finds the names of a lifted track at their new places. Sessions keep the chain file of each track. **Remove lift** shows the data at its own places again.
+- **Lift…** under the region list moves the regions from a different assembly to the assembly in view.
+
 ### GWAS tracks
 
 - genie opens GWAS summary statistics as Manhattan plots: of the GWAS Catalog, PLINK 2, REGENIE, SAIGE and BOLT-LMM. genie knows them by their header line or by their names (`.glm.*`, `.regenie`).
