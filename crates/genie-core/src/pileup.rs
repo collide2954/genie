@@ -49,15 +49,18 @@ impl Coverage {
         self.region
     }
 
+    /// Counts the aligned bases of a read in the region. Only the part of each operation in the
+    /// region counts, so a long operation takes no longer than a short one.
     pub fn add(&mut self, alignment: &Alignment) {
         let (mut position, mut index) = (alignment.start, 0_usize);
         for &(op, length) in &alignment.cigar {
             if matches!(op, Op::Match | Op::Equal | Op::Diff) {
-                for step in 0..length as usize {
-                    if let Some(slot) = self.slot(position + step as u64) {
-                        let base = alignment.bases.get(index + step).copied().unwrap_or(b'N');
-                        self.counts[slot][bucket(base)] += 1;
-                    }
+                let from = position.max(self.region.start());
+                let to = (position + u64::from(length)).min(self.region.end());
+                for at in from..to {
+                    let step = (at - position) as usize;
+                    let base = alignment.bases.get(index + step).copied().unwrap_or(b'N');
+                    self.counts[(at - self.region.start()) as usize][bucket(base)] += 1;
                 }
             }
             if op.consumes_reference() {
@@ -402,6 +405,18 @@ mod tests {
         assert_eq!(coverage.counts(104), Some([0, 1, 1, 0, 0]));
         assert_eq!(coverage.counts(110), None);
         assert_eq!(coverage.depth(99), 0);
+    }
+
+    #[test]
+    fn coverage_walks_only_the_bases_in_its_region() {
+        let mut coverage = Coverage::new(region(100, 110));
+        let started = std::time::Instant::now();
+        let long = vec![(Op::Match, 3_000_000_000)];
+        coverage.add(&read(95, long, b"ACGTACGTACGTACGT"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(coverage.counts(100), Some([0, 1, 0, 0, 0]));
+        assert_eq!(coverage.counts(109), Some([0, 0, 1, 0, 0]));
+        assert_eq!(coverage.depth(105), 1);
     }
 
     #[test]
