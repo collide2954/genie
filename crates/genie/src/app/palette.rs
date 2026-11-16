@@ -11,8 +11,8 @@ use crate::track::{Change, Toggle, Track};
 
 use super::hubs::Hubbing;
 use super::{
-    Arranging, Genie, Message, Paletting, Popup, Ranging, Regions, Renaming, Sampling, Session,
-    Updating, arranging_words,
+    Arranging, Genie, Lifting, Message, Paletting, Popup, Ranging, Regions, Renaming, Sampling,
+    Session, Updating, arranging_words,
 };
 
 fn read_actions(track: &Track) -> Vec<Action> {
@@ -146,7 +146,15 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     if source.has_colors() {
         actions.push(Action::new("Use file colors", name, change(Change::Colors)));
     }
-    if source.can_jump() {
+    if !source.has_reads() && !source.has_contacts() {
+        let (words, lifting) = if track.lift.is_some() {
+            ("Remove lift", Lifting::Stop(id))
+        } else {
+            ("Lift over…", Lifting::Pick(Some(id)))
+        };
+        actions.push(Action::new(words, name, Message::Lift(lifting)));
+    }
+    if source.can_jump() && track.lift.is_none() {
         let noun = if source.has_variants() {
             "variant"
         } else {
@@ -267,6 +275,13 @@ impl Genie {
                     command(Command::Find),
                 ),
             ]);
+            if !session.marks.is_empty() {
+                actions.push(Action::new(
+                    "Lift the regions…",
+                    "",
+                    Message::Lift(Lifting::Pick(None)),
+                ));
+            }
             let catalog = session
                 .reference
                 .genome

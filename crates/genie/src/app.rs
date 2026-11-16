@@ -1385,6 +1385,35 @@ mod tests {
         genie
     }
 
+    fn palette_shows(genie: &mut Genie, query: &str, words: &str) -> bool {
+        let _ = genie.update(Message::Command(Command::Palette));
+        let _ = genie.update(Message::Palette(Paletting::Query(query.to_owned())));
+        let found = shows(genie, words);
+        let _ = genie.update(Message::Command(Command::Dismiss));
+        found
+    }
+
+    #[test]
+    fn the_palette_lifts_tracks_and_regions() {
+        let mut genie = with_track();
+        assert!(palette_shows(&mut genie, "lift over", "Lift over…"));
+        assert!(!palette_shows(
+            &mut genie,
+            "lift regions",
+            "Lift the regions…"
+        ));
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        assert!(palette_shows(
+            &mut genie,
+            "lift regions",
+            "Lift the regions…"
+        ));
+        let read = Lifting::Read(Some(0), shift_file(), Ok(shift()));
+        let _ = genie.update(Message::Lift(read));
+        assert!(palette_shows(&mut genie, "remove lift", "Remove lift"));
+        assert!(!palette_shows(&mut genie, "next feature", "Next feature"));
+    }
+
     #[test]
     fn tracks_lift_over_and_back_with_chain_files() {
         let mut genie = with_track();
