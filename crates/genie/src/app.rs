@@ -53,6 +53,7 @@ mod regions;
 mod samples;
 mod sessions;
 pub mod snapshot;
+mod table;
 mod track_settings;
 mod tracks;
 mod ucsc;
@@ -63,6 +64,7 @@ mod whole;
 pub(crate) use lift::Lifting;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
+pub(crate) use table::Tabling;
 use tracks::pick;
 pub(crate) use updates::Updating;
 
@@ -127,6 +129,7 @@ pub struct Genie {
     track_draft: Option<crate::track_dialog::Draft>,
     palette: Option<crate::palette::State>,
     finder: Option<find::Finder>,
+    table: Option<table::VariantTable>,
     field_draft: Option<String>,
     hubs: Vec<Arc<Hub>>,
     hub_view: Option<hubs::View>,
@@ -216,6 +219,7 @@ impl Default for Genie {
             track_draft: None,
             palette: None,
             finder: None,
+            table: None,
             field_draft: None,
             hubs: Vec::new(),
             hub_view: None,
@@ -685,6 +689,7 @@ pub enum Message {
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
     Lift(Lifting),
+    Table(Tabling),
     Address(Address),
     Modifiers(keyboard::Modifiers),
     CardClosed,
@@ -996,6 +1001,7 @@ impl Genie {
     fn update(&mut self, message: Message) -> Task<Message> {
         let started = Instant::now();
         let task = self.handle(message);
+        self.refresh_table();
         self.answer();
         self.stats.update = started.elapsed();
         task
@@ -1039,6 +1045,7 @@ impl Genie {
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
             Message::Lift(lifting) => return self.lift(lifting),
+            Message::Table(tabling) => return self.tabling(tabling),
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
@@ -1326,7 +1333,7 @@ mod tests {
     use super::{
         Address, Arranging, Caching, Copying, Drafting, Filtering, Genie, Lane, Lifting, Message,
         Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming, Sampling,
-        Sweep, mouse_button, shortcut, window_event,
+        Sweep, Tabling, mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -4915,6 +4922,96 @@ mod tests {
         let loaded = Loaded::variants(region, variants, 2);
         track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
         genie
+    }
+
+    /// A variant track with rs20 (depth 12) and rs700 (depth 40) loaded on chr1.
+    fn with_variant_rows() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let mut deep = site(700, vec![Call::Alternate, Call::Alternate]);
+        deep.info = "DP=40".to_owned();
+        let variants = vec![site(20, vec![Call::Het, Call::Alternate]), deep];
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::variants(region, variants, 2))),
+        );
+        genie
+    }
+
+    fn top(genie: &Genie, words: &str) -> f32 {
+        simulator(genie.view()).find(words).unwrap().bounds().y
+    }
+
+    #[test]
+    fn variant_tables_list_sort_and_find_the_variants_in_view() {
+        let mut genie = with_variant_rows();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Variant table").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Table(Tabling::Open(0))));
+        let _ = genie.update(Message::Table(Tabling::Open(0)));
+        for words in [
+            "Variants · calls.vcf",
+            "2 variants in view",
+            "Pos",
+            "Hom alt",
+            "Quality",
+            "rs20",
+            "rs700",
+        ] {
+            assert!(shows(&genie, words), "{words}");
+        }
+        assert!(top(&genie, "rs20") < top(&genie, "rs700"));
+        let _ = genie.update(Message::Table(Tabling::Sort(1)));
+        let _ = genie.update(Message::Table(Tabling::Sort(1)));
+        assert!(shows(&genie, "Pos ▼"));
+        assert!(top(&genie, "rs700") < top(&genie, "rs20"));
+        let _ = genie.update(Message::Table(Tabling::Search("RS700".to_owned())));
+        assert!(shows(&genie, "1 variant in view"));
+        assert!(!shows(&genie, "rs20"));
+        let _ = genie.update(Message::Table(Tabling::Search(String::new())));
+        go(&mut genie, "chr1:501-600");
+        settle(&mut genie);
+        assert!(shows(&genie, "No variants in view."));
+        let _ = genie.update(Message::Table(Tabling::Go(0)));
+        settle(&mut genie);
+        assert!(shows(&genie, "chr1:1-100"));
+        assert!(shows(&genie, "1 variant in view"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Remove));
+        assert!(genie.table.is_none());
+        assert!(!shows(&genie, "Variants · calls.vcf"));
+    }
+
+    #[test]
+    fn variant_tables_export_tab_separated_text() {
+        let mut genie = with_variant_rows();
+        let _ = genie.update(Message::Table(Tabling::Open(0)));
+        let _ = genie.update(Message::Table(Tabling::Sort(1)));
+        let _ = genie.update(Message::Table(Tabling::Sort(1)));
+        let scratch = Scratch::new("variant-table");
+        let path = scratch.file("calls", "");
+        let _ = genie.update(Message::Table(Tabling::ExportPicked(Some(path.clone()))));
+        let text = std::fs::read_to_string(path.with_extension("tsv")).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(
+            lines[0].starts_with("Chrom\tPos\tID\tRef\tAlt\tHet\tHom alt\tQuality"),
+            "{text}"
+        );
+        assert!(
+            lines[1].starts_with("chr1\t701\trs700\tA\tG\t0\t2\t50"),
+            "{text}"
+        );
+        assert!(
+            lines[2].starts_with("chr1\t21\trs20\tA\tG\t1\t1\t50"),
+            "{text}"
+        );
+        assert!(shows(&genie, "Saved calls.tsv."));
     }
 
     fn signal_source(format: Format) -> Arc<Source> {

@@ -37,6 +37,7 @@ mod settings;
 mod shortcuts;
 mod style;
 mod svg;
+mod table;
 mod theme;
 mod tiles;
 mod timer;

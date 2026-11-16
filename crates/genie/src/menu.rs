@@ -7,7 +7,7 @@ use iced::widget::{Column, button, column, container, opaque, pin, row, space, t
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Filtering, Lifting, Message, Ranging, Renaming, Sampling, active, arranging_words,
+    Filtering, Lifting, Message, Ranging, Renaming, Sampling, Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
@@ -93,7 +93,13 @@ pub fn height(track: &Track, links: usize) -> f32 {
     } else {
         arranged as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
+    let table = if track.source.has_variants() {
+        LINK_HEIGHT
+    } else {
+        0.0
+    };
     LINK_HEIGHT
+        + table
         + SEPARATOR_HEIGHT
         + kind_height(track)
         + lift_height(track)
@@ -559,10 +565,7 @@ pub fn view<'a>(
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     };
-    let settings = self::item("Track settings…", Message::TrackSettings(id), false, true);
-    let mut content = column![settings, separator(), kind]
-        .spacing(1)
-        .extend(sample_items(track));
+    let mut content = top_items(track).push(kind).extend(sample_items(track));
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));
     } else if !track.source.has_variants() && !track.source.has_contacts() {
@@ -615,6 +618,19 @@ pub fn view<'a>(
         place.window,
         (width, height(track, count)),
     )
+}
+
+/// The items at the top of the track menu: the settings dialog, and the variant table of a
+/// variant track.
+fn top_items<'a>(track: &Track) -> Column<'a, Message> {
+    let id = track.id;
+    let settings = item("Track settings…", Message::TrackSettings(id), false, true);
+    let mut items = column![settings].spacing(1);
+    if track.source.has_variants() {
+        let open = Message::Table(Tabling::Open(id));
+        items = items.push(item("Variant table", open, false, true));
+    }
+    items.push(separator())
 }
 
 /// Whether genie can move the data of a track from another assembly to the assembly in view.

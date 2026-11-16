@@ -371,21 +371,30 @@ impl Genie {
         )
     }
 
+    /// The tracks with the variant table under them and the region list at their right.
+    fn session_body<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
+        let main = match self.table_view(session) {
+            Some(table) => column![self.browser(session), table].into(),
+            None => self.browser(session),
+        };
+        let width = self.sidebar_width();
+        if width < 0.5 {
+            return main;
+        }
+        let line = container(space())
+            .width(1)
+            .height(Length::Fill)
+            .style(|theme| container::background(tokens(theme).line));
+        let panel = container(self.sidebar_view(session))
+            .width(width)
+            .height(Length::Fill)
+            .clip(true);
+        row![main, line, panel].into()
+    }
+
     fn body(&self) -> Element<'_, Message> {
         if let Some(session) = &self.session {
-            let width = self.sidebar_width();
-            if width < 0.5 {
-                return self.browser(session);
-            }
-            let line = container(space())
-                .width(1)
-                .height(Length::Fill)
-                .style(|theme| container::background(tokens(theme).line));
-            let panel = container(self.sidebar_view(session))
-                .width(width)
-                .height(Length::Fill)
-                .clip(true);
-            return row![self.browser(session), line, panel].into();
+            return self.session_body(session);
         }
         let message = match (&self.status, &self.indexing) {
             (Status::Idle, _) => text(WELCOME).style(style::muted),

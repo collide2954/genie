@@ -12,7 +12,7 @@ use crate::track::{Change, Toggle, Track};
 use super::hubs::Hubbing;
 use super::{
     Arranging, Genie, Lifting, Message, Paletting, Popup, Ranging, Regions, Renaming, Sampling,
-    Session, Updating, arranging_words,
+    Session, Tabling, Updating, arranging_words,
 };
 
 fn read_actions(track: &Track) -> Vec<Action> {
@@ -101,6 +101,13 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     )];
     actions.extend(sample_actions(track, fields));
     let source = &track.source;
+    if source.has_variants() {
+        actions.push(Action::new(
+            "Show the variant table",
+            name,
+            Message::Table(Tabling::Open(id)),
+        ));
+    }
     if !source.has_signal() && !source.has_links() {
         actions.extend(
             MODES.map(|(label, mode)| Action::new(label, name, change(Change::Mode(mode)))),
