@@ -218,7 +218,7 @@ impl Genie {
             .flat_map(|hub| &hub.tracks)
             .find(|entry| entry.data.as_ref() == Some(data))
             .cloned();
-        let task = self.add_track(Arc::clone(&source));
+        let task = self.add_track(&source);
         if let (Some(entry), Some(session)) = (entry, &mut self.session)
             && let Some(track) = session
                 .tracks

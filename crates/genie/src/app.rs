@@ -44,6 +44,7 @@ mod figure;
 mod filters;
 mod find;
 mod hubs;
+mod lift;
 mod navigation;
 mod offline;
 mod orders;
@@ -59,6 +60,7 @@ mod updates;
 mod view;
 mod whole;
 
+pub(crate) use lift::Lifting;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 use tracks::pick;
@@ -593,8 +595,13 @@ impl Session {
         }
     }
 
-    fn name(&mut self, id: u64, names: Arc<Names>) {
-        if let Some(track) = self.tracks.iter_mut().find(|track| track.id == id) {
+    /// Keeps the names of a track, when its lift did not change since genie read them.
+    fn name(&mut self, (id, lift): (u64, u16), names: Arc<Names>) {
+        if let Some(track) = self
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == id && track.options.lift == lift)
+        {
             track.names = Some(names);
         }
     }
@@ -677,10 +684,12 @@ pub enum Message {
     Jump(u64, bool),
     Jumped(u64, bool, Result<Option<(usize, Region)>, String>),
     Regions(Regions),
+    Lift(Lifting),
     Address(Address),
     Modifiers(keyboard::Modifiers),
     CardClosed,
-    NamesLoaded(u64, Result<Arc<Names>, String>),
+    /// The names of the features of a track, with the number of the lift of the track.
+    NamesLoaded((u64, u16), Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
     ExportPicked(Option<PathBuf>),
     SessionPicked(Option<PathBuf>),
@@ -1029,6 +1038,7 @@ impl Genie {
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
+            Message::Lift(lifting) => return self.lift(lifting),
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
@@ -1093,9 +1103,9 @@ impl Genie {
         Task::none()
     }
 
-    fn names_loaded(&mut self, id: u64, names: Result<Arc<Names>, String>) {
+    fn names_loaded(&mut self, key: (u64, u16), names: Result<Arc<Names>, String>) {
         let names = names.unwrap_or_default();
-        self.on_session(|session| session.name(id, names));
+        self.on_session(|session| session.name(key, names));
     }
 
     fn on_session(&mut self, change: impl FnOnce(&mut Session)) {
@@ -1314,9 +1324,9 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Arranging, Caching, Copying, Drafting, Filtering, Genie, Lane, Message, Offline,
-        Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming, Sampling, Sweep,
-        mouse_button, shortcut, window_event,
+        Address, Arranging, Caching, Copying, Drafting, Filtering, Genie, Lane, Lifting, Message,
+        Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming, Sampling,
+        Sweep, mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -1356,6 +1366,120 @@ mod tests {
         let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
         genie.session.as_mut().unwrap().tracks[0].contigs = vec![Some("1".to_owned()), None];
         genie
+    }
+
+    /// Chains that move chr1 of another assembly 100 bases to the right on chr1.
+    fn shift() -> Arc<genie_formats::chain::Chains> {
+        let text = "chain 1 chr1 2000 + 0 900 chr1 1000 + 100 1000 1\n900\n";
+        Arc::new(genie_formats::chain::Chains::read(std::io::Cursor::new(text)).unwrap())
+    }
+
+    fn shift_file() -> Location {
+        Location::File(PathBuf::from("/data/shift.chain"))
+    }
+
+    fn with_lifted() -> Genie {
+        let mut genie = with_track();
+        let read = Lifting::Read(Some(0), shift_file(), Ok(shift()));
+        let _ = genie.update(Message::Lift(read));
+        genie
+    }
+
+    #[test]
+    fn tracks_lift_over_and_back_with_chain_files() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Lift over…"));
+        assert!(shows(&genie, "Next feature"));
+        let read = Lifting::Read(Some(0), shift_file(), Ok(shift()));
+        let _ = genie.update(Message::Lift(read));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert!(track.lift.is_some());
+        assert_eq!(track.contigs, [Some("chr1".to_owned()), None]);
+        assert_eq!(track.options.lift, 1);
+        assert_eq!(track.slot.wanted, Some((0, Region::between(0, 1_000))));
+        assert_eq!(genie.saved().unwrap().tracks[0].lift, Some(shift_file()));
+        assert_eq!(genie.saved().unwrap().tracks[0].options, Options::default());
+        let names = Arc::new(genie_core::Names::new([genie_core::Named {
+            name: "BRCA1".to_owned(),
+            contig: 0,
+            span: Region::between(100, 200),
+        }]));
+        let _ = genie.update(Message::NamesLoaded((0, 0), Ok(Arc::clone(&names))));
+        assert!(genie.session.as_ref().unwrap().tracks[0].names.is_none());
+        let _ = genie.update(Message::NamesLoaded((0, 1), Ok(names)));
+        assert!(genie.session.as_ref().unwrap().tracks[0].names.is_some());
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Remove lift"));
+        assert!(!shows(&genie, "Next feature"));
+        let _ = genie.update(Message::Jump(0, true));
+        assert!(shows(
+            &genie,
+            "genie cannot go to the next feature of a lifted track."
+        ));
+        let _ = genie.update(Message::Lift(Lifting::Stop(0)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert!(track.lift.is_none() && track.names.is_none());
+        assert_eq!(track.contigs, [None, None]);
+        assert_eq!(track.options.lift, 2);
+        assert_eq!(genie.saved().unwrap().tracks[0].lift, None);
+    }
+
+    #[test]
+    fn sessions_lift_tracks_again_before_they_load() {
+        let saved = with_lifted().saved().unwrap();
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        let _ = restored.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.lifting, Some(shift_file()));
+        assert!(track.contigs.iter().all(Option::is_none));
+        assert_eq!(track.slot.wanted, None);
+        assert_eq!(restored.saved().unwrap().tracks[0].lift, Some(shift_file()));
+        let read = Lifting::Read(Some(track.id), shift_file(), Ok(shift()));
+        let _ = restored.update(Message::Lift(read));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert!(track.lift.is_some() && track.lifting.is_none());
+        assert_eq!(track.contigs, [Some("chr1".to_owned()), None]);
+        let gone = Lifting::Read(Some(track.id), shift_file(), Err("gone".to_owned()));
+        let _ = restored.update(Message::Lift(gone));
+        assert!(shows(&restored, "gone"));
+    }
+
+    #[test]
+    fn the_region_list_lifts_over_with_chain_files() {
+        let mut genie = opened();
+        for locus in ["chr1:101-200", "chr2:1-50"] {
+            go(&mut genie, locus);
+            settle(&mut genie);
+            let _ = genie.update(Message::Command(Command::AddRegion));
+            settle(&mut genie);
+        }
+        assert!(shows(&genie, "Lift…"));
+        let elsewhere = "chain 1 chr9 2000 + 0 900 chr1 1000 + 100 1000 1\n900\n";
+        let elsewhere = genie_formats::chain::Chains::read(std::io::Cursor::new(elsewhere));
+        let read = Lifting::Read(None, shift_file(), Ok(Arc::new(elsewhere.unwrap())));
+        let _ = genie.update(Message::Lift(read));
+        assert!(shows(
+            &genie,
+            "The chain file shift.chain moves none of the regions. The list did not change."
+        ));
+        assert_eq!(marks(&genie).len(), 2);
+        let read = Lifting::Read(None, shift_file(), Ok(shift()));
+        let _ = genie.update(Message::Lift(read));
+        let moved: Vec<(String, usize, Region)> = marks(&genie)
+            .into_iter()
+            .map(|mark| (mark.name, mark.contig, mark.span))
+            .collect();
+        assert_eq!(
+            moved,
+            [("Region 1".to_owned(), 0, Region::between(200, 300))]
+        );
+        assert!(shows(
+            &genie,
+            "Lifted 1 of 2 regions. 1 had no place on this assembly."
+        ));
     }
 
     #[test]
@@ -2026,7 +2150,7 @@ mod tests {
         assert_eq!(track.name, "Tumor");
         assert_eq!(told(&answer), None);
         let id = track.id;
-        let _ = genie.update(Message::NamesLoaded(id, Err("no names".to_owned())));
+        let _ = genie.update(Message::NamesLoaded((id, 0), Err("no names".to_owned())));
         assert_eq!(told(&answer).as_deref(), Some("OK"));
         let (reply, answer) = crate::port::Reply::new();
         let failed = Port::Loaded(Err("The file is gone.".to_owned()), None, reply);
@@ -3699,6 +3823,7 @@ mod tests {
             normalization: None,
             declared: None,
             choice: genie_core::samples::Choice::default(),
+            lift: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -3788,6 +3913,7 @@ mod tests {
                 normalization: None,
                 declared: None,
                 choice: genie_core::samples::Choice::default(),
+                lift: None,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),
@@ -4151,7 +4277,7 @@ mod tests {
             contig: 0,
             span: Region::between(100, 200),
         }]);
-        let _ = genie.update(Message::NamesLoaded(0, Ok(Arc::new(names))));
+        let _ = genie.update(Message::NamesLoaded((0, 0), Ok(Arc::new(names))));
         genie
     }
 
@@ -4700,6 +4826,7 @@ mod tests {
             with_two_signals(),
             with_bedmethyl(),
             with_filtered(),
+            with_lifted(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));

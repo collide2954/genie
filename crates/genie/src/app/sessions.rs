@@ -9,6 +9,7 @@ use crate::location::Location;
 use crate::paths::{self, file_name};
 use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
+use crate::track::Options;
 
 use super::{Genie, LAST, Message};
 
@@ -124,13 +125,21 @@ impl Genie {
                     mode: track.mode,
                     hue: track.hue,
                     height: track.height,
-                    options: track.options,
+                    options: Options {
+                        lift: 0,
+                        ..track.options
+                    },
                     plot: track.plot,
                     filter: track.filter.clone(),
                     modification: track.modification.clone(),
                     normalization: track.normalization(),
                     declared: track.declared.clone(),
                     choice: track.choice.clone(),
+                    lift: track
+                        .lift
+                        .as_ref()
+                        .map(|lift| lift.location.clone())
+                        .or_else(|| track.lifting.clone()),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

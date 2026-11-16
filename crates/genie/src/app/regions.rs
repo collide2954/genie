@@ -21,7 +21,7 @@ use crate::paths::{self, file_name};
 use crate::theme::tokens;
 use crate::{font, style};
 
-use super::{Genie, Message, Regions, Session, Sidebar};
+use super::{Genie, Lifting, Message, Regions, Session, Sidebar};
 
 pub(super) const SIDEBAR_WIDTH: f32 = 220.0;
 const NAME: &str = "region-name";
@@ -267,22 +267,29 @@ impl Genie {
                 .into()
         };
         let chosen = self.sidebar.as_ref().and_then(|sidebar| sidebar.chosen);
-        let action = |label: &'a str, action: Option<Regions>| {
+        let action = |label: &'a str, message: Option<Message>| {
             button(text(label).size(12))
                 .padding([3, 8])
                 .style(style::ghost)
-                .on_press_maybe(action.map(Message::Regions))
+                .on_press_maybe(message)
         };
         let filled = !session.marks.is_empty();
         let footer = column![
             row![
-                action("Add view", Some(Regions::Add)),
-                action("Remove", chosen.map(|_| Regions::Remove)),
+                action("Add view", Some(Message::Regions(Regions::Add))),
+                action("Remove", chosen.map(|_| Message::Regions(Regions::Remove))),
+                action(
+                    "Lift…",
+                    filled.then_some(Message::Lift(Lifting::Pick(None)))
+                ),
             ]
             .spacing(4),
             row![
-                action("Import BED", Some(Regions::Import)),
-                action("Export BED", filled.then_some(Regions::Export)),
+                action("Import BED", Some(Message::Regions(Regions::Import))),
+                action(
+                    "Export BED",
+                    filled.then_some(Message::Regions(Regions::Export))
+                ),
             ]
             .spacing(4),
         ]

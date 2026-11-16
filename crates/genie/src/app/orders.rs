@@ -134,7 +134,7 @@ impl Genie {
                 return Task::none();
             }
         };
-        let task = self.add_track(Arc::clone(&source));
+        let task = self.add_track(&source);
         if let (Some(name), Some(session)) = (name, &mut self.session)
             && let Some(track) = session
                 .tracks

@@ -6,7 +6,9 @@ use genie_render::signal::Style;
 use iced::widget::{Column, button, column, container, opaque, pin, row, space, text, text_input};
 use iced::{Alignment, Element, Length, Point, Size};
 
-use crate::app::{Filtering, Message, Ranging, Renaming, Sampling, active, arranging_words};
+use crate::app::{
+    Filtering, Lifting, Message, Ranging, Renaming, Sampling, active, arranging_words,
+};
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
@@ -91,7 +93,13 @@ pub fn height(track: &Track, links: usize) -> f32 {
     } else {
         arranged as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
-    LINK_HEIGHT + SEPARATOR_HEIGHT + kind_height(track) + extra + rules + samples
+    LINK_HEIGHT
+        + SEPARATOR_HEIGHT
+        + kind_height(track)
+        + lift_height(track)
+        + extra
+        + rules
+        + samples
 }
 
 /// The fields that group, sort and color the samples of a track, to turn them off.
@@ -583,6 +591,7 @@ pub fn view<'a>(
     let content = content
         .extend(filter_items(track))
         .extend(jumps(track))
+        .extend(lift_items(track))
         .extend([
             self::item("Rename", Message::Rename(Renaming::Start(id)), false, true),
             item("Move up", Change::Up, false, place.position > 0),
@@ -608,8 +617,42 @@ pub fn view<'a>(
     )
 }
 
+/// Whether genie can move the data of a track from another assembly to the assembly in view.
+fn can_lift(track: &Track) -> bool {
+    !track.source.has_reads() && !track.source.has_contacts()
+}
+
+fn lift_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    if !can_lift(track) {
+        return Vec::new();
+    }
+    let (label, lifting) = if track.lift.is_some() {
+        ("Remove lift", Lifting::Stop(track.id))
+    } else {
+        ("Lift over…", Lifting::Pick(Some(track.id)))
+    };
+    vec![
+        item(label, Message::Lift(lifting), false, true),
+        separator(),
+    ]
+}
+
+/// The height of the lift items of a track, less the items to go to the next feature that a
+/// lift takes away.
+fn lift_height(track: &Track) -> f32 {
+    if !can_lift(track) {
+        return 0.0;
+    }
+    let jumps = if track.lift.is_some() && track.source.can_jump() {
+        2.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
+    } else {
+        0.0
+    };
+    LINK_HEIGHT + SEPARATOR_HEIGHT - jumps
+}
+
 fn jumps<'a>(track: &Track) -> Vec<Element<'a, Message>> {
-    if !track.source.can_jump() {
+    if !track.source.can_jump() || track.lift.is_some() {
         return Vec::new();
     }
     let noun = if track.source.has_variants() {

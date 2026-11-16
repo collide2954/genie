@@ -30,6 +30,7 @@ mod columns;
 mod contacts;
 mod features;
 mod gwas;
+mod lift;
 mod links;
 pub(crate) mod reads;
 mod segments;
@@ -40,6 +41,7 @@ pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
 pub use gwas::GwasFile;
+pub use lift::{Lift, load_lifted};
 pub use links::LinkFile;
 pub use reads::ReadFile;
 pub use segments::SegmentFile;
@@ -358,6 +360,9 @@ pub struct Options {
     pub contacts: Showing,
     /// What a table with a tabix index shows.
     pub table: Pick,
+    /// A number that changes each time the lift of the track changes, so that data of the
+    /// earlier lift does not show.
+    pub lift: u16,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -398,6 +403,7 @@ impl Default for Options {
             color: None,
             contacts: Showing::default(),
             table: Pick::default(),
+            lift: 0,
         }
     }
 }
@@ -1021,6 +1027,10 @@ pub struct Track {
     pub arrangement: Arc<Arrangement>,
     /// The rows of the samples of the file, for genotypes and copy number segments.
     pub rows: Arc<Rows>,
+    /// The chain file that moves the data of the file to the assembly in view.
+    pub lift: Option<Arc<Lift>>,
+    /// The chain file of a session that genie reads for the track.
+    pub lifting: Option<Location>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -1072,9 +1082,36 @@ impl Track {
             choice: Choice::default(),
             arrangement: Arc::new(arrangement),
             rows,
+            lift: None,
+            lifting: None,
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// Moves the data of the track to the assembly in view with a lift, or shows the data as it
+    /// is without one. Data and names of the earlier lift do not show again.
+    pub fn set_lift(&mut self, lift: Option<Arc<Lift>>, assembly: &Assembly) {
+        self.contigs = match &lift {
+            Some(lift) => contig_names(&lift.contigs(), assembly),
+            None => contig_names(self.source.contigs(), assembly),
+        };
+        self.lift = lift;
+        self.lifting = None;
+        self.names = None;
+        self.options.lift = self.options.lift.wrapping_add(1);
+        self.forget();
+    }
+
+    /// Shows nothing until genie reads the chain file that a session gives the track. False when
+    /// genie already reads that file for the track.
+    pub fn wait_for_lift(&mut self, location: &Location) -> bool {
+        if self.lifting.as_ref() == Some(location) {
+            return false;
+        }
+        self.contigs.fill(None);
+        self.lifting = Some(location.clone());
+        true
     }
 
     /// Puts the samples in the order, the groups and the colors that the fields of `choice`
@@ -1969,27 +2006,55 @@ pub fn load_kept(
     reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let location = source.data();
-    match &source.format {
-        Format::Features(file) => file.load(location, contig, region, scope, DENSITY_BUDGET),
-        Format::Variants(file) => file.load(location, contig, region, scope),
+    let loaded = match &source.format {
+        Format::Features(file) => file.load(location, contig, region, scope, DENSITY_BUDGET)?,
+        Format::Variants(file) => file.load(location, contig, region, scope)?,
         Format::Reads(file) => {
-            file.load(location, contig, region, (options, scope.rules), reference)
+            file.load(location, contig, region, (options, scope.rules), reference)?
         }
-        Format::Signal(file) => {
-            let loaded = file.load(location, contig, region, scope.step, options.methyl)?;
-            Ok(Loaded { options, ..loaded })
-        }
-        Format::Links(file) => file.load(location, contig, region),
-        Format::Segments(file) => Ok(file.load(contig, region)),
+        Format::Signal(file) => file.load(location, contig, region, scope.step, options.methyl)?,
+        Format::Links(file) => file.load(location, contig, region)?,
+        Format::Segments(file) => file.load(contig, region),
         Format::Contacts(file) => {
-            let loaded = file.load(location, contig, region, (scope.step, options.contacts))?;
-            Ok(Loaded { options, ..loaded })
+            file.load(location, contig, region, (scope.step, options.contacts))?
         }
         Format::Columns(file) => {
-            let loaded = file.load(location, contig, region, (scope.step, options.table))?;
-            Ok(Loaded { options, ..loaded })
+            file.load(location, contig, region, (scope.step, options.table))?
         }
-        Format::Gwas(file) => file.load(location, contig, region),
+        Format::Gwas(file) => file.load(location, contig, region)?,
+    };
+    Ok(Loaded { options, ..loaded })
+}
+
+/// Loads a region of a contig in view for a track, through its lift when it has one.
+pub fn load_track(
+    source: &Source,
+    lift: Option<&Lift>,
+    (contig, region): (&str, Region),
+    options: Options,
+    scope: Scope<'_>,
+    reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
+) -> Result<Loaded, String> {
+    match lift {
+        Some(lift) => load_lifted(source, lift, (contig, region), options, scope),
+        None => load_kept(source, contig, region, options, scope, reference),
+    }
+}
+
+/// The contig in view and the span of a span of a contig of a file, through a lift when the
+/// track has one.
+fn placed(
+    assembly: &Assembly,
+    lift: Option<&Lift>,
+    contig: &str,
+    span: Region,
+) -> Option<(usize, Region)> {
+    match lift {
+        Some(lift) => {
+            let (name, span, _) = lift.place(contig, span)?;
+            Some((assembly.find(name)?, span))
+        }
+        None => Some((assembly.find(contig)?, span)),
     }
 }
 
@@ -2159,25 +2224,33 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
 
-pub fn lookup(sources: &[Arc<Source>], name: &str, assembly: &Assembly) -> Option<Named> {
+/// The first feature of a name in the name indexes of bigBed files, with the lift of its track.
+pub fn lookup(
+    sources: &[(Arc<Source>, Option<Arc<Lift>>)],
+    name: &str,
+    assembly: &Assembly,
+) -> Option<Named> {
     let name = name.trim();
-    sources.iter().find_map(|source| {
+    sources.iter().find_map(|(source, lift)| {
         let Format::Features(file) = &source.format else {
             return None;
         };
         file.find(source.data(), name)
             .into_iter()
             .find_map(|(contig, feature)| {
+                let (contig, span) = placed(assembly, lift.as_deref(), &contig, feature.span())?;
                 Some(Named {
                     name: feature.name().to_owned(),
-                    contig: assembly.find(&contig)?,
-                    span: feature.span(),
+                    contig,
+                    span,
                 })
             })
     })
 }
 
-pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
+/// The names of the features or variants of a file, on the assembly in view through the lift of
+/// the track when it has one.
+pub fn names(source: &Source, assembly: &Assembly, lift: Option<&Lift>) -> Result<Names, String> {
     if source.data().is_remote() {
         return Ok(Names::default());
     }
@@ -2195,10 +2268,11 @@ pub fn names(source: &Source, assembly: &Assembly) -> Result<Names, String> {
         }
     };
     Ok(Names::new(entries.into_iter().filter_map(|entry| {
+        let (contig, span) = placed(assembly, lift, &entry.contig, entry.span)?;
         Some(Named {
-            contig: assembly.find(&entry.contig)?,
+            contig,
             name: entry.name,
-            span: entry.span,
+            span,
         })
     })))
 }
@@ -2716,7 +2790,7 @@ mod tests {
                 .iter()
                 .any(|feature| feature.name() == "GENE1003")
         );
-        let names = names(&source, &assembly()).unwrap();
+        let names = names(&source, &assembly(), None).unwrap();
         let gene = names.find("gene1003").unwrap();
         assert_eq!((gene.contig, gene.span), (0, region(50_366, 57_400)));
     }
@@ -2771,7 +2845,7 @@ mod tests {
             };
             assert!(calls.variants.len() > 10, "{}", calls.variants.len());
             assert_eq!(loaded.count(), 3);
-            let names = names(&source, &assembly()).unwrap();
+            let names = names(&source, &assembly(), None).unwrap();
             assert!(names.find("rs1001").is_some() || names.find("rs1002").is_some());
         }
     }
@@ -2892,7 +2966,7 @@ mod tests {
         .unwrap();
         assert_eq!(loaded.count(), 1);
         assert_eq!(
-            names(&source, &assembly())
+            names(&source, &assembly(), None)
                 .unwrap()
                 .find("rs9")
                 .unwrap()
@@ -3067,7 +3141,7 @@ mod tests {
         assert_eq!(source.samples(), ["A", "B"]);
         assert_eq!(variant_ids(&source, "chr1"), ["rs1", "", "sv1"]);
         assert_eq!(variant_ids(&source, "chr2"), ["rs4"]);
-        let found = names(&source, &assembly()).unwrap();
+        let found = names(&source, &assembly(), None).unwrap();
         assert_eq!(found.find("rs4").unwrap().contig, 1);
         let scratch = Scratch::new("bcf-alone");
         let alone = scratch.file("alone.bcf", fs::read(fixture("calls.bcf")).unwrap());
@@ -3255,7 +3329,7 @@ mod tests {
         );
         let count = signal(&coarse.unwrap()).len();
         assert!((1..1_000).contains(&count), "{count}");
-        assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
+        assert_eq!(names(&source, &assembly(), None).unwrap(), Names::default());
     }
 
     #[test]
@@ -3294,7 +3368,7 @@ mod tests {
             no_reference,
         );
         assert_ne!(signal(&far.unwrap()), []);
-        assert_eq!(names(&source, &assembly()).unwrap(), Names::default());
+        assert_eq!(names(&source, &assembly(), None).unwrap(), Names::default());
         assert!(
             is_track(&PathBuf::from("peaks.bb").into())
                 && is_track(&PathBuf::from("a.bigBed").into())
@@ -3547,8 +3621,8 @@ mod tests {
         let remote = open(Location::parse(&server.url("/genes.bed.gz")).unwrap()).unwrap();
         let local = open(fixture("genes.bed.gz")).unwrap();
         let assembly = three_contigs();
-        assert_eq!(names(&remote, &assembly).unwrap(), Names::default());
-        assert_ne!(names(&local, &assembly).unwrap(), Names::default());
+        assert_eq!(names(&remote, &assembly, None).unwrap(), Names::default());
+        assert_ne!(names(&local, &assembly, None).unwrap(), Names::default());
         let window = region(0, 200_000);
         let load = |source: &Source| {
             let loaded = load(source, "chr1", window, Options::default(), 1, true, |_| {
@@ -3666,11 +3740,12 @@ mod tests {
             length: 3_000_000,
         });
         let assembly = Assembly::new(contigs.into());
-        let found = lookup(&[Arc::clone(&source)], "chr2_450", &assembly).unwrap();
+        let sources = [(source, None)];
+        let found = lookup(&sources, "chr2_450", &assembly).unwrap();
         assert_eq!((found.contig, found.span), (1, region(281_270, 283_541)));
-        let upper = lookup(&[Arc::clone(&source)], "CHR2_450", &assembly).unwrap();
+        let upper = lookup(&sources, "CHR2_450", &assembly).unwrap();
         assert_eq!(upper, found);
-        assert_eq!(lookup(&[source], "missing", &assembly), None);
+        assert_eq!(lookup(&sources, "missing", &assembly), None);
     }
 
     #[test]
@@ -3818,7 +3893,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(loaded.count(), 1);
-        let names = names(&source, &assembly()).unwrap();
+        let names = names(&source, &assembly(), None).unwrap();
         assert_eq!(names.find("geneb").unwrap().contig, 1);
     }
 
@@ -3830,7 +3905,7 @@ mod tests {
             let path = scratch.file(name, text);
             let source = open(path.clone()).unwrap();
             std::fs::remove_file(&path).unwrap();
-            let names = names(&source, &assembly()).unwrap();
+            let names = names(&source, &assembly(), None).unwrap();
             assert_eq!(names.find("genea").unwrap().contig, 0, "{name}");
         }
     }
@@ -3888,7 +3963,7 @@ mod tests {
                 .iter()
                 .any(|feature| feature.name() == "GENE1003")
         );
-        let names = names(&source, &assembly()).unwrap();
+        let names = names(&source, &assembly(), None).unwrap();
         assert!(names.find("gene1003").is_some());
     }
 

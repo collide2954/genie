@@ -127,7 +127,7 @@ impl Genie {
             }
         };
         let name = self.catalog().get(index).map(|entry| entry.name);
-        let task = self.add_track(Arc::clone(&source));
+        let task = self.add_track(&source);
         if let (Some(name), Some(session)) = (name, &mut self.session)
             && let Some(track) = session
                 .tracks

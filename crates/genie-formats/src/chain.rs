@@ -138,6 +138,16 @@ impl Chains {
         Ok(chains)
     }
 
+    /// The target contigs of the chains.
+    pub fn targets(&self) -> Vec<&str> {
+        let mut found: Vec<usize> = self.forward.keys().copied().collect();
+        found.sort_unstable();
+        found
+            .into_iter()
+            .map(|id| self.names[id].as_str())
+            .collect()
+    }
+
     /// The query contigs of the chains.
     pub fn queries(&self) -> Vec<&str> {
         let mut found: Vec<usize> = self.back.keys().copied().collect();
@@ -276,6 +286,7 @@ mod tests {
     fn spans_lift_to_the_query_through_their_blocks() {
         let chains = chains();
         assert_eq!(chains.queries(), ["chr1", "chrB"]);
+        assert_eq!(chains.targets(), ["chr1", "chr2"]);
         assert_eq!(
             chains.lift("chr1", Region::between(10, 20)),
             Some(("chr1", Region::between(10, 20), false))

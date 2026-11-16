@@ -6,7 +6,7 @@ use iced::widget::operation;
 
 use crate::chrome;
 use crate::shortcuts::Command;
-use crate::track::{self, Source};
+use crate::track::{self, Lift, Source};
 
 use super::{
     Filtering, Genie, MAX_PANELS, Message, Paneling, Popup, Regions, Session, Suggestion, Sweep,
@@ -283,11 +283,11 @@ impl Genie {
                 Task::batch([moved, checks])
             }
             Err(error) => {
-                let sources: Vec<Arc<Source>> = session
+                let sources: Vec<(Arc<Source>, Option<Arc<Lift>>)> = session
                     .tracks
                     .iter()
                     .filter(|track| track.source.has_lookup())
-                    .map(|track| Arc::clone(&track.source))
+                    .map(|track| (Arc::clone(&track.source), track.lift.clone()))
                     .collect();
                 self.draft = Some(text.clone());
                 if sources.is_empty() {
@@ -443,6 +443,10 @@ impl Genie {
         if !track.source.can_jump() {
             return Task::none();
         }
+        if track.lift.is_some() {
+            let text = "genie cannot go to the next feature of a lifted track.".to_owned();
+            return self.inform(text);
+        }
         let source = Arc::clone(&track.source);
         let (names, rules) = (track.contigs.clone(), track.filter.rules.clone());
         let (reference, contig) = (Arc::clone(&session.reference), session.contig);
@@ -548,6 +552,7 @@ impl Genie {
             .iter()
             .filter(|track| {
                 !track.filter.rules.is_empty()
+                    && track.lift.is_none()
                     && track.contigs.get(named.contig).is_some_and(Option::is_some)
             })
             .map(|track| track.id)

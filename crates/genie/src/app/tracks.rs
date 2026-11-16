@@ -33,8 +33,8 @@ use crate::track::{self, Change, Content, Loaded, Pile, Scope, Source, Track};
 use super::orders::Answer;
 use super::view::{body_height, segment_range, signal_columns, signal_scale};
 use super::{
-    Filtering, Genie, Lane, Message, Opening, Popup, Preparation, Preparing, Ranging, Renaming,
-    Session, Status,
+    Filtering, Genie, Lane, Lifting, Message, Opening, Popup, Preparation, Preparing, Ranging,
+    Renaming, Session, Status,
 };
 
 pub(super) const TRACK_NAME: &str = "track-name";
@@ -50,7 +50,7 @@ impl Genie {
     pub(super) fn track_opened(&mut self, result: Result<Arc<Source>, String>) -> Task<Message> {
         self.busy = self.busy.saturating_sub(1);
         let task = match result {
-            Ok(source) => self.add_track(source),
+            Ok(source) => self.add_track(&source),
             Err(error) => {
                 self.fail(error);
                 Task::none()
@@ -152,16 +152,17 @@ impl Genie {
             }
             Preparation::Opened(Ok(source)) => {
                 let item = session.preparing.remove(at);
-                let task = self.add_track(Arc::clone(&source));
+                let task = self.add_track(&source);
                 let track = self.session.as_mut().and_then(|session| {
                     session
                         .tracks
                         .iter_mut()
                         .find(|track| track.source == source)
                 });
+                let mut lift = None;
                 if let Some(track) = track {
                     if let Some(found) = &item.saved {
-                        apply_saved(track, found);
+                        lift = apply_saved(track, found).map(|location| (track.id, location));
                     }
                     if let Some((_, Some(name))) = &item.reply {
                         track.name.clone_from(name);
@@ -170,7 +171,12 @@ impl Genie {
                 if let Some((reply, _)) = &item.reply {
                     self.answers.push((Answer::Done, reply.clone()));
                 }
-                task
+                match lift {
+                    Some((id, location)) => {
+                        Task::batch([task, self.lift(Lifting::Open(Some(id), location))])
+                    }
+                    None => task,
+                }
             }
             Preparation::Done(Err(error)) | Preparation::Opened(Err(error)) => {
                 let item = session.preparing.remove(at);
@@ -542,7 +548,7 @@ impl Genie {
         self.fetch_features()
     }
 
-    fn forget(&mut self, id: u64) {
+    pub(super) fn forget(&mut self, id: u64) {
         if self.hover.as_ref().is_some_and(|card| card.track == id) {
             self.hover = None;
         }
@@ -559,7 +565,7 @@ impl Genie {
         ])
     }
 
-    fn fetch_features(&mut self) -> Task<Message> {
+    pub(super) fn fetch_features(&mut self) -> Task<Message> {
         self.fetch_tracks(None)
     }
 
@@ -619,7 +625,7 @@ impl Genie {
                 track.slot_mut(panel).wanted = Some((contig, wanted));
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let (reference, rules) = (Arc::clone(reference), track.filter.rules.clone());
-                let detail = source.detailed(visible);
+                let (detail, lift) = (source.detailed(visible), track.lift.clone());
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
@@ -631,8 +637,15 @@ impl Genie {
                             rules: &rules,
                             length,
                         };
-                        let result =
-                            track::load_kept(&source, &name, wanted, options, scope, bases);
+                        let lift = lift.as_deref();
+                        let result = track::load_track(
+                            &source,
+                            lift,
+                            (&name, wanted),
+                            options,
+                            scope,
+                            bases,
+                        );
                         match &result {
                             Ok(loaded) => log::debug!(
                                 "Loaded {} items of {} at {name}:{}-{} in {:.0?}",
@@ -835,20 +848,21 @@ impl Genie {
         genes.map_or_else(|| source.name.clone(), |(genome, _)| genome.track)
     }
 
-    pub(super) fn add_track(&mut self, source: Arc<Source>) -> Task<Message> {
-        let name = self.track_name(&source);
+    pub(super) fn add_track(&mut self, source: &Arc<Source>) -> Task<Message> {
+        let name = self.track_name(source);
         let Some(session) = &mut self.session else {
             self.status = Status::Failed(NO_REFERENCE.to_owned());
             return Task::none();
         };
-        if session.tracks.iter().any(|track| track.source == source) {
+        if session.tracks.iter().any(|track| track.source == *source) {
             return self.inform(format!("The track {name} is already open."));
         }
         self.notice = None;
         let id = self.next_track;
         self.next_track += 1;
-        let mut track = Track::new(id, Arc::clone(&source), &session.reference.assembly);
+        let mut track = Track::new(id, Arc::clone(source), &session.reference.assembly);
         track.name = name;
+        let mut lift = None;
         if let Some(saved) = &self.restoring {
             let saved_at = |location: &Location| {
                 saved
@@ -857,7 +871,7 @@ impl Genie {
                     .position(|known| known.location == *location)
             };
             if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
-                apply_saved(&mut track, found);
+                lift = apply_saved(&mut track, found);
             }
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
@@ -885,15 +899,30 @@ impl Genie {
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
         }
+        if let Some(location) = lift {
+            let read = self.lift(Lifting::Open(Some(id), location));
+            return Task::batch([self.fetch_features(), read]);
+        }
         if source.has_reads() {
             return self.fetch_features();
         }
-        let reference = Arc::clone(&session.reference);
-        let names = Task::perform(
-            async move { track::names(&source, &reference.assembly).map(Arc::new) },
-            move |result| Message::NamesLoaded(id, result),
-        );
-        Task::batch([self.fetch_features(), names])
+        Task::batch([self.fetch_features(), self.find_names(id)])
+    }
+
+    /// Reads the names of the features of a track, on the assembly in view.
+    pub(super) fn find_names(&self, id: u64) -> Task<Message> {
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let Some(track) = session.tracks.iter().find(|track| track.id == id) else {
+            return Task::none();
+        };
+        let (source, lift) = (Arc::clone(&track.source), track.lift.clone());
+        let (reference, key) = (Arc::clone(&session.reference), (id, track.options.lift));
+        Task::perform(
+            async move { track::names(&source, &reference.assembly, lift.as_deref()).map(Arc::new) },
+            move |result| Message::NamesLoaded(key, result),
+        )
     }
 }
 
@@ -1064,20 +1093,29 @@ fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Opt
     })
 }
 
-fn apply_saved(track: &mut Track, found: &SavedTrack) {
+/// Gives a track the settings of a session, and the chain file to read for its lift.
+fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     if let Some(name) = &found.name {
         track.name.clone_from(name);
     }
     track.mode = found.mode;
     track.hue = found.hue;
     track.height = found.height;
-    track.options = found.options;
+    track.options = track::Options {
+        lift: track.options.lift,
+        ..found.options
+    };
     track.plot = found.plot;
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());
     track.set_normalization(found.normalization.as_deref());
     track.declared.clone_from(&found.declared);
     track.choice.clone_from(&found.choice);
+    found
+        .lift
+        .as_ref()
+        .filter(|location| track.wait_for_lift(location))
+        .cloned()
 }
 
 pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {

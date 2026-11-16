@@ -70,6 +70,8 @@ pub struct SavedTrack {
     pub declared: Option<Declared>,
     /// The fields of the sample table that group, sort and color the samples of the track.
     pub choice: Choice,
+    /// The chain file that moves the data of the track to the assembly in view.
+    pub lift: Option<Location>,
 }
 
 impl SavedTrack {
@@ -88,6 +90,7 @@ impl SavedTrack {
             normalization: None,
             declared: None,
             choice: Choice::default(),
+            lift: None,
         }
     }
 }
@@ -163,6 +166,7 @@ impl Saved {
                         sort: section.value(SORT_SAMPLES).map(str::to_owned),
                         color: section.value(COLOR_SAMPLES).map(str::to_owned),
                     },
+                    lift: section.value("lift").map(|text| read(text, base)),
                 })
             })
             .collect();
@@ -213,74 +217,7 @@ impl Saved {
         }
         let mut sections = vec![section("session", session)];
         for track in &self.tracks {
-            let mut entries = vec![("file", written(&track.location, base))];
-            if let Some(name) = &track.name {
-                entries.push(("name", name.clone()));
-            }
-            if let Some(over) = track.over {
-                entries.push(("overlay", (over + 1).to_string()));
-            }
-            if let Some(mode) = track.mode {
-                entries.push(("mode", name(&MODES, mode).to_owned()));
-            }
-            entries.push(("color", name(&HUES, track.hue).to_owned()));
-            if let Some(height) = track.height {
-                entries.push(("height", height.to_string()));
-            }
-            entries.extend(option_entries(track.options));
-            if track.plot.style == Style::Line {
-                entries.push(("style", "line".to_owned()));
-            }
-            if track.plot.linked {
-                entries.push(("scale", "shared".to_owned()));
-            }
-            if let Some(range) = track.plot.range {
-                entries.push(("range", format!("{} {}", range.min, range.max)));
-            }
-            if !track.plot.look.pairs {
-                entries.push(("pairs", "off".to_owned()));
-            }
-            if track.plot.look.mods {
-                entries.push(("modifications", "on".to_owned()));
-            }
-            if let Some(name) = &track.modification {
-                entries.push(("methylation", name.clone()));
-            }
-            if let Some(name) = &track.normalization {
-                entries.push(("normalization", name.clone()));
-            }
-            if !track.plot.colors {
-                entries.push(("colors", "off".to_owned()));
-            }
-            for rule in &track.filter.rules {
-                let (key, value) = match &rule.test {
-                    Test::Keep(value) => ("keep", value.clone()),
-                    Test::Hide(value) => ("hide", value.clone()),
-                    Test::AtLeast(bound) => ("least", bound.to_string()),
-                    Test::AtMost(bound) => ("most", bound.to_string()),
-                };
-                entries.push((key, format!("{}: {value}", rule.label)));
-            }
-            if let Some(label) = &track.filter.label {
-                entries.push(("label", label.clone()));
-            }
-            if let Some(declared) = &track.declared {
-                entries.push(("type", declared.kind.clone()));
-                if let Some(index) = &declared.index {
-                    entries.push(("index", written(index, base)));
-                }
-            }
-            let choice = &track.choice;
-            for (key, field) in [
-                (GROUP_SAMPLES, &choice.group),
-                (SORT_SAMPLES, &choice.sort),
-                (COLOR_SAMPLES, &choice.color),
-            ] {
-                if let Some(field) = field {
-                    entries.push((key, field.clone()));
-                }
-            }
-            sections.push(section("track", entries));
+            sections.push(section("track", track_entries(track, base)));
         }
         for region in &self.regions {
             let entries = vec![
@@ -311,6 +248,81 @@ impl Saved {
 pub fn is_session(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case(EXTENSION))
+}
+
+/// The entries of the section of a track.
+fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)> {
+    let mut entries = vec![("file", written(&track.location, base))];
+    if let Some(name) = &track.name {
+        entries.push(("name", name.clone()));
+    }
+    if let Some(over) = track.over {
+        entries.push(("overlay", (over + 1).to_string()));
+    }
+    if let Some(mode) = track.mode {
+        entries.push(("mode", name(&MODES, mode).to_owned()));
+    }
+    entries.push(("color", name(&HUES, track.hue).to_owned()));
+    if let Some(height) = track.height {
+        entries.push(("height", height.to_string()));
+    }
+    entries.extend(option_entries(track.options));
+    if track.plot.style == Style::Line {
+        entries.push(("style", "line".to_owned()));
+    }
+    if track.plot.linked {
+        entries.push(("scale", "shared".to_owned()));
+    }
+    if let Some(range) = track.plot.range {
+        entries.push(("range", format!("{} {}", range.min, range.max)));
+    }
+    if !track.plot.look.pairs {
+        entries.push(("pairs", "off".to_owned()));
+    }
+    if track.plot.look.mods {
+        entries.push(("modifications", "on".to_owned()));
+    }
+    if let Some(name) = &track.modification {
+        entries.push(("methylation", name.clone()));
+    }
+    if let Some(name) = &track.normalization {
+        entries.push(("normalization", name.clone()));
+    }
+    if !track.plot.colors {
+        entries.push(("colors", "off".to_owned()));
+    }
+    for rule in &track.filter.rules {
+        let (key, value) = match &rule.test {
+            Test::Keep(value) => ("keep", value.clone()),
+            Test::Hide(value) => ("hide", value.clone()),
+            Test::AtLeast(bound) => ("least", bound.to_string()),
+            Test::AtMost(bound) => ("most", bound.to_string()),
+        };
+        entries.push((key, format!("{}: {value}", rule.label)));
+    }
+    if let Some(label) = &track.filter.label {
+        entries.push(("label", label.clone()));
+    }
+    if let Some(declared) = &track.declared {
+        entries.push(("type", declared.kind.clone()));
+        if let Some(index) = &declared.index {
+            entries.push(("index", written(index, base)));
+        }
+    }
+    if let Some(lift) = &track.lift {
+        entries.push(("lift", written(lift, base)));
+    }
+    let choice = &track.choice;
+    for (key, field) in [
+        (GROUP_SAMPLES, &choice.group),
+        (SORT_SAMPLES, &choice.sort),
+        (COLOR_SAMPLES, &choice.color),
+    ] {
+        if let Some(field) = field {
+            entries.push((key, field.clone()));
+        }
+    }
+    entries
 }
 
 fn section(name: &str, entries: Vec<(&str, String)>) -> Section {
@@ -414,6 +426,7 @@ fn options(section: &Section) -> Options {
                 .map_or(Pick::Auto, Pick::Column),
             None => Pick::Auto,
         },
+        lift: 0,
     }
 }
 
@@ -565,6 +578,7 @@ mod tests {
             color: Some(*b"NM"),
             contacts: Showing::default(),
             table: Pick::Rows,
+            lift: 0,
         }
     }
 
@@ -580,6 +594,7 @@ mod tests {
     }
 
     fn saved() -> Saved {
+        let chains = Location::File(base().join("chains").join("hg19ToHg38.over.chain.gz"));
         Saved {
             reference: Location::File(base().join("data").join("ref.fa.gz")),
             genome: None,
@@ -612,6 +627,7 @@ mod tests {
                         index: Some(Location::File(base().join("index").join("reads.bai"))),
                     }),
                     choice: Choice::default(),
+                    lift: None,
                 },
                 SavedTrack {
                     location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
@@ -639,6 +655,7 @@ mod tests {
                         sort: Some("age".to_owned()),
                         color: Some("sex".to_owned()),
                     },
+                    lift: Some(chains),
                 },
                 SavedTrack {
                     over: Some(0),
@@ -714,6 +731,17 @@ mod tests {
         }
         assert_eq!(text.matches("[hub]").count(), 2, "{text}");
         assert_eq!(text.matches("index =").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn lifted_tracks_keep_their_chain_file() {
+        let text = saved().text(&base());
+        assert!(
+            text.contains("lift = chains/hg19ToHg38.over.chain.gz"),
+            "{text}"
+        );
+        assert_eq!(text.matches("lift =").count(), 1, "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(saved()));
     }
 
     #[test]
