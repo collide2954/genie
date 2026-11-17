@@ -17,11 +17,18 @@ pub fn structure(reference: &str, alternate: &str, info: &str, span: Region) -> 
         .and_then(kind_of)
         .or_else(|| symbol.and_then(kind_of))
         .or_else(|| alternate.contains(['[', ']']).then_some(Sv::Breakend))?;
+    // The other end of a breakend: POS2 or END2 as callers write them, or END when it is not the
+    // place of the record itself, as in a breakend of one side only.
+    let place = |key: &str| value(key)?.parse::<u64>().ok()?.checked_sub(1);
+    let own =
+        |position: u64| span.start() <= position && position < span.end().max(span.start() + 1);
     let mate = (kind == Sv::Breakend)
         .then(|| {
             mate(alternate).or_else(|| {
-                let position: u64 = value("POS2").or_else(|| value("END"))?.parse().ok()?;
-                Some((value("CHR2")?.to_owned(), position.checked_sub(1)?))
+                let position = place("POS2")
+                    .or_else(|| place("END2"))
+                    .or_else(|| place("END").filter(|position| !own(*position)))?;
+                Some((value("CHR2")?.to_owned(), position))
             })
         })
         .flatten();
@@ -36,7 +43,7 @@ pub fn structure(reference: &str, alternate: &str, info: &str, span: Region) -> 
             }
             _ => Some(span.len()),
         })
-        .filter(|length| *length > 0);
+        .filter(|length| *length > 0 && kind != Sv::Breakend);
     Some(Structure {
         kind,
         length,
@@ -44,6 +51,21 @@ pub fn structure(reference: &str, alternate: &str, info: &str, span: Region) -> 
         around: [value("CIPOS"), value("CIEND")].map(|text| text.and_then(interval)),
         precise: !info.split(';').any(|entry| entry == "IMPRECISE"),
     })
+}
+
+/// Whether a record is a breakend: one base that joins another place of the genome. Its END, if
+/// any, is a place on the other side, not the end of the record.
+pub fn is_breakend(alternate: &str, info: &str) -> bool {
+    let svtype = info
+        .split(';')
+        .find_map(|entry| entry.strip_prefix("SVTYPE="));
+    let symbol = alternate
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'));
+    alternate.contains(['[', ']'])
+        || svtype
+            .or(symbol)
+            .is_some_and(|text| kind_of(text) == Some(Sv::Breakend))
 }
 
 fn kind_of(text: &str) -> Option<Sv> {
@@ -58,7 +80,8 @@ fn kind_of(text: &str) -> Option<Sv> {
         "INV" => Sv::Inversion,
         "INS" => Sv::Insertion,
         "CNV" => Sv::CopyNumber,
-        "BND" | "TRA" => Sv::Breakend,
+        "BND" | "TRA" | "CTX" => Sv::Breakend,
+        "CPX" => Sv::Complex,
         _ if copies => Sv::CopyNumber,
         _ => return None,
     })
@@ -87,7 +110,7 @@ mod tests {
     use genie_core::Region;
     use genie_core::variant::{Structure, Sv};
 
-    use super::structure;
+    use super::{is_breakend, structure};
 
     fn sv(reference: &str, alternate: &str, info: &str, span: (u64, u64)) -> Option<Structure> {
         structure(reference, alternate, info, Region::between(span.0, span.1))
@@ -166,6 +189,60 @@ mod tests {
         );
         assert_eq!(joined("<TRA>", "CHR2=chr5;POS2=7"), mate("chr5", 6));
         assert_eq!(joined("G.", "SVTYPE=BND"), None);
+    }
+
+    /// Records as gnomAD-SV writes them.
+    #[test]
+    fn complex_variants_and_breakends_of_gnomad() {
+        let complex = sv(
+            "N",
+            "<CPX>",
+            "CHR2=chr21;CPX_TYPE=dDUP_iDEL;END=20321311;SVLEN=5686;SVTYPE=CPX",
+            (20_315_624, 20_321_311),
+        )
+        .unwrap();
+        assert_eq!((complex.kind, complex.length), (Sv::Complex, Some(5_686)));
+        let lone = sv(
+            "N",
+            "<BND>",
+            "CHR2=chr21;END=20180085;SVLEN=9011;SVTYPE=BND;UNRESOLVED_TYPE=SINGLE_ENDER_+-",
+            (20_180_084, 20_180_085),
+        )
+        .unwrap();
+        assert_eq!(
+            (lone.kind, lone.mate, lone.length),
+            (Sv::Breakend, None, None)
+        );
+        let paired = sv(
+            "N",
+            "<BND>",
+            "CHR2=chr21;END=20281059;END2=20281060;SVTYPE=BND",
+            (20_280_917, 20_280_918),
+        )
+        .unwrap();
+        assert_eq!(paired.mate, Some(("chr21".to_owned(), 20_281_059)));
+        let other = sv(
+            "N",
+            "<BND>",
+            "CHR2=chrX;END=6396555;END2=6396556;SVTYPE=BND",
+            (20_142_764, 20_142_765),
+        )
+        .unwrap();
+        assert_eq!(other.mate, Some(("chrX".to_owned(), 6_396_555)));
+        let translocation = sv("N", "<CTX>", "SVTYPE=CTX;CHR2=chr5;END2=300", (9, 10)).unwrap();
+        assert_eq!(
+            (translocation.kind, translocation.mate),
+            (Sv::Breakend, Some(("chr5".to_owned(), 299)))
+        );
+    }
+
+    #[test]
+    fn breakends_are_records_of_one_base() {
+        assert!(is_breakend("G]chr2:500]", "."));
+        assert!(is_breakend("<BND>", "SVTYPE=BND;END=46396555"));
+        assert!(is_breakend("N", "SVTYPE=CTX"));
+        assert!(!is_breakend("<DEL>", "SVTYPE=DEL;END=500"));
+        assert!(!is_breakend("G", "DP=3"));
     }
 
     #[test]

@@ -93,6 +93,8 @@ pub enum Sv {
     Insertion,
     CopyNumber,
     Breakend,
+    /// A rearrangement of several parts, as the CPX records of gnomAD-SV.
+    Complex,
 }
 
 /// What a VCF record says about a structural variant.

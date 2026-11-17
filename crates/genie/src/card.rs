@@ -331,6 +331,7 @@ fn structure_line(structure: &Structure) -> String {
         Sv::Insertion => "Insertion",
         Sv::CopyNumber => "Copy number change",
         Sv::Breakend => "Breakend",
+        Sv::Complex => "Complex rearrangement",
     };
     let mut parts = vec![kind.to_owned()];
     if let Some(length) = structure.length {

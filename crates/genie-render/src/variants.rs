@@ -47,7 +47,7 @@ fn allele(variant: &Variant) -> Allele {
             Sv::Duplication => Allele::Duplication,
             Sv::Inversion => Allele::Inversion,
             Sv::Insertion => Allele::Insertion,
-            Sv::CopyNumber | Sv::Breakend => Allele::Other,
+            Sv::CopyNumber | Sv::Breakend | Sv::Complex => Allele::Other,
         };
     }
     match variant.kind() {

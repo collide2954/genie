@@ -150,8 +150,12 @@ pub fn parse<'a>(line: &'a str, layouts: &[Layout]) -> Result<Option<(&'a str, V
         None => Vec::new(),
     };
     let start = position.saturating_sub(1);
-    let span = extent(start, reference, info);
     let first = alternates.split(',').next().unwrap_or_default();
+    let span = if sv::is_breakend(first, info) {
+        Region::between(start, start + (reference.len() as u64).max(1))
+    } else {
+        extent(start, reference, info)
+    };
     let (annotations, kept) = annotations::split(info, layouts);
     Ok(Some((
         contig,
@@ -335,6 +339,16 @@ mod tests {
             (structure.kind, structure.length),
             (Sv::Deletion, Some(490))
         );
+    }
+
+    #[test]
+    fn breakends_span_one_base_whatever_their_end() {
+        let other = "chr21\t20142765\tb1\tN\t<BND>\t.\tPASS\tSVTYPE=BND;CHR2=chrX;END=46396555";
+        let (_, variant) = parse(other, &[]).unwrap().unwrap();
+        assert_eq!(variant.span, Region::between(20_142_764, 20_142_765));
+        let bracket = "chr1\t100\tb2\tG\tG]chr2:500]\t.\tPASS\tSVTYPE=BND;END=900";
+        let (_, variant) = parse(bracket, &[]).unwrap().unwrap();
+        assert_eq!(variant.span, Region::between(99, 100));
     }
 
     #[test]

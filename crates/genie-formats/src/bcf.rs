@@ -208,7 +208,11 @@ fn record(
     if alternates.is_empty() {
         alternates.push(".".to_owned());
     }
-    let span = Region::between(start, end);
+    let span = if sv::is_breakend(&alternates[0], &info) {
+        Region::between(start, start + (reference.len() as u64).max(1))
+    } else {
+        Region::between(start, end)
+    };
     let structure = sv::structure(&reference, &alternates[0], &info, span);
     let (annotations, kept) = annotations::split(&info, layouts);
     let variant = Variant {
