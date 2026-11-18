@@ -444,6 +444,8 @@ pub struct Plot {
     pub junction_reads: u32,
     /// The comparison that a signal track shows instead of its own values.
     pub math: Option<Math>,
+    /// The place of the viewpoint of the virtual 4C of a Hi-C track.
+    pub viewpoint: Option<u64>,
 }
 
 impl Default for Plot {
@@ -460,6 +462,7 @@ impl Default for Plot {
             sashimi: false,
             junction_reads: 1,
             math: None,
+            viewpoint: None,
         }
     }
 }
@@ -1542,6 +1545,8 @@ pub enum Change {
     Compare(Option<u64>),
     /// The operation of the comparison of a signal track.
     Operation(Operation),
+    /// The viewpoint of the virtual 4C of a Hi-C track, or none to stop it.
+    Viewpoint(Option<u64>),
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -1643,6 +1648,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         }
         Change::Compare(other) => compare(tracks, position, other),
         Change::Operation(operation) => operate(&mut tracks[position], operation),
+        Change::Viewpoint(viewpoint) => tracks[position].plot.viewpoint = viewpoint,
     }
 }
 

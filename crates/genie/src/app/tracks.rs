@@ -33,7 +33,9 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Loaded, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
-use super::view::{body_height, segment_range, shown_columns, signal_scale};
+use super::view::{
+    VIEWPOINT_GAP, body_height, contact_heights, segment_range, shown_columns, signal_scale,
+};
 use super::{
     Filtering, Genie, Lane, Lifting, Message, Opening, Popup, Preparation, Preparing, Ranging,
     Renaming, Session, Status,
@@ -1007,7 +1009,18 @@ fn contact_detail(
     (x, y): (f32, f32),
 ) -> Option<Detail> {
     let map = &found.map;
-    let height = track.height.unwrap_or(contacts::HEIGHT);
+    let (height, _) = contact_heights(track);
+    if let Some(viewpoint) = track.plot.viewpoint
+        && y > height + VIEWPOINT_GAP
+    {
+        let column = contacts::viewpoint_hit(viewport, map, viewpoint, x)?;
+        return Some(Detail::Signal {
+            span: column.span,
+            bin: column.bin,
+            unit: None,
+            measure: Some("Contacts with the viewpoint"),
+        });
+    }
     let (first, second) = contacts::hit(viewport, map, height, x, y)?;
     let bin = |at: u32| {
         let start = u64::from(at) * map.bin;

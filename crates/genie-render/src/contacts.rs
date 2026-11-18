@@ -3,10 +3,12 @@
 //! bin high. Each row of bricks is half a bin higher and half a bin to the right of the row
 //! under it, so the bricks stand for the diamonds of the rotated map.
 
-use genie_core::Viewport;
 use genie_core::contact::ContactMap;
+use genie_core::signal::Summary;
+use genie_core::{Region, Viewport};
 
-use crate::scene::{Paint, Primitive};
+use crate::scene::{Hue, Paint, Primitive};
+use crate::signal::{self, Column, Style};
 
 pub const HEIGHT: f32 = 160.0;
 /// The part of the counts in view that is under the count that gets the full color.
@@ -119,13 +121,72 @@ pub fn hit(
     Some((first, first + depth as u32))
 }
 
+/// The height of the lane of a virtual 4C under the map.
+pub const VIEWPOINT_HEIGHT: f32 = signal::HEIGHT;
+
+/// The contacts of the bin of a viewpoint with each other bin of the map, as values along the
+/// chromosome.
+pub fn viewpoint_values(map: &ContactMap, viewpoint: u64) -> Vec<Summary> {
+    if map.bin == 0 {
+        return Vec::new();
+    }
+    let bin = u32::try_from(viewpoint / map.bin).unwrap_or(u32::MAX);
+    map.row(bin)
+        .into_iter()
+        .filter(|(_, value)| value.is_finite())
+        .map(|(other, value)| {
+            let start = u64::from(other) * map.bin;
+            Summary::single(Region::between(start, start + map.bin), value)
+        })
+        .collect()
+}
+
+fn viewpoint_columns(viewport: Viewport, map: &ContactMap, viewpoint: u64) -> Vec<Column> {
+    signal::columns(viewport, &viewpoint_values(map, viewpoint))
+}
+
+/// The lane of a virtual 4C: a bar for the contacts of the viewpoint with the bins under each
+/// pixel, and a line at the viewpoint.
+pub fn viewpoint_lane(
+    viewport: Viewport,
+    map: &ContactMap,
+    viewpoint: u64,
+    hue: Hue,
+) -> Vec<Primitive> {
+    let columns = viewpoint_columns(viewport, map, viewpoint);
+    let width = viewport.width() as f32;
+    let mut primitives = signal::range(&columns).map_or_else(Vec::new, |scale| {
+        signal::scene(&columns, scale, Style::Bars, hue, VIEWPOINT_HEIGHT, width)
+    });
+    let x = viewport.to_px(viewpoint as f64) as f32;
+    primitives.push(Primitive::Rect {
+        x: x - 0.5,
+        y: 0.0,
+        width: 1.0,
+        height: VIEWPOINT_HEIGHT,
+        paint: Paint::Accent,
+    });
+    primitives
+}
+
+/// The column of the lane of a virtual 4C under a point.
+pub fn viewpoint_hit(
+    viewport: Viewport,
+    map: &ContactMap,
+    viewpoint: u64,
+    x: f32,
+) -> Option<Column> {
+    let columns = viewpoint_columns(viewport, map, viewpoint);
+    signal::hit(&columns, x)
+}
+
 #[cfg(test)]
 mod tests {
     use genie_core::contact::ContactMap;
     use genie_core::{Region, Viewport};
 
-    use super::{hit, scene};
-    use crate::scene::{Paint, Primitive};
+    use super::{VIEWPOINT_HEIGHT, hit, scene, viewpoint_hit, viewpoint_lane, viewpoint_values};
+    use crate::scene::{Hue, Paint, Primitive};
 
     fn view(start: u64, end: u64) -> Viewport {
         Viewport::new(1_000_000, 100.0).show(Region::between(start, end))
@@ -208,6 +269,42 @@ mod tests {
             };
             assert_eq!(*paint, Paint::Change(wanted), "{value}");
         }
+    }
+
+    /// A virtual 4C: the contacts of the bin of a viewpoint with each other bin, as bars, with a
+    /// line at the viewpoint.
+    #[test]
+    fn viewpoints_show_their_contacts_with_each_bin() {
+        let map = ContactMap {
+            bin: 100,
+            contacts: vec![
+                (2, 2, 10.0),
+                (2, 5, 4.0),
+                (5, 5, 8.0),
+                (5, 7, 6.0),
+                (7, 7, 9.0),
+            ],
+            ratio: false,
+        };
+        let values: Vec<(Region, f64)> = viewpoint_values(&map, 550)
+            .iter()
+            .map(|summary| (summary.span, summary.sum / f64::from(summary.count)))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                (Region::between(200, 300), 4.0),
+                (Region::between(500, 600), 8.0),
+                (Region::between(700, 800), 6.0)
+            ]
+        );
+        let lane = viewpoint_lane(view(0, 1_000), &map, 550, Hue::Green);
+        let found = rects(&lane);
+        assert!(found.contains(&([54.5, 0.0, 1.0, VIEWPOINT_HEIGHT], Paint::Accent)));
+        assert!(found.len() > 3, "{found:?}");
+        let column = viewpoint_hit(view(0, 1_000), &map, 550, 75.0).unwrap();
+        assert!((column.bin.mean() - 6.0).abs() < 1e-6);
+        assert_eq!(viewpoint_hit(view(0, 1_000), &map, 550, 5.0), None);
     }
 
     #[test]

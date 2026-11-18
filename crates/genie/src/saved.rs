@@ -263,6 +263,10 @@ fn plot(section: &Section) -> Plot {
             .and_then(|text| text.parse().ok())
             .unwrap_or(1),
         math: None,
+        viewpoint: section
+            .value("viewpoint")
+            .and_then(|text| text.parse::<u64>().ok())
+            .and_then(|place| place.checked_sub(1)),
     }
 }
 
@@ -326,6 +330,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if track.plot.junction_reads > 1 {
         entries.push(("junction reads", track.plot.junction_reads.to_string()));
+    }
+    if let Some(viewpoint) = track.plot.viewpoint {
+        entries.push(("viewpoint", (viewpoint + 1).to_string()));
     }
     if let Some(name) = &track.modification {
         entries.push(("methylation", name.clone()));

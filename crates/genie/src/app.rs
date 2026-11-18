@@ -4274,6 +4274,67 @@ mod tests {
         genie
     }
 
+    /// A Hi-C track with a small map on chr1: bins of 100 bases.
+    fn with_contact_map() -> Genie {
+        use genie_core::contact::ContactMap;
+        let mut genie = with_contacts();
+        let region = Region::between(0, 1_000);
+        let map = ContactMap {
+            bin: 100,
+            contacts: vec![
+                (2, 2, 10.0),
+                (2, 5, 4.0),
+                (5, 5, 8.0),
+                (5, 7, 6.0),
+                (7, 7, 9.0),
+            ],
+            ratio: false,
+        };
+        let contacts = crate::track::Contacts {
+            map,
+            step: 4,
+            normalization: "KR".to_owned(),
+        };
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let loaded = Loaded::contacts(region, contacts);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    #[test]
+    fn hic_tracks_show_the_contacts_of_a_viewpoint_under_the_map() {
+        let height = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            super::view::body_height(session, &session.tracks[0])
+        };
+        let mut genie = with_contact_map();
+        assert!((height(&genie) - 160.0).abs() < 0.5);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(550.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Virtual 4C from here").unwrap();
+        let picked = ui.into_messages().any(|message| {
+            matches!(
+                message,
+                Message::TrackChanged(0, Change::Viewpoint(Some(_)))
+            )
+        });
+        assert!(picked);
+        let _ = genie.update(Message::TrackChanged(0, Change::Viewpoint(Some(550))));
+        assert!((height(&genie) - 209.0).abs() < 0.5);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(750.0, 190.0))));
+        assert!(shows(&genie, "Contacts with the viewpoint 6"));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(550.0, 40.0)));
+        assert!(shows(&genie, "Stop virtual 4C"));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[0].plot.viewpoint, Some(550));
+        let text = saved.text(std::path::Path::new("/data"));
+        assert!(text.contains("viewpoint = 551"), "{text}");
+        let _ = genie.update(Message::TrackChanged(0, Change::Viewpoint(None)));
+        assert!((height(&genie) - 160.0).abs() < 0.5);
+    }
+
     #[test]
     fn segment_tracks_show_a_row_per_sample_and_a_range_in_the_menu() {
         use genie_core::segment::Segment;

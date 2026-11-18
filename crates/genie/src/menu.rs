@@ -276,8 +276,9 @@ pub fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         .collect()
 }
 
-/// The normalizations of a Hi-C map, and observed/expected ratios.
-pub fn contact_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+/// The normalizations of a Hi-C map, observed/expected ratios, and the virtual 4C from the base
+/// under the pointer.
+pub fn contact_items<'a>(track: &Track, base: u64) -> Vec<Element<'a, Message>> {
     let (names, place) = track
         .source
         .normalizations(track.options.contacts.normalization);
@@ -303,6 +304,17 @@ pub fn contact_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         "Observed/expected",
         Message::TrackChanged(track.id, Change::Ratio),
         track.options.contacts.ratio,
+        true,
+    ));
+    let (label, viewpoint) = if track.plot.viewpoint.is_some() {
+        ("Stop virtual 4C", None)
+    } else {
+        ("Virtual 4C from here", Some(base))
+    };
+    items.push(item(
+        label,
+        Message::TrackChanged(track.id, Change::Viewpoint(viewpoint)),
+        false,
         true,
     ));
     items.push(separator());
@@ -375,7 +387,8 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_contacts() {
         // The normalizations and observed/expected, with their separator, in a column of their
         // own that has one space less.
-        let choices = track.source.normalizations(None).0.len() as f32 + 1.0;
+        // The normalizations, observed/expected and the virtual 4C.
+        let choices = track.source.normalizations(None).0.len() as f32 + 2.0;
         PLAIN_HEIGHT + choices * LINK_HEIGHT + SEPARATOR_HEIGHT - 1.0
     } else if track.source.has_columns() {
         // The columns and the rows, with their separator, in a column of their own that has one
@@ -617,7 +630,7 @@ pub fn view<'a>(
     } else if track.source.has_links() || track.source.has_junctions() {
         column![]
     } else if track.source.has_contacts() {
-        column(contact_items(track)).spacing(1)
+        column(contact_items(track, place.base)).spacing(1)
     } else if track.source.has_columns() {
         column(column_items(track))
             .push(column(modes).spacing(1))

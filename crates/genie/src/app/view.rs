@@ -968,8 +968,14 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Contacts(contacts)) => {
-            let height = track.height.unwrap_or(shape.height);
-            Body::Scene(contacts::scene(viewport, &contacts.map, height), height)
+            let (map, total) = contact_heights(track);
+            let mut primitives = contacts::scene(viewport, &contacts.map, map);
+            if let Some(viewpoint) = track.plot.viewpoint {
+                let lane = contacts::viewpoint_lane(viewport, &contacts.map, viewpoint, track.hue);
+                let top = map + VIEWPOINT_GAP;
+                primitives.extend(lane.into_iter().map(|primitive| primitive.lowered(top)));
+            }
+            Body::Scene(primitives, total)
         }
         Some(Content::Associations(found)) => {
             let faint = session.genome && panel % 2 == 1;
@@ -1391,15 +1397,33 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
         Some(Content::Junctions(_)) => Shape::plain(junctions::HEIGHT),
-        Some(Content::Contacts(_)) => Shape::plain(contacts::HEIGHT),
+        Some(Content::Contacts(_)) => Shape::plain(contact_heights(track).1),
         Some(Content::Associations(_)) => Shape::plain(manhattan::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None if track.source.has_junctions() => Shape::plain(junctions::HEIGHT),
-        None if track.source.has_contacts() => Shape::plain(contacts::HEIGHT),
+        None if track.source.has_contacts() => Shape::plain(contact_heights(track).1),
         None if track.source.has_associations() => Shape::plain(manhattan::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),
     }
+}
+
+/// The space between the map of a Hi-C track and the lane of its virtual 4C.
+pub(super) const VIEWPOINT_GAP: f32 = 1.0;
+/// The lowest map of a Hi-C track with a virtual 4C.
+const LOWEST_MAP: f32 = 24.0;
+
+/// The heights of the map of a Hi-C track and of its whole body. With a viewpoint, the lane of
+/// the virtual 4C is under the map. A track height that somebody sets is the height of the whole
+/// body.
+pub(super) fn contact_heights(track: &Track) -> (f32, f32) {
+    let lane = if track.plot.viewpoint.is_some() {
+        VIEWPOINT_GAP + contacts::VIEWPOINT_HEIGHT
+    } else {
+        0.0
+    };
+    let total = track.height.unwrap_or(contacts::HEIGHT + lane);
+    ((total - lane).max(LOWEST_MAP), total.max(LOWEST_MAP + lane))
 }
 
 /// The log2 values that get the full colors of a segment track: its own range, or ±1.5.
