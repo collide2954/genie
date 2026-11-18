@@ -87,6 +87,15 @@
 <li>To use a genome without a network connection, click the genome label, then click <b>Use offline</b>. genie downloads the full sequence into its cache folder (human: about 835 MB). If the download stops, genie continues it the next time. Click <b>Remove offline copy</b> to delete the sequence. If the open genome reads from the offline copy, genie first changes it to the sequence on UCSC.</li>
 <li>Sessions and the recent list keep the genome.</li>
 </ul>
+<h3 id="ncbi-assemblies">NCBI assemblies</h3>
+<p>UCSC GenArk has assembly hubs for thousands of NCBI assemblies of other species. To open one, click <b>Other NCBI assemblies…</b> in the start view, or click the genome label and then <b>NCBI assembly…</b>. The palette has <b>Open an NCBI assembly…</b> too.</p>
+<ul>
+<li>Type a species, a common name or an accession, for example <code>Gallus gallus</code>, <code>chicken</code> or <code>GCF_016699485.2</code>. The list shows the assemblies that have all the words. Accessions that start with the words come first, then species and common names that start with them.</li>
+<li>Click an assembly. genie opens its GenArk hub, then the genome of the hub. The hub dialog then shows the tracks of the hub, such as the genes of NCBI RefSeq.</li>
+<li>An accession with its version (GCA or GCF, nine digits, a dot and the version) also opens from <b>Open URL…</b> and <b>Open a track hub…</b>, and from the dialog when it is not in the list.</li>
+<li>genie gets the list of GenArk assemblies from UCSC the first time you open the dialog, and keeps it in its cache folder for 7 days. Without a network connection, genie uses the list that it has.</li>
+<li>The contigs of a GenArk genome have the names in its 2bit file, often the NCBI accessions of the sequences.</li>
+</ul>
 <h2 id="ucsc-tracks">UCSC tracks</h2>
 <p>Click the tracks button (the layers icon) in the title bar to add a public track from the UCSC Genome Browser to the open genome.</p>
 <div class="table"><table>

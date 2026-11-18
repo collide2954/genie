@@ -143,6 +143,11 @@ impl Genie {
             self.hubs.len() - 1
         };
         let remember = self.remember_hubs();
+        if self.assemblies.wanted.as_ref() == Some(location) {
+            self.assemblies.wanted = None;
+            let shown = self.show_hub(index);
+            return Task::batch([shown, self.open_hub_genome(0), remember]);
+        }
         if show {
             Task::batch([self.show_hub(index), remember])
         } else {
@@ -692,7 +697,10 @@ mod tests {
         let ask = Message::Hub(Hubbing::Ask);
         assert!(ui.into_messages().any(|message| message == ask));
         let _ = genie.update(ask);
-        assert!(shows(&genie, "Open a track hub from the web"));
+        assert!(shows(
+            &genie,
+            "Open a track hub from the web, or an NCBI assembly by its accession"
+        ));
         let address = "https://example.org/x/hub.txt".to_owned();
         let _ = genie.update(Message::Address(Address::Edit(address)));
         let _ = genie.update(Message::Address(Address::Submit));

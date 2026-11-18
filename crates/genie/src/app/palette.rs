@@ -257,10 +257,12 @@ impl Genie {
     }
 
     fn palette_actions(&self) -> Vec<Action> {
+        let ncbi = Message::Assemblies(super::Assembling::Open);
         let mut actions = vec![
             Action::new("Open file…", keys('O'), Message::Command(Command::Open)),
             Action::new("Open URL…", keys('U'), Message::Command(Command::OpenUrl)),
             Action::new("Open a track hub…", "", Message::Hub(Hubbing::Ask)),
+            Action::new("Open an NCBI assembly…", "", ncbi),
             Action::new("Keys and mouse", "F1", Message::Command(Command::Help)),
             Action::new("Settings", "", Message::ToggleSettings),
             Action::new("Change the theme", "", Message::CycleAppearance),

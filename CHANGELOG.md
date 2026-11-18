@@ -13,6 +13,10 @@
 - genie opens PAF files from minimap2, wfmash and other aligners. Each alignment shows on the reference in view with the name of its query, in blocks between the long deletions of its CIGAR. Its card shows the place on the query, the identity, MAPQ and the tags. genie sorts and indexes large PAF files in its cache.
 - A family variant track checks the calls of each child against its parents, from the father and the mother in the sample table (for example a PLINK `.ped` file). The field Inheritance tells the Mendelian errors and the de novo variants, a frame shows around the call of the child, and the track menu has **Only de novo variants** and **Only Mendelian errors**. genie checks X only for daughters.
 
+### Genomes
+
+- **Other NCBI assemblies…** in the start view and **NCBI assembly…** in the genome menu find an assembly of UCSC GenArk by its species, its common name or its accession, then open its hub and its genome. Open URL and Open a track hub also take an accession such as `GCF_016699485.2`.
+
 ### Images
 
 - Ctrl+E opens the export dialog. It gives the image a title, a scale bar and the regions in view as grey bands with their names. The session keeps the title and the settings.

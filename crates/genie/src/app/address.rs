@@ -31,6 +31,14 @@ impl Genie {
                 field.text = text;
                 field.error = None;
             }
+            Address::Submit if genie_formats::genark::accession(&field.text).is_some() => {
+                let Some(location) = super::assemblies::hub_location(&field.text) else {
+                    return Task::none();
+                };
+                self.address = None;
+                self.assemblies.wanted = Some(location.clone());
+                return self.open_hub(location, true);
+            }
             Address::Submit => match Url::parse(&field.text) {
                 Ok(url) => {
                     let hub = field.hub;
@@ -52,12 +60,12 @@ impl Genie {
         let (example, words) = if field.hub {
             (
                 "https://example.org/hub.txt",
-                "Open a track hub from the web",
+                "Open a track hub from the web, or an NCBI assembly by its accession",
             )
         } else {
             (
                 "https://example.org/data/genome.2bit",
-                "Open a file from the web",
+                "Open a file from the web, or an NCBI assembly by its accession",
             )
         };
         let input = text_input(example, &field.text)

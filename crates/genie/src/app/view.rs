@@ -79,8 +79,13 @@ fn genomes<'a>() -> Element<'a, Message> {
         .on_press(Message::Genome(genome.id))
         .into()
     });
+    let other = button(text("Other NCBI assemblies…").size(12))
+        .padding([3, 8])
+        .style(style::ghost)
+        .on_press(Message::Assemblies(super::Assembling::Open));
     column![text("Genomes").size(11).style(style::muted)]
         .extend(rows)
+        .push(other)
         .spacing(2)
         .into()
 }
@@ -236,6 +241,7 @@ impl Genie {
             .or_else(|| self.app_menu())
             .or_else(|| self.track_dialog())
             .or_else(|| self.export_dialog())
+            .or_else(|| self.assembly_dialog())
             .or_else(|| self.hub_dialog())
             .or_else(|| self.palette_view())
         {
@@ -277,10 +283,12 @@ impl Genie {
         });
         let offline = self.offline_items();
         let extra = offline.len();
+        let ncbi = Message::Assemblies(super::Assembling::Open);
         let mut content = Column::new()
             .extend(items)
             .push(menu::separator())
-            .push(menu::item("Open reference…", Message::Open, false, true));
+            .push(menu::item("Open reference…", Message::Open, false, true))
+            .push(menu::item("NCBI assembly…", ncbi, false, true));
         if extra > 0 {
             content = content.push(menu::separator()).extend(offline);
         }
@@ -288,7 +296,7 @@ impl Genie {
             chrome::genome_x(Controls::CURRENT),
             chrome::BAR_HEIGHT + 1.0,
         );
-        let height = (count + extra + 1) as f32 * MENU_ROW + 2.0 * MENU_ROW;
+        let height = (count + extra + 2) as f32 * MENU_ROW + 2.0 * MENU_ROW;
         Some(menu::card(content, at, self.window, height))
     }
 

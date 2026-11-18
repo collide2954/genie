@@ -37,6 +37,7 @@ use crate::{font, paths, timer, update};
 
 mod address;
 mod app_menu;
+mod assemblies;
 mod caching;
 #[cfg(test)]
 mod clips;
@@ -64,6 +65,7 @@ mod updates;
 mod view;
 mod whole;
 
+pub(crate) use assemblies::Assembling;
 pub(crate) use export::Figuring;
 pub(crate) use lift::Lifting;
 use orders::Answer;
@@ -144,6 +146,7 @@ pub struct Genie {
     checks: update::Checks,
     release: update::State,
     effects: effects::Effects,
+    assemblies: assemblies::Assemblies,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +161,7 @@ enum Popup {
     Palette,
     Hub,
     Export,
+    Assemblies,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -234,6 +238,7 @@ impl Default for Genie {
             checks: update::Checks::default(),
             release: update::State::default(),
             effects: effects::Effects::default(),
+            assemblies: assemblies::Assemblies::default(),
         }
     }
 }
@@ -742,6 +747,7 @@ pub enum Message {
     Hub(hubs::Hubbing),
     Update(updates::Updating),
     Samples(Sampling),
+    Assemblies(Assembling),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1074,6 +1080,7 @@ impl Genie {
             Message::Cache(event) => return self.caching(event),
             Message::Find(finding) => return self.find(finding),
             Message::Hub(hubbing) => return self.hubbing(hubbing),
+            Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Update(updating) => return self.updating(updating),
             Message::Samples(sampling) => return self.sampling(sampling),
             Message::Lane(id, lane) => self.lane(id, lane),
@@ -3307,7 +3314,10 @@ mod tests {
     fn the_address_field_opens_urls() {
         let mut genie = Genie::default();
         let _ = genie.update(Message::Command(Command::OpenUrl));
-        assert!(shows(&genie, "Open a file from the web"));
+        assert!(shows(
+            &genie,
+            "Open a file from the web, or an NCBI assembly by its accession"
+        ));
         let text = "http://127.0.0.1:9/data/hg38.2bit".to_owned();
         let _ = genie.update(Message::Address(Address::Edit(text)));
         let _ = genie.update(Message::Address(Address::Submit));
