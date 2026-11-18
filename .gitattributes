@@ -12,3 +12,6 @@
 *.icns binary
 *.res binary
 *.rgba binary
+*.woff2 binary
+*.webp binary
+*.mp4 binary
