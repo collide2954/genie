@@ -2108,6 +2108,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
                 Kind::Bed => bed::fields(feature.extra()),
                 Kind::Gff | Kind::Gtf => gff::fields(feature.extra()),
                 Kind::Paf => genie_formats::paf::fields(feature.extra()),
+                Kind::Psl => genie_formats::psl::fields(feature.extra()),
             }
         }
         Format::Columns(file) => file.fields(feature.extra()),

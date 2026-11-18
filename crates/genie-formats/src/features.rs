@@ -4,7 +4,7 @@ use std::io::{BufRead, Read, Seek};
 use genie_core::{Feature, Region};
 
 pub use crate::table::Table;
-use crate::{Error, Reason, bed, bgzf::Bgzf, gff, gtf, paf, tabix::Index};
+use crate::{Error, Reason, bed, bgzf::Bgzf, gff, gtf, paf, psl, tabix::Index};
 
 const PASSES: usize = 4;
 
@@ -70,6 +70,8 @@ pub enum Kind {
     Gtf,
     /// The pairwise alignments of minimap2 and other aligners, on their target.
     Paf,
+    /// The alignments of BLAT, on their target.
+    Psl,
 }
 
 type Parse = fn(&str) -> Result<Option<gff::Record>, Reason>;
@@ -88,16 +90,18 @@ impl Kind {
             "gff" | "gff3" => Some(Self::Gff),
             "gtf" => Some(Self::Gtf),
             "paf" => Some(Self::Paf),
+            "psl" => Some(Self::Psl),
             _ => None,
         }
     }
 
-    /// The parser of a kind with one feature on each line: BED and PAF. GFF and GTF files join
-    /// several lines into a feature.
+    /// The parser of a kind with one feature on each line: BED, PAF and PSL. GFF and GTF files
+    /// join several lines into a feature.
     fn lines(self) -> Option<Line> {
         match self {
             Self::Bed => Some(bed::parse),
             Self::Paf => Some(paf::parse),
+            Self::Psl => Some(psl::parse),
             Self::Gff | Self::Gtf => None,
         }
     }
@@ -220,7 +224,7 @@ mod tests {
             Bgzf,
             tests::{block, file},
         },
-        tabix::tests::{BED, Bins, GFF, PAF, index},
+        tabix::tests::{BED, Bins, GFF, PAF, PSL, index},
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -235,6 +239,7 @@ mod tests {
             Kind::Bed => BED,
             Kind::Gff | Kind::Gtf => GFF,
             Kind::Paf => PAF,
+            Kind::Psl => PSL,
         };
         let index = index(preset, &["chr1"], &[(bins, &[0])]);
         let mut reader = Bgzf::new(Cursor::new(file(&[text.as_bytes()])));

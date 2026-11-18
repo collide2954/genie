@@ -242,6 +242,7 @@ impl Genie {
             .or_else(|| self.track_dialog())
             .or_else(|| self.export_dialog())
             .or_else(|| self.assembly_dialog())
+            .or_else(|| self.blat_dialog())
             .or_else(|| self.hub_dialog())
             .or_else(|| self.palette_view())
         {

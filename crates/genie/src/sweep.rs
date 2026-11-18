@@ -124,6 +124,12 @@ const TEXTS: &[(&str, &str)] = &[
          chr2\t60\t340\tJUNC2\t3\t-\t60\t340\t0,0,255\t2\t40,40\t0,240\n",
     ),
     (
+        "hits.psl",
+        "psLayout version 3\n\n\
+         95\t3\t2\t0\t1\t10\t1\t200\t-\tread7\t150\t20\t130\tchr1\t5000\t1000\t1310\t2\t50,50,\t20,80,\t1000,1260,\n\
+         24\t0\t0\t0\t0\t0\t0\t0\t+\tread8\t24\t0\t24\tchr2\t1000\t100\t124\t1\t24,\t0,\t100,\n",
+    ),
+    (
         "assembly.paf",
         "ctg1\t9000\t100\t2100\t-\tchr1\t5000\t100\t2100\t1900\t2000\t60\ttp:A:P\tcg:Z:900M100D1000M\n\
          ctg2\t800\t0\t800\t+\tchr2\t1000\t100\t900\t790\t800\t255\tNM:i:10\n",

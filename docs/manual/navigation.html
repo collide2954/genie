@@ -90,6 +90,16 @@
 <li>Push Enter and Shift+Enter to go to the next and the previous product. Put the pointer on a product to see its locus, its length, its strand, its mismatches and its primers.</li>
 <li>Click <b>Bases</b> to find one sequence again.</li>
 </ul>
+<h3 id="blat">BLAT</h3>
+<p>The BLAT server of UCSC finds where a sequence aligns in the whole genome, also with gaps and introns. genie can send a sequence to it when the open genome is a genome of UCSC, such as hg38 or mm39.</p>
+<ul>
+<li>Click <b>BLAT a sequence…</b> in the palette, type or paste the bases (plain or FASTA, 20 to 8,000 bases), then push Enter or click <b>BLAT</b>.</li>
+<li>To BLAT a read, click the read to keep its card open, then click <b>BLAT</b> in the card. If the read has a soft clip of 20 bases or more, <b>Use the clipped part</b> puts the longest clip in the box, for example to find where the clipped part of a split read comes from.</li>
+<li>genie sends only the bases to UCSC. UCSC asks for at most one search each 15 seconds, so genie waits that long between two searches.</li>
+<li>The dialog lists the alignments, the best score first, with the locus, the strand, the identity, the score and the length. Click an alignment to go there.</li>
+<li>genie keeps the alignments as a PSL file in its cache folder and opens it as a track, named &quot;BLAT&quot; and the name of the sequence. The track shows each alignment with its blocks, and Ctrl+F and Ctrl+B go to the next and the previous alignment. The card of an alignment shows the place on the query, the identity, the score, the matches, the mismatches and the gaps.</li>
+<li>genie opens other PSL files too, for example from BLAT on the command line. Index a large PSL file without its header with <code>tabix -0 -s14 -b16 -e17</code>, or let genie prepare it in its cache.</li>
+</ul>
 <h2 id="several-loci">Several loci</h2>
 <ul>
 <li>Type two to four loci in the locus box, with a space between them, for example <code>BRCA1 BRCA2</code>. genie shows the loci side by side in panels of equal width.</li>

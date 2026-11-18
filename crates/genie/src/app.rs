@@ -38,6 +38,7 @@ use crate::{font, paths, timer, update};
 mod address;
 mod app_menu;
 mod assemblies;
+mod blat;
 mod caching;
 #[cfg(test)]
 mod clips;
@@ -66,6 +67,7 @@ mod view;
 mod whole;
 
 pub(crate) use assemblies::Assembling;
+pub(crate) use blat::Blatting;
 pub(crate) use export::Figuring;
 pub(crate) use lift::Lifting;
 use orders::Answer;
@@ -147,6 +149,7 @@ pub struct Genie {
     release: update::State,
     effects: effects::Effects,
     assemblies: assemblies::Assemblies,
+    blat: blat::Blat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +165,7 @@ enum Popup {
     Hub,
     Export,
     Assemblies,
+    Blat,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -239,6 +243,7 @@ impl Default for Genie {
             release: update::State::default(),
             effects: effects::Effects::default(),
             assemblies: assemblies::Assemblies::default(),
+            blat: blat::Blat::default(),
         }
     }
 }
@@ -748,6 +753,7 @@ pub enum Message {
     Update(updates::Updating),
     Samples(Sampling),
     Assemblies(Assembling),
+    Blat(Blatting),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1068,19 +1074,15 @@ impl Genie {
             Message::Field(choice) => self.choose_field(choice),
             Message::Visit(locus) => return self.show_locus(locus),
             Message::MenuDismissed => self.close_menus(),
-            Message::Scrolled(offset) => {
-                self.scroll = offset;
-                self.close_menus();
-            }
-            Message::SequenceMenu(at) => {
-                self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
-            }
+            Message::Scrolled(offset) => self.scrolled(offset),
+            Message::SequenceMenu(at) => self.open_sequence_menu(at),
             Message::SequenceChanged(change) => self.change_reading(change),
             Message::ToggleSettings => return self.toggle_settings(),
             Message::Cache(event) => return self.caching(event),
             Message::Find(finding) => return self.find(finding),
             Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Assemblies(assembling) => return self.assembling(assembling),
+            Message::Blat(blatting) => return self.blatting(blatting),
             Message::Update(updating) => return self.updating(updating),
             Message::Samples(sampling) => return self.sampling(sampling),
             Message::Lane(id, lane) => self.lane(id, lane),
@@ -1123,6 +1125,15 @@ impl Genie {
             Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
+    }
+
+    fn scrolled(&mut self, offset: f32) {
+        self.scroll = offset;
+        self.close_menus();
+    }
+
+    fn open_sequence_menu(&mut self, at: Point) {
+        self.sequence_menu = Some(Point::new(at.x, at.y - self.scroll));
     }
 
     fn names_loaded(&mut self, key: (u64, u16), names: Result<Arc<Names>, String>) {

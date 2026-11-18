@@ -814,7 +814,8 @@ fn field_row<'a>(
     .into()
 }
 
-fn heading<'a>(title: String, pinned: bool) -> Element<'a, Message> {
+/// The title of a card. A pinned card has a close button, and a pinned read card a BLAT button.
+fn heading<'a>(title: String, pinned: bool, read: bool) -> Element<'a, Message> {
     let mut heading = row![
         text(title)
             .font(font::UI_STRONG)
@@ -822,7 +823,16 @@ fn heading<'a>(title: String, pinned: bool) -> Element<'a, Message> {
             .wrapping(WRAP)
             .width(Length::Fill)
     ]
+    .spacing(4)
     .align_y(Align::Center);
+    if pinned && read {
+        heading = heading.push(
+            button(text("BLAT").size(11))
+                .padding([1, 6])
+                .style(style::ghost)
+                .on_press(Message::Blat(crate::app::Blatting::Read)),
+        );
+    }
     if pinned {
         heading = heading.push(
             button(icon::view(Icon::Close, 10.0))
@@ -902,7 +912,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
     let locus = locus(card, span);
     let mut body = column![
-        heading(title, pinned),
+        heading(title, pinned, matches!(card.detail, Detail::Read { .. })),
         text(locus.to_string())
             .font(font::MONO)
             .size(11)

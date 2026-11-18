@@ -129,6 +129,7 @@ fn kind(name: &str) -> Option<Kind> {
         features::Kind::Bed => Layout::BED,
         features::Kind::Gff | features::Kind::Gtf => Layout::GFF,
         features::Kind::Paf => Layout::PAF,
+        features::Kind::Psl => Layout::PSL,
     }))
 }
 
@@ -678,6 +679,33 @@ mod tests {
         ]
         .concat();
         let file: Location = scratch.file("asm.paf", text).into();
+        let (prepared, steps) = prepare(&file, &cache);
+        assert!(steps.contains(&Step::Sorting), "{steps:?}");
+        let source = track::open_with(file, Some(prepared)).unwrap();
+        assert_eq!(feature_names(&source, "chr1"), ["a", "c"]);
+        assert_eq!(feature_names(&source, "chr2"), ["d"]);
+    }
+
+    #[test]
+    fn large_psl_files_keep_their_header_and_are_sorted_by_their_target() {
+        let scratch = Scratch::new("prepare-psl");
+        let cache = folder(&scratch).join("cache");
+        let line = |query: &str, contig: &str, start: u64| {
+            format!(
+                "100\t0\t0\t0\t0\t0\t0\t0\t+\t{query}\t100\t0\t100\t{contig}\t5000\t{start}\t{}\t1\t100,\t0,\t{start},\n",
+                start + 100
+            )
+        };
+        let header = "psLayout version 3\n\nmatch\tmis- \trep. \n\
+            \tmatch\tmatch\n---------------------------------\n";
+        let text = [
+            header.to_owned(),
+            line("c", "chr1", 300),
+            line("d", "chr2", 5),
+            line("a", "chr1", 100),
+        ]
+        .concat();
+        let file: Location = scratch.file("hits.psl", text).into();
         let (prepared, steps) = prepare(&file, &cache);
         assert!(steps.contains(&Step::Sorting), "{steps:?}");
         let source = track::open_with(file, Some(prepared)).unwrap();
