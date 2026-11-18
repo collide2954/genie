@@ -11,6 +11,10 @@ use crate::scene::{Paint, Primitive};
 pub const HEIGHT: f32 = 160.0;
 /// The part of the counts in view that is under the count that gets the full color.
 const SHARE: f64 = 0.95;
+/// The least part of the full color that the middle count in view gets.
+const MIDDLE: f32 = 0.2;
+/// The flattest curve of the colors, for the most skewed counts.
+const FLATTEST: f32 = 0.35;
 /// The log2 of the ratio of observed to expected contacts that gets the full color.
 const RATIO: f32 = 2.0;
 
@@ -40,13 +44,11 @@ pub fn scene(viewport: Viewport, map: &ContactMap, height: f32) -> Vec<Primitive
             shown.push((left, top, value));
         }
     }
-    let scale = if map.ratio {
-        1.0
+    let (scale, curve) = if map.ratio {
+        (1.0, 1.0)
     } else {
         let mut counts: Vec<f32> = shown.iter().map(|(.., value)| *value).collect();
-        counts.sort_by(f32::total_cmp);
-        let at = ((counts.len().saturating_sub(1)) as f64 * SHARE).round() as usize;
-        counts.get(at).copied().unwrap_or(1.0)
+        colors(&mut counts)
     };
     shown
         .into_iter()
@@ -54,7 +56,7 @@ pub fn scene(viewport: Viewport, map: &ContactMap, height: f32) -> Vec<Primitive
             let level = if map.ratio {
                 ratio_level(value)?
             } else if scale > 0.0 {
-                ((value / scale).clamp(0.0, 1.0) * 100.0).round() as i8
+                ((value / scale).clamp(0.0, 1.0).powf(curve) * 100.0).round() as i8
             } else {
                 0
             };
@@ -68,6 +70,24 @@ pub fn scene(viewport: Viewport, map: &ContactMap, height: f32) -> Vec<Primitive
             })
         })
         .collect()
+}
+
+/// The count that gets the full color, and the power of the curve of the colors. The full color
+/// starts at the count that is higher than 95 % of the counts in view. The colors follow a
+/// straight line, unless the middle count would get less than a fifth of the full color: then
+/// they follow a curve that gives it a fifth. In a view of a whole chromosome, the contacts of
+/// near bins are much higher than the others, and a straight line leaves the map pale.
+fn colors(counts: &mut [f32]) -> (f32, f32) {
+    counts.sort_by(f32::total_cmp);
+    let at = ((counts.len().saturating_sub(1)) as f64 * SHARE).round() as usize;
+    let top = counts.get(at).copied().unwrap_or(1.0);
+    let middle = counts.get(counts.len() / 2).copied().unwrap_or(0.0);
+    let curve = if middle > 0.0 && top > middle {
+        (MIDDLE.ln() / (middle / top).ln()).clamp(FLATTEST, 1.0)
+    } else {
+        1.0
+    };
+    (top, curve)
 }
 
 /// The level of a ratio of observed to expected contacts: -100 for a quarter, 100 for 4.
@@ -159,6 +179,35 @@ mod tests {
             paints,
             [Paint::Change(100), Paint::Change(0), Paint::Change(-50)]
         );
+    }
+
+    /// In a view of a whole chromosome, the contacts of near bins are much higher than the
+    /// others. The colors then follow a curve that gives the middle count a fifth of the color.
+    #[test]
+    fn skewed_counts_bend_the_colors_so_the_middle_count_shows() {
+        let mut contacts = Vec::new();
+        for first in 0..10 {
+            contacts.push((first, first, if first < 2 { 100.0 } else { 10.0 }));
+        }
+        for first in 0..9 {
+            contacts.push((first, first + 1, if first == 0 { 50.0 } else { 10.0 }));
+        }
+        contacts.extend([(0, 2, 10.0), (1, 3, 10.0)]);
+        let map = ContactMap {
+            bin: 100,
+            contacts: contacts.clone(),
+            ratio: false,
+        };
+        let bricks = rects(&scene(view(0, 1_000), &map, 40.0));
+        assert_eq!(bricks.len(), contacts.len());
+        for ((_, paint), (.., value)) in bricks.iter().zip(&contacts) {
+            let wanted = match *value {
+                100.0 => 100,
+                50.0 => 62,
+                _ => 20,
+            };
+            assert_eq!(*paint, Paint::Change(wanted), "{value}");
+        }
     }
 
     #[test]
