@@ -260,7 +260,9 @@ The BLAT server of UCSC finds where a sequence aligns in the whole genome, also 
 
 - Click **BLAT a sequence…** in the palette, type or paste the bases (plain or FASTA, 20 to 8,000 bases), then push Enter or click **BLAT**.
 - To BLAT a read, click the read to keep its card open, then click **BLAT** in the card. If the read has a soft clip of 20 bases or more, **Use the clipped part** puts the longest clip in the box, for example to find where the clipped part of a split read comes from.
-- genie sends only the bases to UCSC. UCSC asks for at most one search each 15 seconds, so genie waits that long between two searches.
+- UCSC takes BLAT searches from programs only with the API key of a person. To make your key, log in to your account at genome.ucsc.edu, open the Hub Development page and make a key in its API key part. Paste the key in **UCSC API key** in the dialog. genie keeps the key in its settings file on this computer and does not show it in messages.
+- Without a key, **Search on the UCSC page** opens the same search in your web browser. genie also opens PSL files that you save from UCSC.
+- genie sends only the bases and your key to UCSC. UCSC asks for at most one search each 15 seconds, so genie waits that long between two searches.
 - The dialog lists the alignments, the best score first, with the locus, the strand, the identity, the score and the length. Click an alignment to go there.
 - genie keeps the alignments as a PSL file in its cache folder and opens it as a track, named "BLAT" and the name of the sequence. The track shows each alignment with its blocks, and Ctrl+F and Ctrl+B go to the next and the previous alignment. The card of an alignment shows the place on the query, the identity, the score, the matches, the mismatches and the gaps.
 - genie opens other PSL files too, for example from BLAT on the command line. Index a large PSL file without its header with `tabix -0 -s14 -b16 -e17`, or let genie prepare it in its cache.

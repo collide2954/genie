@@ -11,7 +11,7 @@
 - **Virtual 4C from here** in the menu of a Hi-C track shows the contacts of one place with each bin in view, in a lane under the map.
 - A signal track can compare its values with another signal track: **Compare with** in the track menu shows the log2 ratio, the ratio or the difference of the two tracks at each pixel, for example ChIP over input.
 
-- **BLAT a sequence…** sends bases, a read or the clipped part of a read to the BLAT server of UCSC. The alignments show in a list and as a track, and genie opens other PSL files too.
+- **BLAT a sequence…** sends bases, a read or the clipped part of a read to the BLAT server of UCSC with your UCSC API key. The alignments show in a list and as a track, and genie opens other PSL files too. Without a key, the dialog opens the same search on the UCSC page in your web browser.
 - genie opens PAF files from minimap2, wfmash and other aligners. Each alignment shows on the reference in view with the name of its query, in blocks between the long deletions of its CIGAR. Its card shows the place on the query, the identity, MAPQ and the tags. genie sorts and indexes large PAF files in its cache.
 - A family variant track checks the calls of each child against its parents, from the father and the mother in the sample table (for example a PLINK `.ped` file). The field Inheritance tells the Mendelian errors and the de novo variants, a frame shows around the call of the child, and the track menu has **Only de novo variants** and **Only Mendelian errors**. genie checks X only for daughters.
 

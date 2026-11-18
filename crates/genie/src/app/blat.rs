@@ -2,6 +2,7 @@
 //! its cache folder, opens the file as a track and lists the alignments in a dialog.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use genie_core::alignment::Op;
 use genie_core::{Locus, Region, Span, Strand, Target, grouped};
 use genie_formats::blat;
 use genie_formats::http::Url;
+use genie_formats::ini::{self, Section};
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
@@ -20,7 +22,7 @@ use iced::{Alignment, Element, Length, Task};
 use crate::card::Detail;
 use crate::icon::{self, Icon};
 use crate::location::Location;
-use crate::{export, font, genome, hub, style};
+use crate::{export, font, genome, hub, paths, settings, style, update};
 
 use super::{Genie, Message, Popup};
 
@@ -35,6 +37,15 @@ const NO_GENOME: &str = "BLAT needs a genome of UCSC, such as hg38. Open one in 
 const SEARCHING: &str = "Asking the BLAT server of UCSC…";
 const NONE: &str = "BLAT found no alignment.";
 const ABOUT: &str = "genie sends the bases to the BLAT server of UCSC.";
+const KEY_FIELD: &str = "blat-key";
+/// The note of the dialog without a key.
+const KEY_NEEDED: &str = "UCSC takes BLAT searches from programs only with your UCSC API key. To make one, log in at genome.ucsc.edu and open the Hub Development page.";
+/// The note when UCSC answers with its check for people, not with alignments.
+const CHECKED: &str = "UCSC did not take the API key. Check the key, or search on the UCSC page.";
+const PAGE: &str = "Search on the UCSC page";
+/// The section of the settings file that keeps the API key of UCSC.
+const SECTION: &str = "ucsc";
+const KEY: &str = "api key";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Blatting {
@@ -45,7 +56,11 @@ pub enum Blatting {
     Edit(String),
     /// Puts the clipped part of the read in the field.
     Clip,
+    /// The API key of UCSC. genie keeps it in its settings file.
+    Key(String),
     Submit,
+    /// Opens the same search on the BLAT page of UCSC in the web browser.
+    Browse,
     /// The PSL file of the alignments and its text.
     Done(Result<(PathBuf, String), String>),
     /// Goes to an alignment of the list.
@@ -75,11 +90,53 @@ pub(super) struct Blat {
     name: String,
     text: String,
     clip: Option<String>,
+    /// The API key of UCSC, from the settings file.
+    key: String,
     searching: bool,
     error: Option<String>,
     hits: Vec<Hit>,
     /// When genie last asked UCSC.
     last: Option<Instant>,
+}
+
+impl Blat {
+    pub(super) fn keyed(key: String) -> Self {
+        Self {
+            key,
+            ..Self::default()
+        }
+    }
+}
+
+/// The API key of UCSC in the settings file of a folder, or an empty text.
+pub(super) fn load_key(folder: &Path) -> String {
+    fs::read_to_string(folder.join(settings::FILE))
+        .ok()
+        .and_then(|text| ini::parse(&text).ok())
+        .and_then(|document| Some(document.section(SECTION)?.value(KEY)?.trim().to_owned()))
+        .unwrap_or_default()
+}
+
+/// Saves the key in the settings file, away from the work of the window.
+fn remember_key(key: &str) -> Task<Message> {
+    let Some(folder) = paths::config_dir() else {
+        return Task::none();
+    };
+    let key = key.to_owned();
+    Task::future(async move {
+        let _ = save_key(&folder, &key);
+    })
+    .discard()
+}
+
+fn save_key(folder: &Path, key: &str) -> io::Result<()> {
+    settings::store(
+        folder,
+        Section {
+            name: SECTION.to_owned(),
+            entries: vec![(KEY.to_owned(), key.trim().to_owned())],
+        },
+    )
 }
 
 /// The longest soft-clipped part of a read, if it has enough bases for BLAT.
@@ -108,21 +165,24 @@ fn code(bases: &str) -> String {
     format!("{hash:08x}")
 }
 
-/// Asks a BLAT server for the alignments of bases in a genome, and writes them to a PSL file in
-/// a folder. Gives the file and its lines.
+/// Asks a BLAT server with an API key for the alignments of bases in a genome, and writes them
+/// to a PSL file in a folder. Gives the file and its lines.
 pub(super) fn search(
     server: &str,
     genome: &str,
     (name, bases): (&str, &str),
-    folder: Option<&Path>,
+    (key, folder): (Option<&str>, Option<&Path>),
 ) -> Result<(PathBuf, String), String> {
     let folder = folder
         .ok_or_else(|| "genie has no cache folder for the alignments.".to_owned())?
         .join(FOLDER);
-    let url =
-        Url::parse(&blat::address(server, genome, bases)).map_err(|error| error.to_string())?;
+    let address = blat::address(server, genome, bases, key);
+    let url = Url::parse(&address).map_err(|error| error.to_string())?;
     let answer = hub::read_text(&Location::Url(url))
         .map_err(|error| format!("genie cannot reach BLAT. {error}"))?;
+    if blat::is_page(&answer) {
+        return Err(CHECKED.to_owned());
+    }
     let text = blat::psl(&answer, name)?;
     let path = folder.join(format!("BLAT {} {}.psl", export::safe(name), code(bases)));
     fs::create_dir_all(&folder)
@@ -183,7 +243,13 @@ impl Genie {
                     self.blat.name = format!("{} clip", self.blat.name);
                 }
             }
+            Blatting::Key(key) => {
+                self.blat.key = key;
+                self.blat.error = None;
+                return remember_key(&self.blat.key);
+            }
             Blatting::Submit => return self.submit_blat(),
+            Blatting::Browse => self.browse_blat(),
             Blatting::Done(result) => return self.blat_done(result),
             Blatting::Go(index) => return self.go_to_hit(index),
         }
@@ -203,7 +269,9 @@ impl Genie {
         operation::focus(FIELD)
     }
 
-    fn submit_blat(&mut self) -> Task<Message> {
+    /// The genome of UCSC in view and the bases of the field, or None with the reason in the
+    /// dialog.
+    fn blat_input(&mut self) -> Option<(String, String)> {
         let genome = self
             .session
             .as_ref()
@@ -211,15 +279,34 @@ impl Genie {
             .filter(|genome| genome::find(genome).is_some());
         let Some(genome) = genome else {
             self.blat.error = Some(NO_GENOME.to_owned());
-            return Task::none();
+            return None;
         };
-        let bases = match blat::bases(&self.blat.text) {
-            Ok(bases) => bases,
+        match blat::bases(&self.blat.text) {
+            Ok(bases) => Some((genome, bases)),
             Err(error) => {
                 self.blat.error = Some(error);
-                return Task::none();
+                None
             }
+        }
+    }
+
+    fn browse_blat(&mut self) {
+        let Some((genome, bases)) = self.blat_input() else {
+            return;
         };
+        if let Err(error) = update::browse(&blat::page(blat::SERVER, &genome, &bases)) {
+            self.blat.error = Some(format!("genie cannot open the web browser. {error}"));
+        }
+    }
+
+    fn submit_blat(&mut self) -> Task<Message> {
+        let Some((genome, bases)) = self.blat_input() else {
+            return Task::none();
+        };
+        let key = self.blat.key.trim().to_owned();
+        if key.is_empty() {
+            return Task::none();
+        }
         let now = Instant::now();
         if let Some(last) = self.blat.last {
             let waited = now.saturating_duration_since(last);
@@ -242,7 +329,10 @@ impl Genie {
         };
         let cache = self.cache.clone();
         Task::perform(
-            async move { search(blat::SERVER, &genome, (&name, &bases), cache.as_deref()) },
+            async move {
+                let place = (Some(key.as_str()), cache.as_deref());
+                search(blat::SERVER, &genome, (&name, &bases), place)
+            },
             |result| Message::Blat(Blatting::Done(result)),
         )
     }
@@ -360,10 +450,25 @@ impl Genie {
             .style(style::locus)
             .on_input(|text| Message::Blat(Blatting::Edit(text)))
             .on_submit(Message::Blat(Blatting::Submit));
+        let keyless = state.key.trim().is_empty();
+        let key = row![
+            text("UCSC API key").size(11).style(style::muted),
+            text_input("Paste your key", &state.key)
+                .id(KEY_FIELD)
+                .secure(true)
+                .size(12)
+                .padding([3, 8])
+                .style(style::locus)
+                .on_input(|key| Message::Blat(Blatting::Key(key)))
+                .on_submit(Message::Blat(Blatting::Submit))
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let ready = !state.searching && !keyless;
         let search = button(text("BLAT").size(12))
             .padding([4, 12])
             .style(style::primary)
-            .on_press_maybe((!state.searching).then_some(Message::Blat(Blatting::Submit)));
+            .on_press_maybe(ready.then_some(Message::Blat(Blatting::Submit)));
         let mut actions = row![].spacing(6).align_y(Alignment::Center);
         if let Some(clip) = &state.clip {
             let words = format!(
@@ -377,15 +482,26 @@ impl Genie {
                     .on_press(Message::Blat(Blatting::Clip)),
             );
         }
-        actions = actions.push(space::horizontal()).push(search);
+        actions = actions.push(space::horizontal());
+        if keyless || state.error.as_deref() == Some(CHECKED) {
+            actions = actions.push(
+                button(text(PAGE).size(12))
+                    .padding([4, 8])
+                    .style(style::ghost)
+                    .on_press(Message::Blat(Blatting::Browse)),
+            );
+        }
+        actions = actions.push(search);
         let note = state
             .error
             .as_deref()
             .or_else(|| state.searching.then_some(SEARCHING))
+            .or_else(|| keyless.then_some(KEY_NEEDED))
             .unwrap_or(ABOUT);
         let mut body = column![
             heading,
             field,
+            key,
             actions,
             text(note).size(11).style(style::muted)
         ]
@@ -473,15 +589,74 @@ mod tests {
             &server.url("/cgi-bin/hgBlat"),
             "hg38",
             ("my read", &"ACGT".repeat(6)),
-            Some(&folder),
+            (Some("key1"), Some(&folder)),
         )
         .unwrap();
         assert!(path.starts_with(folder.join("blat")));
         assert!(path.extension().is_some_and(|extension| extension == "psl"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{text}\n"));
         assert!(text.contains("\tmy_read\t"), "{text}");
-        let missing = search(&server.url("/none"), "hg38", ("q", "ACGT"), Some(&folder));
-        assert!(missing.unwrap_err().starts_with("genie cannot reach BLAT."));
+        let missing = search(
+            &server.url("/none"),
+            "hg38",
+            ("q", "ACGT"),
+            (None, Some(&folder)),
+        );
+        let error = missing.unwrap_err();
+        assert!(error.starts_with("genie cannot reach BLAT."), "{error}");
+    }
+
+    /// UCSC answers a search without a valid key with a web page that checks for people.
+    #[test]
+    fn searches_that_ucsc_checks_ask_for_the_key() {
+        let page = b"<html><h4>The Genome Browser is protecting itself from bots.</h4></html>";
+        let server = crate::server::serve(vec![("/cgi-bin/hgBlat".to_owned(), page.to_vec())]);
+        let scratch = Scratch::new("blat-checked");
+        let folder = scratch.file("marker", "").parent().unwrap().to_owned();
+        let bases = "ACGT".repeat(6);
+        let checked = search(
+            &server.url("/cgi-bin/hgBlat"),
+            "hg38",
+            ("q", &bases),
+            (Some("old"), Some(&folder)),
+        );
+        assert_eq!(checked.unwrap_err(), super::CHECKED);
+    }
+
+    #[test]
+    fn the_key_stays_in_the_settings_file() {
+        let scratch = Scratch::new("blat-key");
+        let folder = scratch.file("marker", "").parent().unwrap().to_owned();
+        assert_eq!(super::load_key(&folder), "");
+        crate::settings::Settings::default().save(&folder).unwrap();
+        super::save_key(&folder, " a1b2 ").unwrap();
+        assert_eq!(super::load_key(&folder), "a1b2");
+        assert_eq!(
+            crate::settings::Settings::load(&folder),
+            crate::settings::Settings::default()
+        );
+    }
+
+    #[test]
+    fn without_a_key_the_dialog_offers_the_ucsc_page() {
+        let mut genie = opened(Some("hg38"));
+        let _ = genie.update(Message::Blat(Blatting::Open(None)));
+        let _ = genie.update(Message::Blat(Blatting::Edit("ACGT".repeat(6))));
+        assert!(shows(&genie, super::KEY_NEEDED));
+        let mut ui = simulator(genie.view());
+        ui.click("Search on the UCSC page").unwrap();
+        let browse = Message::Blat(Blatting::Browse);
+        assert!(ui.into_messages().any(|message| message == browse));
+        let _ = genie.update(Message::Blat(Blatting::Submit));
+        assert!(!genie.blat.searching);
+        let _ = genie.update(Message::Blat(Blatting::Key("key1".to_owned())));
+        assert!(!shows(&genie, "Search on the UCSC page"));
+        let _ = genie.update(Message::Blat(Blatting::Submit));
+        assert!(genie.blat.searching);
+        let refused = Blatting::Done(Err(super::CHECKED.to_owned()));
+        let _ = genie.update(Message::Blat(refused));
+        assert!(shows(&genie, super::CHECKED));
+        assert!(shows(&genie, "Search on the UCSC page"));
     }
 
     /// A genie with chr1 and chr2 of 1,000 bases, from a genome of UCSC or from a file.
@@ -519,6 +694,7 @@ mod tests {
             "BLAT needs a genome of UCSC, such as hg38. Open one in the start view."
         ));
         let mut human = opened(Some("hg38"));
+        let _ = human.update(Message::Blat(Blatting::Key("key1".to_owned())));
         let _ = human.update(Message::Blat(Blatting::Open(None)));
         let _ = human.update(Message::Blat(Blatting::Edit("ACGT".to_owned())));
         let _ = human.update(Message::Blat(Blatting::Submit));
@@ -588,9 +764,35 @@ mod tests {
         assert!(shows(&genie, "BLAT found no alignment."));
     }
 
+    /// One real search of UCSC with your API key in `GENIE_UCSC_API_KEY`: the first 60 bases of
+    /// the human mitochondrial genome (rCRS) in hg38.
+    #[test]
+    #[ignore = "asks the BLAT server of UCSC with the key of GENIE_UCSC_API_KEY"]
+    fn real_blat_on_hg38() {
+        let Ok(key) = std::env::var("GENIE_UCSC_API_KEY") else {
+            println!("Set GENIE_UCSC_API_KEY to your UCSC API key.");
+            return;
+        };
+        let scratch = Scratch::new("blat-real");
+        let folder = scratch.file("marker", "").parent().unwrap().to_owned();
+        let bases = "GATCACAGGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTGGTATTTT";
+        let (_, text) = search(
+            genie_formats::blat::SERVER,
+            "hg38",
+            ("chrM start", bases),
+            (Some(&key), Some(&folder)),
+        )
+        .unwrap();
+        println!("{text}");
+        let found = super::hits(&text);
+        let start = |hit: &super::Hit| hit.contig == "chrM" && hit.span.start() == 0;
+        assert!(found.iter().any(start), "{found:?}");
+    }
+
     #[test]
     fn searches_wait_fifteen_seconds_between_them() {
         let mut genie = opened(Some("hg38"));
+        let _ = genie.update(Message::Blat(Blatting::Key("key1".to_owned())));
         genie.blat.last = Some(Instant::now());
         let _ = genie.update(Message::Blat(Blatting::Open(None)));
         let _ = genie.update(Message::Blat(Blatting::Edit("ACGT".repeat(6))));

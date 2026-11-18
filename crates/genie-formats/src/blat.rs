@@ -9,6 +9,8 @@ pub const MOST: usize = 8_000;
 /// The fewest bases that BLAT can align.
 pub const FEWEST: usize = 20;
 
+use std::fmt::Write as _;
+
 use genie_core::grouped;
 
 use crate::json::{self, Json};
@@ -74,9 +76,32 @@ pub fn bases(text: &str) -> Result<String, String> {
     Ok(found)
 }
 
-/// The address that asks a BLAT server for the alignments of bases in a genome of UCSC.
-pub fn address(server: &str, genome: &str, bases: &str) -> String {
-    format!("{server}?userSeq={bases}&type=DNA&db={genome}&output=json")
+/// The address that asks a BLAT server for the alignments of bases in a genome of UCSC. UCSC
+/// takes searches from programs only with the API key of a person.
+pub fn address(server: &str, genome: &str, bases: &str, key: Option<&str>) -> String {
+    let mut address = format!("{}&output=json", page(server, genome, bases));
+    if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
+        address.push_str("&apiKey=");
+        for byte in key.bytes() {
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+                address.push(char::from(byte));
+            } else {
+                let _ = write!(address, "%{byte:02X}");
+            }
+        }
+    }
+    address
+}
+
+/// The address of the web page of the same search, for a web browser.
+pub fn page(server: &str, genome: &str, bases: &str) -> String {
+    format!("{server}?userSeq={bases}&type=DNA&db={genome}")
+}
+
+/// True when an answer is a web page, not JSON: UCSC answers a program without a valid key with
+/// a page that checks for people.
+pub fn is_page(answer: &str) -> bool {
+    answer.trim_start().starts_with('<')
 }
 
 /// The alignments of an answer of the server as the lines of a PSL file, with the query name of
@@ -133,7 +158,7 @@ pub fn psl(answer: &str, query: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FEWEST, MOST, address, bases, psl};
+    use super::{FEWEST, MOST, address, bases, is_page, page, psl};
     use crate::psl::parse;
 
     #[test]
@@ -158,11 +183,31 @@ mod tests {
     }
 
     #[test]
-    fn addresses_ask_for_json() {
+    fn addresses_ask_for_json_with_the_key() {
+        let server = "https://genome.ucsc.edu/cgi-bin/hgBlat";
         assert_eq!(
-            address("https://genome.ucsc.edu/cgi-bin/hgBlat", "hg38", "ACGT"),
+            address(server, "hg38", "ACGT", None),
             "https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=ACGT&type=DNA&db=hg38&output=json"
         );
+        assert_eq!(
+            address(server, "hg38", "ACGT", Some(" a1/b+\n")),
+            "https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=ACGT&type=DNA&db=hg38&output=json&apiKey=a1%2Fb%2B"
+        );
+        assert_eq!(
+            address(server, "hg38", "ACGT", Some("  ")),
+            address(server, "hg38", "ACGT", None)
+        );
+        assert_eq!(
+            page(server, "hg38", "ACGT"),
+            "https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=ACGT&type=DNA&db=hg38"
+        );
+    }
+
+    /// UCSC answers a program without a valid key with a web page that checks for people.
+    #[test]
+    fn web_pages_are_not_answers() {
+        assert!(is_page("\n<html><head><script>"));
+        assert!(!is_page(ANSWER));
     }
 
     const ANSWER: &str = r#"{"track": "blat", "genome": "hg38",

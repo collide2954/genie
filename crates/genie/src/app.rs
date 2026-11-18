@@ -933,6 +933,7 @@ impl Genie {
                 .map(update::Checks::load)
                 .unwrap_or_default(),
             settings: folder.as_deref().map(Settings::load).unwrap_or_default(),
+            blat: blat::Blat::keyed(folder.as_deref().map(blat::load_key).unwrap_or_default()),
             last: folder
                 .as_deref()
                 .and_then(|folder| Saved::load(&folder.join(LAST)).ok()),
