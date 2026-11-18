@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+The check for updates works again.
+
+### Fixes
+
+- genie reads the answer of GitHub also when it is long. Before, the check for updates said that the answer "is not valid".
+
 ## 0.3.0
 
 genie shows methylation, structural variants, Hi-C maps, Sashimi plots and GWAS results. It opens CRAM, BCF, track hubs and files in cloud buckets, and it lifts tracks to another assembly.
