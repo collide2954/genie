@@ -134,6 +134,8 @@ fn answer(
         let (chunked, path) = route(path, "/chunked");
         let (whole, path) = route(path, "/whole");
         let (close, path) = route(path, "/close");
+        // No length and no chunks: the data ends where the connection ends.
+        let (eof, path) = route(path, "/eof");
         let (slow, path) = route(path, "/slow");
         let _meeting = slow.then(|| Meeting::new(inflight));
         let Some(data) = files.get(path) else {
@@ -143,7 +145,9 @@ fn answer(
             }
             continue;
         };
-        let message = message(data, range.filter(|_| !whole), (chunked, close), sizeless);
+        let close = close || eof;
+        let framing = (chunked, close, eof);
+        let message = message(data, range.filter(|_| !whole), framing, sizeless);
         if writer.write_all(&message).is_err() || close {
             return;
         }
@@ -153,7 +157,7 @@ fn answer(
 fn message(
     data: &[u8],
     range: Option<(usize, usize)>,
-    (chunked, close): (bool, bool),
+    (chunked, close, eof): (bool, bool, bool),
     sizeless: bool,
 ) -> Vec<u8> {
     let (status, extra, body) = match range {
@@ -191,6 +195,10 @@ fn message(
             message.extend_from_slice(b"\r\n");
         }
         message.extend_from_slice(b"0\r\n\r\n");
+    } else if eof {
+        head.push_str("\r\n");
+        message.extend_from_slice(head.as_bytes());
+        message.extend_from_slice(body);
     } else {
         let length = format!("Content-Length: {}\r\n\r\n", body.len());
         head.push_str(&length);

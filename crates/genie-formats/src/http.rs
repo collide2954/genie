@@ -14,7 +14,7 @@ use crate::Error;
 const CONNECT: Duration = Duration::from_secs(10);
 const WAIT: Duration = Duration::from_secs(30);
 const REDIRECTS: usize = 5;
-const WHOLE: u64 = 4 << 20;
+const WHOLE: usize = 4 << 20;
 const PART: u64 = 4 << 20;
 const IDLE: usize = 4;
 const AGENT: &str = concat!("genie/", env!("CARGO_PKG_VERSION"));
@@ -611,26 +611,21 @@ impl Connection {
         let length = answer
             .header("content-length")
             .and_then(|value| value.parse::<u64>().ok());
-        if status == 200 && length.is_none_or(|length| length > WHOLE) {
-            return Err(remote(format!(
-                "The server of {url} does not send parts of files."
-            )));
+        // A server that does not send parts sends the whole file. genie takes only a small one.
+        let most = if status == 200 {
+            WHOLE as u64
+        } else {
+            u64::MAX
+        };
+        if length.is_some_and(|length| length > most) {
+            return Err(sends_whole(url));
         }
         #[cfg(feature = "net-budget")]
         crate::budget::budget().room(url, length.unwrap_or(0))?;
-        answer.body = if chunked {
-            chunks(&mut self.reader)?
-        } else if let Some(length) = length {
-            let mut body = vec![0; usize::try_from(length).map_err(|_| bad_answer(url))?];
-            self.reader.read_exact(&mut body)?;
-            body
-        } else {
-            let mut body = Vec::new();
-            self.reader.read_to_end(&mut body)?;
-            body
-        };
+        let body = body(&mut self.reader, url, (chunked, length), most)?;
         #[cfg(feature = "net-budget")]
-        crate::budget::budget().count(url, status, answer.body.len());
+        crate::budget::budget().count(url, status, body.as_ref().map_or(WHOLE, Vec::len));
+        answer.body = body.ok_or_else(|| sends_whole(url))?;
         let closes = answer
             .header("connection")
             .is_some_and(|value| value.eq_ignore_ascii_case("close"));
@@ -641,13 +636,18 @@ impl Connection {
 
 fn exchange(url: &Url, start: u64, last: u64) -> Result<Answer, Error> {
     let origin = url.origin();
-    if let Some(mut connection) = take(&origin)
-        && let Ok((answer, keep)) = connection.send(url, start, last)
-    {
-        if keep {
-            give(origin, connection);
+    if let Some(mut connection) = take(&origin) {
+        match connection.send(url, start, last) {
+            Ok((answer, keep)) => {
+                if keep {
+                    give(origin, connection);
+                }
+                return Ok(answer);
+            }
+            // The server closed the kept connection. A new connection asks again.
+            Err(Error::Io(_)) => {}
+            Err(error) => return Err(error),
         }
-        return Ok(answer);
     }
     let mut connection = Connection::open(url)?;
     let (answer, keep) = connection
@@ -667,7 +667,27 @@ fn line(reader: &mut impl BufRead) -> Result<String, Error> {
     Ok(String::from_utf8_lossy(&bytes).trim_end().to_owned())
 }
 
-fn chunks(reader: &mut impl BufRead) -> Result<Vec<u8>, Error> {
+/// Reads the body of an answer. Gives `None` and stops when the body is longer than `most` bytes.
+fn body(
+    reader: &mut impl BufRead,
+    url: &Url,
+    (chunked, length): (bool, Option<u64>),
+    most: u64,
+) -> Result<Option<Vec<u8>>, Error> {
+    if chunked {
+        return chunks(reader, most);
+    }
+    let mut body = Vec::new();
+    if let Some(length) = length {
+        body.resize(usize::try_from(length).map_err(|_| bad_answer(url))?, 0);
+        reader.read_exact(&mut body)?;
+        return Ok(Some(body));
+    }
+    reader.take(most.saturating_add(1)).read_to_end(&mut body)?;
+    Ok((body.len() as u64 <= most).then_some(body))
+}
+
+fn chunks(reader: &mut impl BufRead, most: u64) -> Result<Option<Vec<u8>>, Error> {
     let mut body = Vec::new();
     loop {
         let size_line = line(reader)?;
@@ -676,13 +696,20 @@ fn chunks(reader: &mut impl BufRead) -> Result<Vec<u8>, Error> {
             .map_err(|_| remote("A server sent a chunk size that is not valid.".to_owned()))?;
         if size == 0 {
             while !line(reader)?.is_empty() {}
-            return Ok(body);
+            return Ok(Some(body));
         }
         let at = body.len();
+        if at.saturating_add(size) as u64 > most {
+            return Ok(None);
+        }
         body.resize(at + size, 0);
         reader.read_exact(&mut body[at..])?;
         line(reader)?;
     }
+}
+
+fn sends_whole(url: &Url) -> Error {
+    remote(format!("The server of {url} does not send parts of files."))
 }
 
 fn pool() -> &'static Mutex<HashMap<Origin, Vec<Connection>>> {
@@ -980,6 +1007,42 @@ mod tests {
             assert_eq!(fetched.bytes, data()[10..20], "{path}");
             assert_eq!(fetched.size, 5_000, "{path}");
         }
+    }
+
+    /// A program on a server, as BLAT, sends its whole answer in chunks or until it closes the
+    /// connection, and does not give the length first.
+    #[test]
+    fn whole_answers_without_a_length_work() {
+        let server = serve(vec![("/a.bin".to_owned(), data())]);
+        for path in ["/chunked/whole/a.bin", "/whole/eof/a.bin"] {
+            let url = Url::parse(&server.url(path)).unwrap();
+            let fetched = fetch(&url, 10, 20).unwrap();
+            assert_eq!(fetched.bytes, data()[10..20], "{path}");
+            assert_eq!(fetched.size, 5_000, "{path}");
+        }
+    }
+
+    #[test]
+    fn big_whole_answers_stop_once_and_without_a_second_request() {
+        let big = vec![7; (4 << 20) + 1];
+        let server = serve(vec![
+            ("/a.bin".to_owned(), data()),
+            ("/big.bin".to_owned(), big),
+        ]);
+        fetch(&Url::parse(&server.url("/a.bin")).unwrap(), 0, 10).unwrap();
+        for path in [
+            "/whole/big.bin",
+            "/chunked/whole/big.bin",
+            "/whole/eof/big.bin",
+        ] {
+            let url = Url::parse(&server.url(path)).unwrap();
+            assert_eq!(
+                fetch(&url, 0, 10).unwrap_err().to_string(),
+                format!("The server of {url} does not send parts of files."),
+                "{path}"
+            );
+        }
+        assert_eq!(server.requests(), 4);
     }
 
     /// The GitHub API answers a range with 206 and `Content-Range: bytes 0-4194303/*`, so it does
