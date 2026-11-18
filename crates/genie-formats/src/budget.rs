@@ -56,7 +56,7 @@ impl Budget {
     pub fn stored(&self, url: &Url, start: u64, end: u64) -> Option<Fetched> {
         let folder = self.cache.as_ref()?;
         let index = fs::read_to_string(folder.join("index.txt")).ok()?;
-        let address = url.to_string();
+        let address = url.shown();
         index.lines().find_map(|line| {
             let mut fields = line.split('\t');
             let name = fields.next()?;
@@ -84,13 +84,14 @@ impl Budget {
             return;
         };
         let last = start + fetched.bytes.len() as u64;
-        let key = format!("{url} {start} {last}");
+        let address = url.shown();
+        let key = format!("{address} {start} {last}");
         let file = format!("{}.part", md5::hex(&md5::digest(key.as_bytes())));
         if fs::write(folder.join(&file), &fetched.bytes).is_err() {
             return;
         }
         let _guard = LOCK.lock().unwrap_or_else(PoisonError::into_inner);
-        let line = format!("{url}\t{start}\t{last}\t{}\t{file}", fetched.size);
+        let line = format!("{address}\t{start}\t{last}\t{}\t{file}", fetched.size);
         append(&folder.join("index.txt"), &line);
     }
 
@@ -104,9 +105,10 @@ impl Budget {
             return Ok(());
         }
         let words = format!("{used} + {length} bytes is more than the cap of {cap} bytes");
-        self.note(&format!("refused {url}: {words}"));
+        let address = url.shown();
+        self.note(&format!("refused {address}: {words}"));
         Err(Error::Remote(format!(
-            "genie did not fetch {url}: {words} (GENIE_NET_CAP)."
+            "genie did not fetch {address}: {words} (GENIE_NET_CAP)."
         )))
     }
 
@@ -122,7 +124,10 @@ impl Budget {
             }
             all
         };
-        self.note(&format!("{status} {url} {bytes} bytes, {all} in all"));
+        self.note(&format!(
+            "{status} {} {bytes} bytes, {all} in all",
+            url.shown()
+        ));
     }
 
     fn note(&self, line: &str) {

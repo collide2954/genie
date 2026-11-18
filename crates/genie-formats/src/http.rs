@@ -21,6 +21,19 @@ const AGENT: &str = concat!("genie/", env!("CARGO_PKG_VERSION"));
 const AMAZON: &str = "s3.amazonaws.com";
 const GOOGLE: &str = "storage.googleapis.com";
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
+/// The names of query parts whose values are secret, in lower case.
+const SECRETS: [&str; 10] = [
+    "apikey",
+    "api_key",
+    "key",
+    "token",
+    "access_token",
+    "sig",
+    "signature",
+    "x-amz-signature",
+    "x-amz-credential",
+    "x-amz-security-token",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Url {
@@ -233,6 +246,29 @@ impl Url {
     fn origin(&self) -> Origin {
         (self.secure, self.host.clone(), self.port)
     }
+
+    /// The address for messages and logs: the values of keys, tokens and signatures in its
+    /// query show as `hidden`.
+    pub fn shown(&self) -> String {
+        let full = self.to_string();
+        let Some((head, query)) = full.split_once('?') else {
+            return full;
+        };
+        let parts: Vec<String> = query
+            .split('&')
+            .map(|part| match part.split_once('=') {
+                Some((name, _))
+                    if SECRETS
+                        .iter()
+                        .any(|secret| name.eq_ignore_ascii_case(secret)) =>
+                {
+                    format!("{name}=hidden")
+                }
+                _ => part.to_owned(),
+            })
+            .collect();
+        format!("{head}?{}", parts.join("&"))
+    }
 }
 
 impl fmt::Display for Url {
@@ -389,7 +425,10 @@ fn download_in(
             return Ok(fetched.size);
         }
         if fetched.bytes.is_empty() {
-            return Err(remote(format!("The server sent no data for {url}.")));
+            return Err(remote(format!(
+                "The server sent no data for {}.",
+                url.shown()
+            )));
         }
         write(&fetched.bytes)?;
         at += fetched.bytes.len() as u64;
@@ -429,7 +468,8 @@ fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
                     None if sizeless && bytes.len() < wanted => start + bytes.len() as u64,
                     None if sizeless => {
                         return Err(remote(format!(
-                            "The server of {url} does not say the size of the file."
+                            "The server of {} does not say the size of the file.",
+                            url.shown()
                         )));
                     }
                     None => return Err(bad_answer(url)),
@@ -459,7 +499,10 @@ fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
             status => return Err(refused(url, status, &answer.reason)),
         }
     }
-    Err(remote(format!("The address {url} has too many redirects.")))
+    Err(remote(format!(
+        "The address {} has too many redirects.",
+        url.shown()
+    )))
 }
 
 type Origin = (bool, String, u16);
@@ -709,7 +752,10 @@ fn chunks(reader: &mut impl BufRead, most: u64) -> Result<Option<Vec<u8>>, Error
 }
 
 fn sends_whole(url: &Url) -> Error {
-    remote(format!("The server of {url} does not send parts of files."))
+    remote(format!(
+        "The server of {} does not send parts of files.",
+        url.shown()
+    ))
 }
 
 fn pool() -> &'static Mutex<HashMap<Origin, Vec<Connection>>> {
@@ -755,7 +801,7 @@ fn failed(url: &Url, error: Error) -> Error {
             .and_then(|inner| inner.downcast_ref::<rustls::Error>())
         {
             Some(tls) => insecure(&url.host, tls),
-            None => remote(format!("genie cannot read {url}. {error}")),
+            None => remote(format!("genie cannot read {}. {error}", url.shown())),
         },
         error => error,
     }
@@ -772,13 +818,15 @@ fn refused(url: &Url, status: u16, reason: &str) -> Error {
         ""
     };
     remote(format!(
-        "The server answered {status} {reason} for {url}.{public}"
+        "The server answered {status} {reason} for {}.{public}",
+        url.shown()
     ))
 }
 
 fn bad_answer(url: &Url) -> Error {
     remote(format!(
-        "The server of {url} sent an answer that is not valid."
+        "The server of {} sent an answer that is not valid.",
+        url.shown()
     ))
 }
 
@@ -1074,6 +1122,28 @@ mod tests {
         assert_eq!(server.connections(), 1);
         fetch(&closing, 100, 110).unwrap();
         assert_eq!(server.connections(), 2);
+    }
+
+    /// The API key of UCSC and other secrets in an address do not show in messages and logs.
+    /// Sessions keep the whole address.
+    #[test]
+    fn messages_hide_the_secrets_of_addresses() {
+        let text = "https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=ACGT&apiKey=s3cret&db=hg38";
+        let url = Url::parse(text).unwrap();
+        assert_eq!(
+            url.shown(),
+            "https://genome.ucsc.edu/cgi-bin/hgBlat?userSeq=ACGT&apiKey=hidden&db=hg38"
+        );
+        assert_eq!(url.to_string(), text);
+        let signed = Url::parse("https://b.s3.amazonaws.com/a.bam?X-Amz-Signature=ab&x=1").unwrap();
+        assert_eq!(
+            signed.shown(),
+            "https://b.s3.amazonaws.com/a.bam?X-Amz-Signature=hidden&x=1"
+        );
+        let server = serve(Vec::new());
+        let missing = Url::parse(&server.url("/none.bam?APIKEY=s3cret")).unwrap();
+        let error = fetch(&missing, 0, 10).unwrap_err().to_string();
+        assert!(error.ends_with("/none.bam?APIKEY=hidden."), "{error}");
     }
 
     #[test]
