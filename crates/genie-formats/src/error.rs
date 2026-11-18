@@ -56,6 +56,15 @@ pub enum Reason {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // The end of a cut file, without words of its own: the standard library says only
+            // "failed to fill whole buffer".
+            Self::Io(error)
+                if error.kind() == io::ErrorKind::UnexpectedEof && error.get_ref().is_none() =>
+            {
+                f.write_str(
+                    "The file stops before the end of its data. Make sure that the file is complete.",
+                )
+            }
             Self::Io(error) => error.fmt(f),
             Self::Format { line, reason } => write!(f, "Line {line}: {reason}."),
             Self::Remote(message) => f.write_str(message),
@@ -142,5 +151,36 @@ impl From<io::Error> for Error {
             Ok(error) => error,
             Err(error) => Self::Io(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read};
+
+    use super::Error;
+
+    const CUT: &str =
+        "The file stops before the end of its data. Make sure that the file is complete.";
+
+    /// A file that is cut short gives words that say so, not the words of the standard library.
+    #[test]
+    fn files_that_stop_too_soon_say_so() {
+        let mut bytes = [0; 8];
+        let short = (&b"BAM\x01"[..]).read_exact(&mut bytes).unwrap_err();
+        assert_eq!(Error::from(short).to_string(), CUT);
+        let plain = io::Error::from(io::ErrorKind::UnexpectedEof);
+        assert_eq!(Error::from(plain).to_string(), CUT);
+        let own = io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "The server sent 10 bytes of 20.",
+        );
+        assert_eq!(
+            Error::from(own).to_string(),
+            "The server sent 10 bytes of 20."
+        );
+        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        let words = denied.to_string();
+        assert_eq!(Error::from(denied).to_string(), words);
     }
 }
