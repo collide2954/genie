@@ -237,4 +237,16 @@ mod tests {
         let missing = Url::parse(&server.url("/repos/x/releases/none")).unwrap();
         assert!(latest(&missing).is_err());
     }
+
+    /// GitHub sends a long answer in chunks, as a part of a size it does not say.
+    #[test]
+    #[ignore = "network"]
+    fn github_gives_the_newest_release() {
+        let release = latest(&Url::parse(super::LATEST).unwrap()).unwrap();
+        assert!(
+            release
+                .version
+                .starts_with(|letter: char| letter.is_ascii_digit())
+        );
+    }
 }

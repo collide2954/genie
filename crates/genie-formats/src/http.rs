@@ -407,9 +407,23 @@ pub fn fetch(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
         let answer = exchange(&current, start, last)?;
         match answer.status {
             206 => {
-                let size = answer.size().ok_or_else(|| bad_answer(url))?;
+                let wanted = usize::try_from(end - start).unwrap_or(usize::MAX);
+                let (size, sizeless) = (answer.size(), answer.sizeless());
                 let mut bytes = answer.body;
-                bytes.truncate(usize::try_from(end - start).unwrap_or(usize::MAX));
+                let size = match size {
+                    Some(size) => size,
+                    // A server that does not know the size of the whole, as the GitHub API,
+                    // ends Content-Range with `/*`. A part shorter than the range ends with the
+                    // data. A full part cannot say where the file ends.
+                    None if sizeless && bytes.len() < wanted => start + bytes.len() as u64,
+                    None if sizeless => {
+                        return Err(remote(format!(
+                            "The server of {url} does not say the size of the file."
+                        )));
+                    }
+                    None => return Err(bad_answer(url)),
+                };
+                bytes.truncate(wanted);
                 return Ok(Fetched { bytes, size });
             }
             200 => {
@@ -461,6 +475,12 @@ impl Answer {
             .trim()
             .parse()
             .ok()
+    }
+
+    /// True when Content-Range ends with `/*`: the server does not know the size of the whole.
+    fn sizeless(&self) -> bool {
+        self.header("content-range")
+            .is_some_and(|range| range.trim_end().ends_with("/*"))
     }
 }
 
@@ -945,6 +965,22 @@ mod tests {
             assert_eq!(fetched.bytes, data()[10..20], "{path}");
             assert_eq!(fetched.size, 5_000, "{path}");
         }
+    }
+
+    /// The GitHub API answers a range with 206 and `Content-Range: bytes 0-4194303/*`, so it does
+    /// not say the size of the whole answer. A part shorter than the range ends with the data.
+    #[test]
+    fn parts_of_an_unknown_size_end_where_their_data_ends() {
+        let server = serve(vec![("/a.bin".to_owned(), data())]);
+        let github = Url::parse(&server.url("/unsized/chunked/a.bin")).unwrap();
+        assert_eq!(get(&github).unwrap(), data());
+        let tail = fetch(&github, 4_000, 6_000).unwrap();
+        assert_eq!((tail.bytes, tail.size), (data()[4_000..].to_vec(), 5_000));
+        let full = Url::parse(&server.url("/unsized/a.bin")).unwrap();
+        assert_eq!(
+            fetch(&full, 0, 100).unwrap_err().to_string(),
+            format!("The server of {full} does not say the size of the file.")
+        );
     }
 
     #[test]

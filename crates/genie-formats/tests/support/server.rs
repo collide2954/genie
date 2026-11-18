@@ -129,6 +129,8 @@ fn answer(
             }
             continue;
         }
+        // As the GitHub API: parts say `bytes 0-4194303/*`, the range asked for and no size.
+        let (sizeless, path) = route(path, "/unsized");
         let (chunked, path) = route(path, "/chunked");
         let (whole, path) = route(path, "/whole");
         let (close, path) = route(path, "/close");
@@ -141,29 +143,35 @@ fn answer(
             }
             continue;
         };
-        let message = message(data, range.filter(|_| !whole), chunked, close);
+        let message = message(data, range.filter(|_| !whole), (chunked, close), sizeless);
         if writer.write_all(&message).is_err() || close {
             return;
         }
     }
 }
 
-fn message(data: &[u8], range: Option<(usize, usize)>, chunked: bool, close: bool) -> Vec<u8> {
+fn message(
+    data: &[u8],
+    range: Option<(usize, usize)>,
+    (chunked, close): (bool, bool),
+    sizeless: bool,
+) -> Vec<u8> {
     let (status, extra, body) = match range {
         Some((start, _)) if start >= data.len() => (
             "416 Range Not Satisfiable",
             format!("Content-Range: bytes */{}\r\n", data.len()),
             &data[0..0],
         ),
-        Some((start, end)) => {
-            let end = (end + 1).min(data.len());
+        Some((start, asked)) => {
+            let end = (asked + 1).min(data.len());
+            let part = if sizeless {
+                format!("{start}-{asked}/*")
+            } else {
+                format!("{start}-{}/{}", end - 1, data.len())
+            };
             (
                 "206 Partial Content",
-                format!(
-                    "Content-Range: bytes {start}-{}/{}\r\n",
-                    end - 1,
-                    data.len()
-                ),
+                format!("Content-Range: bytes {part}\r\n"),
                 &data[start..end],
             )
         }
