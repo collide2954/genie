@@ -180,6 +180,28 @@ pub struct LocusField {
     pub forward: bool,
     pub genome: String,
     pub about: String,
+    /// The widest the box can be, in pixels: the room that the tools and the window buttons at
+    /// its right leave in the window.
+    pub room: u16,
+}
+
+/// The width of the zoom buttons after the locus box, with the gap before them.
+const ZOOM_WIDTH: f32 = 8.0 + 4.0 * TOOL_SIZE + 3.0 * TOOL_GAP;
+/// The width of the tools at the right of the bar: regions, save, export, help, settings, look.
+const TOOLS_WIDTH: f32 = 6.0 * TOOL_SIZE + 5.0 * TOOL_GAP;
+/// The narrowest locus box, when the window has less room.
+const LOCUS_MIN_WIDTH: f32 = 120.0;
+
+/// The room for the locus box in a window of this width: what the buttons after it leave.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn locus_room(controls: Controls, window: f32) -> u16 {
+    let buttons = match controls {
+        Controls::Native => 0.0,
+        Controls::Custom => 3.0 * WINDOW_BUTTON_WIDTH,
+    };
+    let room = window - locus_x(controls) - ZOOM_WIDTH - TOOLS_WIDTH - END_GAP - buttons;
+    // The room is clamped to the range of u16 first, so the cast keeps its value.
+    room.clamp(0.0, f32::from(u16::MAX)).floor() as u16
 }
 
 pub const GENOME: &str = "genome";
@@ -345,9 +367,10 @@ pub fn resize_handles<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn locus_width(value: &str) -> f32 {
+fn locus_width(value: &str, room: u16) -> f32 {
     let text = value.chars().count() as f32 * MONO_ADVANCE * LOCUS_SIZE;
-    (text + 2.0 * LOCUS_PADDING + LOCUS_SIZE).clamp(LOCUS_WIDTH, LOCUS_MAX_WIDTH)
+    let wanted = (text + 2.0 * LOCUS_PADDING + LOCUS_SIZE).clamp(LOCUS_WIDTH, LOCUS_MAX_WIDTH);
+    wanted.min(f32::from(room).max(LOCUS_MIN_WIDTH))
 }
 
 fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
@@ -356,7 +379,7 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .font(font::MONO)
         .size(LOCUS_SIZE)
         .padding([2.0, LOCUS_PADDING])
-        .width(locus_width(&field.value))
+        .width(locus_width(&field.value, field.room))
         .style(style::locus)
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
@@ -550,8 +573,8 @@ mod tests {
     use iced_test::simulator::{self, simulator};
 
     use super::{
-        Action, Controls, Edge, GENOME, LOCUS, LocusField, genome_x, locus_x, resize_handles,
-        title_bar,
+        Action, Controls, Edge, GENOME, LOCUS, LOCUS_WIDTH, LocusField, WINDOW_BUTTON_WIDTH,
+        genome_x, locus_room, locus_x, resize_handles, title_bar,
     };
     use crate::app::{Message, Regions};
     use crate::icon::Icon;
@@ -613,6 +636,7 @@ mod tests {
             forward: false,
             genome: "hg38".to_owned(),
             about: "Human GRCh38".to_owned(),
+            room: u16::MAX,
         }
     }
 
@@ -747,6 +771,31 @@ mod tests {
         let two = width("chr17:43,041,001-43,128,600 chr13:32,312,901-32,402,900");
         assert!(two >= 55.0 * 7.2 + 16.0, "{two}");
         assert!((width(&"chr1:1-4 ".repeat(20)) - 480.0).abs() < 0.5);
+    }
+
+    /// Several loci in a narrow window do not push the window buttons out of it: the box takes
+    /// only the room that the tools leave, and its text scrolls.
+    #[test]
+    fn the_locus_box_keeps_the_window_buttons_in_the_window() {
+        let two = "chr17:43,044,295-43,125,364 chr13:32,315,508-32,400,268";
+        let window = 1024.0;
+        let locus = LocusField {
+            room: locus_room(Controls::Custom, window),
+            ..field(two, None)
+        };
+        let bar = title_bar(Controls::Custom, Icon::Monitor, Some(locus));
+        let mut ui =
+            iced_test::Simulator::with_size(iced::Settings::default(), (window, 300.0), bar);
+        for id in ["minimize", "maximize", "close"] {
+            let button = ui.find(selector::id(id)).unwrap().bounds();
+            assert!(
+                (button.width - WINDOW_BUTTON_WIDTH).abs() < 0.5
+                    && button.x + button.width <= window + 0.5,
+                "{id} {button:?}"
+            );
+        }
+        let width = ui.find(selector::id(LOCUS)).unwrap().bounds().width;
+        assert!(width >= LOCUS_WIDTH, "{width}");
     }
 
     #[test]

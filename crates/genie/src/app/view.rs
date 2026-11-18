@@ -175,6 +175,7 @@ impl Genie {
                 forward: session.history.can_go_forward(),
                 genome,
                 about,
+                room: chrome::locus_room(Controls::CURRENT, self.window.width),
             }
         });
         let mut layers = stack![column![
