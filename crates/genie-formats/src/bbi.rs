@@ -79,6 +79,8 @@ pub struct Index {
     lookup: Option<u64>,
     defined: usize,
     fields: Vec<(String, String)>,
+    /// The columns of the fields that are lists.
+    lists: Vec<usize>,
     labels: Vec<usize>,
 }
 
@@ -171,19 +173,27 @@ fn auto_sql(reader: &mut (impl Read + Seek), offset: u64) -> Result<String, Erro
     Ok(String::from_utf8_lossy(&bytes[..end]).into_owned())
 }
 
-fn declared(auto_sql: &str) -> Vec<(&str, &str)> {
+/// The fields that an autoSql declares: the name, the description, and true for a list, which
+/// `double[count] name` declares. A `char` array is a text, not a list.
+fn declared(auto_sql: &str) -> Vec<(&str, &str, bool)> {
     auto_sql
         .lines()
         .filter_map(|line| line.split_once(';'))
-        .filter_map(|(declaration, about)| Some((declaration.split_whitespace().last()?, about)))
+        .filter_map(|(declaration, about)| {
+            let mut words = declaration.split_whitespace();
+            let kind = words.next()?;
+            let name = words.last().unwrap_or(kind);
+            let list = kind.contains('[') && !kind.starts_with("char");
+            Some((name, about, list))
+        })
         .collect()
 }
 
-fn label_columns(fields: &[(&str, &str)]) -> Vec<usize> {
+fn label_columns(fields: &[(&str, &str, bool)]) -> Vec<usize> {
     let symbols: Vec<usize> = fields
         .iter()
         .enumerate()
-        .filter(|(column, (field, about))| {
+        .filter(|(column, (field, about, _))| {
             *column > 3 && SYMBOL_FIELDS.contains(field) && names_symbol(about)
         })
         .map(|(column, _)| column)
@@ -193,17 +203,17 @@ fn label_columns(fields: &[(&str, &str)]) -> Vec<usize> {
     }
     LABELS
         .iter()
-        .filter_map(|wanted| fields.iter().position(|(field, _)| field == wanted))
+        .filter_map(|wanted| fields.iter().position(|(field, ..)| field == wanted))
         .filter(|&column| column > 3)
         .collect()
 }
 
 /// The number of standard BED fields at the start of an autoSql.
-fn bed_fields(declared: &[(&str, &str)]) -> usize {
+fn bed_fields(declared: &[(&str, &str, bool)]) -> usize {
     declared
         .iter()
         .zip(BED_FIELDS)
-        .take_while(|((field, _), names)| names.contains(field))
+        .take_while(|((field, ..), names)| names.contains(field))
         .count()
 }
 
@@ -678,17 +688,7 @@ impl Index {
         } else {
             String::new()
         };
-        let declared = declared(&text);
-        let defined = match bed_fields(&declared) {
-            counted if defined < 3 && counted >= 3 => counted,
-            _ => defined,
-        };
-        let fields = declared
-            .iter()
-            .map(|(field, about)| ((*field).to_owned(), (*about).to_owned()))
-            .collect();
-        let labels = label_columns(&declared);
-        Ok(Self {
+        let mut index = Self {
             big,
             bed,
             buffer,
@@ -698,9 +698,33 @@ impl Index {
             zooms,
             lookup,
             defined,
-            fields,
-            labels,
-        })
+            fields: Vec::new(),
+            lists: Vec::new(),
+            labels: Vec::new(),
+        };
+        index.declare(&text);
+        Ok(index)
+    }
+
+    /// Takes the fields from the autoSql of the file. Old files can give 0 as the number of BED
+    /// fields, and the autoSql then tells it.
+    fn declare(&mut self, auto_sql: &str) {
+        let declared = declared(auto_sql);
+        let counted = bed_fields(&declared);
+        if self.defined < 3 && counted >= 3 {
+            self.defined = counted;
+        }
+        self.fields = declared
+            .iter()
+            .map(|(field, about, _)| ((*field).to_owned(), (*about).to_owned()))
+            .collect();
+        self.lists = declared
+            .iter()
+            .enumerate()
+            .filter(|(_, (.., list))| *list)
+            .map(|(column, _)| column)
+            .collect();
+        self.labels = label_columns(&declared);
     }
 
     pub fn is_bed(&self) -> bool {
@@ -745,10 +769,17 @@ impl Index {
             } else {
                 fields::label(about, name)
             };
-            found.push(Field {
-                label,
-                value: fields::plain(fields::linked(value)),
-            });
+            let value = fields::plain(fields::linked(value));
+            let value = if self.lists.contains(&column) {
+                fields::listed(&value)
+            } else if fields::names_ontology(about) {
+                fields::ontology(&value)
+            } else {
+                Some(value)
+            };
+            if let Some(value) = value {
+                found.push(Field { label, value });
+            }
         }
         found
     }
@@ -1107,6 +1138,71 @@ mod tests {
                 "Name of the source region",
                 "Name of the target region"
             ]
+        );
+    }
+
+    /// An autoSql like the one of dbSNP 155 at UCSC, with a text of two characters.
+    const DBSNP: &str = "table bigDbSnp
+\"Variant summary data extracted from dbSNP\"
+    (
+    string chrom; \"Reference sequence chromosome or scaffold\"
+    uint chromStart; \"Start position in chrom\"
+    uint chromEnd; \"End position in chrom\"
+    string name; \"dbSNP Reference SNP (rs) identifier\"
+    lstring ref; \"Reference allele\"
+    int altCount; \"Number of alternate alleles\"
+    lstring[altCount] alts; \"Alternate alleles\"
+    char[2] code; \"Code of two letters\"
+    int freqSourceCount; \"Number of projects reporting frequencies for this variant\"
+    double[freqSourceCount] minorAlleleFreq; \"Minor allele frequency from each project, -inf if not reported\"
+    lstring[freqSourceCount] majorAllele; \"Major allele from each project\"
+    uint maxFuncImpact; \"Sequence Ontology (SO) ID of greatest functional impact on gene (or 0 if none)\"
+    enum(snv, mnv, ins, del, delins, identity) class; \"Variation class\"
+    lstring ucscNotes; \"Interesting or anomalous properties noted by UCSC\"
+    )
+";
+
+    /// A char array of an autoSql is a text, not a list.
+    #[test]
+    fn auto_sql_lists_are_the_arrays_that_are_not_text() {
+        let lists: Vec<&str> = super::declared(DBSNP)
+            .iter()
+            .filter(|(.., list)| *list)
+            .map(|(name, ..)| *name)
+            .collect();
+        assert_eq!(lists, ["alts", "minorAlleleFreq", "majorAllele"]);
+    }
+
+    #[test]
+    fn list_items_keep_their_places_and_ontology_numbers_show_their_terms() {
+        let (mut index, _) = opened("genes.bb");
+        index.defined = 4;
+        index.declare(DBSNP);
+        let values = |extra: &str| -> Vec<String> {
+            index
+                .fields(extra)
+                .into_iter()
+                .map(|field| field.value)
+                .collect()
+        };
+        assert_eq!(
+            values("G\t1\tT,\tGT\t3\t0.5,-inf,0.25,\tG,,G,\t1623\tsnv\tclinvar,commonSome,"),
+            [
+                "G",
+                "1",
+                "T",
+                "GT",
+                "3",
+                "0.5, –, 0.25",
+                "G, –, G",
+                "5_prime_UTR_variant (SO:0001623)",
+                "snv",
+                "clinvar,commonSome,"
+            ]
+        );
+        assert_eq!(
+            values("G\t1\tT,\tGT\t2\t-inf,-inf,\t,,\t0\tsnv\t"),
+            ["G", "1", "T", "GT", "2", "snv"]
         );
     }
 

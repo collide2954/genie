@@ -13,6 +13,8 @@
 
 - In a narrow window, a locus box with several loci keeps the window buttons in the window. Before, the buttons could go out of view.
 - genie reads CRAM files with empty blocks that name a codec, as the 1000 Genomes files for GRCh38 have. Before, they gave the message "A CRAM block is not valid".
+- In a bigBed card, each item of a list keeps its place, and an item without a value (empty, `-inf` or `nan`) shows as –. Before, the card did not show empty items, so the alleles of dbSNP did not agree with the frequencies, and the card showed `-inf`.
+- A bigBed card shows the term of a Sequence Ontology number, for example `5_prime_UTR_variant (SO:0001623)` for 1623 in dbSNP. The card does not show 0, which is no term.
 
 ## 0.3.1
 

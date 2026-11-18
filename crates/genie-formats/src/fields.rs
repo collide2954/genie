@@ -52,6 +52,128 @@ pub fn number(item: &str) -> Option<f64> {
         .filter(|number| number.is_finite())
 }
 
+/// What a card shows for an item of a list that has no value.
+pub const MISSING: &str = "–";
+
+/// True for an item of a list that has no value: an empty item, or the `-inf` or `nan` that UCSC
+/// files give when a project does not report a number.
+fn missing(item: &str) -> bool {
+    ["", "-inf", "nan", "-nan"]
+        .iter()
+        .any(|word| item.eq_ignore_ascii_case(word))
+}
+
+/// The items of a list as a card shows them: each item in its place, [`MISSING`] for an item
+/// without a value, and no empty item after a last comma. A list without values gives `None`.
+pub fn listed(value: &str) -> Option<String> {
+    let mut items: Vec<&str> = value.split(',').map(str::trim).collect();
+    if items.len() > 1 && items.last() == Some(&"") {
+        items.pop();
+    }
+    if items.iter().all(|item| missing(item)) {
+        return None;
+    }
+    let shown: Vec<&str> = items
+        .into_iter()
+        .map(|item| if missing(item) { MISSING } else { item })
+        .collect();
+    Some(shown.join(", "))
+}
+
+/// The Sequence Ontology terms of variants by their numbers: the consequences of Ensembl VEP, the
+/// functional classes of dbSNP and the variant types of `ClinVar`.
+const ONTOLOGY: &[(u32, &str)] = &[
+    (159, "deletion"),
+    (199, "translocation"),
+    (289, "microsatellite"),
+    (667, "insertion"),
+    (1019, "copy_number_variation"),
+    (1059, "sequence_alteration"),
+    (1060, "sequence_variant"),
+    (1483, "SNV"),
+    (1566, "regulatory_region_variant"),
+    (1567, "stop_retained_variant"),
+    (1574, "splice_acceptor_variant"),
+    (1575, "splice_donor_variant"),
+    (1578, "stop_lost"),
+    (1580, "coding_sequence_variant"),
+    (1582, "initiator_codon_variant"),
+    (1583, "missense_variant"),
+    (1587, "stop_gained"),
+    (1589, "frameshift_variant"),
+    (1590, "terminator_codon_variant"),
+    (1619, "non_coding_transcript_variant"),
+    (1620, "mature_miRNA_variant"),
+    (1621, "NMD_transcript_variant"),
+    (1623, "5_prime_UTR_variant"),
+    (1624, "3_prime_UTR_variant"),
+    (1626, "incomplete_terminal_codon_variant"),
+    (1627, "intron_variant"),
+    (1628, "intergenic_variant"),
+    (1630, "splice_region_variant"),
+    (1631, "upstream_gene_variant"),
+    (1632, "downstream_gene_variant"),
+    (1634, "500B_downstream_variant"),
+    (1636, "2KB_upstream_variant"),
+    (1742, "copy_number_gain"),
+    (1743, "copy_number_loss"),
+    (1782, "TF_binding_site_variant"),
+    (1787, "splice_donor_5th_base_variant"),
+    (1792, "non_coding_transcript_exon_variant"),
+    (1818, "protein_altering_variant"),
+    (1819, "synonymous_variant"),
+    (1820, "inframe_indel"),
+    (1821, "inframe_insertion"),
+    (1822, "inframe_deletion"),
+    (1889, "transcript_amplification"),
+    (1891, "regulatory_region_amplification"),
+    (1892, "TFBS_amplification"),
+    (1893, "transcript_ablation"),
+    (1894, "regulatory_region_ablation"),
+    (1895, "TFBS_ablation"),
+    (1906, "feature_truncation"),
+    (1907, "feature_elongation"),
+    (1968, "coding_transcript_variant"),
+    (2007, "MNV"),
+    (2012, "start_lost"),
+    (2019, "start_retained_variant"),
+    (2152, "genic_downstream_transcript_variant"),
+    (2153, "genic_upstream_transcript_variant"),
+    (2169, "splice_polypyrimidine_tract_variant"),
+    (2170, "splice_donor_region_variant"),
+    (1_000_032, "delins"),
+    (1_000_035, "duplication"),
+    (1_000_036, "inversion"),
+];
+
+/// True for the description of a field with Sequence Ontology numbers.
+pub fn names_ontology(about: &str) -> bool {
+    about.to_ascii_lowercase().contains("sequence ontology")
+}
+
+/// The Sequence Ontology term of a number such as `1623` or `SO:0001623`, as
+/// `5_prime_UTR_variant (SO:0001623)`. An unknown number gives only its id, and other values stay
+/// as they are. 0 is the number of no term and gives `None`.
+pub fn ontology(value: &str) -> Option<String> {
+    let value = value.trim();
+    let digits = value.strip_prefix("SO:").unwrap_or(value);
+    let number = digits
+        .parse::<u32>()
+        .ok()
+        .filter(|_| digits.bytes().all(|byte| byte.is_ascii_digit()));
+    let Some(number) = number else {
+        return Some(value.to_owned());
+    };
+    if number == 0 {
+        return None;
+    }
+    let id = format!("SO:{number:07}");
+    Some(match ONTOLOGY.iter().find(|(known, _)| *known == number) {
+        Some((_, term)) => format!("{term} ({id})"),
+        None => id,
+    })
+}
+
 const LABEL_LIMIT: usize = 40;
 const STOPS: [&str; 8] = ["(", "{", "[", ",", ";", ":", ". ", "|"];
 const ENTITIES: [(&str, &str); 6] = [
@@ -169,7 +291,10 @@ pub fn plain(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Field, Rule, Test, items, label, linked, number, passes, plain, shown};
+    use super::{
+        Field, Rule, Test, items, label, linked, listed, names_ontology, number, ontology, passes,
+        plain, shown,
+    };
 
     fn fields(pairs: &[(&str, &str)]) -> Vec<Field> {
         pairs
@@ -228,6 +353,58 @@ mod tests {
         assert_eq!(number("-inf"), None);
         assert_eq!(number("NaN"), None);
         assert_eq!(number("x"), None);
+    }
+
+    #[test]
+    fn list_items_keep_their_places() {
+        let listed = |value| listed(value).unwrap();
+        assert_eq!(
+            listed("0.0329473,0.0111098,-inf,0.5,"),
+            "0.0329473, 0.0111098, –, 0.5"
+        );
+        assert_eq!(listed("G,G,,G,"), "G, G, –, G");
+        assert_eq!(listed(",T,"), "–, T");
+        assert_eq!(listed("NaN, 1 ,-nan"), "–, 1, –");
+        assert_eq!(listed("T,"), "T");
+        assert_eq!(listed("G"), "G");
+        assert_eq!(listed("inf,-INF"), "inf, –");
+    }
+
+    #[test]
+    fn lists_without_values_are_not_shown() {
+        assert_eq!(listed("-inf,-inf,"), None);
+        assert_eq!(listed(",,,"), None);
+        assert_eq!(listed("-inf"), None);
+        assert_eq!(listed(""), None);
+    }
+
+    #[test]
+    fn ontology_numbers_show_their_terms() {
+        assert_eq!(
+            ontology("1623").as_deref(),
+            Some("5_prime_UTR_variant (SO:0001623)")
+        );
+        assert_eq!(
+            ontology("SO:0001583").as_deref(),
+            Some("missense_variant (SO:0001583)")
+        );
+        assert_eq!(ontology("1000032").as_deref(), Some("delins (SO:1000032)"));
+        assert_eq!(ontology(" 99 ").as_deref(), Some("SO:0000099"));
+        assert_eq!(ontology("0"), None);
+        assert_eq!(ontology("SO:0000000"), None);
+        assert_eq!(
+            ontology("intron_variant").as_deref(),
+            Some("intron_variant")
+        );
+        assert_eq!(
+            ontology("SO:0001583|missense_variant").as_deref(),
+            Some("SO:0001583|missense_variant")
+        );
+        assert!(names_ontology(
+            "\"Sequence Ontology (SO) ID of greatest functional impact on gene\""
+        ));
+        assert!(names_ontology("Sequence Ontology id for variant type"));
+        assert!(!names_ontology("Variation class/type"));
     }
 
     #[test]

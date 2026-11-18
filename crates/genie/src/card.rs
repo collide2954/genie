@@ -669,8 +669,8 @@ fn wrapped(text: &str, width: f32, character: f32) -> usize {
     text.chars().count().div_ceil(per_line).max(1)
 }
 
-/// The items of a field value, each with a menu of what genie can do with it. A field of the
-/// sample table is a `sample` field.
+/// The items of a field value, each with a menu of what genie can do with it. An item without a
+/// value has no menu. A field of the sample table is a `sample` field.
 fn items<'a>(track: u64, label: &str, value: &str, sample: bool) -> Element<'a, Message> {
     let parts: Vec<String> = fields::items(value).map(str::to_owned).collect();
     if parts.is_empty() {
@@ -688,19 +688,21 @@ fn items<'a>(track: u64, label: &str, value: &str, sample: bool) -> Element<'a, 
         } else {
             item.clone()
         };
+        let words = text(shown).size(11).wrapping(WRAP);
+        if item == fields::MISSING {
+            cell = cell.push(words.style(style::muted));
+            continue;
+        }
         let label = label.to_owned();
-        cell = cell.push(Context::left(
-            text(shown).size(11).wrapping(WRAP),
-            move |at| {
-                Message::Field(Choice {
-                    track,
-                    label: label.clone(),
-                    item: item.clone(),
-                    at,
-                    sample,
-                })
-            },
-        ));
+        cell = cell.push(Context::left(words, move |at| {
+            Message::Field(Choice {
+                track,
+                label: label.clone(),
+                item: item.clone(),
+                at,
+                sample,
+            })
+        }));
     }
     cell.wrap().vertical_spacing(2).into()
 }

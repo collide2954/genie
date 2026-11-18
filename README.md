@@ -264,6 +264,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 - Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.
 - A card also shows the other fields of the file: bigBed fields with the descriptions from the file, GFF3 and GTF attributes, and the BED columns after column 12 (Column 13 and so on). A variant card shows the INFO entries with the descriptions from the `##INFO` lines of the header. If two descriptions give the same short label, the card shows the INFO IDs, for example `AF_EUR` and `AF_EUR_unrel`. genie does not show empty fields, fields with the value `none` or `.`, and bigBed fields that UCSC hides (names that start with `_`).
+- In a bigBed card, each item of a list keeps its place, and an item without a value (empty, `-inf` or `nan`) shows as –. For example, the alleles and the frequencies of the projects in dbSNP agree item by item. A Sequence Ontology number shows its term, for example `5_prime_UTR_variant (SO:0001623)`. genie does not show 0, which is no term.
 - A card shows up to 6 fields. Click to keep the card open and see all fields. If the card is taller than the window, scroll it. Ctrl+C (Cmd+C on macOS) copies the card with all fields.
 - genie keeps the first 400 characters of the INFO column of each variant, without the annotations of VEP, SnpEff and bcftools (see below). If it cuts the INFO column, the card shows **More INFO**.
 - A variant card shows QUAL and FILTER as the fields Quality and Filter.
