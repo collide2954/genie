@@ -116,7 +116,7 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
             Message::Table(Tabling::Open(id)),
         ));
     }
-    if !source.has_signal() && !source.has_links() {
+    if !source.has_signal() && !source.has_links() && !source.has_junctions() {
         actions.extend(
             MODES.map(|(label, mode)| Action::new(label, name, change(Change::Mode(mode)))),
         );

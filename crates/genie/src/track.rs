@@ -30,6 +30,7 @@ mod columns;
 mod contacts;
 mod features;
 mod gwas;
+pub mod junctions;
 mod lift;
 mod links;
 pub(crate) mod reads;
@@ -41,6 +42,7 @@ pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
 pub use gwas::GwasFile;
+pub use junctions::JunctionFile;
 pub use lift::{Lift, load_lifted};
 pub use links::LinkFile;
 pub use reads::ReadFile;
@@ -68,6 +70,7 @@ pub enum Format {
     Contacts(ContactFile),
     Columns(ColumnFile),
     Gwas(GwasFile),
+    Junctions(JunctionFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +109,7 @@ impl Source {
             Format::Contacts(file) => file.contigs(),
             Format::Columns(file) => file.contigs(),
             Format::Gwas(file) => file.contigs(),
+            Format::Junctions(file) => file.contigs(),
         }
     }
 
@@ -143,6 +147,11 @@ impl Source {
 
     pub fn has_links(&self) -> bool {
         matches!(self.format, Format::Links(_))
+    }
+
+    /// True for a file of splice junctions, such as a `SJ.out.tab` file of STAR.
+    pub fn has_junctions(&self) -> bool {
+        matches!(self.format, Format::Junctions(_))
     }
 
     pub fn has_features(&self) -> bool {
@@ -204,7 +213,7 @@ impl Source {
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
-            Format::Segments(_) | Format::Contacts(_) => u64::MAX,
+            Format::Segments(_) | Format::Contacts(_) | Format::Junctions(_) => u64::MAX,
             Format::Columns(_) => FEATURE_SPAN,
             Format::Gwas(file) => file.span(),
         }
@@ -713,6 +722,14 @@ pub enum Content {
     Segments(Copies),
     Contacts(Contacts),
     Associations(Vec<Association>),
+    Junctions(Splices),
+}
+
+/// The splice junctions of a junction file in a region, and the fields of each for its card.
+#[derive(Debug, PartialEq)]
+pub struct Splices {
+    pub junctions: Vec<Junction>,
+    pub fields: Vec<Vec<Field>>,
 }
 
 /// The contacts of a Hi-C map, the step that chose the size of its bins, and the normalization
@@ -878,6 +895,18 @@ impl Loaded {
         }
     }
 
+    pub fn junctions(region: Region, splices: Vec<genie_formats::junctions::Splice>) -> Self {
+        let (junctions, fields) = splices
+            .into_iter()
+            .map(|splice| (splice.junction, splice.fields))
+            .unzip();
+        Self {
+            region,
+            options: Options::default(),
+            content: Content::Junctions(Splices { junctions, fields }),
+        }
+    }
+
     pub fn associations(region: Region, associations: Vec<Association>) -> Self {
         Self {
             region,
@@ -953,7 +982,8 @@ impl Loaded {
             Content::Signal(_)
             | Content::Links(_)
             | Content::Contacts(_)
-            | Content::Associations(_) => 0,
+            | Content::Associations(_)
+            | Content::Junctions(_) => 0,
         }
     }
 
@@ -1285,6 +1315,16 @@ impl Track {
                         .collect(),
                 )
             }
+            Content::Junctions(splices) => {
+                let rules = &self.filter.rules;
+                let kept: Vec<usize> = (0..splices.junctions.len())
+                    .filter(|&at| fields::passes(rules, &splices.fields[at]))
+                    .collect();
+                Content::Junctions(Splices {
+                    junctions: kept.iter().map(|&at| splices.junctions[at]).collect(),
+                    fields: kept.iter().map(|&at| splices.fields[at].clone()).collect(),
+                })
+            }
             Content::Reads(_)
             | Content::Signal(_)
             | Content::Segments(_)
@@ -1592,6 +1632,7 @@ pub fn is_track(location: &Location) -> bool {
         || is_segments(&name)
         || is_hic(&name)
         || is_gwas_name(&name)
+        || genie_formats::junctions::Layout::of(&name).is_some()
         || Kind::of(&name).is_some()
 }
 
@@ -1807,6 +1848,8 @@ pub fn open_with(
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
     } else if is_hic(&name) {
         Format::Contacts(ContactFile::open(reading, &name)?)
+    } else if let Some(layout) = junctions::layout(reading, &name) {
+        Format::Junctions(JunctionFile::open(reading, &name, layout)?)
     } else if is_bedpe(&name) || is_loop_list(reading) {
         Format::Links(LinkFile::open(reading, &name)?)
     } else if is_segments(&name) {
@@ -2037,6 +2080,7 @@ pub fn load_kept(
             file.load(location, contig, region, (scope.step, options.table))?
         }
         Format::Gwas(file) => file.load(location, contig, region)?,
+        Format::Junctions(file) => file.load(contig, region),
     };
     Ok(Loaded { options, ..loaded })
 }
@@ -2163,7 +2207,8 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         | Format::Segments(_)
         | Format::Contacts(_)
         | Format::Columns(_)
-        | Format::Gwas(_) => Ok(Vec::new()),
+        | Format::Gwas(_)
+        | Format::Junctions(_) => Ok(Vec::new()),
     }
 }
 
@@ -2196,7 +2241,8 @@ fn kept(
         | Format::Segments(_)
         | Format::Contacts(_)
         | Format::Columns(_)
-        | Format::Gwas(_) => Vec::new(),
+        | Format::Gwas(_)
+        | Format::Junctions(_) => Vec::new(),
     })
 }
 
@@ -2234,7 +2280,8 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
         | Format::Segments(_)
         | Format::Contacts(_)
         | Format::Columns(_)
-        | Format::Gwas(_) => Vec::new(),
+        | Format::Gwas(_)
+        | Format::Junctions(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -2278,7 +2325,8 @@ pub fn names(source: &Source, assembly: &Assembly, lift: Option<&Lift>) -> Resul
         | Format::Segments(_)
         | Format::Contacts(_)
         | Format::Columns(_)
-        | Format::Gwas(_) => {
+        | Format::Gwas(_)
+        | Format::Junctions(_) => {
             return Ok(Names::default());
         }
     };
@@ -2312,10 +2360,10 @@ mod tests {
     use super::reads::Reads;
     use super::{
         Change, Contacts, Content, FeatureFile, Format, Gather, Grouping, Kept, Kinds, Loaded,
-        Methyl, Options, Pick, Plot, Prepared, Scope, Showing, SignalFile, Source, TAG_GROUPS,
-        Toggle, Track, Typed, VariantFile, change, contig_names, feature_fields, fits, hides,
-        is_track, link_fields, load, load_kept, lookup, names, neighbor, open, open_bbi,
-        open_typed, open_with, spans, step, variant_fields,
+        Methyl, Options, Pick, Plot, Prepared, Scope, Showing, SignalFile, Source, Splices,
+        TAG_GROUPS, Toggle, Track, Typed, VariantFile, change, contig_names, feature_fields, fits,
+        hides, is_track, junctions, link_fields, load, load_kept, lookup, names, neighbor, open,
+        open_bbi, open_typed, open_with, spans, step, variant_fields,
     };
     use crate::location::Location;
     use crate::scratch::Scratch;
@@ -3719,6 +3767,85 @@ mod tests {
             .map(|field| (field.label, field.value))
             .collect();
         assert_eq!(fields, [("observed".to_owned(), "30".to_owned())]);
+    }
+
+    fn junctions_of(loaded: &Loaded) -> &Splices {
+        let Content::Junctions(found) = &loaded.content else {
+            panic!("expected junctions");
+        };
+        found
+    }
+
+    #[test]
+    fn junction_files_open_as_junction_tracks() {
+        let scratch = Scratch::new("track-junctions");
+        let none = |_: Region| Err("There is no reference.".to_owned());
+        let star = "chr1\t1001\t2000\t1\t1\t1\t12\t3\t40\nchr1\t5001\t9000\t2\t2\t0\t4\t0\t25\n";
+        let path = scratch.file("liver.SJ.out.tab", star);
+        assert!(is_track(&Location::File(path.clone())));
+        let source = open(path).unwrap();
+        assert!(source.has_junctions() && !source.has_links() && !source.can_jump());
+        assert_eq!(source.contigs(), ["chr1"]);
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 3_000),
+            Options::default(),
+            1,
+            true,
+            none,
+        )
+        .unwrap();
+        let found = junctions_of(&loaded);
+        assert_eq!(found.junctions.len(), 1);
+        assert_eq!(found.junctions[0].span, region(1_000, 2_000));
+        assert_eq!(found.junctions[0].count, 12);
+        assert_eq!(found.fields[0][0].label, "Unique reads");
+        let bed = "track name=junctions description=\"TopHat junctions\"\n\
+            chr2\t100\t400\tJUNC1\t7\t+\t100\t400\t0\t2\t50,50\t0,250\n";
+        for name in ["sample_junctions.bed", "spliced.bed"] {
+            let source = open(scratch.file(name, bed)).unwrap();
+            assert!(source.has_junctions(), "{name}");
+            let loaded = load(
+                &source,
+                "chr2",
+                region(0, 1_000),
+                Options::default(),
+                1,
+                true,
+                none,
+            )
+            .unwrap();
+            assert_eq!(junctions_of(&loaded).junctions[0].span, region(150, 350));
+        }
+        let genes = open(scratch.file("genes.bed", "chr2\t100\t400\tGENE1\n")).unwrap();
+        assert!(!genes.has_junctions());
+    }
+
+    /// A view shows the junctions with the most reads when a file has very many in view.
+    #[test]
+    fn crowded_views_keep_the_junctions_with_the_most_reads() {
+        use std::fmt::Write as _;
+        let scratch = Scratch::new("track-junctions-many");
+        let mut text = String::new();
+        for at in 0..(junctions::MOST + 10) {
+            let start = 1_000 + at as u64 * 10;
+            let _ = writeln!(text, "chr1\t{start}\t{}\t1\t1\t0\t{at}\t0\t30", start + 500);
+        }
+        let source = open(scratch.file("many.SJ.out.tab", &text)).unwrap();
+        let none = |_: Region| Err("There is no reference.".to_owned());
+        let window = region(0, 1_000_000);
+        let loaded = load(&source, "chr1", window, Options::default(), 1, true, none).unwrap();
+        let found = junctions_of(&loaded);
+        assert_eq!(found.junctions.len(), junctions::MOST);
+        assert!(found.junctions.iter().all(|junction| junction.count >= 10));
+        assert!(
+            found
+                .junctions
+                .windows(2)
+                .all(|pair| pair[0].span.start() <= pair[1].span.start())
+        );
+        assert_eq!(found.fields.len(), found.junctions.len());
     }
 
     #[test]

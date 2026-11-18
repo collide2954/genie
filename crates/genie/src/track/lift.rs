@@ -3,11 +3,13 @@ use std::sync::Arc;
 
 use genie_core::association::Association;
 use genie_core::interaction::Interaction;
+use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
 use genie_core::signal::Summary;
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Contig, Feature, Region, Strand};
 use genie_formats::chain::Chains;
+use genie_formats::junctions::Splice;
 
 use super::{Content, Loaded, Options, Scope, Source, load_kept};
 use crate::location::Location;
@@ -103,6 +105,7 @@ enum Kind {
     Links,
     Segments,
     Associations,
+    Junctions,
 }
 
 /// The lifted records of the parts of a region.
@@ -115,7 +118,17 @@ struct Lifted {
     links: Vec<Interaction>,
     segments: Vec<Segment>,
     associations: Vec<Association>,
+    junctions: Vec<Splice>,
     samples: usize,
+}
+
+/// The strand of a record on the assembly in view: the reverse strand of a chain changes it.
+fn lifted_strand(strand: Strand, reverse: bool) -> Strand {
+    match (strand, reverse) {
+        (Strand::Forward, true) => Strand::Reverse,
+        (Strand::Reverse, true) => Strand::Forward,
+        (strand, _) => strand,
+    }
 }
 
 impl Lifted {
@@ -179,6 +192,22 @@ impl Lifted {
                         })
                     }));
             }
+            Content::Junctions(found) => {
+                self.kind = Some(Kind::Junctions);
+                for (junction, fields) in found.junctions.into_iter().zip(found.fields) {
+                    if let Some((span, reverse)) = place(junction.span) {
+                        let strand = lifted_strand(junction.strand, reverse);
+                        self.junctions.push(Splice {
+                            junction: Junction {
+                                span,
+                                strand,
+                                ..junction
+                            },
+                            fields,
+                        });
+                    }
+                }
+            }
             Content::Reads(_) | Content::Contacts(_) => {}
         }
     }
@@ -194,6 +223,11 @@ impl Lifted {
                 Loaded::signal(region, self.summaries, step)
             }
             Some(Kind::Links) => Loaded::links(region, self.links),
+            Some(Kind::Junctions) => {
+                self.junctions
+                    .sort_by_key(|splice| splice.junction.span.start());
+                Loaded::junctions(region, self.junctions)
+            }
             Some(Kind::Segments) => {
                 self.segments
                     .sort_by_key(|segment| (segment.sample, segment.span.start()));
@@ -219,11 +253,7 @@ fn lifted_feature(
     (span, reverse): (Region, bool),
     place: &impl Fn(Region) -> Option<(Region, bool)>,
 ) -> Feature {
-    let strand = match (feature.strand(), reverse) {
-        (Strand::Forward, true) => Strand::Reverse,
-        (Strand::Reverse, true) => Strand::Forward,
-        (strand, _) => strand,
-    };
+    let strand = lifted_strand(feature.strand(), reverse);
     let mut blocks: Vec<Region> = feature
         .blocks()
         .iter()

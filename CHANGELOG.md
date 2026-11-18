@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New tracks
+
+- genie opens splice junction files as junction tracks: the `SJ.out.tab` files of STAR, and the junction BED files of TopHat and regtools. Each junction is an arc in the color of its strand, higher and thicker for more reads, and its card shows the fields of the file, such as the multi-mapping reads and the splice motif.
+
 ### Website
 
 - A tutorial shows the main work in ten short clips of genie with real data: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change a track, find a sequence and save the work.
@@ -15,6 +19,7 @@
 - In the narrowest window, the title bar hides the buttons that the genie menu also has: save, export, help, settings and the whole genome. Before, the bar was wider than the window, and the buttons at its right were out of view.
 - A Hi-C map of a whole chromosome is bright. When the contacts of near bins are much higher than the others, the colors follow a curve that gives the middle count a fifth of the full color. Before, only the diagonal had color. Views of 10 Mb and less keep almost the same colors.
 - genie reads CRAM files with empty blocks that name a codec, as the 1000 Genomes files for GRCh38 have. Before, they gave the message "A CRAM block is not valid".
+- The track menus of interaction, Hi-C, copy number and table tracks have the correct height. Before, genie made space for items that these menus do not have, so a menu near the bottom of the window could move up too far.
 - In a bigBed card, each item of a list keeps its place, and an item without a value (empty, `-inf` or `nan`) shows as –. Before, the card did not show empty items, so the alleles of dbSNP did not agree with the frequencies, and the card showed `-inf`.
 - A bigBed card shows the term of a Sequence Ontology number, for example `5_prime_UTR_variant (SO:0001623)` for 1623 in dbSNP. The card does not show 0, which is no term.
 

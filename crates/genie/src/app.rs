@@ -4208,6 +4208,70 @@ mod tests {
         }
     }
 
+    /// A segment track of two samples with one segment each on chr1.
+    fn with_segments() -> Genie {
+        use genie_core::segment::Segment;
+        use genie_formats::seg::Segments;
+        let mut genie = opened();
+        let segments = Segments {
+            samples: vec!["tumor1".to_owned(), "tumor2".to_owned()],
+            value: "seg.mean".to_owned(),
+            ..Segments::default()
+        };
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/cohort.seg").into(),
+            name: "cohort.seg".to_owned(),
+            data: None,
+            format: Format::Segments(SegmentFile { segments }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let segment = |sample, start, end| Segment {
+            span: Region::between(start, end),
+            sample,
+            value: 0.5,
+            markers: None,
+        };
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let found = vec![segment(0, 0, 400), segment(1, 100, 900)];
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::segments(region, found, 2))),
+        );
+        genie
+    }
+
+    /// A track of a table with a tabix index and two columns of numbers, without data in view.
+    fn with_table() -> Genie {
+        let scratch = crate::scratch::Scratch::new("app-table");
+        let text = "#Chrom\tPos\tRef\tAlt\tRawScore\tPHRED\n1\t101\tT\tA\t0.7\t8.5\n";
+        let mut writer = genie_formats::bgzf::Writer::new(Vec::new());
+        std::io::Write::write_all(&mut writer, text.as_bytes()).unwrap();
+        let data = writer.finish().unwrap();
+        let layout = genie_formats::tabix::Layout::generic([1, 2, 2]);
+        let index =
+            genie_formats::tabix::build(std::io::Cursor::new(&data), layout, false).unwrap();
+        let path = scratch.file("scores.tsv.gz", &data);
+        scratch.file("scores.tsv.gz.tbi", &index);
+        let source = Arc::new(crate::track::open(path).unwrap());
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        genie
+    }
+
+    /// A Hi-C track of the test file of genie-formats, without data in view.
+    fn with_contacts() -> Genie {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../genie-formats/tests/data/contacts.hic");
+        let source = Arc::new(crate::track::open(path).unwrap());
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        genie
+    }
+
     #[test]
     fn segment_tracks_show_a_row_per_sample_and_a_range_in_the_menu() {
         use genie_core::segment::Segment;
@@ -4295,6 +4359,67 @@ mod tests {
         }
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(410.0, 40.0))));
         assert!(!shows(&genie, "loopA"));
+    }
+
+    /// A link track of a BEDPE file with one loop on chr1.
+    fn with_links() -> Genie {
+        use genie_core::interaction::Interaction;
+        let mut genie = opened();
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/loops.bedpe").into(),
+            name: "loops.bedpe".to_owned(),
+            data: None,
+            format: Format::Links(LinkFile::Table {
+                bedpe: genie_formats::bedpe::Bedpe::default(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let link = Interaction::new(Region::between(100, 120), Region::between(700, 720), None);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::links(region, vec![link]))),
+        );
+        genie
+    }
+
+    /// A junction track of a STAR file with two junctions on chr1: 101-300 with 12 reads and
+    /// 401-800 with 4 reads.
+    fn with_junctions() -> Genie {
+        let scratch = crate::scratch::Scratch::new("app-junctions");
+        let text = "chr1\t101\t300\t1\t1\t1\t12\t3\t40\nchr1\t401\t800\t2\t2\t0\t4\t0\t25\n";
+        let source = Arc::new(crate::track::open(scratch.file("liver.SJ.out.tab", text)).unwrap());
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::clone(&source))));
+        let region = Region::between(0, 1_000);
+        let none = |_: Region| Err("There is no reference.".to_owned());
+        let options = crate::track::Options::default();
+        let loaded = crate::track::load(&source, "chr1", region, options, 1, true, none).unwrap();
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    #[test]
+    fn junction_tracks_draw_arcs_and_their_cards_show_the_fields_of_the_file() {
+        let mut genie = with_junctions();
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.0, 4.0))));
+        for text in [
+            "Intron 200 bp",
+            "Unique reads",
+            "Multi-mapping reads",
+            "GT/AG",
+            "40 bp",
+        ] {
+            assert!(shows(&genie, text), "{text}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.0, 28.0))));
+        assert!(!shows(&genie, "Intron 200 bp"));
     }
 
     #[test]
@@ -4950,6 +5075,11 @@ mod tests {
             with_filtered(),
             with_lifted(),
             with_sashimi(),
+            with_junctions(),
+            with_links(),
+            with_segments(),
+            with_contacts(),
+            with_table(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));

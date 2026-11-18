@@ -459,6 +459,7 @@ impl Genie {
         let data = slot.data(contig)?;
         let mode = track.mode_at(panel, contig);
         let (x, y) = (pointer.local.x, pointer.local.y);
+        let mut file_fields = Vec::new();
         let detail = match &data.content {
             Content::Features(annotation) => {
                 let index =
@@ -518,6 +519,12 @@ impl Genie {
             }
             Content::Associations(found) => association_detail(track, found, viewport, (x, y))?,
             Content::Contacts(found) => contact_detail(track, found, viewport, (x, y))?,
+            Content::Junctions(found) => {
+                let height = track.height.unwrap_or(track::junctions::HEIGHT);
+                let index = alignments::arc_hit_in(viewport, &found.junctions, height, x, y)?;
+                file_fields.clone_from(&found.fields[index]);
+                Detail::Junction(found.junctions[index])
+            }
         };
         let fields = match &detail {
             Detail::Feature(feature) => track::feature_fields(&track.source, feature),
@@ -527,8 +534,8 @@ impl Genie {
             Detail::Association { association, .. } => {
                 track::association_fields(&track.source, association)
             }
-            Detail::Junction(_)
-            | Detail::Methylation { .. }
+            Detail::Junction(_) => file_fields,
+            Detail::Methylation { .. }
             | Detail::Signal { .. }
             | Detail::Match { .. }
             | Detail::Product { .. }
@@ -1167,6 +1174,7 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "cns",
                     "cnr",
                     "hic",
+                    "tab",
                 ],
             )
             .add_filter(

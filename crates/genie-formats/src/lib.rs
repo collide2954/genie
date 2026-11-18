@@ -33,6 +33,7 @@ pub mod http;
 pub mod hub;
 pub mod icon;
 pub mod ini;
+pub mod junctions;
 pub mod md5;
 pub mod png;
 pub mod remote;

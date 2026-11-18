@@ -29,7 +29,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{Change, Content, Loaded, Pile, Track};
+use crate::track::{Change, Content, Loaded, Pile, Track, junctions};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -94,6 +94,7 @@ impl Genie {
                     Some(Content::Reads(pile)) => reads += pile.reads.len(),
                     Some(Content::Features(annotation)) => features += annotation.features.len(),
                     Some(Content::Links(links)) => features += links.len(),
+                    Some(Content::Junctions(found)) => features += found.junctions.len(),
                     Some(Content::Segments(copies)) => features += copies.segments.len(),
                     Some(Content::Contacts(contacts)) => values += contacts.map.contacts.len(),
                     Some(Content::Associations(found)) => sites += found.len(),
@@ -806,6 +807,13 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
                 .filter(|link| link.span().overlaps(visible))
                 .count(),
         ),
+        Content::Junctions(found) => Some(
+            found
+                .junctions
+                .iter()
+                .filter(|junction| junction.span.overlaps(visible))
+                .count(),
+        ),
         Content::Reads(_)
         | Content::Signal(_)
         | Content::Segments(_)
@@ -939,6 +947,11 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             let height = track.height.unwrap_or(shape.height);
             let look = (track.hue, track.plot.colors);
             Body::Scene(links::scene(viewport, found, look, height), height)
+        }
+        Some(Content::Junctions(found)) => {
+            let height = track.height.unwrap_or(shape.height);
+            let arcs = alignments::arcs_in(viewport, &found.junctions, height);
+            Body::Scene(arcs, height)
         }
         Some(Content::Segments(copies)) => {
             let names = track.source.samples();
@@ -1370,10 +1383,12 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         }
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
+        Some(Content::Junctions(_)) => Shape::plain(junctions::HEIGHT),
         Some(Content::Contacts(_)) => Shape::plain(contacts::HEIGHT),
         Some(Content::Associations(_)) => Shape::plain(manhattan::HEIGHT),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
+        None if track.source.has_junctions() => Shape::plain(junctions::HEIGHT),
         None if track.source.has_contacts() => Shape::plain(contacts::HEIGHT),
         None if track.source.has_associations() => Shape::plain(manhattan::HEIGHT),
         None => Shape::plain(EMPTY_HEIGHT),

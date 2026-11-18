@@ -68,6 +68,7 @@
 <tr><td>Variant track</td><td>VCF (plain, gzip or bgzip); BCF (<code>.bcf</code>) with its CSI index (<code>.bcf.csi</code>)</td></tr>
 <tr><td>Signal track</td><td>bigWig (<code>.bw</code>); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip)</td></tr>
 <tr><td>Interaction track</td><td>bigInteract (<code>.bb</code>); BEDPE (<code>.bedpe</code>, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (<code>.txt</code>, plain or gzip)</td></tr>
+<tr><td>Junction track</td><td>STAR splice junctions (<code>SJ.out.tab</code>); junction BED files of TopHat and regtools (<code>junctions.bed</code>, or a BED file with the track line <code>track name=junctions</code> or <code>graphType=junctions</code>). Plain or gzip, up to 50 MB</td></tr>
 <tr><td>Hi-C track</td><td>Juicer <code>.hic</code>, versions 6 to 9</td></tr>
 <tr><td>Table track</td><td>Tab-separated tables compressed with bgzip and indexed with <code>tabix -s -b -e</code>, for example the CADD scores (<code>.tsv.gz</code>, <code>.txt.gz</code> and others, with <code>.tbi</code> or <code>.csi</code>)</td></tr>
 <tr><td>GWAS track</td><td>Summary statistics of the GWAS Catalog, PLINK 2 (<code>.glm.linear</code>, <code>.glm.logistic</code>), REGENIE (<code>.regenie</code>), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index</td></tr>

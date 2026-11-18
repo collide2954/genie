@@ -25,6 +25,18 @@ const HEADING_HEIGHT: f32 = 21.0;
 const LINK_HEIGHT: f32 = 22.6;
 const SEPARATOR_HEIGHT: f32 = 8.0;
 const SWATCHES_HEIGHT: f32 = 24.0;
+/// The kind items of a track without modes, swatches or jumps to the next feature, each with its
+/// separator: the items that every track menu has.
+const PLAIN_HEIGHT: f32 =
+    FEATURES_HEIGHT - 5.0 * LINK_HEIGHT - 3.0 * SEPARATOR_HEIGHT - SWATCHES_HEIGHT;
+/// The row of swatches with the space of the menu under it.
+const SWATCH_ROW: f32 = SWATCHES_HEIGHT + 1.0;
+/// The swatches and their separator.
+const COLORS_HEIGHT: f32 = SWATCH_ROW + SEPARATOR_HEIGHT;
+/// The three modes and their separator.
+const MODES_HEIGHT: f32 = 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT;
+/// The row of the fields of a range, with the space of the menu under it.
+const RANGE_ROW: f32 = 25.6;
 const FILTER_WIDTH: f32 = 260.0;
 pub const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
@@ -350,14 +362,24 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_signal() {
         SIGNAL_HEIGHT
     } else if track.source.has_links() {
-        COLORED_HEIGHT - 3.0 * LINK_HEIGHT - SEPARATOR_HEIGHT
+        // The file colors and the swatches.
+        PLAIN_HEIGHT + LINK_HEIGHT + COLORS_HEIGHT
+    } else if track.source.has_junctions() {
+        PLAIN_HEIGHT
     } else if track.source.has_contacts() {
+        // The normalizations and observed/expected, with their separator, in a column of their
+        // own that has one space less.
         let choices = track.source.normalizations(None).0.len() as f32 + 1.0;
-        FEATURES_HEIGHT - SWATCHES_HEIGHT - SEPARATOR_HEIGHT + (choices - 3.0) * LINK_HEIGHT
+        PLAIN_HEIGHT + choices * LINK_HEIGHT + SEPARATOR_HEIGHT - 1.0
     } else if track.source.has_columns() {
-        FEATURES_HEIGHT + column_choices(track) as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
+        // The columns and the rows, with their separator, in a column of their own that has one
+        // space less.
+        let choices = column_choices(track) as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT - 1.0;
+        PLAIN_HEIGHT + choices + MODES_HEIGHT + COLORS_HEIGHT
     } else if track.source.has_segments() {
-        FEATURES_HEIGHT + 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
+        // The range and the default range, with their separator.
+        let range = RANGE_ROW + LINK_HEIGHT + SEPARATOR_HEIGHT;
+        PLAIN_HEIGHT + MODES_HEIGHT + range + COLORS_HEIGHT
     } else if track.source.has_colors() {
         COLORED_HEIGHT
     } else {
@@ -581,7 +603,7 @@ pub fn view<'a>(
         signal_items(track, range).extend(methyl_items(track))
     } else if track.source.has_signal() {
         signal_items(track, range)
-    } else if track.source.has_links() {
+    } else if track.source.has_links() || track.source.has_junctions() {
         column![]
     } else if track.source.has_contacts() {
         column(contact_items(track)).spacing(1)
@@ -604,7 +626,10 @@ pub fn view<'a>(
     let mut content = top_items(track).push(kind).extend(sample_items(track));
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));
-    } else if !track.source.has_variants() && !track.source.has_contacts() {
+    } else if !track.source.has_variants()
+        && !track.source.has_contacts()
+        && !track.source.has_junctions()
+    {
         if track.source.has_colors() {
             content = content.push(item(
                 "Use file colors",

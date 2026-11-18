@@ -196,11 +196,14 @@ pub fn view<'a>(
     ]
     .spacing(6)
     .align_y(Alignment::Center);
+    let junctions = track.source.has_junctions();
     let mut body = Column::new()
         .spacing(8)
-        .push(line("Name", field("Name", &draft.name, Drafting::Name)))
-        .push(line("Color", swatches(id, track.hue)));
-    if !track.source.has_signal() && !track.source.has_links() {
+        .push(line("Name", field("Name", &draft.name, Drafting::Name)));
+    if !junctions {
+        body = body.push(line("Color", swatches(id, track.hue)));
+    }
+    if !track.source.has_signal() && !track.source.has_links() && !junctions {
         let modes =
             MODES.map(|(label, choice)| (label, change(Change::Mode(choice)), choice == mode));
         body = body.push(line("Rows", choices(modes)));

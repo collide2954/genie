@@ -291,16 +291,20 @@ fn row_at(y: f32, row_height: f32, groups: &[(usize, String)]) -> Option<usize> 
     (row < end).then_some(row)
 }
 
-const ARC_BASE: f32 = JUNCTION_HEIGHT - 2.0;
+/// The space under the feet of the arcs of a lane of junctions.
+const ARC_FOOT: f32 = 2.0;
+/// The space over the highest arc of a lane of junctions.
+const ARC_HEAD: f32 = 6.0;
 const LOW_RISE: f32 = 6.0;
-const HIGH_RISE: f32 = JUNCTION_HEIGHT - 6.0;
 const COUNT_GAP: f32 = 6.0;
 
-fn arc_shape(viewport: Viewport, junction: &Junction, most: u32) -> (f32, f32, f32) {
+/// The start, the end and the rise of the arc of a junction in a lane of a height.
+fn arc_shape(viewport: Viewport, junction: &Junction, most: u32, height: f32) -> (f32, f32, f32) {
     let px = |bp: u64| viewport.to_px(bp as f64) as f32;
     let (from, to) = (px(junction.span.start()), px(junction.span.end()));
     let share = junction.count as f32 / most.max(1) as f32;
-    let rise = LOW_RISE + (HIGH_RISE - LOW_RISE) * share;
+    let high = (height - ARC_HEAD).max(LOW_RISE);
+    let rise = LOW_RISE + (high - LOW_RISE) * share;
     (from, to, rise.min(((to - from) / 2.0).max(4.0)))
 }
 
@@ -316,7 +320,15 @@ fn most(junctions: &[Junction]) -> u32 {
         .unwrap_or(1)
 }
 
+/// The arcs of the junctions of a read track, in its junction lane.
 pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
+    arcs_in(viewport, junctions, JUNCTION_HEIGHT)
+}
+
+/// The arcs of junctions in a lane of a height: an arc rises higher for more reads, and has the
+/// color of its strand and the number of its reads.
+pub fn arcs_in(viewport: Viewport, junctions: &[Junction], height: f32) -> Vec<Primitive> {
+    let base = height - ARC_FOOT;
     let visible = viewport.visible();
     let most = most(junctions);
     let mut shown: Vec<&Junction> = junctions
@@ -329,7 +341,7 @@ pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
     let mut primitives: Vec<Primitive> = shown
         .iter()
         .map(|junction| {
-            let (from, to, rise) = arc_shape(viewport, junction, most);
+            let (from, to, rise) = arc_shape(viewport, junction, most, height);
             let paint = match junction.strand {
                 Strand::Forward => Paint::Hue(Hue::Blue),
                 Strand::Reverse => Paint::Hue(Hue::Vermillion),
@@ -338,7 +350,7 @@ pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
             Primitive::Arc {
                 from,
                 to,
-                base: ARC_BASE,
+                base,
                 rise,
                 width: arc_width(junction.count),
                 paint,
@@ -347,10 +359,10 @@ pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
         .collect();
     let mut placed: Vec<(f32, f32, f32)> = Vec::new();
     for junction in shown.into_iter().rev() {
-        let (from, to, rise) = arc_shape(viewport, junction, most);
+        let (from, to, rise) = arc_shape(viewport, junction, most, height);
         let words = junction.count.to_string();
         let half = words.len() as f32 * COUNT_SIZE * 0.3;
-        let peak = ARC_BASE - rise;
+        let peak = base - rise;
         let y = if peak - COUNT_GAP - COUNT_SIZE / 2.0 >= 0.0 {
             peak - COUNT_GAP
         } else {
@@ -377,18 +389,31 @@ pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
     primitives
 }
 
+/// The junction of the arc under a point of the junction lane of a read track.
 pub fn arc_hit(viewport: Viewport, junctions: &[Junction], x: f32, y: f32) -> Option<usize> {
+    arc_hit_in(viewport, junctions, JUNCTION_HEIGHT, x, y)
+}
+
+/// The junction of the arc under a point of a lane of junctions of a height.
+pub fn arc_hit_in(
+    viewport: Viewport,
+    junctions: &[Junction],
+    height: f32,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let base = height - ARC_FOOT;
     let most = most(junctions);
     junctions
         .iter()
         .enumerate()
         .filter_map(|(index, junction)| {
-            let (from, to, rise) = arc_shape(viewport, junction, most);
+            let (from, to, rise) = arc_shape(viewport, junction, most, height);
             if to <= from || x < from || x > to {
                 return None;
             }
             let t = (x - from) / (to - from);
-            let curve = ARC_BASE - 4.0 * rise * t * (1.0 - t);
+            let curve = base - 4.0 * rise * t * (1.0 - t);
             let distance = (curve - y).abs();
             (distance <= REACH.max(arc_width(junction.count))).then_some((index, distance))
         })
@@ -695,8 +720,8 @@ mod tests {
     use genie_core::methylation::Site;
 
     use super::{
-        LIMIT, Look, arc_hit, arcs, coverage, fit, hit, methylation, methylation_height,
-        methylation_hit, reads,
+        LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, coverage, fit, hit, methylation,
+        methylation_height, methylation_hit, reads,
     };
     use crate::features::Mode;
     use crate::scene::{Align, Base, Hue, Paint, Primitive, Shade};
@@ -1012,6 +1037,28 @@ mod tests {
         assert_eq!(at(71.0, 26.0), Some(1));
         assert_eq!(at(35.0, 30.0), None);
         assert_eq!(at(5.0, 29.0), None);
+    }
+
+    /// A junction track can be taller than the lane of a read track: its arcs rise higher.
+    #[test]
+    fn taller_lanes_raise_the_arcs() {
+        let junction = |start, end, count| Junction {
+            span: region(start, end),
+            count,
+            strand: Strand::Forward,
+        };
+        let junctions = [junction(0, 100, 8), junction(500, 600, 16)];
+        let primitives = arcs_in(view(0, 100), &junctions, 64.0);
+        let arc = primitives.iter().find_map(|primitive| match primitive {
+            Primitive::Arc { base, rise, .. } => Some((*base, *rise)),
+            _ => None,
+        });
+        assert_eq!(arc, Some((62.0, 32.0)));
+        assert_eq!(
+            arc_hit_in(view(0, 100), &junctions, 64.0, 50.0, 30.0),
+            Some(0)
+        );
+        assert_eq!(arc_hit_in(view(0, 100), &junctions, 64.0, 50.0, 60.0), None);
     }
 
     #[test]

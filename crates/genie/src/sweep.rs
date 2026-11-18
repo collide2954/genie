@@ -112,6 +112,17 @@ const TEXTS: &[(&str, &str)] = &[
         "chr1\t100\t101\tm\t20\t+\t100\t101\t255,0,0\t20\t75.00\t15\t5\t0\t0\t0\t0\t0\n\
          chr1\t101\t102\tm\t18\t-\t101\t102\t255,0,0\t18\t50.00\t9\t9\t0\t0\t0\t0\t0\n",
     ),
+    (
+        "liver.SJ.out.tab",
+        "chr1\t1001\t2000\t1\t1\t1\t12\t3\t40\nchr1\t5001\t9000\t2\t2\t0\t4\t0\t25\n\
+         chr2\t101\t300\t0\t0\t0\t1\t2\t18\n",
+    ),
+    (
+        "liver_junctions.bed",
+        "track name=junctions description=\"TopHat junctions\"\n\
+         chr1\t950\t2050\tJUNC1\t12\t+\t950\t2050\t255,0,0\t2\t50,50\t0,1050\n\
+         chr2\t60\t340\tJUNC2\t3\t-\t60\t340\t0,0,255\t2\t40,40\t0,240\n",
+    ),
 ];
 
 fn data() -> PathBuf {
