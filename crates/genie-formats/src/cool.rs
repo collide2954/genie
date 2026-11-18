@@ -367,6 +367,86 @@ mod tests {
         assert_eq!(cooler.weights(&mut reader, 1_000, 1, "KR").unwrap(), None);
     }
 
+    /// A real cooler file, as written by the cooler library: genie reads its chromosomes, all
+    /// its pixels and its weights, on this computer and through a server. The balanced rows of
+    /// the matrix have almost the same sum. Set `GENIE_REAL_COOL` to the file.
+    #[test]
+    #[ignore = "reads the real cooler file of GENIE_REAL_COOL"]
+    fn real_cooler_file() {
+        let path = std::env::var_os("GENIE_REAL_COOL").expect("GENIE_REAL_COOL names a file");
+        let bytes = std::fs::read(path).unwrap();
+        let mut reader = Cursor::new(&bytes);
+        let cooler = Cooler::read(&mut reader).unwrap();
+        println!("bin sizes {:?}", cooler.resolutions());
+        println!("chromosomes {:?}", cooler.chromosomes);
+        println!("normalizations {:?}", cooler.normalizations);
+        let bin = cooler.resolutions()[0];
+        let file = &cooler.file;
+        let column = |reader: &mut Cursor<&Vec<u8>>, name: &str| {
+            let dataset = file.dataset(reader, name).unwrap();
+            dataset.floats(file, reader, 0..dataset.len).unwrap()
+        };
+        let places = |reader: &mut Cursor<&Vec<u8>>, name: &str| -> Vec<usize> {
+            let dataset = file.dataset(reader, name).unwrap();
+            let values = dataset.integers(file, reader, 0..dataset.len).unwrap();
+            values
+                .into_iter()
+                .map(|value| usize::try_from(value).unwrap())
+                .collect()
+        };
+        let firsts = places(&mut reader, "pixels/bin1_id");
+        let seconds = places(&mut reader, "pixels/bin2_id");
+        let counts = column(&mut reader, "pixels/count");
+        let weights = column(&mut reader, "bins/weight");
+        let offsets = places(&mut reader, "indexes/chrom_offset");
+        println!("{} pixels, {} bins", firsts.len(), weights.len());
+        let mut sums = vec![0.0; weights.len()];
+        let mut cis = vec![(0_usize, 0.0); cooler.chromosomes.len()];
+        let owner = |bin: usize| offsets.iter().rposition(|start| *start <= bin).unwrap();
+        for ((&i, &j), count) in firsts.iter().zip(&seconds).zip(&counts) {
+            if owner(i) == owner(j) {
+                let found = &mut cis[owner(i)];
+                *found = (found.0 + 1, found.1 + count);
+            }
+            let value = count * weights[i] * weights[j];
+            if j >= i + 2 && value.is_finite() {
+                sums[i] += value;
+                sums[j] += value;
+            }
+        }
+        let kept: Vec<f64> = sums
+            .iter()
+            .zip(&weights)
+            .filter(|(_, weight)| weight.is_finite())
+            .map(|(sum, _)| *sum)
+            .collect();
+        let (low, high) = kept.iter().fold((f64::MAX, f64::MIN), |(low, high), sum| {
+            (low.min(*sum), high.max(*sum))
+        });
+        println!("{} balanced rows, sums from {low} to {high}", kept.len());
+        for (index, (name, length)) in cooler.chromosomes.iter().enumerate() {
+            let last = u32::try_from(length.div_ceil(u64::from(bin)) - 1).unwrap();
+            let contacts = cooler
+                .contacts(&mut reader, bin, index, (0, last), u32::MAX)
+                .unwrap();
+            let sum: f64 = contacts
+                .iter()
+                .map(|contact| f64::from(contact.count))
+                .sum();
+            assert_eq!((contacts.len(), sum), cis[index], "{name}");
+        }
+        assert!(high - low < 1e-3 * high, "{low} {high}");
+        let server = crate::server::serve(vec![("/real.cool".to_owned(), bytes.clone())]);
+        let url = crate::http::Url::parse(&server.url("/real.cool")).unwrap();
+        let mut remote = crate::remote::Remote::open(&url).unwrap();
+        let far = Cooler::read(&mut remote).unwrap();
+        assert_eq!(far.chromosomes, cooler.chromosomes);
+        let near = cooler.contacts(&mut reader, bin, 3, (0, 40), 20).unwrap();
+        let through = far.contacts(&mut remote, bin, 3, (0, 40), 20).unwrap();
+        assert_eq!(found(&through), found(&near));
+        println!("{} requests to the server", server.requests());
+    }
+
     #[test]
     fn single_coolers_take_their_bin_size_from_the_bins() {
         let mut file = Builder::new();
