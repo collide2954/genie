@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+genie shows methylation, structural variants, Hi-C maps, Sashimi plots and GWAS results. It opens CRAM, BCF, track hubs and files in cloud buckets, and it lifts tracks to another assembly.
 
 ### Methylation
 
