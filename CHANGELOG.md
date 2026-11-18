@@ -155,6 +155,8 @@
 - Structural variants show over their full length in the colors of their type: dark grey for deletions, vermillion for duplications, green for inversions and purple for insertions. genie finds them by SVTYPE, by symbolic alleles such as `<DEL>`, and by breakends.
 - Lines with ends show the confidence intervals of the start and the end (CIPOS and CIEND).
 - Breakends (BND) are arcs to their other ends in a lane above the sites, or stubs when the other end is on another chromosome.
+- genie finds the other end of a breakend in its alternate allele, or in CHR2 with POS2, END2 or END, as gnomAD-SV and other callers write it. A breakend takes one base, also when its END is on the other side. CTX translocations are breakends too.
+- Complex rearrangements, such as the CPX records of gnomAD-SV, show over their full length. Their card says "Complex rearrangement".
 - The card says the type, the length, the other end of a breakend and if the call is imprecise, for example "Deletion · 2,345 bp · imprecise".
 
 ### Variant annotations
@@ -186,6 +188,8 @@
 - genie checks the CRC of each block of a file compressed with bgzip. A damaged block gives an error. Before, a damaged BAM file could give wrong reads, and genie could stop for minutes on a read with a very long CIGAR.
 - genie rejects a BAM read whose CIGAR does not fit the length of its bases, as htslib does.
 - A test gives cut and damaged copies of all test files to all readers. Each reader must give an error or data, and must not stop or hang.
+- A file that stops before the end of its data gives the message "The file stops before the end of its data. Make sure that the file is complete." Before, the message was "failed to fill whole buffer".
+- The card of a variant with no ID shows its change once, as its title. Before, the change was also the first line of the card.
 
 ## 0.2.0
 
