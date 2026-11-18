@@ -449,6 +449,7 @@ impl Genie {
         }
         let source = Arc::clone(&track.source);
         let (names, rules) = (track.contigs.clone(), track.filter.rules.clone());
+        let trios = Arc::clone(&track.trios);
         let (reference, contig) = (Arc::clone(&session.reference), session.contig);
         Task::perform(
             async move {
@@ -459,7 +460,7 @@ impl Genie {
                     contig,
                     position,
                     forward,
-                    &rules,
+                    (&rules, &trios),
                 )
             },
             move |result| Message::Jumped(id, forward, result),
@@ -567,10 +568,11 @@ impl Genie {
             let track = session.tracks.iter().find(|track| track.id == id)?;
             let contig = track.contigs.get(named.contig)?.clone()?;
             let (source, rules) = (Arc::clone(&track.source), track.filter.rules.clone());
+            let trios = Arc::clone(&track.trios);
             let (name, span) = (named.name.clone(), named.span);
             Some(Task::perform(
                 async move {
-                    let hidden = track::hides(&source, &contig, span, &name, &rules);
+                    let hidden = track::hides(&source, &contig, span, &name, (&rules, &trios));
                     (name, hidden)
                 },
                 move |(name, hidden)| Message::Filter(id, Filtering::Checked(name, hidden)),

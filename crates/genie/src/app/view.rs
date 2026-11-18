@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
-use genie_core::{Region, Viewport, grouped};
+use genie_core::{Region, Viewport, grouped, trio};
+use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
     alignments, contacts, features, links, manhattan, matches, overview, ruler, samples, sashimi,
@@ -29,13 +30,13 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{Change, Content, Loaded, Pile, Track, junctions};
+use crate::track::{self, Change, Content, Loaded, Pile, Track, junctions};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
 use super::{
-    Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation, Preparing, Renaming,
-    Session, Status, Suggestion, Sweep, whole,
+    Filtering, Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation, Preparing,
+    Renaming, Session, Status, Suggestion, Sweep, whole,
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -944,9 +945,13 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             } else {
                 Vec::new()
             };
+            let (found, rows) = (&calls.variants, &track.rows);
+            let trios = track.trios_on(contig);
+            let marks = variants::trio_marks(viewport, found, mode, rows, &trios);
             primitives.extend(
-                variants::scene(viewport, &calls.variants, mode, &track.rows)
+                marks
                     .into_iter()
+                    .chain(variants::scene(viewport, found, mode, rows))
                     .map(|primitive| primitive.lowered(arcs)),
             );
             Body::Scene(primitives, shape.height)
@@ -1538,7 +1543,41 @@ pub(super) fn shown_columns(
 /// The sections of the menu of a signal track that link it with other signal tracks: the
 /// operations of its comparison, the tracks that overlay it, or the tracks to overlay or to
 /// compare with.
+/// The filters of a family track: the variants with a de novo call or another Mendelian error in
+/// a trio. The filters that the track already has do not show.
+fn trio_section(track: &Track) -> Option<Section> {
+    if track.trios.is_empty() {
+        return None;
+    }
+    let choices = [
+        ("Only de novo variants", trio::DE_NOVO),
+        ("Only Mendelian errors", trio::MENDELIAN_ERROR),
+    ];
+    let items = choices
+        .into_iter()
+        .map(|(words, kind)| {
+            let rule = Rule {
+                label: track::INHERITANCE.to_owned(),
+                test: Test::Keep(kind.to_owned()),
+            };
+            (words, rule)
+        })
+        .filter(|(_, rule)| !track.filter.rules.contains(rule))
+        .map(|(words, rule)| {
+            let add = Message::Filter(track.id, Filtering::Add(rule));
+            (words.to_owned(), add)
+        })
+        .collect();
+    Some(Section {
+        heading: "Trios",
+        items,
+    })
+}
+
 pub(super) fn links(session: &Session, track: &Track) -> Vec<Section> {
+    if track.source.has_variants() {
+        return trio_section(track).into_iter().collect();
+    }
     if !track.source.has_signal() || track.over.is_some() {
         return Vec::new();
     }

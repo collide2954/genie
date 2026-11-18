@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use genie_core::interaction::Interaction;
+use genie_core::trio::{self, Inheritance, Trio};
 use genie_core::variant::{Call, Kind, Structure, Sv, Variant};
 use genie_core::{Region, Viewport};
 
@@ -99,12 +100,7 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
         }
         let left = px(span.start());
         let extent = px(span.end()) - left;
-        let width = if extent > NARROWEST + 1.0 {
-            extent - 1.0
-        } else {
-            NARROWEST
-        };
-        let x = left + (extent - width).min(0.0) / 2.0;
+        let (x, width) = cell(viewport, span);
         let column = left.floor() as i64;
         let narrow = extent <= 1.0;
         let allele = allele(variant);
@@ -176,6 +172,84 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
         );
     }
     primitives
+}
+
+/// Frames around the calls of children that their parents cannot give them, as in a de novo
+/// variant. They have the color of text, so that they show around every allele color.
+pub fn trio_marks(
+    viewport: Viewport,
+    variants: &[Variant],
+    mode: Mode,
+    rows: &Rows,
+    trios: &[Trio],
+) -> Vec<Primitive> {
+    if trios.is_empty() || mode == Mode::Collapsed {
+        return Vec::new();
+    }
+    let (row, offset, mark) = shape(mode);
+    let visible = viewport.visible();
+    let mut primitives = Vec::new();
+    for variant in variants {
+        let span = variant.span;
+        if span.start() > visible.end() || span.end() < visible.start() {
+            continue;
+        }
+        let call = |sample: usize| variant.calls.get(sample).copied().unwrap_or(Call::Missing);
+        let biallelic = variant.alternates.len() <= 1;
+        let children: Vec<usize> = trios
+            .iter()
+            .filter(|trio| {
+                let calls = (call(trio.child), call(trio.father), call(trio.mother));
+                matches!(
+                    trio::check(calls.0, calls.1, calls.2, biallelic),
+                    Some(Inheritance::DeNovo | Inheritance::Error)
+                )
+            })
+            .map(|trio| trio.child)
+            .collect();
+        if children.is_empty() {
+            continue;
+        }
+        let (x, width) = cell(viewport, span);
+        for (index, part) in rows.members.iter().enumerate() {
+            if part.iter().any(|sample| children.contains(sample)) {
+                let y = SITE_HEIGHT + 1.0 + rows.top(index, row) + offset;
+                primitives.extend(outline(x, y, width, mark));
+            }
+        }
+    }
+    primitives
+}
+
+/// Four lines of one pixel around a box, outside it, so that a call keeps its own color.
+fn outline(x: f32, y: f32, width: f32, height: f32) -> [Primitive; 4] {
+    let line = |x, y, width, height| Primitive::Rect {
+        x,
+        y,
+        width,
+        height,
+        paint: Paint::Text,
+    };
+    [
+        line(x - 1.0, y - 1.0, width + 2.0, 1.0),
+        line(x - 1.0, y + height, width + 2.0, 1.0),
+        line(x - 1.0, y, 1.0, height),
+        line(x + width, y, 1.0, height),
+    ]
+}
+
+/// The left edge and the width of the marks of a site: at least `NARROWEST` pixels, around the
+/// middle of a short site.
+fn cell(viewport: Viewport, span: Region) -> (f32, f32) {
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let left = px(span.start());
+    let extent = px(span.end()) - left;
+    let width = if extent > NARROWEST + 1.0 {
+        extent - 1.0
+    } else {
+        NARROWEST
+    };
+    (left + (extent - width).min(0.0) / 2.0, width)
 }
 
 /// Lines over the confidence intervals of the start and the end of a structural variant.
@@ -314,11 +388,13 @@ pub fn hit(
 #[cfg(test)]
 mod tests {
     use genie_core::samples::{Arrangement, Group, Tint};
+    use genie_core::trio::{Sex, Trio};
     use genie_core::variant::{Annotations, Call, Structure, Sv, Variant};
     use genie_core::{Region, Viewport};
 
     use super::{
         BREAKEND_HEIGHT, Breakends, SITE_HEIGHT, breakend_height, group, hit, row_height, scene,
+        trio_marks,
     };
     use crate::features::Mode;
     use crate::samples::{GROUP_GAP, Rows, STRIP};
@@ -510,6 +586,43 @@ mod tests {
         );
         assert!((row_height(Mode::Expanded) - 10.0).abs() < f32::EPSILON);
         assert!((row_height(Mode::Squished) - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn children_with_calls_that_their_parents_cannot_give_get_a_frame() {
+        let trio = Trio {
+            child: 0,
+            father: 1,
+            mother: 2,
+            sex: Sex::Unknown,
+        };
+        let sites = [
+            variant(10, "A", "T", &[Call::Het, Call::Reference, Call::Reference]),
+            variant(30, "A", "T", &[Call::Het, Call::Het, Call::Reference]),
+            variant(50, "A", "T", &[Call::Reference, Call::Alternate, Call::Het]),
+            variant(70, "A", "T", &[Call::Het, Call::Missing, Call::Reference]),
+        ];
+        let rows = plain(3);
+        let marks = trio_marks(view(0, 100), &sites, Mode::Expanded, &rows, &[trio]);
+        let top = SITE_HEIGHT + 1.0;
+        let frame = |x: f32| {
+            [
+                ([x - 1.0, top, 5.0, 1.0], Paint::Text),
+                ([x - 1.0, top + 9.0, 5.0, 1.0], Paint::Text),
+                ([x - 1.0, top + 1.0, 1.0, 8.0], Paint::Text),
+                ([x + 3.0, top + 1.0, 1.0, 8.0], Paint::Text),
+            ]
+        };
+        let expected: Vec<([f32; 4], Paint)> = frame(9.0).into_iter().chain(frame(49.0)).collect();
+        assert_eq!(rects(&marks), expected);
+        assert_eq!(
+            trio_marks(view(0, 100), &sites, Mode::Expanded, &rows, &[]),
+            []
+        );
+        assert_eq!(
+            trio_marks(view(0, 100), &sites, Mode::Collapsed, &rows, &[trio]),
+            []
+        );
     }
 
     #[test]

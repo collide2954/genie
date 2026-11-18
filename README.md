@@ -370,6 +370,17 @@ A sample table gives facts about the samples of variant and copy number tracks, 
 - The track menu shows the fields in use, for example **Group samples by pop**. Click one to stop. The palette has **Group samples by**, **Sort samples by** and **Color samples by** for each field and each track.
 - If each row of a big cohort shows a group of samples, all samples of a row are in the same group.
 
+### Trios
+
+If the sample table gives the father and the mother of a sample, and the variant track has the three samples, genie checks each variant of the child. The columns of the father and the mother can be the fields of a PLINK file, or columns with the name `Father` and `Mother`, `Paternal ID` and `Maternal ID`, or `paternal_id` and `maternal_id`.
+
+- The card of a variant has the field **Inheritance**. **Mendelian error** tells that the child cannot have its call from its parents. **De novo** tells that the child is heterozygous and both parents are homozygous reference: the child can have a new mutation. A de novo variant is also a Mendelian error. **Consistent** tells that the calls agree. A variant with a missing call in a trio has no field for that trio.
+- A frame shows around the call of a child with a Mendelian error.
+- The card of the child's call tells the calls of the parents, for example "De novo: father homozygous reference, mother homozygous reference".
+- The track menu has **Only de novo variants** and **Only Mendelian errors**. They add a filter on Inheritance. Then Ctrl+F and Ctrl+B go to the next and the previous variant that the filter keeps, and the variant table shows only these variants. The menu shows the filter, and you can remove it there.
+- At a site with more than one alternate allele, a heterozygous call can have two alternate alleles. There, genie tells only the errors that no alleles can explain.
+- A son has one X chromosome, from his mother. So genie checks X only for daughters, and it does not check Y and the mitochondria. The sex of a child comes from the PLINK sex or from a field with the name `Sex` or `Gender` (male, female, M, F, 1 or 2).
+
 ## Sessions
 
 To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.

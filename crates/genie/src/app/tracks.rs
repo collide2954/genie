@@ -6,10 +6,12 @@ use std::time::SystemTime;
 
 use genie_core::association::Association;
 use genie_core::methylation::Site;
-use genie_core::variant::Variant;
+use genie_core::trio::{self, Trio};
+use genie_core::variant::{Call, Variant};
 use genie_core::{Region, Span, Target, Viewport};
 use genie_formats::fields::Field;
 use genie_render::features::Mode;
+use genie_render::samples::Rows;
 use genie_render::{
     alignments, contacts, features, links, manhattan, sashimi, segments, signal, variants,
 };
@@ -19,7 +21,7 @@ use iced::time::Instant;
 use iced::widget::operation;
 use iced::{Point, Task};
 
-use crate::card::{Card, Changes, Detail, Pair};
+use crate::card::{self, Card, Changes, Detail, Pair};
 use crate::genome;
 use crate::location::Location;
 use crate::paths;
@@ -482,12 +484,12 @@ impl Genie {
                     let name = &session.reference.assembly.contigs()[contig].name;
                     let breakends = variants::Breakends::new(&calls.variants, name);
                     let index = breakends.hit(viewport, x, y)?;
-                    variant_detail(track, calls.variants[index].clone(), None)
+                    variant_detail(track, contig, calls.variants[index].clone(), None)
                 } else {
                     let rows = &track.rows;
                     let (index, line) =
                         variants::hit(viewport, &calls.variants, mode, rows, x, y - arcs)?;
-                    variant_detail(track, calls.variants[index].clone(), line)
+                    variant_detail(track, contig, calls.variants[index].clone(), line)
                 }
             }
             Content::Signal(data) => {
@@ -529,7 +531,7 @@ impl Genie {
                 Detail::Junction(found.junctions[index])
             }
         };
-        let fields = detail_fields(track, &detail, file_fields);
+        let fields = detail_fields(track, contig, &detail, file_fields);
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[contig].name.clone(),
@@ -950,7 +952,7 @@ impl Genie {
 
 /// The card of a variant, from its site or from a row of its genotypes. The site of a track
 /// with groups of samples counts the alleles of each group.
-fn variant_detail(track: &Track, variant: Variant, line: Option<usize>) -> Detail {
+fn variant_detail(track: &Track, contig: usize, variant: Variant, line: Option<usize>) -> Detail {
     let rows = &track.rows;
     let sample = line.and_then(|line| {
         let names = track.source.samples();
@@ -972,16 +974,39 @@ fn variant_detail(track: &Track, variant: Variant, line: Option<usize>) -> Detai
         };
         Some((label, call))
     });
-    let groups = if line.is_none() {
-        super::samples::group_lines(&track.arrangement, &variant)
-    } else {
-        Vec::new()
+    let groups = match line {
+        None => super::samples::group_lines(&track.arrangement, &variant),
+        Some(line) => trio_lines(&track.trios_on(contig), &track.rows, &variant, line),
     };
     Detail::Variant {
         variant,
         sample,
         groups,
     }
+}
+
+/// The line of the card of a child in a trio: what the calls of its parents say about its call,
+/// as "De novo: father homozygous reference, mother homozygous reference".
+fn trio_lines(trios: &[Trio], rows: &Rows, variant: &Variant, line: usize) -> Vec<String> {
+    let Some([sample]) = rows.members.get(line).map(Vec::as_slice) else {
+        return Vec::new();
+    };
+    let call = |sample: usize| variant.calls.get(sample).copied().unwrap_or(Call::Missing);
+    let biallelic = variant.alternates.len() <= 1;
+    trios
+        .iter()
+        .filter(|trio| trio.child == *sample)
+        .filter_map(|trio| {
+            let (father, mother) = (call(trio.father), call(trio.mother));
+            let kind = trio::check(call(trio.child), father, mother, biallelic)?;
+            Some(format!(
+                "{}: father {}, mother {}",
+                kind.word(),
+                card::call_words(father),
+                card::call_words(mother)
+            ))
+        })
+        .collect()
 }
 
 /// The association of the dot under a point of a GWAS track.
@@ -1079,10 +1104,17 @@ fn sample_fields(session: &Session, detail: &Detail) -> Vec<Field> {
 
 /// The fields of a card: the fields of the file of a record, the inserted bases and the fields of
 /// a read, or the `file_fields` of a junction.
-fn detail_fields(track: &Track, detail: &Detail, file_fields: Vec<Field>) -> Vec<Field> {
+fn detail_fields(
+    track: &Track,
+    contig: usize,
+    detail: &Detail,
+    file_fields: Vec<Field>,
+) -> Vec<Field> {
     match detail {
         Detail::Feature(feature) => track::feature_fields(&track.source, feature),
-        Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
+        Detail::Variant { variant, .. } => {
+            track::variant_fields(&track.source, variant, &track.trios_on(contig))
+        }
         Detail::Link(link) => track::link_fields(&track.source, link),
         Detail::Read {
             read, insertion, ..

@@ -166,6 +166,16 @@
 <li>The track menu shows the fields in use, for example <b>Group samples by pop</b>. Click one to stop. The palette has <b>Group samples by</b>, <b>Sort samples by</b> and <b>Color samples by</b> for each field and each track.</li>
 <li>If each row of a big cohort shows a group of samples, all samples of a row are in the same group.</li>
 </ul>
+<h3 id="trios">Trios</h3>
+<p>If the sample table gives the father and the mother of a sample, and the variant track has the three samples, genie checks each variant of the child. The columns of the father and the mother can be the fields of a PLINK file, or columns with the name <code>Father</code> and <code>Mother</code>, <code>Paternal ID</code> and <code>Maternal ID</code>, or <code>paternal_id</code> and <code>maternal_id</code>.</p>
+<ul>
+<li>The card of a variant has the field <b>Inheritance</b>. <b>Mendelian error</b> tells that the child cannot have its call from its parents. <b>De novo</b> tells that the child is heterozygous and both parents are homozygous reference: the child can have a new mutation. A de novo variant is also a Mendelian error. <b>Consistent</b> tells that the calls agree. A variant with a missing call in a trio has no field for that trio.</li>
+<li>A frame shows around the call of a child with a Mendelian error.</li>
+<li>The card of the child's call tells the calls of the parents, for example &quot;De novo: father homozygous reference, mother homozygous reference&quot;.</li>
+<li>The track menu has <b>Only de novo variants</b> and <b>Only Mendelian errors</b>. They add a filter on Inheritance. Then Ctrl+F and Ctrl+B go to the next and the previous variant that the filter keeps, and the variant table shows only these variants. The menu shows the filter, and you can remove it there.</li>
+<li>At a site with more than one alternate allele, a heterozygous call can have two alternate alleles. There, genie tells only the errors that no alleles can explain.</li>
+<li>A son has one X chromosome, from his mother. So genie checks X only for daughters, and it does not check Y and the mitochondria. The sex of a child comes from the PLINK sex or from a field with the name <code>Sex</code> or <code>Gender</code> (male, female, M, F, 1 or 2).</li>
+</ul>
 </article>
 </div>
 </main>

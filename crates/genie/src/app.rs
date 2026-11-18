@@ -5188,6 +5188,7 @@ mod tests {
             with_segments(),
             with_contacts(),
             with_table(),
+            with_family(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
@@ -6079,6 +6080,141 @@ mod tests {
         let _ = restored.update(Message::Samples(opened));
         assert_eq!(rows(&restored).groups.len(), 2);
         assert_eq!(restored.busy, 0);
+    }
+
+    /// A family track (kid, dad and mum) with a de novo variant at 20, a consistent one at 300
+    /// and a Mendelian error at 700, and the pedigree of the family as the sample table.
+    fn with_family() -> Genie {
+        let mut genie = opened();
+        let names = |names: &[&str]| -> Vec<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        };
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/family.vcf").into(),
+            name: "family.vcf".to_owned(),
+            data: None,
+            format: Format::Variants(VariantFile::Table {
+                table: genie_formats::features::Table::new(Vec::new()),
+                samples: names(&["kid", "dad", "mum"]),
+                infos: Vec::new(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let variants = vec![
+            site(20, vec![Call::Het, Call::Reference, Call::Reference]),
+            site(300, vec![Call::Het, Call::Het, Call::Reference]),
+            site(700, vec![Call::Reference, Call::Alternate, Call::Het]),
+        ];
+        let loaded = Loaded::variants(region, variants, 3);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let table = Table::new(
+            names(&["Family", "Father", "Mother"]),
+            vec![
+                ("kid".to_owned(), names(&["F1", "dad", "mum"])),
+                ("dad".to_owned(), names(&["F1"])),
+                ("mum".to_owned(), names(&["F1"])),
+            ],
+        );
+        let location = Location::File(PathBuf::from("/data/family.ped"));
+        let opened = Sampling::Opened(location, Ok(Arc::new(table)));
+        let _ = genie.update(Message::Samples(opened));
+        genie
+    }
+
+    /// The names of the variants that a track shows after its filter.
+    fn shown_ids(genie: &Genie) -> Vec<String> {
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let data = track
+            .slot
+            .shown
+            .as_ref()
+            .or(track.slot.loaded.as_ref().map(|(_, data)| data));
+        let Some(Content::Variants(calls)) = data.map(|data| &data.content) else {
+            return Vec::new();
+        };
+        calls
+            .variants
+            .iter()
+            .map(|variant| variant.id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn family_tracks_check_the_calls_of_each_child() {
+        let mut genie = with_family();
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].trios.len(), 1);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
+        assert!(shows(&genie, "Inheritance"));
+        assert!(shows(&genie, "Mendelian error, De novo"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 18.0))));
+        assert!(shows(&genie, "kid · heterozygous"));
+        assert!(shows(
+            &genie,
+            "De novo: father homozygous reference, mother homozygous reference"
+        ));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(700.5, 18.0))));
+        assert!(shows(
+            &genie,
+            "Mendelian error: father homozygous alternate, mother heterozygous"
+        ));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(700.5, 28.0))));
+        assert!(shows(&genie, "dad · homozygous alternate"));
+        assert!(!shows(&genie, "Trio"));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        assert!(ui.find("Only Mendelian errors").is_ok());
+        ui.click("Only de novo variants").unwrap();
+        for message in ui.into_messages().collect::<Vec<_>>() {
+            let _ = genie.update(message);
+        }
+        assert_eq!(shown_ids(&genie), ["rs20"]);
+    }
+
+    #[test]
+    fn inheritance_filters_keep_the_variants_of_trios() {
+        let mut genie = with_family();
+        assert_eq!(shown_ids(&genie), ["rs20", "rs300", "rs700"]);
+        let keep = |word: &str| Rule {
+            label: "Inheritance".to_owned(),
+            test: Test::Keep(word.to_owned()),
+        };
+        let _ = genie.update(Message::Filter(0, Filtering::Add(keep("Mendelian error"))));
+        assert_eq!(shown_ids(&genie), ["rs20", "rs700"]);
+        let _ = genie.update(Message::Filter(0, Filtering::Remove(0)));
+        let _ = genie.update(Message::Filter(0, Filtering::Add(keep("De novo"))));
+        assert_eq!(shown_ids(&genie), ["rs20"]);
+        let _ = genie.update(Message::Samples(Sampling::Close));
+        assert_eq!(shown_ids(&genie), Vec::<String>::new());
+    }
+
+    #[test]
+    fn children_with_calls_that_break_inheritance_have_a_frame() {
+        let genie = with_family();
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[0];
+        let (shapes, _) = super::view::shapes(session, track, false);
+        let shape = shapes.into_iter().next().unwrap();
+        let super::view::Body::Scene(primitives, _) =
+            super::view::body(session, track, 0, shape, false)
+        else {
+            panic!("no scene");
+        };
+        let frames = primitives
+            .iter()
+            .filter(|primitive| {
+                matches!(
+                    primitive,
+                    genie_render::scene::Primitive::Rect {
+                        paint: Paint::Text,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(frames, 2 * 4);
     }
 
     #[test]

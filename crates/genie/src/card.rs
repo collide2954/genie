@@ -59,7 +59,8 @@ pub enum Detail {
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
-        /// The allele frequency of each group of samples, while a field groups them.
+        /// Lines about the samples: the allele frequency of each group of samples while a field
+        /// groups them, or what the calls of the parents of a child say about its call.
         groups: Vec<String>,
     },
     Signal {
@@ -363,13 +364,17 @@ pub fn change(variant: &Variant) -> String {
 }
 
 pub fn genotype(name: &str, call: Call) -> String {
-    let words = match call {
+    format!("{name} · {}", call_words(call))
+}
+
+/// A call in words, as "heterozygous".
+pub fn call_words(call: Call) -> &'static str {
+    match call {
         Call::Missing => "no call",
         Call::Reference => "homozygous reference",
         Call::Het => "heterozygous",
         Call::Alternate => "homozygous alternate",
-    };
-    format!("{name} · {words}")
+    }
 }
 
 fn amount(value: f64) -> String {

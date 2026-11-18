@@ -24,6 +24,7 @@ pub mod search;
 pub mod segment;
 pub mod signal;
 mod tile;
+pub mod trio;
 pub mod variant;
 mod viewport;
 

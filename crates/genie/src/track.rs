@@ -12,6 +12,7 @@ use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_str
 use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
+use genie_core::trio::{self, Trio};
 use genie_core::variant::Variant;
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
@@ -1127,6 +1128,8 @@ pub struct Track {
     pub arrangement: Arc<Arrangement>,
     /// The rows of the samples of the file, for genotypes and copy number segments.
     pub rows: Arc<Rows>,
+    /// The children of the file whose parents are in the file too, from the sample table.
+    pub trios: Arc<[Trio]>,
     /// The chain file that moves the data of the file to the assembly in view.
     pub lift: Option<Arc<Lift>>,
     /// The chain file of a session that genie reads for the track.
@@ -1182,6 +1185,7 @@ impl Track {
             choice: Choice::default(),
             arrangement: Arc::new(arrangement),
             rows,
+            trios: Arc::new([]),
             lift: None,
             lifting: None,
             slot: Slot::default(),
@@ -1215,7 +1219,9 @@ impl Track {
     }
 
     /// Puts the samples in the order, the groups and the colors that the fields of `choice`
-    /// give them in a sample table, or in the order of the file without a table.
+    /// give them in a sample table, or in the order of the file without a table. The parents in
+    /// the table give the trios of a variant track. When the trios change, the filter applies
+    /// again, because the inheritance of the variants changes with them.
     pub fn arrange(&mut self, table: Option<&Table>) {
         let names = self.source.samples();
         let arrangement = match table {
@@ -1226,6 +1232,14 @@ impl Track {
         };
         self.rows = Arc::new(Rows::new(&arrangement, row_size(&self.source)));
         self.arrangement = Arc::new(arrangement);
+        let trios: Vec<Trio> = match table {
+            Some(table) if self.source.has_variants() => trio::trios(names, table),
+            _ => Vec::new(),
+        };
+        if *self.trios != *trios {
+            self.trios = trios.into();
+            self.refilter();
+        }
     }
 
     pub fn modification_names(&self) -> Vec<String> {
@@ -1309,15 +1323,24 @@ impl Track {
             .slot
             .loaded
             .as_ref()
-            .and_then(|(_, data)| self.derive(data));
+            .and_then(|(contig, data)| self.derive(*contig, data));
         self.slot.shown = shown;
         for index in 0..self.extra.len() {
             let shown = self.extra[index]
                 .loaded
                 .as_ref()
-                .and_then(|(_, data)| self.derive(data));
+                .and_then(|(contig, data)| self.derive(*contig, data));
             self.extra[index].shown = shown;
         }
+    }
+
+    /// The trios that check the variants of a contig in view: see `trio::on`.
+    pub fn trios_on(&self, contig: usize) -> Vec<Trio> {
+        if self.trios.is_empty() {
+            return Vec::new();
+        }
+        let name = self.contigs.get(contig).and_then(Option::as_deref);
+        trio::on(name.unwrap_or_default(), &self.trios)
     }
 
     /// Reads and a zoomed-out bigBed density depend on the filter rules, so a rule change drops
@@ -1343,7 +1366,7 @@ impl Track {
         }
     }
 
-    fn derive(&self, data: &Loaded) -> Option<Arc<Loaded>> {
+    fn derive(&self, contig: usize, data: &Loaded) -> Option<Arc<Loaded>> {
         if self.filter.is_empty() {
             return None;
         }
@@ -1357,11 +1380,13 @@ impl Track {
                 Loaded::features(data.region, kept).content
             }
             Content::Variants(calls) => {
-                let rules = &self.filter.rules;
+                let (rules, trios) = (&self.filter.rules, &self.trios_on(contig));
                 let variants = calls
                     .variants
                     .iter()
-                    .filter(|variant| fields::passes(rules, &variant_fields(&self.source, variant)))
+                    .filter(|variant| {
+                        fields::passes(rules, &variant_fields(&self.source, variant, trios))
+                    })
                     .cloned()
                     .collect();
                 Content::Variants(Calls {
@@ -1494,7 +1519,10 @@ impl Track {
         if self.slot(panel).wanted != Some((contig, region)) || stale {
             return;
         }
-        let shown = result.as_ref().ok().and_then(|data| self.derive(data));
+        let shown = result
+            .as_ref()
+            .ok()
+            .and_then(|data| self.derive(contig, data));
         let slot = self.slot_mut(panel);
         slot.wanted = None;
         match result {
@@ -2116,7 +2144,13 @@ pub fn link_fields(source: &Source, link: &Interaction) -> Vec<Field> {
     }
 }
 
-pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
+/// The name of the field of a variant that tells what the calls of the trios of a family say.
+pub const INHERITANCE: &str = "Inheritance";
+
+/// The fields of a variant for its card, its filters and the variant table. With the trios of
+/// the track, the Inheritance field lists what their calls say: Mendelian error, De novo and
+/// Consistent.
+pub fn variant_fields(source: &Source, variant: &Variant, trios: &[Trio]) -> Vec<Field> {
     let Format::Variants(file) = &source.format else {
         return Vec::new();
     };
@@ -2131,6 +2165,14 @@ pub fn variant_fields(source: &Source, variant: &Variant) -> Vec<Field> {
         found.push(Field {
             label: "Filter".to_owned(),
             value: variant.filter.clone(),
+        });
+    }
+    let biallelic = variant.alternates.len() <= 1;
+    let inheritance = trio::words(&variant.calls, trios, biallelic);
+    if !inheritance.is_empty() {
+        found.push(Field {
+            label: INHERITANCE.to_owned(),
+            value: inheritance.join(", "),
         });
     }
     found.extend(
@@ -2248,6 +2290,10 @@ pub fn association_fields(source: &Source, association: &Association) -> Vec<Fie
     }
 }
 
+/// The rules of the filter of a track, and the trios that give its variants their Inheritance
+/// field.
+pub type Keep<'a> = (&'a [Rule], &'a [Trio]);
+
 pub fn neighbor(
     source: &Source,
     names: &[Option<String>],
@@ -2255,7 +2301,7 @@ pub fn neighbor(
     contig: usize,
     position: u64,
     forward: bool,
-    rules: &[Rule],
+    keep: Keep<'_>,
 ) -> Result<Option<(usize, Region)>, String> {
     let count = assembly.contigs().len().min(names.len());
     if !source.can_jump() || contig >= count {
@@ -2272,7 +2318,7 @@ pub fn neighbor(
         };
         let length = assembly.contigs()[index].length;
         let threshold = (index == contig).then_some(position);
-        if let Some(span) = nearest(source, name, length, threshold, forward, rules)? {
+        if let Some(span) = nearest(source, name, length, threshold, forward, keep)? {
             return Ok(Some((index, span)));
         }
     }
@@ -2285,9 +2331,9 @@ fn nearest(
     length: u64,
     threshold: Option<u64>,
     forward: bool,
-    rules: &[Rule],
+    keep: Keep<'_>,
 ) -> Result<Option<Region>, String> {
-    let spans = |source: &Source, name: &str, window: Region| kept(source, name, window, rules);
+    let spans = |source: &Source, name: &str, window: Region| kept(source, name, window, keep);
     let key = |span: &Region| (span.start(), span.end());
     let mut size = SEARCH;
     if forward {
@@ -2339,11 +2385,12 @@ fn kept(
     source: &Source,
     contig: &str,
     region: Region,
-    rules: &[Rule],
+    (rules, trios): Keep<'_>,
 ) -> Result<Vec<Region>, String> {
     if rules.is_empty() {
         return spans(source, contig, region);
     }
+    let trios = &trio::on(contig, trios);
     Ok(match &source.format {
         Format::Features(file) => file
             .features(source.data(), contig, region)?
@@ -2355,7 +2402,7 @@ fn kept(
         Format::Variants(file) => file
             .variants(source.data(), contig, region)?
             .iter()
-            .filter(|variant| fields::passes(rules, &variant_fields(source, variant)))
+            .filter(|variant| fields::passes(rules, &variant_fields(source, variant, trios)))
             .map(|variant| variant.span)
             .collect(),
         Format::Reads(_)
@@ -2371,10 +2418,12 @@ fn kept(
 
 /// True when the track has a feature or a variant with this name at this place and the filter
 /// hides all of them.
-pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[Rule]) -> bool {
+pub fn hides(source: &Source, contig: &str, span: Region, name: &str, keep: Keep<'_>) -> bool {
+    let (rules, trios) = keep;
     if rules.is_empty() {
         return false;
     }
+    let trios = &trio::on(contig, trios);
     let same = |other: &str| other.eq_ignore_ascii_case(name);
     let passes: Vec<bool> = match &source.format {
         Format::Features(file) => file
@@ -2393,7 +2442,7 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, rules: &[R
                 variants
                     .iter()
                     .filter(|variant| same(&variant.id) && variant.span == span)
-                    .map(|variant| fields::passes(rules, &variant_fields(source, variant)))
+                    .map(|variant| fields::passes(rules, &variant_fields(source, variant, trios)))
                     .collect()
             })
             .unwrap_or_default(),
@@ -3432,7 +3481,7 @@ mod tests {
         let Content::Variants(calls) = &loaded.content else {
             panic!("expected variants");
         };
-        let shown: Vec<(String, String)> = variant_fields(&source, &calls.variants[0])
+        let shown: Vec<(String, String)> = variant_fields(&source, &calls.variants[0], &[])
             .into_iter()
             .map(|field| (field.label, field.value))
             .collect();
@@ -3461,7 +3510,7 @@ mod tests {
             .map(|variant| {
                 genie_formats::fields::passes(
                     std::slice::from_ref(&high),
-                    &variant_fields(&source, variant),
+                    &variant_fields(&source, variant, &[]),
                 )
             })
             .collect();
@@ -3624,9 +3673,16 @@ mod tests {
             for contig in 0..3 {
                 for position in [0, 1_000, 123_456, 1_500_000, 2_999_999] {
                     for forward in [true, false] {
-                        let found =
-                            neighbor(&source, &names, &assembly, contig, position, forward, &[])
-                                .unwrap();
+                        let found = neighbor(
+                            &source,
+                            &names,
+                            &assembly,
+                            contig,
+                            position,
+                            forward,
+                            (&[], &[]),
+                        )
+                        .unwrap();
                         let expected = scanned(&source, &names, contig, position, forward);
                         assert_eq!(found, expected, "{file} {contig} {position} {forward}");
                     }
@@ -3660,7 +3716,16 @@ mod tests {
             test: Test::Keep("keep".to_owned()),
         }];
         let next = |contig, position, forward, rules: &[Rule]| {
-            neighbor(&source, &names, &assembly, contig, position, forward, rules).unwrap()
+            neighbor(
+                &source,
+                &names,
+                &assembly,
+                contig,
+                position,
+                forward,
+                (rules, &[]),
+            )
+            .unwrap()
         };
         assert_eq!(next(0, 150, true, &[]), Some((0, region(300, 400))));
         assert_eq!(next(0, 150, true, &keep), Some((0, region(500, 600))));
@@ -3732,10 +3797,34 @@ mod tests {
             label: "Column 13".to_owned(),
             test: Test::Keep("keep".to_owned()),
         }];
-        assert!(hides(&source, "chr1", region(100, 200), "tp53", &keep));
-        assert!(!hides(&source, "chr1", region(300, 400), "BRCA1", &keep));
-        assert!(!hides(&source, "chr1", region(100, 200), "TP53", &[]));
-        assert!(!hides(&source, "chr1", region(500, 600), "EGFR", &keep));
+        assert!(hides(
+            &source,
+            "chr1",
+            region(100, 200),
+            "tp53",
+            (&keep, &[])
+        ));
+        assert!(!hides(
+            &source,
+            "chr1",
+            region(300, 400),
+            "BRCA1",
+            (&keep, &[])
+        ));
+        assert!(!hides(
+            &source,
+            "chr1",
+            region(100, 200),
+            "TP53",
+            (&[], &[])
+        ));
+        assert!(!hides(
+            &source,
+            "chr1",
+            region(500, 600),
+            "EGFR",
+            (&keep, &[])
+        ));
     }
 
     #[test]
@@ -3743,28 +3832,29 @@ mod tests {
         let assembly = three_contigs();
         let genes = open(fixture("genes.bed.gz")).unwrap();
         let names = contig_names(genes.contigs(), &assembly);
-        let next =
-            |position, forward| neighbor(&genes, &names, &assembly, 0, position, forward, &[]);
+        let next = |position, forward| {
+            neighbor(&genes, &names, &assembly, 0, position, forward, (&[], &[]))
+        };
         assert_eq!(next(0, true).unwrap(), Some((0, region(1_050, 3_208))));
         let after = next(1_050, true).unwrap().unwrap();
         assert_eq!((after.0, after.1.start()), (0, 1_415));
         assert_eq!(next(1_050, false).unwrap(), None);
         let calls = open(fixture("variants.vcf.gz")).unwrap();
         let names = contig_names(calls.contigs(), &assembly);
-        let first = neighbor(&calls, &names, &assembly, 0, 0, true, &[]).unwrap();
+        let first = neighbor(&calls, &names, &assembly, 0, 0, true, (&[], &[])).unwrap();
         assert_eq!(first, Some((0, region(1_000, 1_001))));
         assert_eq!(
-            neighbor(&calls, &names, &assembly, 2, 0, true, &[]).unwrap(),
+            neighbor(&calls, &names, &assembly, 2, 0, true, (&[], &[])).unwrap(),
             None
         );
-        let last = neighbor(&calls, &names, &assembly, 2, 0, false, &[])
+        let last = neighbor(&calls, &names, &assembly, 2, 0, false, (&[], &[]))
             .unwrap()
             .unwrap();
         assert_eq!(last.0, 1);
         let reads = open(fixture("reads.bam")).unwrap();
         let names = contig_names(reads.contigs(), &assembly);
         assert_eq!(
-            neighbor(&reads, &names, &assembly, 0, 0, true, &[]).unwrap(),
+            neighbor(&reads, &names, &assembly, 0, 0, true, (&[], &[])).unwrap(),
             None
         );
     }

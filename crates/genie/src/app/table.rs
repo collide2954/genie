@@ -73,6 +73,8 @@ struct Built {
     region: Region,
     count: usize,
     contig: usize,
+    /// The trios of the track, which give the Inheritance column.
+    trios: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,13 +258,14 @@ impl Genie {
             region: data.region,
             count: calls.variants.len(),
             contig,
+            trios: Arc::as_ptr(&track.trios).cast::<()>() as usize,
         };
         if table.built.as_ref().is_none_or(|(known, _)| *known != key) {
             let name = &session.reference.assembly.contigs()[contig].name;
             let samples = !track.source.samples().is_empty();
-            let source = &track.source;
+            let (source, trios) = (&track.source, &track.trios_on(contig));
             let built = Table::new(name, &calls.variants, samples, |variant| {
-                track::variant_fields(source, variant)
+                track::variant_fields(source, variant, trios)
             });
             table.built = Some((key, Arc::new(built)));
             table.shown = None;

@@ -10,6 +10,8 @@
 - **Virtual 4C from here** in the menu of a Hi-C track shows the contacts of one place with each bin in view, in a lane under the map.
 - A signal track can compare its values with another signal track: **Compare with** in the track menu shows the log2 ratio, the ratio or the difference of the two tracks at each pixel, for example ChIP over input.
 
+- A family variant track checks the calls of each child against its parents, from the father and the mother in the sample table (for example a PLINK `.ped` file). The field Inheritance tells the Mendelian errors and the de novo variants, a frame shows around the call of the child, and the track menu has **Only de novo variants** and **Only Mendelian errors**. genie checks X only for daughters.
+
 ### Images
 
 - Ctrl+E opens the export dialog. It gives the image a title, a scale bar and the regions in view as grey bands with their names. The session keeps the title and the settings.
