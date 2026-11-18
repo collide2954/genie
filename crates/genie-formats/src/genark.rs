@@ -16,10 +16,21 @@ pub struct Assembly {
     pub species: String,
     /// The common name, as human, or empty.
     pub common: String,
+    /// True for an outdated assembly that a newer assembly replaces. UCSC puts it in its legacy
+    /// set, and its clade ends with `(L)`.
+    pub legacy: bool,
+    /// The accession, the name, the species and the common name in lower case, for searches.
+    words: String,
 }
 
-/// The names of the columns of the list that genie uses, in the order of a list without a header.
-const COLUMNS: [&str; 4] = ["accession", "assembly", "scientific name", "common name"];
+/// The names of the columns of the list that genie uses.
+const COLUMNS: [&str; 5] = [
+    "accession",
+    "assembly",
+    "scientific name",
+    "common name",
+    "genark clade",
+];
 
 /// The accession of an NCBI assembly in a text, in upper case: GCA or GCF, an underscore, nine
 /// digits, a dot and the version, as `GCF_000001405.40`.
@@ -44,10 +55,10 @@ pub fn hub(accession: &str) -> Option<String> {
 }
 
 /// The assemblies of the `GenArk` list. A header line that starts with `#` names the columns, and
-/// genie uses the accession, the assembly, the scientific name and the common name. Without a
-/// header, the columns come in this order. Lines without an accession do not count.
+/// genie uses the accession, the assembly, the scientific name, the common name and the clade.
+/// Without a header, these are the columns 1 to 4 and 6. Lines without an accession do not count.
 pub fn list(text: &str) -> Vec<Assembly> {
-    let mut places: [Option<usize>; 4] = [Some(0), Some(1), Some(2), Some(3)];
+    let mut places: [Option<usize>; 5] = [Some(0), Some(1), Some(2), Some(3), Some(5)];
     let mut found = Vec::new();
     for line in text.lines() {
         let line = line.trim_end_matches('\r');
@@ -74,11 +85,14 @@ pub fn list(text: &str) -> Vec<Assembly> {
         let Some(accession) = accession(&value(places[0])) else {
             continue;
         };
+        let (name, species, common) = (value(places[1]), value(places[2]), value(places[3]));
         found.push(Assembly {
+            words: format!("{accession} {name} {species} {common}").to_lowercase(),
+            legacy: value(places[4]).ends_with("(L)"),
             accession,
-            name: value(places[1]),
-            species: value(places[2]),
-            common: value(places[3]),
+            name,
+            species,
+            common,
         });
     }
     found
@@ -86,39 +100,36 @@ pub fn list(text: &str) -> Vec<Assembly> {
 
 /// The assemblies whose accession, name, species or common name hold all words of a query, at
 /// most `most` of them. The accessions that start with the query come first, then the species
-/// and the common names that start with it, then the others in the order of the list.
+/// and the common names that start with it, then the others in the order of the list. In each
+/// of these groups, the outdated assemblies come last.
 pub fn search<'a>(assemblies: &'a [Assembly], query: &str, most: usize) -> Vec<&'a Assembly> {
     let query = query.trim().to_lowercase();
     let words: Vec<&str> = query.split_whitespace().collect();
     if words.is_empty() {
         return Vec::new();
     }
-    let mut found: Vec<(u8, &Assembly)> = assemblies
+    let starts = |text: &str| {
+        text.as_bytes()
+            .get(..query.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(query.as_bytes()))
+    };
+    let mut found: Vec<(u8, bool, &Assembly)> = assemblies
         .iter()
-        .filter_map(|assembly| {
-            let parts = [
-                assembly.accession.to_lowercase(),
-                assembly.name.to_lowercase(),
-                assembly.species.to_lowercase(),
-                assembly.common.to_lowercase(),
-            ];
-            let all = parts.join(" ");
-            if !words.iter().all(|word| all.contains(word)) {
-                return None;
-            }
-            let rank = [0, 2, 3]
+        .filter(|assembly| words.iter().all(|word| assembly.words.contains(word)))
+        .map(|assembly| {
+            let rank = [&assembly.accession, &assembly.species, &assembly.common]
                 .into_iter()
                 .zip([0, 1, 2])
-                .find(|(part, _)| parts[*part].starts_with(&query))
+                .find(|(part, _)| starts(part))
                 .map_or(3, |(_, rank)| rank);
-            Some((rank, assembly))
+            (rank, assembly.legacy, assembly)
         })
         .collect();
-    found.sort_by_key(|(rank, _)| *rank);
+    found.sort_by_key(|(rank, legacy, _)| (*rank, *legacy));
     found
         .into_iter()
         .take(most)
-        .map(|(_, assembly)| assembly)
+        .map(|(_, _, assembly)| assembly)
         .collect()
 }
 
@@ -127,12 +138,13 @@ mod tests {
     use super::{Assembly, accession, hub, list, search};
 
     const TEXT: &str = "# UCSC GenArk assembly hubs\n\
-        # accession\tassembly\tscientific name\tcommon name\ttaxonId\n\
-        GCA_009914755.4\tT2T-CHM13v2.0\tHomo sapiens\thuman (2022 T2T)\t9606\n\
-        GCF_000001405.40\tGRCh38.p14\tHomo sapiens\thuman\t9606\n\
-        GCF_016699485.2\tbGalGal1.mat.broiler.GRCg7b\tGallus gallus\tchicken\t9031\n\
-        GCF_000002315.6\tGRCg6a\tGallus gallus\tchicken (2018)\t9031\n\
-        GCA_011100615.1\tMus caroli assembly\tMus caroli\tRyukyu mouse\t10089\n";
+        # accession\tassembly\tscientific name\tcommon name\ttaxonId\tGenArk clade\n\
+        GCA_000002315.3\tGallus_gallus-4.0\tGallus gallus\tchicken (2011 genbank)\t9031\tbirds(L)\n\
+        GCA_009914755.4\tT2T-CHM13v2.0\tHomo sapiens\thuman (2022 T2T)\t9606\tprimates\n\
+        GCF_000001405.40\tGRCh38.p14\tHomo sapiens\thuman\t9606\tprimates\n\
+        GCF_016699485.2\tbGalGal1.mat.broiler.GRCg7b\tGallus gallus\tchicken\t9031\tbirds\n\
+        GCF_000002315.6\tGRCg6a\tGallus gallus\tchicken (2018)\t9031\tbirds\n\
+        GCA_011100615.1\tMus caroli assembly\tMus caroli\tRyukyu mouse\t10089\tmammals\n";
 
     #[test]
     fn accessions_have_a_kind_nine_digits_and_a_version() {
@@ -167,19 +179,27 @@ mod tests {
         assert_eq!(hub("chr1"), None);
     }
 
+    fn fields(assembly: &Assembly) -> [&str; 4] {
+        let Assembly {
+            accession,
+            name,
+            species,
+            common,
+            ..
+        } = assembly;
+        [accession, name, species, common].map(String::as_str)
+    }
+
     #[test]
     fn lists_name_their_columns_in_a_header() {
         let found = list(TEXT);
-        assert_eq!(found.len(), 5);
+        assert_eq!(found.len(), 6);
         assert_eq!(
-            found[1],
-            Assembly {
-                accession: "GCF_000001405.40".to_owned(),
-                name: "GRCh38.p14".to_owned(),
-                species: "Homo sapiens".to_owned(),
-                common: "human".to_owned(),
-            }
+            fields(&found[2]),
+            ["GCF_000001405.40", "GRCh38.p14", "Homo sapiens", "human"]
         );
+        let legacy: Vec<bool> = found.iter().map(|assembly| assembly.legacy).collect();
+        assert_eq!(legacy, [true, false, false, false, false, false]);
         let other = "#common name\tscientific name\taccession\nfruit fly\tDrosophila melanogaster\tGCF_000001215.4\n";
         let fly = list(other);
         assert_eq!(fly[0].accession, "GCF_000001215.4");
@@ -199,7 +219,11 @@ mod tests {
         let all = list(TEXT);
         assert_eq!(
             accessions(&search(&all, "chicken", 10)),
-            ["GCF_016699485.2", "GCF_000002315.6"]
+            ["GCF_016699485.2", "GCF_000002315.6", "GCA_000002315.3"]
+        );
+        assert_eq!(
+            accessions(&search(&all, "gca_000002315", 10)),
+            ["GCA_000002315.3"]
         );
         assert_eq!(
             accessions(&search(&all, "gallus GRCg6a", 10)),

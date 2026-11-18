@@ -53,10 +53,22 @@ pub enum Assembling {
 pub(super) struct Assemblies {
     list: Option<Arc<[Assembly]>>,
     query: String,
+    /// The assemblies of the list that match the query. genie finds them when the query or the
+    /// list changes, not at each draw of the dialog.
+    found: Vec<Assembly>,
     reading: bool,
     error: Option<String>,
     /// The hub of the assembly that somebody chose. When it arrives, genie opens its genome.
     pub(super) wanted: Option<Location>,
+}
+
+impl Assemblies {
+    fn find(&mut self) {
+        self.found = self.list.as_deref().map_or_else(Vec::new, |list| {
+            let found = genark::search(list, &self.query, MOST);
+            found.into_iter().cloned().collect()
+        });
+    }
 }
 
 /// The location of the `GenArk` hub of an accession.
@@ -129,11 +141,17 @@ impl Genie {
                 );
                 return Task::batch([focus, read]);
             }
-            Assembling::Query(query) => state.query = query,
+            Assembling::Query(query) => {
+                state.query = query;
+                state.find();
+            }
             Assembling::Read(result) => {
                 state.reading = false;
                 match result {
-                    Ok(list) => state.list = Some(list),
+                    Ok(list) => {
+                        state.list = Some(list);
+                        state.find();
+                    }
                     Err(error) => state.error = Some(error),
                 }
             }
@@ -153,10 +171,7 @@ impl Genie {
     /// assemblies of the list that match the words.
     fn assembly_rows(&self) -> Vec<Element<'_, Message>> {
         let state = &self.assemblies;
-        let found = state
-            .list
-            .as_deref()
-            .map_or_else(Vec::new, |list| genark::search(list, &state.query, MOST));
+        let found = &state.found;
         let mut rows = Vec::new();
         if let Some(accession) = genark::accession(&state.query)
             && !found.iter().any(|assembly| assembly.accession == accession)
@@ -164,17 +179,20 @@ impl Genie {
             let words = format!("Open {accession} from UCSC GenArk");
             rows.push(pick(text(words).size(12).into(), accession));
         }
-        rows.extend(found.into_iter().map(|assembly| {
+        rows.extend(found.iter().map(|assembly| {
             let title = if assembly.common.is_empty() {
                 assembly.species.clone()
             } else {
                 format!("{} ({})", assembly.species, assembly.common)
             };
-            let about = if assembly.name.is_empty() {
+            let mut about = if assembly.name.is_empty() {
                 assembly.accession.clone()
             } else {
                 format!("{} · {}", assembly.name, assembly.accession)
             };
+            if assembly.legacy {
+                about.push_str(" · outdated");
+            }
             let content = column![
                 text(title).size(12),
                 text(about).size(11).style(style::muted)
@@ -266,9 +284,10 @@ mod tests {
     use crate::location::Location;
     use crate::scratch::Scratch;
 
-    const LIST: &str = "# accession\tassembly\tscientific name\tcommon name\ttaxonId\n\
-        GCF_016699485.2\tbGalGal1.mat.broiler.GRCg7b\tGallus gallus\tchicken\t9031\n\
-        GCF_000001405.40\tGRCh38.p14\tHomo sapiens\thuman\t9606\n";
+    const LIST: &str = "# accession\tassembly\tscientific name\tcommon name\ttaxonId\tGenArk clade\n\
+        GCA_000002315.3\tGallus_gallus-4.0\tGallus gallus\tchicken (2011)\t9031\tbirds(L)\n\
+        GCF_016699485.2\tbGalGal1.mat.broiler.GRCg7b\tGallus gallus\tchicken\t9031\tbirds\n\
+        GCF_000001405.40\tGRCh38.p14\tHomo sapiens\thuman\t9606\tprimates\n";
 
     fn shows(genie: &Genie, text: &str) -> bool {
         simulator(genie.view()).find(text).is_ok()
@@ -276,6 +295,102 @@ mod tests {
 
     fn list() -> Arc<[Assembly]> {
         genark::list(LIST).into()
+    }
+
+    /// The sizes of the real files of these checks, for one byte each.
+    #[test]
+    #[ignore = "fetches real data from the web"]
+    fn real_sizes() {
+        let chicken = genark::hub("GCF_016699485.2").unwrap();
+        for address in [genark::LIST, chicken.as_str()] {
+            let url = genie_formats::http::Url::parse(address).unwrap();
+            let size = genie_formats::http::fetch(&url, 0, 1).unwrap().size;
+            println!("{address}: {size} bytes");
+        }
+    }
+
+    /// The start of the real list of UCSC (128 KB of its 6 MB): its first lines, its count, and
+    /// what searches find in it.
+    #[test]
+    #[ignore = "fetches real data from the web"]
+    fn real_genark_list() {
+        let url = genie_formats::http::Url::parse(genark::LIST).unwrap();
+        let start = genie_formats::http::fetch(&url, 0, 128 << 10).unwrap();
+        let text = String::from_utf8_lossy(&start.bytes);
+        let whole = text.rfind('\n').map_or(&text[..], |end| &text[..end]);
+        for line in whole.lines().take(4) {
+            println!("{line}");
+        }
+        let all = genark::list(whole);
+        println!(
+            "{} assemblies in {} lines",
+            all.len(),
+            whole.lines().count()
+        );
+        for query in ["chicken", "Gallus", "GCA_", "Homo sapiens", "fish"] {
+            let found: Vec<String> = genark::search(&all, query, 4)
+                .into_iter()
+                .map(|assembly| {
+                    let (name, species) = (&assembly.name, &assembly.species);
+                    format!(
+                        "{} {name} {species} ({})",
+                        assembly.accession, assembly.common
+                    )
+                })
+                .collect();
+            println!("{query}: {found:?}");
+        }
+        assert!(all.len() > 100, "{}", all.len());
+        assert!(all.iter().all(|assembly| !assembly.species.is_empty()));
+    }
+
+    /// The real hub of the chicken assembly: its genome and its sequence, then its tracks once
+    /// the sequence is open.
+    #[test]
+    #[ignore = "fetches real data from the web"]
+    fn real_genark_hub() {
+        let location = super::hub_location("GCF_016699485.2").unwrap();
+        let found = hub::load(&location, Wanted::default()).unwrap();
+        println!("{} · {} genomes", found.short, found.genomes.len());
+        let genome = &found.genomes[0];
+        println!(
+            "{} · {} · {:?} · {:?}",
+            genome.name, genome.organism, genome.sequence, genome.position
+        );
+        let (sequence, sizes) = (
+            genome.sequence.clone().unwrap(),
+            genome.sizes.clone().unwrap(),
+        );
+        let reference =
+            crate::reference::open_sized(sequence.clone(), &sizes, None, &mut |_| {}).unwrap();
+        let contigs = reference.assembly.contigs();
+        let first: Vec<String> = contigs
+            .iter()
+            .take(4)
+            .map(|contig| format!("{} {}", contig.name, contig.length))
+            .collect();
+        println!("{} contigs: {first:?}", contigs.len());
+        let bases = reference
+            .fetch(0, genie_core::Region::between(1_000_000, 1_000_040))
+            .unwrap();
+        println!("{}", String::from_utf8_lossy(&bases));
+        let wanted = Wanted {
+            genome: None,
+            reference: Some(&sequence),
+        };
+        let open = hub::load(&location, wanted).unwrap();
+        let tracks: Vec<String> = open
+            .tracks
+            .iter()
+            .take(8)
+            .map(|track| format!("{} ({})", track.short, track.kind))
+            .collect();
+        println!(
+            "chosen {:?}, {} tracks: {tracks:?}",
+            open.chosen,
+            open.tracks.len()
+        );
+        assert_eq!(open.chosen, Some(0));
     }
 
     #[test]
@@ -290,14 +405,25 @@ mod tests {
         let _ = genie.update(Message::Assemblies(Assembling::Open));
         assert!(shows(&genie, "NCBI assemblies"));
         assert!(shows(&genie, "Reading the list of UCSC GenArk…"));
-        let _ = genie.update(Message::Assemblies(Assembling::Read(Ok(list()))));
         let _ = genie.update(Message::Assemblies(Assembling::Query("chicken".to_owned())));
+        let _ = genie.update(Message::Assemblies(Assembling::Read(Ok(list()))));
         assert!(shows(&genie, "Gallus gallus (chicken)"));
         assert!(shows(
             &genie,
             "bGalGal1.mat.broiler.GRCg7b · GCF_016699485.2"
         ));
+        assert!(shows(
+            &genie,
+            "Gallus_gallus-4.0 · GCA_000002315.3 · outdated"
+        ));
+        let found = |genie: &Genie| -> Vec<String> {
+            let found = &genie.assemblies.found;
+            found.iter().map(|one| one.accession.clone()).collect()
+        };
+        assert_eq!(found(&genie), ["GCF_016699485.2", "GCA_000002315.3"]);
         assert!(!shows(&genie, "Homo sapiens (human)"));
+        let _ = genie.update(Message::Assemblies(Assembling::Query("human".to_owned())));
+        assert_eq!(found(&genie), ["GCF_000001405.40"]);
         let busy = genie.busy;
         let pick = Assembling::Pick("GCF_016699485.2".to_owned());
         let _ = genie.update(Message::Assemblies(pick));
@@ -368,7 +494,7 @@ mod tests {
         let source = Location::File(scratch.file("remote.txt", LIST));
         let now = SystemTime::now();
         let first = read_list(Some(&cache), &source, now).unwrap();
-        assert_eq!(first.len(), 2);
+        assert_eq!(first.len(), 3);
         let saved: PathBuf = cache.join("genark").join("assemblies.txt");
         assert!(saved.is_file());
         std::fs::write(
@@ -378,9 +504,9 @@ mod tests {
         .unwrap();
         assert_eq!(read_list(Some(&cache), &source, now).unwrap().len(), 1);
         let later = now + Duration::from_hours(8 * 24);
-        assert_eq!(read_list(Some(&cache), &source, later).unwrap().len(), 2);
+        assert_eq!(read_list(Some(&cache), &source, later).unwrap().len(), 3);
         let gone = Location::File(cache.join("absent.txt"));
-        assert_eq!(read_list(Some(&cache), &gone, later).unwrap().len(), 2);
+        assert_eq!(read_list(Some(&cache), &gone, later).unwrap().len(), 3);
         assert!(read_list(None, &gone, now).is_err());
     }
 }

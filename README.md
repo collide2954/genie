@@ -59,10 +59,10 @@ The start view lists ten genomes. Click a genome to open it with its gene track 
 
 UCSC GenArk has assembly hubs for thousands of NCBI assemblies of other species. To open one, click **Other NCBI assemblies…** in the start view, or click the genome label and then **NCBI assembly…**. The palette has **Open an NCBI assembly…** too.
 
-- Type a species, a common name or an accession, for example `Gallus gallus`, `chicken` or `GCF_016699485.2`. The list shows the assemblies that have all the words. Accessions that start with the words come first, then species and common names that start with them.
+- Type a species, a common name or an accession, for example `Gallus gallus`, `chicken` or `GCF_016699485.2`. The list shows the assemblies that have all the words. Accessions that start with the words come first, then species and common names that start with them. Outdated assemblies, which UCSC keeps in its legacy set, come after the others and show **outdated**.
 - Click an assembly. genie opens its GenArk hub, then the genome of the hub. The hub dialog then shows the tracks of the hub, such as the genes of NCBI RefSeq.
 - An accession with its version (GCA or GCF, nine digits, a dot and the version) also opens from **Open URL…** and **Open a track hub…**, and from the dialog when it is not in the list.
-- genie gets the list of GenArk assemblies from UCSC the first time you open the dialog, and keeps it in its cache folder for 7 days. Without a network connection, genie uses the list that it has.
+- genie gets the list of GenArk assemblies (about 6 MB) from UCSC the first time you open the dialog, and keeps it in its cache folder for 7 days. Without a network connection, genie uses the list that it has.
 - The contigs of a GenArk genome have the names in its 2bit file, often the NCBI accessions of the sequences.
 
 ## UCSC tracks
