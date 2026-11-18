@@ -770,7 +770,8 @@ impl Index {
                 fields::label(about, name)
             };
             let value = fields::plain(fields::linked(value));
-            let value = if self.lists.contains(&column) {
+            // UCSC writes a comma after each item of a list, also in a list that is a text field.
+            let value = if self.lists.contains(&column) || value.ends_with(',') {
                 fields::listed(&value)
             } else if fields::names_ontology(about) {
                 fields::ontology(&value)
@@ -1197,7 +1198,7 @@ mod tests {
                 "G, –, G",
                 "5_prime_UTR_variant (SO:0001623)",
                 "snv",
-                "clinvar,commonSome,"
+                "clinvar, commonSome"
             ]
         );
         assert_eq!(
