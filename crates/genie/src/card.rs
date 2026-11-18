@@ -46,6 +46,8 @@ pub enum Detail {
         read: Alignment,
         mate: Option<String>,
         same: bool,
+        /// The insertion under the pointer: its place on the reference and its length.
+        insertion: Option<(u64, u32)>,
     },
     Junction(Junction),
     Methylation {
@@ -400,6 +402,31 @@ pub fn signal_facts(bin: Bin) -> (String, Option<String>) {
     (format!("Mean {}", amount(bin.mean())), Some(range))
 }
 
+/// The title, the span and the lines of the card of a read: its facts, its CIGAR, the insertion
+/// under the pointer, its mate and its modifications.
+fn read_content(detail: &Detail) -> (String, Region, Vec<String>) {
+    let Detail::Read {
+        read,
+        mate,
+        same,
+        insertion,
+    } = detail
+    else {
+        return (String::new(), Region::between(0, 0), Vec::new());
+    };
+    let mut lines = vec![read_facts(read), cigar(read)];
+    lines.extend(insertion.map(|(position, length)| {
+        format!(
+            "Insertion of {} bp after base {}",
+            grouped(u64::from(length)),
+            grouped(position)
+        )
+    }));
+    lines.extend(pair_lines(read, mate.as_deref(), *same));
+    lines.extend(modification_line(read));
+    (read.name.clone(), read.span(), lines)
+}
+
 /// The title, the span and the lines of the card of a signal: a value, a density or a measure
 /// such as a log2 ratio.
 fn signal_content(detail: &Detail) -> (String, Region, Vec<String>) {
@@ -486,12 +513,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             lines.extend(coding(feature));
             (title, feature.span(), lines)
         }
-        Detail::Read { read, mate, same } => {
-            let mut lines = vec![read_facts(read), cigar(read)];
-            lines.extend(pair_lines(read, mate.as_deref(), *same));
-            lines.extend(modification_line(read));
-            (read.name.clone(), read.span(), lines)
-        }
+        Detail::Read { .. } => read_content(detail),
         Detail::Junction(junction) => {
             let lines = vec![
                 junction_facts(junction),

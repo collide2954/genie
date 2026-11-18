@@ -81,6 +81,8 @@ pub struct DataColors {
     pub strands: [Color; 2],
     pub coverage: Color,
     pub insertion: Color,
+    /// The color of the length of a long insertion on the insertion color.
+    pub on_insertion: Color,
     pub codons: [Color; 2],
 }
 
@@ -121,6 +123,7 @@ pub const LIGHT_DATA: DataColors = DataColors {
     strands: [color!(0xBACBE3), color!(0xE5BEC4)],
     coverage: color!(0xB0B0B0),
     insertion: color!(0x7B3FA0),
+    on_insertion: color!(0xFFFFFF),
     codons: [color!(0xE3E3E3), color!(0xD2D2D2)],
 };
 
@@ -153,6 +156,7 @@ pub const DARK_DATA: DataColors = DataColors {
     strands: [color!(0x405873), color!(0x6E4850)],
     coverage: color!(0x5E5E5E),
     insertion: color!(0xB784E0),
+    on_insertion: color!(0x1A1A1A),
     codons: [color!(0x3A3A3A), color!(0x2D2D2D)],
 };
 

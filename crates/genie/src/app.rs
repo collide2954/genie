@@ -4531,6 +4531,31 @@ mod tests {
     }
 
     #[test]
+    fn read_cards_show_the_bases_of_the_insertion_under_the_pointer() {
+        use genie_core::alignment::Op;
+        let mut genie = opened();
+        let mut bases = vec![b'A'; 20];
+        bases.extend([b'C'; 15]);
+        bases.extend([b'A'; 20]);
+        let long = genie_core::alignment::Alignment {
+            cigar: vec![(Op::Match, 20), (Op::Insertion, 15), (Op::Match, 20)],
+            bases,
+            ..read("long1", 0)
+        };
+        add_reads(&mut genie, vec![long]);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 5.0))));
+        assert!(shows(&genie, "Insertion of 15 bp after base 20"));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(20.5, 5.0)));
+        let card = genie.pinned.as_ref().unwrap();
+        assert_eq!(card.fields[0].label, "Inserted bases");
+        assert_eq!(card.fields[0].value, "C".repeat(15));
+        let _ = genie.update(Message::CardClosed);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(35.0, 5.0))));
+        assert!(shows(&genie, "long1"));
+        assert!(!shows(&genie, "Insertion of 15 bp after base 20"));
+    }
+
+    #[test]
     fn right_clicking_the_sequence_opens_its_menu() {
         let mut genie = opened();
         let _ = genie.update(Message::SequenceMenu(Point::new(100.0, 120.0)));

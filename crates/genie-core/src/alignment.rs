@@ -196,6 +196,27 @@ pub struct Parts {
 }
 
 impl Alignment {
+    /// The bases of the insertion of the read before a place of the reference.
+    pub fn inserted(&self, position: u64) -> Option<&[u8]> {
+        let (mut at, mut index) = (self.start, 0_usize);
+        for &(op, length) in &self.cigar {
+            let count = length as usize;
+            match op {
+                Op::Insertion if at == position => {
+                    return self.bases.get(index..index + count);
+                }
+                Op::Insertion | Op::SoftClip => index += count,
+                Op::Match | Op::Equal | Op::Diff => {
+                    at += u64::from(length);
+                    index += count;
+                }
+                Op::Deletion | Op::Skip => at += u64::from(length),
+                Op::HardClip | Op::Padding => {}
+            }
+        }
+        None
+    }
+
     pub fn parts(&self, reference: &[u8], offset: u64) -> Parts {
         let mut parts = Parts::default();
         let (mut position, mut index) = (self.start, 0_usize);
@@ -557,6 +578,29 @@ mod tests {
         };
         assert_eq!(expected(&reads), Some((301, 598)));
         assert_eq!(expected(&reads[..50]), None);
+    }
+
+    #[test]
+    fn inserted_bases_come_from_the_read_at_their_place() {
+        let read = Alignment {
+            bases: b"NNAAAAACGTTTTTGGG".to_vec(),
+            ..alignment(
+                0,
+                vec![
+                    (Op::SoftClip, 2),
+                    (Op::Match, 5),
+                    (Op::Insertion, 3),
+                    (Op::Deletion, 4),
+                    (Op::Match, 4),
+                    (Op::Insertion, 3),
+                ],
+            )
+        };
+        let read = Alignment { start: 100, ..read };
+        assert_eq!(read.inserted(105), Some(&b"CGT"[..]));
+        assert_eq!(read.inserted(113), Some(&b"GGG"[..]));
+        assert_eq!(read.inserted(104), None);
+        assert_eq!(read.inserted(109), None);
     }
 
     #[test]

@@ -198,6 +198,7 @@ pub fn color(paint: Paint, tokens: &Tokens, data: &DataColors) -> Color {
         }
         Paint::Coverage => data.coverage,
         Paint::Insertion => data.insertion,
+        Paint::OnInsertion => data.on_insertion,
         Paint::Codon(even) => data.codons[usize::from(!even)],
         Paint::Text => tokens.text,
         Paint::Muted => tokens.muted,

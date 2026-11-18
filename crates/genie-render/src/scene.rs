@@ -79,6 +79,8 @@ pub enum Paint {
     Change(i8),
     Coverage,
     Insertion,
+    /// Text on the color of an insertion.
+    OnInsertion,
     Codon(bool),
     Text,
     Muted,

@@ -527,22 +527,7 @@ impl Genie {
                 Detail::Junction(found.junctions[index])
             }
         };
-        let fields = match &detail {
-            Detail::Feature(feature) => track::feature_fields(&track.source, feature),
-            Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
-            Detail::Link(link) => track::link_fields(&track.source, link),
-            Detail::Read { read, .. } => track::read_fields(read),
-            Detail::Association { association, .. } => {
-                track::association_fields(&track.source, association)
-            }
-            Detail::Junction(_) => file_fields,
-            Detail::Methylation { .. }
-            | Detail::Signal { .. }
-            | Detail::Match { .. }
-            | Detail::Product { .. }
-            | Detail::Segment { .. }
-            | Detail::Contact(_) => Vec::new(),
-        };
+        let fields = detail_fields(track, &detail, file_fields);
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[contig].name.clone(),
@@ -1079,6 +1064,40 @@ fn sample_fields(session: &Session, detail: &Detail) -> Vec<Field> {
     })
 }
 
+/// The fields of a card: the fields of the file of a record, the inserted bases and the fields of
+/// a read, or the `file_fields` of a junction.
+fn detail_fields(track: &Track, detail: &Detail, file_fields: Vec<Field>) -> Vec<Field> {
+    match detail {
+        Detail::Feature(feature) => track::feature_fields(&track.source, feature),
+        Detail::Variant { variant, .. } => track::variant_fields(&track.source, variant),
+        Detail::Link(link) => track::link_fields(&track.source, link),
+        Detail::Read {
+            read, insertion, ..
+        } => {
+            let inserted = insertion.and_then(|(position, _)| read.inserted(position));
+            let mut fields: Vec<Field> = inserted
+                .map(|bases| Field {
+                    label: "Inserted bases".to_owned(),
+                    value: String::from_utf8_lossy(bases).into_owned(),
+                })
+                .into_iter()
+                .collect();
+            fields.extend(track::read_fields(read));
+            fields
+        }
+        Detail::Association { association, .. } => {
+            track::association_fields(&track.source, association)
+        }
+        Detail::Junction(_) => file_fields,
+        Detail::Methylation { .. }
+        | Detail::Signal { .. }
+        | Detail::Match { .. }
+        | Detail::Product { .. }
+        | Detail::Segment { .. }
+        | Detail::Contact(_) => Vec::new(),
+    }
+}
+
 fn read_detail(
     track: &Track,
     panel: usize,
@@ -1107,6 +1126,7 @@ fn read_detail(
     let slot = track.slot(panel);
     let (rows, groups, y) = (slot.rows(pile), &pile.groups, y - pile.arc_height());
     let index = alignments::hit(viewport, &pile.reads, rows, groups, mode, x, y)?;
+    let insertion = alignments::insertion_hit(viewport, &pile.reads[index], x);
     let read = pile.reads[index].alignment.clone();
     let names = track.source.contigs();
     let own = track.contigs[contig]
@@ -1114,7 +1134,12 @@ fn read_detail(
         .and_then(|name| names.iter().position(|known| known == name));
     let mate = read.mate.and_then(|mate| names.get(mate.contig).cloned());
     let same = read.mate.is_some_and(|mate| Some(mate.contig) == own);
-    Some(Detail::Read { read, mate, same })
+    Some(Detail::Read {
+        read,
+        mate,
+        same,
+        insertion,
+    })
 }
 
 fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Option<Detail> {

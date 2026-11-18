@@ -579,6 +579,78 @@ pub fn reads(
     painted(viewport, reads, rows, groups, mode, (look, &[], false))
 }
 
+/// Insertions of this length or longer show their length.
+const LONG_INSERTION: u32 = 10;
+/// The size of the text of the length of a long insertion.
+const INSERTION_SIZE: f32 = 8.0;
+
+/// The width of the label of the length of a long insertion.
+fn insertion_width(length: u32) -> f32 {
+    length.to_string().len() as f32 * INSERTION_SIZE * 0.6 + 4.0
+}
+
+/// The marks of the insertions of a read, and the lengths of the long ones. Each insertion has a
+/// thin mark when the view shows single bases. A long insertion has a mark in every view, and a
+/// box with its length when the rows have room for `labels`.
+fn insertion_marks(
+    viewport: Viewport,
+    read: &Read,
+    (top, size): (f32, f32),
+    (labels, pixels): (bool, f64),
+) -> (Vec<Primitive>, Vec<Primitive>) {
+    let (mut boxes, mut lengths) = (Vec::new(), Vec::new());
+    for &(position, length) in &read.parts.insertions {
+        let x = viewport.to_px(position as f64) as f32;
+        let long = length >= LONG_INSERTION;
+        if long && labels {
+            let width = insertion_width(length);
+            boxes.push(Primitive::Rect {
+                x: x - width / 2.0,
+                y: top,
+                width,
+                height: size,
+                paint: Paint::Insertion,
+            });
+            lengths.push(Primitive::Text {
+                x,
+                y: top + size / 2.0,
+                content: Cow::Owned(length.to_string()),
+                size: INSERTION_SIZE,
+                paint: Paint::OnInsertion,
+                font: Font::Ui,
+                align: Align::Center,
+            });
+        } else if long || pixels >= 1.0 {
+            boxes.push(Primitive::Rect {
+                x: x - 1.0,
+                y: top,
+                width: 2.0,
+                height: size,
+                paint: Paint::Insertion,
+            });
+        }
+    }
+    (boxes, lengths)
+}
+
+/// The insertion of a read under a point: its place on the reference and its length.
+pub fn insertion_hit(viewport: Viewport, read: &Read, x: f32) -> Option<(u64, u32)> {
+    read.parts
+        .insertions
+        .iter()
+        .filter_map(|&(position, length)| {
+            let distance = (viewport.to_px(position as f64) as f32 - x).abs();
+            let reach = if length >= LONG_INSERTION {
+                (insertion_width(length) / 2.0).max(REACH)
+            } else {
+                REACH
+            };
+            (distance <= reach).then_some(((position, length), distance))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(found, _)| found)
+}
+
 /// The lines between the two mates of each pair that share a row, at the middle of the row.
 fn mate_lines(
     viewport: Viewport,
@@ -692,20 +764,10 @@ pub fn painted(
         let (bases, letters) = mismatches(viewport, read, (top, size), letters);
         primitives.extend(bases);
         marks.extend(letters);
-        if pixels >= 1.0 {
-            primitives.extend(
-                read.parts
-                    .insertions
-                    .iter()
-                    .map(|(position, _)| Primitive::Rect {
-                        x: px(*position) - 1.0,
-                        y: top,
-                        width: 2.0,
-                        height: size,
-                        paint: Paint::Insertion,
-                    }),
-            );
-        }
+        let labels = mode == Mode::Expanded;
+        let (boxes, lengths) = insertion_marks(viewport, read, (top, size), (labels, pixels));
+        primitives.extend(boxes);
+        marks.extend(lengths);
     }
     for (index, (first, label)) in groups.iter().enumerate() {
         marks.push(Primitive::Text {
@@ -775,8 +837,8 @@ mod tests {
     use genie_core::methylation::Site;
 
     use super::{
-        LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, coverage, fit, hit, methylation,
-        methylation_height, methylation_hit, painted, reads,
+        LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, coverage, fit, hit, insertion_hit,
+        methylation, methylation_height, methylation_hit, painted, reads,
     };
     use crate::features::Mode;
     use crate::scene::{Align, Base, Hue, Paint, Primitive, Shade};
@@ -1351,6 +1413,52 @@ mod tests {
         assert!(found.contains(&([20.0, 4.5, 4.0, 1.0], Paint::Text)));
         assert!(found.contains(&([29.0, 4.5, 20.0, 1.0], Paint::Muted)));
         assert!(found.contains(&([14.0, 1.0, 2.0, 8.0], Paint::Insertion)));
+    }
+
+    /// An insertion of 10 bases or more has a label with its length, also in a view too wide for
+    /// the marks of short insertions.
+    #[test]
+    fn long_insertions_show_their_length() {
+        let cigar = vec![
+            (Op::Match, 5),
+            (Op::Insertion, 12),
+            (Op::Match, 5),
+            (Op::Insertion, 2),
+            (Op::Match, 5),
+        ];
+        let long = read(10, 0, cigar, &[b'A'; 29]);
+        let labels = |primitives: &[Primitive]| -> Vec<(String, f32)> {
+            primitives
+                .iter()
+                .filter_map(|primitive| match primitive {
+                    Primitive::Text {
+                        x,
+                        content,
+                        paint: Paint::OnInsertion,
+                        ..
+                    } => Some((content.to_string(), *x)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let marks = |primitives: &[Primitive]| {
+            rects(primitives)
+                .into_iter()
+                .filter(|(_, paint)| *paint == Paint::Insertion)
+                .count()
+        };
+        let one = std::slice::from_ref(&long);
+        let reads = |view| reads(view, one, &[0], &[], Mode::Expanded, PAIRS);
+        let near = reads(view(0, 100));
+        assert_eq!(labels(&near), [("12".to_owned(), 15.0)]);
+        assert_eq!(marks(&near), 2);
+        let far = reads(view(0, 10_000));
+        assert_eq!(labels(&far).len(), 1);
+        assert_eq!(marks(&far), 1);
+        let at = |x| insertion_hit(view(0, 100), &long, x);
+        assert_eq!(at(15.5), Some((15, 12)));
+        assert_eq!(at(20.5), Some((20, 2)));
+        assert_eq!(at(40.0), None);
     }
 
     #[test]
