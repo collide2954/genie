@@ -401,6 +401,17 @@ fn download_in(
 }
 
 pub fn fetch(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
+    #[cfg(feature = "net-budget")]
+    if let Some(stored) = crate::budget::budget().stored(url, start, end) {
+        return Ok(stored);
+    }
+    let fetched = fetch_live(url, start, end)?;
+    #[cfg(feature = "net-budget")]
+    crate::budget::budget().store(url, start, &fetched);
+    Ok(fetched)
+}
+
+fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
     let last = end.max(start + 1) - 1;
     let mut current = url.clone();
     for _ in 0..=REDIRECTS {
@@ -605,6 +616,8 @@ impl Connection {
                 "The server of {url} does not send parts of files."
             )));
         }
+        #[cfg(feature = "net-budget")]
+        crate::budget::budget().room(url, length.unwrap_or(0))?;
         answer.body = if chunked {
             chunks(&mut self.reader)?
         } else if let Some(length) = length {
@@ -616,6 +629,8 @@ impl Connection {
             self.reader.read_to_end(&mut body)?;
             body
         };
+        #[cfg(feature = "net-budget")]
+        crate::budget::budget().count(url, status, answer.body.len());
         let closes = answer
             .header("connection")
             .is_some_and(|value| value.eq_ignore_ascii_case("close"));

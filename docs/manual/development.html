@@ -68,7 +68,9 @@
 <h2 id="website">Website</h2>
 <p>The project page in <code>docs/</code> comes from the pages in <code>site/</code>, this README (the manual), the changelog, the keys of genie and its logo. A test fails when a file in <code>docs/</code> is out of date. To write the files again:</p>
 <pre><code>GENIE_WRITE_SITE=1 cargo test -p genie --bin genie site</code></pre>
-<p>The clips of the tutorial and the pictures are files in <code>docs/clips/</code> and <code>docs/images/</code>.</p>
+<p>The clips of the tutorial and the pictures are files in <code>docs/clips/</code> and <code>docs/images/</code>. To record the clips again after a change of the look, run this PowerShell script (<code>pwsh</code> on macOS and Linux). It needs ffmpeg with libx264 and libwebp:</p>
+<pre><code>powershell -File site/clips/record.ps1</code></pre>
+<p>genie runs without a window, and a script in <code>crates/genie/src/app/clips.rs</code> moves the pointer and clicks. The clips use real data from the web: a first run of all clips fetches about 35 MB. The work folder <code>target/clips</code> keeps the fetched ranges, so a later run fetches only new ranges. <code>-Clips cards, hero</code> records some of the clips, <code>-Cap 60MB</code> changes the most bytes that all runs can fetch (50 MB), and <code>-SkipRecord</code> encodes the frames of the last run again.</p>
 <h2 id="crates">Crates</h2>
 <div class="table"><table>
 <thead><tr><th>Crate</th><th>Contents</th></tr></thead>

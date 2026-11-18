@@ -9,6 +9,8 @@ pub mod bedmethyl;
 pub mod bedpe;
 pub mod bgzf;
 mod binning;
+#[cfg(feature = "net-budget")]
+pub mod budget;
 pub mod chain;
 pub mod columns;
 pub mod contigs;

@@ -471,7 +471,13 @@ The project page in `docs/` comes from the pages in `site/`, this README (the ma
 GENIE_WRITE_SITE=1 cargo test -p genie --bin genie site
 ```
 
-The clips of the tutorial and the pictures are files in `docs/clips/` and `docs/images/`.
+The clips of the tutorial and the pictures are files in `docs/clips/` and `docs/images/`. To record the clips again after a change of the look, run this PowerShell script (`pwsh` on macOS and Linux). It needs ffmpeg with libx264 and libwebp:
+
+```bash
+powershell -File site/clips/record.ps1
+```
+
+genie runs without a window, and a script in `crates/genie/src/app/clips.rs` moves the pointer and clicks. The clips use real data from the web: a first run of all clips fetches about 35 MB. The work folder `target/clips` keeps the fetched ranges, so a later run fetches only new ranges. `-Clips cards, hero` records some of the clips, `-Cap 60MB` changes the most bytes that all runs can fetch (50 MB), and `-SkipRecord` encodes the frames of the last run again.
 
 ## Crates
 

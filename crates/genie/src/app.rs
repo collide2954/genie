@@ -37,6 +37,8 @@ use crate::{font, paths, timer, update};
 mod address;
 mod app_menu;
 mod caching;
+#[cfg(test)]
+mod clips;
 mod copy;
 mod effects;
 mod export;

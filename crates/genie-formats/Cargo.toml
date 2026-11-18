@@ -12,5 +12,10 @@ miniz_oxide.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
 
+[features]
+# A range cache, a request log and a byte cap for work with real data from the web, such as the
+# clips of the website. Only the tests of genie turn it on.
+net-budget = []
+
 [lints]
 workspace = true

@@ -16,6 +16,7 @@ rfd.workspace = true
 
 [dev-dependencies]
 fontdb.workspace = true
+genie-formats = { workspace = true, features = ["net-budget"] }
 iced_test.workspace = true
 
 [lints]
