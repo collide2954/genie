@@ -6,7 +6,7 @@ use genie_core::{Assembly, Band, Contig, Region, contig_order};
 use genie_formats::bgzf::{self, Bgzf};
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
-use genie_formats::{fasta, gzi};
+use genie_formats::{contigs, fasta, gzi};
 
 use crate::location::{Location, Reader};
 
@@ -61,6 +61,34 @@ pub fn open(
     progress: &mut dyn FnMut(f32),
 ) -> Result<Reference, String> {
     open_with(location, &Extras::default(), cache, progress)
+}
+
+/// Opens a sequence with the contig sizes of a sizes file, as the `chromSizes` file of a hub
+/// genome, so that a remote 2bit file does not read the size of each contig. When genie cannot
+/// read the sizes file, it reads the sizes from the sequence.
+pub fn open_sized(
+    location: impl Into<Location>,
+    sizes: &Location,
+    cache: Option<&Path>,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Reference, String> {
+    let extras = match read_sizes(sizes) {
+        Ok(sizes) => Extras {
+            sizes,
+            ..Extras::default()
+        },
+        Err(error) => {
+            log::warn!("genie cannot read the sizes {}. {error}", sizes.name());
+            Extras::default()
+        }
+    };
+    open_with(location, &extras, cache, progress)
+}
+
+fn read_sizes(location: &Location) -> Result<HashMap<String, u64>, String> {
+    let text = crate::hub::read_text(location)?;
+    let rows = contigs::sizes(text.as_bytes()).map_err(|error| error.to_string())?;
+    Ok(rows.into_iter().collect())
 }
 
 fn sized(
@@ -226,7 +254,7 @@ mod tests {
 
     use genie_core::{Band, Region, Stain};
 
-    use super::{Extras, open, open_with};
+    use super::{Extras, open, open_sized, open_with};
     use crate::location::Location;
     use crate::scratch::Scratch;
 
@@ -503,6 +531,33 @@ mod tests {
         assert_eq!(lengths, [8, 4, 12]);
         assert!(server.connections() > 1, "{}", server.connections());
         assert_eq!(reference.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
+    }
+
+    /// The genome of a UCSC assembly hub can have hundreds of contigs. The sizes file of the
+    /// genome spares one request for each contig.
+    #[test]
+    fn a_sizes_file_spares_the_reads_of_far_lengths() {
+        let server = crate::server::serve(vec![
+            ("/far.2bit".to_owned(), far_2bit()),
+            (
+                "/far.sizes".to_owned(),
+                b"chr1\t8\nchr2\t4\nchr3\t12\n".to_vec(),
+            ),
+        ]);
+        let at = |path: &str| Location::parse(&server.url(path)).unwrap();
+        let lengths = |reference: &super::Reference| {
+            let contigs = reference.assembly.contigs();
+            contigs
+                .iter()
+                .map(|contig| contig.length)
+                .collect::<Vec<_>>()
+        };
+        let sized = open_sized(at("/far.2bit"), &at("/far.sizes"), None, &mut |_| {}).unwrap();
+        assert_eq!(lengths(&sized), [8, 4, 12]);
+        assert_eq!(server.requests(), 2);
+        assert_eq!(sized.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
+        let fallback = open_sized(at("/far.2bit"), &at("/none.sizes"), None, &mut |_| {}).unwrap();
+        assert_eq!(lengths(&fallback), [8, 4, 12]);
     }
 
     #[test]

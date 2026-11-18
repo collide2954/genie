@@ -82,6 +82,8 @@ pub struct Genome {
     pub name: String,
     pub track_db: Option<String>,
     pub two_bit: Option<String>,
+    /// The `chromSizes` file: the name and length of each contig.
+    pub sizes: Option<String>,
     pub organism: String,
     pub description: String,
     pub position: Option<String>,
@@ -156,6 +158,7 @@ fn genome(stanza: &Stanza) -> Genome {
         name: word(stanza.get("genome").unwrap_or_default()).to_owned(),
         track_db: text("trackDb"),
         two_bit: text("twoBitPath"),
+        sizes: text("chromSizes"),
         organism: text("organism").unwrap_or_default(),
         description: text("description").unwrap_or_default(),
         position: text("defaultPos"),
@@ -242,17 +245,18 @@ mod tests {
 
     #[test]
     fn genomes_point_at_their_tracks_and_sequence() {
-        let text = "genome hg38\ntrackDb hg38/trackDb.txt\n\ngenome myAsm\ntrackDb myAsm/trackDb.txt\ntwoBitPath myAsm/myAsm.2bit\norganism Fly\ndescription My assembly\ndefaultPos chr1:1-1000\n";
+        let text = "genome hg38\ntrackDb hg38/trackDb.txt\n\ngenome myAsm\ntrackDb myAsm/trackDb.txt\ntwoBitPath myAsm/myAsm.2bit\nchromSizes myAsm/myAsm.chrom.sizes.txt\norganism Fly\ndescription My assembly\ndefaultPos chr1:1-1000\n";
         let found = genomes(text);
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].name, "hg38");
-        assert_eq!(found[0].two_bit, None);
+        assert_eq!((&found[0].two_bit, &found[0].sizes), (&None, &None));
         assert_eq!(
             found[1],
             Genome {
                 name: "myAsm".to_owned(),
                 track_db: Some("myAsm/trackDb.txt".to_owned()),
                 two_bit: Some("myAsm/myAsm.2bit".to_owned()),
+                sizes: Some("myAsm/myAsm.chrom.sizes.txt".to_owned()),
                 organism: "Fly".to_owned(),
                 description: "My assembly".to_owned(),
                 position: Some("chr1:1-1000".to_owned()),

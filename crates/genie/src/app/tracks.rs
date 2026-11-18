@@ -762,6 +762,15 @@ impl Genie {
         if track::is_track(&location) {
             return self.open_track(location);
         }
+        self.open_reference(location, None)
+    }
+
+    /// Opens a reference sequence, with the file of its contig sizes when there is one.
+    pub(super) fn open_reference(
+        &mut self,
+        location: Location,
+        sizes: Option<Location>,
+    ) -> Task<Message> {
         let name = location.name();
         if self.session.is_none() {
             self.status = Status::Opening(name.clone());
@@ -773,7 +782,13 @@ impl Genie {
             let mut report = |share| {
                 let _ = sender.unbounded_send(Opening::Progress(share));
             };
-            let result = reference::open(location, paths::cache_dir().as_deref(), &mut report);
+            let cache = paths::cache_dir();
+            let result = match &sizes {
+                Some(sizes) => {
+                    reference::open_sized(location, sizes, cache.as_deref(), &mut report)
+                }
+                None => reference::open(location, cache.as_deref(), &mut report),
+            };
             if let Ok(reference) = &result {
                 let contigs = reference.assembly.contigs().len();
                 log::info!(

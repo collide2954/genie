@@ -271,11 +271,12 @@ impl Genie {
             return Task::none();
         };
         let (location, sequence) = (hub.location.clone(), chosen.sequence.clone());
+        let sizes = chosen.sizes.clone();
         let known = genome::find(&chosen.name);
         let task = match (sequence, known) {
             (Some(sequence), _) => {
                 self.close_menus();
-                self.open(sequence)
+                self.open_reference(sequence, sizes)
             }
             (None, Some(known)) => self.open_genome(&known.id),
             (None, None) => return Task::none(),

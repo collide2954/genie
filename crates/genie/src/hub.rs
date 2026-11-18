@@ -43,6 +43,8 @@ pub struct Genome {
     pub description: String,
     /// The 2bit sequence of an assembly hub genome.
     pub sequence: Option<Location>,
+    /// The file with the length of each contig of the sequence.
+    pub sizes: Option<Location>,
     pub position: Option<String>,
     track_db: Option<Location>,
 }
@@ -161,6 +163,7 @@ fn place(genome: &text::Genome, base: &Location) -> Genome {
         organism: genome.organism.clone(),
         description: genome.description.clone(),
         sequence: resolve(&genome.two_bit),
+        sizes: resolve(&genome.sizes),
         position: genome.position.clone(),
         track_db: resolve(&genome.track_db),
     }
@@ -441,8 +444,8 @@ mod tests {
     #[test]
     fn assembly_hubs_in_one_file_name_their_sequence() {
         let text = "hub single\nshortLabel One\nuseOneFile on\nemail a@b.c\n\n\
-            genome myAsm\ntwoBitPath seq/myAsm.2bit\norganism Fly\ndescription My assembly\n\
-            defaultPos chr1:1-1000\n\n\
+            genome myAsm\ntwoBitPath seq/myAsm.2bit\nchromSizes seq/myAsm.chrom.sizes.txt\n\
+            organism Fly\ndescription My assembly\ndefaultPos chr1:1-1000\n\n\
             track genes\ntype bigGenePred\nbigDataUrl genes.bb\nshortLabel Genes\n";
         let scratch = Scratch::new("hub-assembly");
         let hub = file(&scratch.file("hub.txt", text));
@@ -457,6 +460,7 @@ mod tests {
         let genome = &found.genomes[0];
         let sequence = hub.join("seq/myAsm.2bit").unwrap();
         assert_eq!(genome.sequence.as_ref(), Some(&sequence));
+        assert_eq!(genome.sizes, hub.join("seq/myAsm.chrom.sizes.txt").ok());
         assert_eq!(
             (genome.organism.as_str(), genome.description.as_str()),
             ("Fly", "My assembly")
