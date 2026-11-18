@@ -1,0 +1,14 @@
+[session]
+reference = https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/hg19.2bit
+genome = hg19
+locus = chr7:5,566,001-5,571,000
+
+[track]
+file = hg19/RefSeq Select.bed
+name = RefSeq Select
+
+[track]
+file = https://s3.amazonaws.com/jbrowse.org/genomes/hg19/paired_end_rnaseq/Pairend_StrandSpecific_51mer_Human_hg19.bam
+name = Strand-specific RNA-seq
+sashimi = on
+junction reads = 4

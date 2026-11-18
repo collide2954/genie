@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Website
+
+- A tutorial shows the main work in ten short clips of genie with real data: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change a track, find a sequence and save the work.
+- The manual has the full guide on pages with a search box. Other pages list all keys and mouse actions, the changes of each version, example sessions with public data, and answers to common questions.
+- The home page shows the features of 0.3 with real data, and the download button offers the package for your system.
+- The pages load less: the fonts are about ten times smaller, and the clips play only while they are on the screen.
+
+### Fixes
+
+- In a narrow window, a locus box with several loci keeps the window buttons in the window. Before, the buttons could go out of view.
+- genie reads CRAM files with empty blocks that name a codec, as the 1000 Genomes files for GRCh38 have. Before, they gave the message "A CRAM block is not valid".
+
 ## 0.3.1
 
 The check for updates works again.

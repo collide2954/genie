@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracks · genie</title>
+<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, liftover, sample groups.">
+<meta property="og:title" content="Tracks · genie">
+<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, liftover, sample groups.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="../tutorial.html">Tutorial</a>
+      <a href="../manual/index.html" aria-current="page">Manual</a>
+      <a href="../examples.html">Examples</a>
+      <a href="../keys.html">Keys</a>
+      <a href="../changelog.html">Changelog</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="../index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap manual">
+<aside>
+  <input class="search" type="search" placeholder="Find in the manual" aria-label="Find in the manual" data-index="search.json">
+  <ul class="results"></ul>
+  <nav aria-label="Manual">
+    <ul>
+      <li><a href="install.html">Install</a></li>
+      <li><a href="genomes.html">Genomes and tracks</a></li>
+      <li><a href="files.html">Files</a></li>
+      <li><a href="navigation.html">Navigation</a></li>
+      <li><a href="tracks.html" aria-current="page">Tracks</a>
+        <ul>
+          <li><a href="#tracks">Tracks</a></li>
+          <li><a href="#variant-table">Variant table</a></li>
+          <li><a href="#sashimi-plots">Sashimi plots</a></li>
+          <li><a href="#liftover">Liftover</a></li>
+          <li><a href="#sample-groups">Sample groups</a></li>
+        </ul>
+      </li>
+      <li><a href="sessions.html">Sessions and images</a></li>
+      <li><a href="automation.html">Automation</a></li>
+      <li><a href="settings.html">Settings and updates</a></li>
+      <li><a href="development.html">Development</a></li>
+    </ul>
+  </nav>
+</aside>
+<article class="prose">
+<h1 id="tracks">Tracks</h1>
+<ul>
+<li>Put the pointer on a feature, a read or a variant to see its data. Click to keep the card open.</li>
+<li>A card also shows the other fields of the file: bigBed fields with the descriptions from the file, GFF3 and GTF attributes, and the BED columns after column 12 (Column 13 and so on). A variant card shows the INFO entries with the descriptions from the <code>##INFO</code> lines of the header. If two descriptions give the same short label, the card shows the INFO IDs, for example <code>AF_EUR</code> and <code>AF_EUR_unrel</code>. genie does not show empty fields, fields with the value <code>none</code> or <code>.</code>, and bigBed fields that UCSC hides (names that start with <code>_</code>).</li>
+<li>A card shows up to 6 fields. Click to keep the card open and see all fields. If the card is taller than the window, scroll it. Ctrl+C (Cmd+C on macOS) copies the card with all fields.</li>
+<li>genie keeps the first 400 characters of the INFO column of each variant, without the annotations of VEP, SnpEff and bcftools (see below). If it cuts the INFO column, the card shows <b>More INFO</b>.</li>
+<li>A variant card shows QUAL and FILTER as the fields Quality and Filter.</li>
+<li>A variant card also shows the change of the variant on the transcripts of the open feature tracks, in HGVS notation, for example &quot;BRCA1 p.Arg1699Trp · c.5095C&gt;T&quot;. genie uses the transcripts in view that have a strand and a coding part, for example from BED12, bigBed, GFF3 and GTF files, and gets the bases from the reference. The card shows up to 3 transcripts, with the protein changes first, and the number of the other transcripts. &quot;p.Leu12=&quot; keeps the amino acid, &quot;p.Arg37Ter&quot; makes a stop codon and &quot;p.Lys45fs&quot; moves the reading frame. A variant in the 2 bases next to an exon shows &quot;splice site&quot;. A variant out of the coding sequence shows its place and its c. position: 5′ UTR (for example &quot;c.-14G&gt;A&quot;), 3′ UTR (&quot;c.*32C&gt;T&quot;) or intron (&quot;c.92+5G&gt;A&quot;). A deletion of whole exons shows &quot;exon deletion&quot;, and a deletion of the whole transcript shows &quot;transcript deletion&quot;. A change of the stop codon shows the extension, for example &quot;p.Ter148GluextTer?&quot;. An allele with unknown bases (N) shows &quot;p.?&quot;. As HGVS asks, genie moves an insertion or a deletion in a repeat to the 3′ end of the transcript, and an insertion of the bases before it is a duplication, for example &quot;c.417dup&quot; or &quot;p.Lys2dup&quot;. Each alternate allele of a site has its own lines. genie does not use a transcript if the length of its coding part is not a multiple of 3.</li>
+<li>If the VCF file has annotations from Ensembl VEP (<code>CSQ</code>), SnpEff (<code>ANN</code>) or bcftools csq (<code>BCSQ</code>), the variant card shows the 3 most severe annotations, one line for each, for example &quot;BRCA1 · missense_variant · MODERATE · ENST00000357654.9:c.5095C&gt;T · p.Arg1699Trp&quot;, and the number of the other annotations. For the same impact, the transcripts that VEP marks as canonical, MANE Select or picked come first. bcftools csq does not give the impact, so genie gets it from the consequence, as VEP does.</li>
+<li>The fields <b>Consequence</b>, <b>Impact</b>, <b>Gene</b> and <b>Biotype</b> list the values of all annotations of the variant. Use them to filter the track, for example to keep only the variants with a HIGH impact. The other columns of the first annotation are fields with the name of the INFO field before them, for example <code>CSQ SIFT</code>. genie finds annotations in each INFO field whose description names its columns, as VEP, SnpEff and bcftools write them.</li>
+<li>To filter a track, click a value in a card that you keep open. Then click <b>Keep only</b> or <b>Hide</b> the value. For a number, the menu has a box with the value: keep it or type a different number, then click <b>At least</b> or <b>At most</b>. Each rule hides more features or variants. A value with commas passes when one of its items passes, for example the tags of a GENCODE transcript or the frequencies of a dbSNP variant.</li>
+<li>A filtered track shows the number of features or variants in view that it keeps, for example &quot;12 of 586&quot;, at the top right. Click the number, or right-click the track, to see the rules. Click × to remove a rule.</li>
+<li>Click <b>Label with this field</b> in the same menu to name the features with that field, for example the gene type. <b>Label with name</b> in the track menu goes back.</li>
+<li>Filters and labels apply when the track shows features or variants. A filtered bigBed track wider than 10 Mb shows the density of the features that the filter keeps, if their data in view is 16 MB or less. If there is more data, the track shows the density of all features, and the count asks you to zoom in. <b>Next feature</b> and <b>Previous feature</b> skip the features and variants that the filter hides. If you type a name that a filter hides, genie goes to it and a note says so, for example &quot;TP53 is hidden by the filter of GENCODE V48.&quot; Sessions and images keep the filters.</li>
+<li>Type a feature name or a variant ID in the locus box to go to it. The search ignores letter case. genie finds variant IDs in VCF files up to 50 MB. It also finds names in bigBed files that have a name index (<code>bedToBigBed -extraIndex=name</code>), and in other bigBed files up to 50 MB.</li>
+<li>BED and bigBed features use the colors of the file (itemRgb). Right-click the track and turn off &quot;Use file colors&quot; to use the track color.</li>
+<li>In a bigBed file of gene models (bigGenePred), each transcript shows its gene symbol. genie uses the field that the file describes as the gene symbol. If there is no such field, it uses <code>geneName2</code>, then <code>name2</code>. A track from the <a href="genomes.html#ucsc-tracks">UCSC track list</a> can set the field. For example, mm10 UCSC Genes uses <code>geneName</code>.</li>
+<li>In a variant track, the color of a site shows the change: the color of the new base for an SNV, purple for an insertion and dark grey for a deletion. A site that does not pass FILTER has a light color.</li>
+<li>Structural variants from callers such as Sniffles2, Manta, DELLY, pbsv and cuteSV show over their full length: a deletion in dark grey, a duplication in vermillion, an inversion in green and an insertion in purple. genie finds them by their SVTYPE, by a symbolic allele such as <code>&lt;DEL&gt;</code> or <code>&lt;DUP:TANDEM&gt;</code>, or by a breakend such as <code>G]chr17:198982]</code>. The card says the type and the length, for example &quot;Deletion · 2,345 bp&quot;, and &quot;imprecise&quot; for an IMPRECISE call. A complex rearrangement, such as a CPX record of gnomAD-SV, also shows over its full length, and its card says &quot;Complex rearrangement&quot;.</li>
+<li>Thin lines with ends show the confidence intervals of the start and the end (CIPOS and CIEND).</li>
+<li>A lane above the sites shows each breakend (BND) as an arc to its other end. Two breakends that join each other give one arc. A breakend to another chromosome shows as a stub, and its card names the other end, for example &quot;Breakend · other end chr2:321,682&quot;. genie finds the other end in the alternate allele, or in CHR2 with POS2, END2 or END, as gnomAD-SV and other callers write it. A breakend takes one base, also when its END is on the other side.</li>
+<li>Under the sites, each sample has a row: a light color for heterozygous, the full color for homozygous alternate and grey for homozygous reference. A sample with no call has no mark. If there are more than 100 samples, the rows are thin. If there are more than 300 samples, each row shows a group of samples with the strongest call of the group (homozygous alternate, then heterozygous, then homozygous reference), and the card names the samples of the row.</li>
+<li>A signal track has a bar for each pixel. The bar goes to the mean value, and a light color goes to the maximum value. Values below zero go down from a zero line. The range of the values in view is at the top right.</li>
+<li>Right-click a signal track to show a line instead of bars. Turn on &quot;Shared scale&quot; on two or more signal tracks to give them the same range.</li>
+<li>To fix the range of a signal track, right-click it, type the minimum and the maximum, then push Enter. The fields show the range in view. <b>Auto range</b> goes back to the range of the data in view. A track with a fixed range does not use &quot;Shared scale&quot;.</li>
+<li>To show two or more signal tracks in one lane, right-click a signal track, then click a track under <b>Overlay on</b>. The lane shows each signal as a line in the color of its track, with one range for all. If two tracks have the same color, genie gives the added track a different color. To show a track in its own lane again, right-click the lane and click the track under <b>Separate</b>.</li>
+<li>Double-click a track name to change it, then push Enter. Push Escape to stop. If you delete the name, the track shows its file name again. The track menu also has <b>Rename</b>.</li>
+<li>Right-click a track to set its rows, its color or its place. When the pointer is on a track, a ⋯ button next to its name opens the same menu and a × button removes the track.</li>
+<li>Click <b>Track settings…</b> at the top of the track menu to see all settings of the track in one dialog: name, color, rows, height, and the settings of its kind. Each change shows at once.</li>
+<li>Right-click a read track to show duplicate reads and soft clips, or to keep all reads.</li>
+<li>genie colors unusual read pairs: vermillion for an insert size that is larger than expected, blue for a smaller one, green for two mates on the same strand, purple for mates that point away from each other, and orange for a mate on a different chromosome. The expected insert sizes come from the loaded pairs. Right-click a read track to turn these colors off.</li>
+<li>Right-click a read track to sort the rows by the base at that position, or to group the reads by phase (HP tag) or by strand.</li>
+<li>The card of a paired read shows the mate position, the insert size, the pair orientation and the HP and RG tags.</li>
+<li>A read card also lists MAPQ, the insert size of a pair and the small tags of the read as fields, for example NM, AS or CB. In a card that you keep open, click a field to keep only or hide the reads with that value, or to keep the reads with at least or at most a number. genie loads the reads again with the filter. For a tag, the menu also has <b>Group by this tag</b> and <b>Color by this tag</b>. Groups show numbers in order, then text values, then the reads without the tag. A track shows at most 30 groups: the smallest ones go together as &quot;Other values&quot;. Color by a tag gives the 5 most common values in the loaded reads the 5 track colors. The other reads are grey. Right-click the track and click <b>Group by</b> or <b>Color by</b> with the tag name to stop. CRAM files from samtools usually leave out the NM and MD tags, so their reads do not show them.</li>
+<li>Right-click a read track to show secondary reads, supplementary reads or reads that failed the quality checks of the sequencer, and to hide the reads under MAPQ 1, 10, 20 or 30 (<b>MAPQ ≥</b>). Sessions keep these settings.</li>
+<li>A read with MAPQ 0 is placed in more than one spot of the genome. genie shows it in a light color, and its card says &quot;placed in more than one spot&quot;.</li>
+<li>A split read has other parts in the genome (SA tag). A dark mark shows the clipped end of the read. The card lists the other parts, for example &quot;chr2:1,234,000 + · MAPQ 60&quot;. In a card that you keep open, click a part to go to it.</li>
+<li>A read that spans an intron (N in the CIGAR) shows a thin line over the intron. Above the reads, an arc joins the two ends of each splice junction. A higher and thicker arc has more reads. The color of the arc shows the strand: blue for forward, vermillion for reverse and grey if the strand is not known. The strand comes from the XS or ts tag of the reads. If the reads have no such tag, it comes from the bases at the two ends of the intron: GT-AG, GC-AG or AT-AC on the forward strand, or their reverse complements. If there is space, the arc shows its number of reads. The count includes all reads, also the reads that down-sampling hides. Put the pointer on an arc to see its position, reads, strand and intron length. A collapsed read track shows the coverage and the arcs.</li>
+<li>Long reads can have base modifications (MM and ML tags), for example 5mC from nanopore or PacBio. Right-click a read track and turn on <b>Color by modification</b>. The reads become grey, and each call has a color: vermillion for modified, blue for not modified, and a light color for a probability near 50%. Mismatches stay on top. When you zoom out, a pixel shows the mean probability of its calls. The card of a read counts the calls for each modification, for example &quot;Modified 5mC 34 of 120&quot; (calls with a probability of 50% or more).</li>
+<li>When <b>Color by modification</b> is on, a lane above the reads shows the share of modified reads at each site. A vermillion bar goes up to the share of modified calls, and grey fills the rest. If you group the reads by phase or by strand, each group has a lane with the group name. At a CpG, genie adds the calls of the two strands together, at the C of the forward strand. Put the pointer on a bar to see the counts, for example &quot;Modified 12 of 20 reads · 60 %&quot;, and the counts of the other modifications at the site. The lane shows 5mC, or the modification with the most calls if the reads have no 5mC. To show a different modification, right-click the track and click it, for example <b>Show 5hmC</b>.</li>
+<li>genie opens bedMethyl files from <code>modkit pileup</code> as signal tracks. genie knows a bedMethyl file by its name (<code>.bedMethyl</code>, also compressed) or by its columns, also if the name ends with <code>.bed</code>. The bars show the percent of modified reads, from 0 to 100. Right-click the track to select the modification, for example <b>Show 5hmC</b>. <b>Join CpG strands</b> adds the counts of the two strands of each CpG together, at the C of the forward strand. genie joins two sites only if the file has a site on each strand. Turn it off to see each strand. Zoom in until a pixel shows less than 8 bp: then the card of a site shows its counts, for example &quot;Modified 12 of 20 reads · 60 %&quot;.</li>
+<li>An interaction track shows links between two regions, for example chromatin loops from Hi-C or ChIA-PET. genie opens bigInteract files (bigBed files with the UCSC interact fields, also with the older names <code>region1</code> and <code>region2</code> of the ends), BEDPE files, and the loop lists of Juicer and HiCCUPS. In a loop list, the header line gives the names of all fields, and the <code>color</code> column gives the color of each arc. Each link is an arc from the middle of one end to the middle of the other, with a small block at each end. A longer link rises higher. A link with a larger value (the <code>value</code> field of bigInteract, the score of BEDPE) has a thicker line. An arc with an end outside the view goes past the edge. A link to another chromosome shows as a short stub at its end in view. The arcs use the colors of the file; right-click the track and turn off <b>Use file colors</b> to use the track color. Put the pointer on an arc, an end or a stub to see the two ends, the distance and the other fields. A BEDPE header line gives the names of the fields. Zoom in to 50 Mb or less to see the links of a bigInteract file.</li>
+<li>A Hi-C track shows the contacts of a <code>.hic</code> file of Juicer (versions 6 to 9) as a triangle over the diagonal: contacts between near bins are at the bottom, and contacts between bins farther apart are higher. Each contact is a block of one bin, in rows that stand for the rotated matrix. The color goes from light grey to vermillion; the full color starts at the count that is higher than 95% of the counts in view. The size of the bins follows the zoom: genie uses the smallest bin size of the file that gives blocks of 2 to 8 pixels. genie reads only the blocks of the matrix that the view needs, also from the web.</li>
+<li>Right-click a Hi-C track to select the normalization of the file, for example <b>KR normalization</b> or <b>SCALE normalization</b>, or <b>No normalization</b> for the counts. Without a choice, genie uses SCALE, KR, VC_SQRT or VC, in this order, if the file has it. If the file has no vector of a normalization for a chromosome at a bin size, the map shows the counts. <b>Observed/expected</b> divides each value by the expected value at its distance: blue below 1 and vermillion above 1, with the full colors at 1/4 and 4. Put the pointer on a block to see its two bins, their distance, the value and the normalization. Drag the bottom edge of the track to make the triangle taller.</li>
+<li>genie opens a table compressed with bgzip that has a tabix index as a table track, for example the CADD scores. The index gives the columns of the chromosome, the start and the end. The last header line (<code>#Chrom Pos …</code>) gives the names of the columns. A table track shows a column of numbers as a signal: at first the last column of numbers, for example PHRED. Right-click the track to show a different column, for example <b>Show RawScore</b>, or <b>Show rows</b> to see each row as a feature with its columns as fields, named by its first column of text. Zoom in to 10 Mb or less to see the data. Sessions keep the choice. A <code>.tsv</code> or <code>.txt</code> file without a tabix index stays a sample table.</li>
+<li>A GWAS track shows each variant of a file of summary statistics as a dot at the height of its -log10 p (a Manhattan plot). A grey line shows the genome-wide significance of 5×10⁻⁸, and the dots over it are vermillion. The lane goes up to the highest value in view. genie knows the file by its header line, which names the chromosome, the position and the p-value or the -log10 p, for example <code>chromosome base_pair_location … p_value</code> (GWAS Catalog), <code>#CHROM POS … P</code> (PLINK 2) or <code>CHROM GENPOS … LOG10P</code> (REGENIE). Put the pointer on a dot to see its row. A file with a tabix index opens at once, and genie reads only the part in view; for a file on the web, zoom in to 50 Mb or less. genie reads all of a file without an index, up to 1 GB. In the whole-genome view, every second chromosome has a lighter color.</li>
+<li>A copy number track shows the segments of each sample in a row: blue for a loss, vermillion for a gain, and light grey near 0. The full colors start at a log2 value of -1.5 and +1.5. To use a different range, right-click the track, type the minimum and the maximum, then push Enter. <b>Default range (±1.5)</b> goes back. genie finds the columns by the header line of the file: the sample, the chromosome, the start, the end, the number of markers and the value (for example <code>seg.mean</code>, <code>log2</code> or <code>MEAN_LOG2_COPY_RATIO</code>). If the header names no value column, genie uses the last column. A CNVkit file gets its sample name from the file name, and a GATK file from its <code>@RG</code> line. Up to 20 samples show expanded, with their names on the right. With more samples, the rows get thinner to fit, down to 1 px. Put the pointer on a segment to see its sample, its length, its markers and its value.</li>
+<li>Right-click the sequence to show the reverse strand and 3 or 6 reading frames.</li>
+<li>Drag a track name to move the track.</li>
+<li>Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.</li>
+<li>If a track has more than 200,000 shapes to draw in the view, it shows &quot;There is too much to draw here. Zoom in.&quot; in place of the data.</li>
+</ul>
+<h2 id="variant-table">Variant table</h2>
+<ul>
+<li>Right-click a variant track and click <b>Variant table</b> to see its variants in a table under the tracks. The palette has <b>Show the variant table</b>. Click the item again, or click ×, to close the table.</li>
+<li>The table has a row for each variant in view of the first locus. The columns are the chromosome, the position, the ID, the reference allele, the alternate alleles, the number of heterozygous and homozygous alternate calls (if the file has samples), Quality, Filter, the annotation fields and the INFO fields. If the track has a filter, the table shows only the variants that the filter keeps.</li>
+<li>Click a column name to sort the rows by that column: numbers in order, then text. Click again to reverse the order, and a third time to show the order of the file again. Empty cells are always last.</li>
+<li>Type in <b>Find in the table</b> to show only the rows with a cell that contains the text. The search ignores letter case.</li>
+<li>Click a row to go to its variant.</li>
+<li><b>Export TSV</b> saves the rows in their order, with all columns, as a tab-separated file.</li>
+<li>If the view is too wide to show the variants, the table asks you to zoom in.</li>
+</ul>
+<h2 id="sashimi-plots">Sashimi plots</h2>
+<p>A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.</p>
+<ul>
+<li>Right-click a read track and click <b>Sashimi plot</b>. The track then shows the coverage as an area in the color of the track, and each splice junction as an arc with its number of reads. The first junction is above the coverage, the next one is below it, and so on, so that near arcs do not hide each other. A thicker arc has more reads.</li>
+<li><b>Arcs ≥</b> in the track menu hides the junctions with fewer reads, for example 5 or 10.</li>
+<li>To compare samples, show each read track as a Sashimi plot, give each track a different color, and turn on <b>Shared scale</b> in the menu of each track. The tracks then use the same range of coverage.</li>
+<li>Put the pointer on an arc to see its junction: the position, the reads, the strand and the length of the intron.</li>
+<li>To save the plots as an image, push Ctrl+E (Cmd+E on macOS), then save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.</li>
+<li>Click <b>Sashimi plot</b> again to see the reads. Sessions keep the Sashimi plot, the <b>Arcs ≥</b> setting and the shared scale of each track.</li>
+</ul>
+<h2 id="liftover">Liftover</h2>
+<p>A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the <code>liftOver</code> folder of each genome, for example <code>hg19ToHg38.over.chain.gz</code>.</p>
+<ul>
+<li>Right-click a track and click <b>Lift over…</b>. Then open a chain file from the assembly of the track to the assembly in view, plain or compressed with gzip. The chain file and the data file can name the chromosomes differently, for example <code>chr1</code> and <code>1</code>.</li>
+<li>genie reads only the parts of the data file that align with the view. Each feature, variant, value, link, segment and dot goes to its place in view: the span from its first to its last aligned base, on the chain that aligns the most of its bases. If that chain aligns less than half of its bases, genie does not show it. Exons and coding parts move with their feature. If the chain aligns the two assemblies on opposite strands, a feature changes its strand, and a variant shows the reverse complement of its alleles.</li>
+<li>The locus box finds the feature names and the variant IDs of a lifted track at their new places.</li>
+<li>genie cannot lift read tracks and Hi-C tracks. A lifted track does not have <b>Next feature</b> and <b>Previous feature</b>.</li>
+<li>Click <b>Remove lift</b> in the track menu to show the data at its own places again.</li>
+<li>Sessions keep the chain file of each track. genie reads the chain file again before it shows the track.</li>
+<li>Click <b>Lift…</b> under the region list to move the regions from the places of a different assembly to the places of the assembly in view, for example after you import a BED file of hg19 regions into an hg38 session. A region that the chains do not move leaves the list, and a notice gives the number. If the chains move none of the regions, the list does not change.</li>
+</ul>
+<h2 id="sample-groups">Sample groups</h2>
+<p>A sample table gives facts about the samples of variant and copy number tracks, for example the population, the sex or the phenotype. genie uses the table to put the rows of the samples in groups, to sort them and to color them.</p>
+<ul>
+<li>Open a sample table as you open a track: open the file or drop it on the window. genie reads tab or comma separated files with a header line (<code>.tsv</code>, <code>.csv</code>, <code>.txt</code>, and the <code>.panel</code> files of the 1000 Genomes Project), IGV sample information files (the <code>#sampleTable</code> part) and PLINK <code>.fam</code> and <code>.ped</code> files. The column with the name <code>sample</code>, <code>ID</code> or <code>IID</code> has the sample names. If there is no such column, the first column has them. The other columns are the fields.</li>
+<li>In a clinical file from cBioPortal (for example <code>data_clinical_sample.txt</code>), the <code>SAMPLE_ID</code> column has the sample names, and the fields have the names of the first line. Values such as <code>[Not Available]</code> count as missing.</li>
+<li>genie reads the first lines of a <code>.txt</code> file to know what it is, also for a file on the web. A file that starts with a <code>hub</code> line opens as a track hub, and a loop list (<code>chr1 x1 x2 chr2 y1 y2 …</code>) opens as an interaction track. Other <code>.txt</code> files open as sample tables.</li>
+<li>For a PLINK file, the fields are the family, the father, the mother, the sex (male or female) and the phenotype (affected or unaffected, or the number of a quantitative phenotype).</li>
+<li>One table applies to all tracks of the session that have its samples. A notice tells how many samples of the open tracks are in the table. Open a different table to replace it. <b>Close the sample table</b> in the palette removes it.</li>
+<li>Put the pointer on a genotype row or a copy number row to see the fields of its sample in the card. Click the row to keep the card open. Then click a field value, and click <b>Group by this field</b>, <b>Sort by this field</b> or <b>Color by this field</b>.</li>
+<li>A group shows the rows of one value together, under a band with the value and the number of samples, for example &quot;EUR · 503 samples&quot;. Numbers come in order, then text values. A track shows at most 30 groups: the samples of the other values go together as &quot;Other ... values&quot;. After them come the samples without a value (&quot;No ...&quot;) and the samples that are not in the table (&quot;Not in the sample table&quot;).</li>
+<li>Sort puts the rows of each group in order: numbers from the smallest, text from A to Z, and samples without a value last.</li>
+<li>Color gives each row a strip at the left. The 8 most common values get 8 colors, and the other values are grey. For a field of numbers, the strip goes from light grey for the smallest number to blue for the largest.</li>
+<li>While a field groups a variant track, the card of a site shows the frequency of the other alleles (AF) in each group and the number of called alleles, for example &quot;EUR · AF 0.12 · 1,006 alleles&quot;. genie counts two alleles for each called sample. The card shows up to 10 groups.</li>
+<li>The track menu shows the fields in use, for example <b>Group samples by pop</b>. Click one to stop. The palette has <b>Group samples by</b>, <b>Sort samples by</b> and <b>Color samples by</b> for each field and each track.</li>
+<li>If each row of a big cohort shows a group of samples, all samples of a row are in the same group.</li>
+</ul>
+</article>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Questions · genie</title>
+<meta name="description" content="Answers to common questions about genie: the first start on Windows, macOS and Linux, the cache folder, files on the web, the network, updates and how to report a problem.">
+<meta property="og:title" content="Questions · genie">
+<meta property="og:description" content="Answers to common questions about genie: the first start on Windows, macOS and Linux, the cache folder, files on the web, the network, updates and how to report a problem.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/faq.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="tutorial.html">Tutorial</a>
+      <a href="manual/index.html">Manual</a>
+      <a href="examples.html">Examples</a>
+      <a href="keys.html">Keys</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="faq.html" aria-current="page">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap page-head">
+  <h1>Questions</h1>
+  <p>Answers to common questions about genie. The <a href="manual/index.html">manual</a> has all the details.</p>
+</div>
+
+<div class="wrap prose">
+  <h2>Install and first start</h2>
+  <details>
+    <summary>Windows says "Windows protected your PC". Is genie safe?</summary>
+    <p>The packages are not signed yet, so SmartScreen does not know them. Click <b>More info</b>, then <b>Run anyway</b>. The installer needs no administrator rights. It puts genie in your user folder, adds it to the Start menu and opens <code>.genie</code> session files in genie. Each package comes from the release workflow of the GitHub repository, which also tests it.</p>
+  </details>
+  <details>
+    <summary>macOS does not open genie.</summary>
+    <p>Open the disk image and drag genie to Applications. Open genie. If macOS stops it, open <b>System Settings &gt; Privacy &amp; Security</b> and click <b>Open Anyway</b>. The disk image runs on Apple silicon and Intel Macs with macOS 11 or later.</p>
+  </details>
+  <details>
+    <summary>The AppImage does not start on Linux.</summary>
+    <p>Make the file executable with <code>chmod +x genie-*-linux-x86_64.AppImage</code>. Some systems need FUSE 2, the <code>libfuse2</code> package. You can also install the .deb package with <code>sudo apt install ./genie_*_amd64.deb</code>.</p>
+  </details>
+  <details>
+    <summary>How do I use genie from a terminal?</summary>
+    <p>On Windows, <code>genie.exe</code> has no console. Use <code>genie-cli.exe</code> from the same folder, for example <code>genie-cli snapshot work.genie regions.bed pictures</code>. On macOS, run <code>/Applications/genie.app/Contents/MacOS/genie</code>. On Linux, run <code>genie</code> after you install the .deb, or the AppImage.</p>
+  </details>
+
+  <h2>Files and data</h2>
+  <details>
+    <summary>Which files does genie open?</summary>
+    <p>Sequences in FASTA and 2bit; features in BED, GFF3, GTF and bigBed; reads in BAM and CRAM 3.0 and 3.1; variants in VCF and BCF; signal in bigWig, bedGraph and bedMethyl; Hi-C maps of Juicer; interactions in BEDPE and bigInteract; copy numbers in SEG; GWAS summary statistics; and tables with a tabix index. The <a href="manual/files.html">Files</a> page of the manual lists the details.</p>
+  </details>
+  <details>
+    <summary>My file has no index. Can genie open it?</summary>
+    <p>Yes. genie makes the index in its cache folder for BAM files, and for VCF, BED, GFF3, GTF and bedGraph files compressed with bgzip. Plain and gzip files of any size open too: genie makes a sorted copy, compressed with bgzip, in its cache folder. A file on the web without an index downloads into the cache first, up to 1 GB.</p>
+  </details>
+  <details>
+    <summary>A file on the web does not open.</summary>
+    <ul>
+      <li>The server must send parts of files (HTTP range requests). Most file servers, Amazon S3 and Google Cloud Storage do.</li>
+      <li>The index must be next to the file, with the usual name, for example <code>reads.bam.bai</code> or <code>calls.vcf.gz.tbi</code>. A track hub can give a different index.</li>
+      <li>genie reads only public buckets. It does not sign requests for private buckets or Requester Pays buckets.</li>
+      <li>genie connects directly to the server. It does not use a proxy server.</li>
+    </ul>
+  </details>
+  <details>
+    <summary>Where does genie keep its files?</summary>
+    <p>The cache folder keeps the genome files, the indexes and sorted copies that genie makes, and the files that it downloads:</p>
+    <ul>
+      <li>Windows: <code>%LOCALAPPDATA%\genie</code></li>
+      <li>macOS: <code>~/Library/Caches/genie</code></li>
+      <li>Linux: <code>$XDG_CACHE_HOME/genie</code> or <code>~/.cache/genie</code></li>
+    </ul>
+    <p>The settings panel shows the space that the cache uses. <b>Clear</b> removes the copies and indexes. The settings, the recent files and the last session are in <code>%APPDATA%\genie</code> on Windows, <code>~/Library/Application Support/genie</code> on macOS, and <code>~/.config/genie</code> on Linux.</p>
+  </details>
+  <details>
+    <summary>Can I use genie without a network connection?</summary>
+    <p>Yes, for files on your computer. To use a genome offline, click the genome label left of the locus box, then click <b>Use offline</b>. genie downloads the full sequence into its cache folder (human: about 835 MB). Public UCSC tracks and files on the web need a network connection.</p>
+  </details>
+  <details>
+    <summary>My track has <code>1</code> as the name of chromosome 1, but the genome has <code>chr1</code>.</summary>
+    <p>genie matches the contig names of a file with the names of the genome, for example <code>1</code>, <code>chr1</code>, <code>NC_000001.11</code> and <code>CM000663.2</code>. The track shows on <code>chr1</code> of hg38.</p>
+  </details>
+
+  <h2>Updates and privacy</h2>
+  <details>
+    <summary>How does genie find new versions?</summary>
+    <p>When genie starts, it asks GitHub for the newest release, at most once a day. If a newer version exists, a notice says so. Click <b>Download</b> to open the release page, then install the new version as usual. To stop the checks, open the settings and set <b>Updates</b> to <b>Off</b>.</p>
+  </details>
+  <details>
+    <summary>Does genie send data about me?</summary>
+    <p>No. genie has no telemetry. It connects to a server only to read a file that you open, the files of a genome or a UCSC track that you select, and the newest release on GitHub. The update request contains the version of genie and no other data.</p>
+  </details>
+
+  <h2>Problems</h2>
+  <details>
+    <summary>How do I report a problem?</summary>
+    <p>Open an issue on <a href="https://github.com/collide2954/genie/issues">GitHub</a>. Write the version of genie (the settings show it), your system, what you did, what you expected and what genie did. If you can, attach a small file that shows the problem.</p>
+  </details>
+  <details>
+    <summary>How do I see more about what genie does?</summary>
+    <p>genie writes warnings to stderr. To see more, set the variable <code>GENIE_LOG</code> to <code>info</code>, <code>debug</code> or <code>trace</code> before you start genie, for example <code>GENIE_LOG=debug genie</code>.</p>
+  </details>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

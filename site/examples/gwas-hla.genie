@@ -1,0 +1,12 @@
+[session]
+reference = https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit
+genome = hg38
+locus = chr6:31,000,001-33,000,000
+
+[track]
+file = hg38/RefSeq Select.bed
+name = RefSeq Select
+
+[track]
+file = https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST90270001-GCST90271000/GCST90270050/harmonised/GCST90270050.h.tsv.gz
+name = GCST90270050

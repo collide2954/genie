@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings and updates · genie</title>
+<meta name="description" content="The genie manual: settings, updates, diagnostics.">
+<meta property="og:title" content="Settings and updates · genie">
+<meta property="og:description" content="The genie manual: settings, updates, diagnostics.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/manual/settings.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="../tutorial.html">Tutorial</a>
+      <a href="../manual/index.html" aria-current="page">Manual</a>
+      <a href="../examples.html">Examples</a>
+      <a href="../keys.html">Keys</a>
+      <a href="../changelog.html">Changelog</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="../index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap manual">
+<aside>
+  <input class="search" type="search" placeholder="Find in the manual" aria-label="Find in the manual" data-index="search.json">
+  <ul class="results"></ul>
+  <nav aria-label="Manual">
+    <ul>
+      <li><a href="install.html">Install</a></li>
+      <li><a href="genomes.html">Genomes and tracks</a></li>
+      <li><a href="files.html">Files</a></li>
+      <li><a href="navigation.html">Navigation</a></li>
+      <li><a href="tracks.html">Tracks</a></li>
+      <li><a href="sessions.html">Sessions and images</a></li>
+      <li><a href="automation.html">Automation</a></li>
+      <li><a href="settings.html" aria-current="page">Settings and updates</a>
+        <ul>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#updates">Updates</a></li>
+          <li><a href="#diagnostics">Diagnostics</a></li>
+        </ul>
+      </li>
+      <li><a href="development.html">Development</a></li>
+    </ul>
+  </nav>
+</aside>
+<article class="prose">
+<h1>Settings and updates</h1>
+<h2 id="settings">Settings</h2>
+<p>The gear button opens the settings: UI scale (90 % to 150 %), density, motion and the port for <a href="automation.html#commands-from-other-programs">commands from other programs</a>. genie keeps the settings and the theme in its configuration folder.</p>
+<h2 id="updates">Updates</h2>
+<p>When genie starts, it asks GitHub for the newest release, at most once a day. If a newer version exists, a notice says so. Click <b>Download</b> to open the release page in your browser, then install the new version as usual.</p>
+<ul>
+<li>The check sends one request to api.github.com. The request contains the version of genie. genie sends no other data.</li>
+<li>To stop the checks at start, open the settings and set <b>Updates</b> to <b>Off</b>. <b>Check now</b> in the settings, <b>Check for updates…</b> in the genie menu and the palette always check.</li>
+<li>The settings show the version and the result of the last check, for example &quot;genie 0.3.1 · Up to date&quot;.</li>
+</ul>
+<h2 id="diagnostics">Diagnostics</h2>
+<p>genie writes warnings to stderr. To see more, set <code>GENIE_LOG</code> to <code>info</code>, <code>debug</code> or <code>trace</code>:</p>
+<pre><code>GENIE_LOG=debug cargo run -p genie</code></pre>
+<p>In a debug build, F12 shows the time of each update and view, the frame time and the use of the caches.</p>
+</article>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

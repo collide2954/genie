@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sessions and images · genie</title>
+<meta name="description" content="The genie manual: sessions, export, images from the command line.">
+<meta property="og:title" content="Sessions and images · genie">
+<meta property="og:description" content="The genie manual: sessions, export, images from the command line.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/manual/sessions.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="../tutorial.html">Tutorial</a>
+      <a href="../manual/index.html" aria-current="page">Manual</a>
+      <a href="../examples.html">Examples</a>
+      <a href="../keys.html">Keys</a>
+      <a href="../changelog.html">Changelog</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="../index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap manual">
+<aside>
+  <input class="search" type="search" placeholder="Find in the manual" aria-label="Find in the manual" data-index="search.json">
+  <ul class="results"></ul>
+  <nav aria-label="Manual">
+    <ul>
+      <li><a href="install.html">Install</a></li>
+      <li><a href="genomes.html">Genomes and tracks</a></li>
+      <li><a href="files.html">Files</a></li>
+      <li><a href="navigation.html">Navigation</a></li>
+      <li><a href="tracks.html">Tracks</a></li>
+      <li><a href="sessions.html" aria-current="page">Sessions and images</a>
+        <ul>
+          <li><a href="#sessions">Sessions</a></li>
+          <li><a href="#export">Export</a></li>
+          <li><a href="#images-from-the-command-line">Images from the command line</a></li>
+        </ul>
+      </li>
+      <li><a href="automation.html">Automation</a></li>
+      <li><a href="settings.html">Settings and updates</a></li>
+      <li><a href="development.html">Development</a></li>
+    </ul>
+  </nav>
+</aside>
+<article class="prose">
+<h1>Sessions and images</h1>
+<h2 id="sessions">Sessions</h2>
+<p>To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its <code>.genie</code> file. genie keeps the last session when you close it, and the start view can restore it.</p>
+<p>If a file is in the folder of the session file, the session file has its path relative to that folder.</p>
+<h2 id="export">Export</h2>
+<p>To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. The image uses the current theme.</p>
+<ul>
+<li>If the file name ends with <code>.svg</code>, genie saves an SVG image. The SVG has shapes and text that you can edit, for example in Inkscape or Illustrator. The text uses the fonts Inter and JetBrains Mono. If a computer does not have these fonts, it uses similar fonts.</li>
+<li>Other names give a PNG image. The scale of a PNG image is 2. Its maximum height is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.</li>
+</ul>
+<h2 id="images-from-the-command-line">Images from the command line</h2>
+<p>To save one image for each region in a BED file, without a window:</p>
+<pre><code>genie snapshot work.genie regions.bed pictures</code></pre>
+<p>The command to use depends on how you got genie:</p>
+<ul>
+<li>Windows: genie.exe has no console. In a terminal, use <code>genie-cli.exe</code> from the same folder, for example <code>&amp; &quot;$env:LOCALAPPDATA\genie\genie-cli.exe&quot; snapshot work.genie regions.bed pictures</code> in PowerShell.</li>
+<li>macOS: <code>/Applications/genie.app/Contents/MacOS/genie snapshot work.genie regions.bed pictures</code>.</li>
+<li>Linux: <code>genie snapshot work.genie regions.bed pictures</code> after you install the .deb, or <code>./genie-0.3.1-linux-x86_64.AppImage snapshot work.genie regions.bed pictures</code>.</li>
+<li>Source code: <code>cargo run -p genie -- snapshot work.genie regions.bed pictures</code>.</li>
+</ul>
+<ul>
+<li>genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.</li>
+<li>The name of an image is the name of the region (BED column 4) or the locus, for example <code>chr1_1001-2000.png</code>. If two regions have the same name, genie adds <code>-2</code>, <code>-3</code> and so on.</li>
+<li><code>--width POINTS</code> sets the width of the view, from 200 to 4,096 (default 1,280). A PNG image has two pixels for each point. <code>--theme dark</code> uses the dark theme. The default is light. <code>--format svg</code> saves SVG images. The default is PNG.</li>
+<li>genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.</li>
+<li>The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.</li>
+</ul>
+</article>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

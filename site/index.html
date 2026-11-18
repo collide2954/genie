@@ -1,0 +1,221 @@
+<!-- title: genie · genome browser -->
+<!-- description: genie is a genome browser for Windows, macOS and Linux. It shows sequences, genes, reads, variants, signal, Hi-C maps and GWAS results from files on your computer and on the web. -->
+<!-- menu: Home -->
+<div class="wrap hero">
+  <h1>genie</h1>
+  <p class="lead">A genome browser for Windows, macOS and Linux.</p>
+  <p class="about">genie shows sequences, genes, reads, variants, signal, Hi-C maps and GWAS results. It opens files on your computer, on web servers and in public cloud buckets, and it reads only the parts of a file that the view needs. genie uses Rust and the <a href="https://iced.rs">iced</a> GUI library.</p>
+  <div class="actions">
+    <a class="button primary" href="#download">Download</a>
+    <a class="button" href="tutorial.html">Tutorial</a>
+    <a class="button" href="https://github.com/collide2954/genie">Source on GitHub</a>
+    <span class="status" data-version>For Windows, macOS and Linux.</span>
+  </div>
+  <figure class="shot">
+    <picture>
+      <source srcset="images/hero-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/hero-light.webp" width="2048" height="500" alt="genie at BRCA1 on human chromosome 17, with the RefSeq Select genes, ClinVar variants in the colors of the file, and phyloP 100-way conservation.">
+    </picture>
+  </figure>
+  <p class="caption">BRCA1 on hg38, with RefSeq Select genes, ClinVar variants and phyloP 100-way conservation. The <a href="tutorial.html">tutorial</a> shows how to get there.</p>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>What genie does</h2>
+    <div class="grid">
+      <div>
+        <h3>Genomes and tracks</h3>
+        <p>Ten genomes of the UCSC Genome Browser open with one click, with their genes and chromosome bands. The tracks button adds public UCSC tracks, for example ClinVar, dbSNP, GENCODE and phyloP, and opens track hubs.</p>
+      </div>
+      <div>
+        <h3>Files</h3>
+        <p>FASTA, 2bit, BED, GFF3, GTF, bigBed, BAM, CRAM, VCF, BCF, bigWig, bedGraph, bedMethyl, Hi-C, BEDPE, bigInteract, SEG, GWAS summary statistics and tabix tables. Files without an index open too: genie sorts and indexes them in its cache.</p>
+      </div>
+      <div>
+        <h3>On the web</h3>
+        <p>genie reads files on web servers and in public Amazon S3 and Google Cloud Storage buckets, from their <code>https://</code>, <code>s3://</code> and <code>gs://</code> addresses. It reads only the parts of a file that the view needs.</p>
+      </div>
+      <div>
+        <h3>Reads</h3>
+        <p>Read pairs, splits, base modifications such as 5mC, groups by haplotype or tag, splice junction arcs and Sashimi plots. Cards show the data of each read.</p>
+      </div>
+      <div>
+        <h3>Variants</h3>
+        <p>Genotypes of many samples in groups, structural variants with their breakends, the annotations of VEP and SnpEff, filters on any field and a variant table that you can sort and export.</p>
+      </div>
+      <div>
+        <h3>Tools</h3>
+        <p>Two to four loci side by side, the whole genome, sequence and primer search, liftover between assemblies, region lists, sessions, PNG and SVG images, and commands from scripts.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="hi-c">
+  <div class="wrap feature">
+    <div>
+      <h2>Hi-C contact maps</h2>
+      <p>genie opens the <code>.hic</code> files of Juicer, versions 6 to 9, also on the web. The size of the bins follows the zoom, and genie reads only the blocks of the matrix that the view needs. The track menu selects the normalization, for example SCALE or KR, and observed/expected ratios in blue and vermillion.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/hic-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/hic-light.webp" width="1600" height="488" loading="lazy" alt="Chromosome 21 in two Hi-C files of ENCODE: the contacts of a version 9 file with SCALE normalization, and the observed/expected ratios of a version 8 file with KR normalization, which show the A and B compartments.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="structural-variants">
+  <div class="wrap feature">
+    <div>
+      <h2>Structural variants</h2>
+      <p>Deletions, duplications, inversions, insertions and complex rearrangements show over their full length in the colors of their type. Breakends are arcs to their other ends. genie reads the SVs of Sniffles2, Manta, DELLY, pbsv, cuteSV and gnomAD-SV.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/sv-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/sv-light.webp" width="1600" height="146" loading="lazy" alt="One megabase of chromosome 21 in gnomAD-SV v4.1, with breakends above the structural variants.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="sashimi">
+  <div class="wrap feature">
+    <div>
+      <h2>Sashimi plots</h2>
+      <p>A read track can show its coverage and its splice junctions as a Sashimi plot. Each arc has the number of reads that skip the intron. Tracks with a shared scale can be compared, and the plot saves as an SVG image.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/sashimi-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/sashimi-light.webp" width="1600" height="252" loading="lazy" alt="A Sashimi plot of ACTB in strand-specific RNA-seq: the coverage, and arcs for the five introns with 450, 292, 29, 27 and 4 reads.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="gwas">
+  <div class="wrap feature">
+    <div>
+      <h2>GWAS results</h2>
+      <p>Summary statistics of the GWAS Catalog, PLINK 2, REGENIE, SAIGE and BOLT-LMM show as a Manhattan plot, with a line at genome-wide significance. The whole genome view shows all chromosomes side by side.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/gwas-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/gwas-light.webp" width="1600" height="202" loading="lazy" alt="A Manhattan plot of 22,563 associations of a GWAS Catalog study in the HLA region of chromosome 6.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="variant-table">
+  <div class="wrap feature">
+    <div>
+      <h2>Variant table</h2>
+      <p>The variants in view show in a table with a column for each field, also the annotations of VEP and SnpEff. Sort by a column, find text, click a row to go to the variant, and export the rows as TSV.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/table-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/table-light.webp" width="1600" height="280" loading="lazy" alt="The variant table of gnomAD v4.1 genomes with 619 variants in view and the VEP consequence, impact and gene columns.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="liftover">
+  <div class="wrap feature">
+    <div>
+      <h2>Liftover</h2>
+      <p>A UCSC chain file lifts a track to the assembly that is open, for example a GRCh37 file onto GRCh38. Region lists lift too.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/lift-dark.webp" media="(prefers-color-scheme: dark)">
+        <img src="images/lift-light.webp" width="1600" height="115" loading="lazy" alt="ClinVar for GRCh37 lifted to GRCh38 at BRCA1, above ClinVar for GRCh38: the two tracks are the same.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="loci">
+  <div class="wrap feature">
+    <div>
+      <h2>Several loci</h2>
+      <p>Type two to four loci in the locus box, with a space between them. genie shows them side by side, and each panel moves and zooms on its own. Click the locus above a panel to show only that locus.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/loci-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="images/loci-light.png" width="1280" height="190" loading="lazy" alt="genie with two panels side by side: BRCA1 on chromosome 17 and BRCA2 on chromosome 13, each with its own locus, ruler, genes and phyloP signal.">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="reads">
+  <div class="wrap feature">
+    <div>
+      <h2>Long reads and methylation</h2>
+      <p>Turn on <b>Color by modification</b> in the menu of a read track to show the 5mC and 5hmC calls of nanopore and PacBio reads. Group the reads by haplotype: each haplotype gets its own lane with the share of modified reads at each site. genie also opens bedMethyl files from modkit.</p>
+    </div>
+    <figure class="shot">
+      <picture>
+        <source srcset="images/snrpn-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="images/snrpn-light.png" width="1280" height="412" loading="lazy" alt="Nanopore reads of HG002 at the SNRPN imprinting center on chromosome 15, grouped by haplotype. At the SNURF and SNRPN promoter, the reads of haplotype 1 are methylated (vermillion) and the reads of haplotype 2 are not (blue).">
+      </picture>
+    </figure>
+  </div>
+</section>
+
+<section id="automation">
+  <div class="wrap">
+    <h2>Automation</h2>
+    <p>Make one image for each region in a BED file, without a window:</p>
+<pre><code>genie snapshot work.genie regions.bed pictures</code></pre>
+    <p>While genie runs, programs on the same computer, for example R, Python or Jupyter, can control it through port 60151 with the batch commands of IGV, for example <code>goto</code>, <code>load</code> and <code>snapshot</code>.</p>
+<pre><code>import socket
+
+with socket.create_connection(("127.0.0.1", 60151)) as connection:
+    answers = connection.makefile("r")
+    for line in ["goto BRCA1", "snapshotDirectory /tmp", "snapshot brca1.png"]:
+        connection.sendall((line + "\n").encode())
+        print(answers.readline().strip())</code></pre>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap">
+    <h2 id="install">Download</h2>
+    <div class="download">
+      <p>genie has packages for Windows 10 and 11 (x64), macOS 11 or later (Apple silicon and Intel), and Linux (x86_64).</p>
+      <div class="choices">
+        <a class="button primary" href="https://github.com/collide2954/genie/releases/latest">Get the latest release</a>
+      </div>
+      <p class="note">The packages are not signed yet, so the system asks before genie opens the first time. On Windows, click <b>More info</b>, then <b>Run anyway</b>. On macOS, open <b>System Settings &gt; Privacy &amp; Security</b> and click <b>Open Anyway</b>. On Linux, make the AppImage executable before you run it. The <a href="faq.html">questions</a> page tells more.</p>
+    </div>
+    <h3>Build from source</h3>
+    <p>Install <a href="https://rustup.rs">rustup</a>, then get the source and start genie:</p>
+<pre><code>git clone https://github.com/collide2954/genie
+cd genie
+cargo run -p genie</code></pre>
+  </div>
+</section>
+
+<section id="learn">
+  <div class="wrap">
+    <h2>Learn genie</h2>
+    <div class="grid">
+      <div><h3><a href="tutorial.html">Tutorial</a></h3><p>Ten short clips show the main work: genomes, tracks, reads, cards, search and sessions.</p></div>
+      <div><h3><a href="manual/index.html">Manual</a></h3><p>All that genie does, with a search box.</p></div>
+      <div><h3><a href="examples.html">Examples</a></h3><p>Sessions that open public data in one click: Hi-C, structural variants, GWAS, exome reads and more.</p></div>
+      <div><h3><a href="keys.html">Keys and mouse</a></h3><p>All keys and mouse actions for Windows, Linux and macOS.</p></div>
+      <div><h3><a href="changelog.html">Changelog</a></h3><p>What changed in each version.</p></div>
+      <div><h3><a href="faq.html">Questions</a></h3><p>First start, the cache folder, files on the web, updates and how to report a problem.</p></div>
+    </div>
+  </div>
+</section>

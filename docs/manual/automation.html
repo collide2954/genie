@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automation · genie</title>
+<meta name="description" content="The genie manual: commands from other programs.">
+<meta property="og:title" content="Automation · genie">
+<meta property="og:description" content="The genie manual: commands from other programs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/manual/automation.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="../tutorial.html">Tutorial</a>
+      <a href="../manual/index.html" aria-current="page">Manual</a>
+      <a href="../examples.html">Examples</a>
+      <a href="../keys.html">Keys</a>
+      <a href="../changelog.html">Changelog</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="../index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap manual">
+<aside>
+  <input class="search" type="search" placeholder="Find in the manual" aria-label="Find in the manual" data-index="search.json">
+  <ul class="results"></ul>
+  <nav aria-label="Manual">
+    <ul>
+      <li><a href="install.html">Install</a></li>
+      <li><a href="genomes.html">Genomes and tracks</a></li>
+      <li><a href="files.html">Files</a></li>
+      <li><a href="navigation.html">Navigation</a></li>
+      <li><a href="tracks.html">Tracks</a></li>
+      <li><a href="sessions.html">Sessions and images</a></li>
+      <li><a href="automation.html" aria-current="page">Automation</a>
+        <ul>
+          <li><a href="#commands-from-other-programs">Commands from other programs</a></li>
+        </ul>
+      </li>
+      <li><a href="settings.html">Settings and updates</a></li>
+      <li><a href="development.html">Development</a></li>
+    </ul>
+  </nav>
+</aside>
+<article class="prose">
+<h1>Automation</h1>
+<h2 id="commands-from-other-programs">Commands from other programs</h2>
+<p>While genie runs, programs on the same computer (for example R, Python or Jupyter) can control it through port 60151, as with the batch port of IGV. Send one command on each line. genie answers each line with <code>OK</code> or with the reason for a problem. It answers when the work is complete, for example when a new track is open and its data is loaded.</p>
+<div class="table"><table>
+<thead><tr><th>Command</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>genome hg38</code>, <code>genome /data/genome.fa</code></td><td>Opens a genome from the list or a reference file</td></tr>
+<tr><td><code>load /data/reads.bam name=Tumor</code></td><td>Adds a track. <code>name=</code> sets the track name.</td></tr>
+<tr><td><code>goto chr1:1,000-2,000</code>, <code>goto BRCA1</code>, <code>goto BRCA1 BRCA2</code></td><td>Goes to a locus or a feature name. Two to four loci show side by side.</td></tr>
+<tr><td><code>region chr1 1001 2000 promoter</code></td><td>Adds a region to the region list. The start and the end are 1-based and are in the region.</td></tr>
+<tr><td><code>snapshotDirectory /data/pictures</code></td><td>Sets the folder for snapshots</td></tr>
+<tr><td><code>snapshot BRCA1.png</code></td><td>Saves the view as an image in that folder: SVG for a name that ends with <code>.svg</code>, else PNG. Without a name, the image is a PNG named after the locus.</td></tr>
+<tr><td><code>expand</code>, <code>squish</code>, <code>collapse</code></td><td>Sets the rows of all tracks, or of one track, for example <code>squish Tumor</code></td></tr>
+<tr><td><code>new</code></td><td>Removes all tracks and regions</td></tr>
+<tr><td><code>echo</code></td><td>Answers <code>echo</code></td></tr>
+</tbody></table></div>
+<pre><code>import socket
+
+with socket.create_connection((&quot;127.0.0.1&quot;, 60151)) as connection:
+    answers = connection.makefile(&quot;r&quot;)
+    for line in [&quot;goto BRCA1&quot;, &quot;snapshotDirectory /tmp&quot;, &quot;snapshot brca1.png&quot;]:
+        connection.sendall((line + &quot;\n&quot;).encode())
+        print(answers.readline().strip())</code></pre>
+<ul>
+<li>Put a path that has spaces between double quotes: <code>load &quot;/data/my reads.bam&quot;</code>.</li>
+<li>genie accepts <code>maxPanelHeight</code> and <code>setSleepInterval</code>, but they have no effect.</li>
+<li>Only programs on this computer can connect. genie does not answer web (HTTP) requests, so web pages cannot send commands.</li>
+<li>To close the port, open the settings and set <b>Commands</b> to Off. If a different program (for example IGV) uses port 60151, genie shows a message and does not take commands.</li>
+</ul>
+</article>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

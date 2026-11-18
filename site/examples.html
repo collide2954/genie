@@ -1,0 +1,93 @@
+<!-- title: Examples -->
+<!-- description: genie sessions that open public data in one click: exome reads at BRCA1, Hi-C maps, gnomAD structural variants and annotations, GWAS results, a Sashimi plot and a liftover. -->
+<!-- menu: Examples -->
+<div class="wrap page-head">
+  <h1>Examples</h1>
+  <p>Each example is a genie session that opens public data on the web. Download the session file, then open it in genie: push <kbd>Ctrl</kbd>+<kbd>O</kbd> (<kbd>Cmd</kbd>+<kbd>O</kbd> on macOS), or drop the file on the window. genie reads only the parts of the files that the view needs, so the first view can take some seconds.</p>
+</div>
+
+<div class="wrap examples">
+  <article class="example">
+    <picture>
+      <source srcset="images/exome-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/exome-light.webp" width="1600" height="600" loading="lazy" alt="Exome reads of NA12878 at an exon of BRCA1, under ClinVar and phyloP 100-way.">
+    </picture>
+    <div class="text">
+      <h2>Exome reads at BRCA1</h2>
+      <p>hg38 at an exon of BRCA1 with ClinVar, phyloP 100-way and the exome of NA12878 from the 1000 Genomes Project, a CRAM file of 8.6 GB on Amazon S3.</p>
+      <a class="button small" href="examples/brca1-exome.genie" download>brca1-exome.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/hic-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/hic-light.webp" width="1600" height="488" loading="lazy" alt="A Hi-C map of chromosome 21.">
+    </picture>
+    <div class="text">
+      <h2>Hi-C on chromosome 21</h2>
+      <p>The whole of chromosome 21 in a Hi-C file of ENCODE (ENCFF080DPJ, version 9). The track menu selects the normalization and observed/expected ratios.</p>
+      <a class="button small" href="examples/hic-chr21.genie" download>hic-chr21.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/sv-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/sv-light.webp" width="1600" height="146" loading="lazy" alt="Structural variants of gnomAD-SV on chromosome 21.">
+    </picture>
+    <div class="text">
+      <h2>Structural variants of gnomAD</h2>
+      <p>One megabase of chromosome 21 in gnomAD-SV v4.1, read from Google Cloud Storage: deletions, duplications, insertions, complex rearrangements and breakends.</p>
+      <a class="button small" href="examples/gnomad-sv.genie" download>gnomad-sv.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/table-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/table-light.webp" width="1600" height="280" loading="lazy" alt="The variant table of gnomAD with VEP columns.">
+    </picture>
+    <div class="text">
+      <h2>gnomAD with VEP annotations</h2>
+      <p>The variants of gnomAD v4.1 genomes in the APP gene. Cards show the VEP annotations. Open the variant table from the track menu to sort and export them.</p>
+      <a class="button small" href="examples/gnomad-vep.genie" download>gnomad-vep.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/gwas-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/gwas-light.webp" width="1600" height="202" loading="lazy" alt="A Manhattan plot in the HLA region.">
+    </picture>
+    <div class="text">
+      <h2>GWAS in the HLA region</h2>
+      <p>The summary statistics of the GWAS Catalog study GCST90270050 as a Manhattan plot over two megabases of chromosome 6.</p>
+      <a class="button small" href="examples/gwas-hla.genie" download>gwas-hla.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/sashimi-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/sashimi-light.webp" width="1600" height="252" loading="lazy" alt="A Sashimi plot of ACTB.">
+    </picture>
+    <div class="text">
+      <h2>Sashimi plot of ACTB</h2>
+      <p>Strand-specific RNA-seq of the JBrowse demo data on hg19, as a Sashimi plot that shows the junctions with 4 reads or more.</p>
+      <a class="button small" href="examples/actb-sashimi.genie" download>actb-sashimi.genie</a>
+    </div>
+  </article>
+
+  <article class="example">
+    <picture>
+      <source srcset="images/lift-dark.webp" media="(prefers-color-scheme: dark)">
+      <img src="images/lift-light.webp" width="1600" height="115" loading="lazy" alt="ClinVar for GRCh37 lifted to GRCh38, above ClinVar for GRCh38.">
+    </picture>
+    <div class="text">
+      <h2>Liftover of ClinVar</h2>
+      <p>The ClinVar file for GRCh37, lifted to hg38 with the UCSC chain file, above the ClinVar file for GRCh38 at BRCA1. The variants are at the same places.</p>
+      <a class="button small" href="examples/clinvar-lift.genie" download>clinvar-lift.genie</a>
+    </div>
+  </article>
+</div>

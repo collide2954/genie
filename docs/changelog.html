@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog · genie</title>
+<meta name="description" content="What changed in each version of genie.">
+<meta property="og:title" content="Changelog · genie">
+<meta property="og:description" content="What changed in each version of genie.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/changelog.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="tutorial.html">Tutorial</a>
+      <a href="manual/index.html">Manual</a>
+      <a href="examples.html">Examples</a>
+      <a href="keys.html">Keys</a>
+      <a href="changelog.html" aria-current="page">Changelog</a>
+      <a href="faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap page-head">
+<h1>Changelog</h1>
+<p>What changed in each version of genie. The <a href="https://github.com/collide2954/genie/releases">release pages</a> have the packages.</p>
+</div>
+<div class="wrap prose release">
+
+<h2 id="unreleased">Unreleased</h2>
+<h3 id="website">Website</h3>
+<ul>
+<li>A tutorial shows the main work in ten short clips of genie with real data: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change a track, find a sequence and save the work.</li>
+<li>The manual has the full guide on pages with a search box. Other pages list all keys and mouse actions, the changes of each version, example sessions with public data, and answers to common questions.</li>
+<li>The home page shows the features of 0.3 with real data, and the download button offers the package for your system.</li>
+<li>The pages load less: the fonts are about ten times smaller, and the clips play only while they are on the screen.</li>
+</ul>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li>In a narrow window, a locus box with several loci keeps the window buttons in the window. Before, the buttons could go out of view.</li>
+<li>genie reads CRAM files with empty blocks that name a codec, as the 1000 Genomes files for GRCh38 have. Before, they gave the message &quot;A CRAM block is not valid&quot;.</li>
+</ul>
+<h2 id="v0.3.1">0.3.1 <a href="https://github.com/collide2954/genie/releases/tag/v0.3.1">Release page</a></h2>
+<p>The check for updates works again.</p>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li>genie reads the answer of GitHub also when it is long. Before, the check for updates said that the answer &quot;is not valid&quot;.</li>
+</ul>
+<h2 id="v0.3.0">0.3.0 <a href="https://github.com/collide2954/genie/releases/tag/v0.3.0">Release page</a></h2>
+<p>genie shows methylation, structural variants, Hi-C maps, Sashimi plots and GWAS results. It opens CRAM, BCF, track hubs and files in cloud buckets, and it lifts tracks to another assembly.</p>
+<h3 id="methylation">Methylation</h3>
+<ul>
+<li>When <b>Color by modification</b> is on, a lane above the reads shows the share of modified reads at each site. Grouped reads get a lane for each group, for example one for each haplotype.</li>
+<li>At a CpG, genie adds the calls of the two strands together.</li>
+<li>The read track menu selects the modification of the lane, for example 5mC or 5hmC.</li>
+<li>genie opens bedMethyl files from modkit as signal tracks that show the percent of modified reads. The track menu selects the modification and joins or separates the two strands of each CpG. The card of a site shows its counts.</li>
+</ul>
+<h3 id="easier-to-use">Easier to use</h3>
+<ul>
+<li>Click the genie logo for a menu: Open file, Open URL, Recent, Save session, Export image, Keys and mouse, and Settings. Ctrl+O (Cmd+O on macOS) opens a file.</li>
+<li>Ctrl+K (Cmd+K on macOS) opens a palette. Type words in any order to find an action, a track item or a recent file, then push Enter.</li>
+<li>The ? button and F1 show all keys and mouse actions.</li>
+<li>Buttons next to the locus box zoom out, zoom in and show the whole chromosome.</li>
+<li>Put the pointer on a track to see a button for its menu and a button that removes it.</li>
+<li><b>Track settings…</b> in the track menu shows all settings of the track in one dialog. Each change shows at once.</li>
+<li>Menu items show their keys, for example &quot;Next feature Ctrl+F&quot;.</li>
+<li>A strip under the ruler shows tips until you close it.</li>
+<li>The logo has one strand in green and purple bases.</li>
+</ul>
+<h3 id="find-a-sequence">Find a sequence</h3>
+<ul>
+<li>Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a find bar. Type bases, for example a primer, with IUPAC codes if necessary. A lane under the ruler shows the matches on the two strands.</li>
+<li>Allow 1, 2 or 3 mismatches to also find near matches. The card of a match shows its strand and its wrong bases.</li>
+<li>Enter and Shift+Enter go to the next and the previous match. Past the view, genie reads the reference 20 Mb at a time.</li>
+</ul>
+<h3 id="filters">Filters</h3>
+<ul>
+<li>Next feature and Previous feature (Ctrl+F and Ctrl+B) skip the features and variants that the filter hides.</li>
+<li>For a number in a card, type your own limit in the menu, then click At least or At most.</li>
+<li>If you type a name that a filter hides, genie goes to it and a note says so.</li>
+<li>A filtered bigBed track wider than 10 Mb shows the density of the features that the filter keeps, if their data in view is 16 MB or less.</li>
+<li>A click inside a menu does not close the menu.</li>
+</ul>
+<h3 id="cram">CRAM</h3>
+<ul>
+<li>genie opens CRAM 3.0 and 3.1 files as read tracks, with gzip, rANS and rANS Nx16 compression. It decodes the reads with the reference that is open, and checks the MD5 of each part of the file against that reference.</li>
+<li>A CRAM file without its <code>.crai</code> index gets one in the cache folder.</li>
+</ul>
+<h3 id="track-hubs">Track hubs</h3>
+<ul>
+<li>genie opens UCSC track hubs from the web or from your computer. Use the tracks button, the genie menu, the palette or Open URL. A dialog shows the tracks of the open genome in their groups. Type words to find a track. Click a track to add or remove it.</li>
+<li>genie adds bigBed, bigWig and the other UCSC big formats, bam, cram and vcfTabix tracks, with the type and the index that the hub gives.</li>
+<li>If the hub has no tracks for the open genome, the dialog lists its genomes. A click opens the genome, also the 2bit sequence of an assembly hub, and then shows the tracks of the hub.</li>
+<li>Sessions keep their hubs. The tracks button lists the hubs that you opened last.</li>
+<li>The tracks button is on for all genomes and reference files.</li>
+</ul>
+<h3 id="interaction-tracks">Interaction tracks</h3>
+<ul>
+<li>genie opens bigInteract and BEDPE files as interaction tracks. Each link is an arc between its two ends: longer links rise higher, and links with a larger value have a thicker line.</li>
+<li>Arcs with an end outside the view go past the edge. A link to another chromosome shows as a stub.</li>
+<li>The card of a link shows its two ends, the distance, the value and the other fields. BEDPE header lines name the fields.</li>
+<li>The arcs use the colors of the file, or the track color.</li>
+<li>genie opens the loop lists of Juicer and HiCCUPS (<code>.txt</code>, also compressed and on the web). The header line names all fields, and the <code>color</code> column gives the color of each arc.</li>
+<li>genie opens bigInteract files with the older names of the ends (<code>region1</code> and <code>region2</code>).</li>
+</ul>
+<h3 id="copy-number">Copy number</h3>
+<ul>
+<li>genie opens copy number segment files as heatmap tracks: SEG files (as from TCGA, DNAcopy or GISTIC), CNVkit <code>.cns</code> and <code>.cnr</code> files, and GATK ModelSegments <code>.seg</code> files.</li>
+<li>Each sample has a row: blue for a loss, vermillion for a gain, light grey near 0. The full colors start at a log2 value of ±1.5. The track menu sets a different range.</li>
+<li>Up to 20 samples show their names. More samples get thinner rows, down to 1 px.</li>
+<li>The card of a segment shows its sample, its length, its markers and its value.</li>
+</ul>
+<h3 id="updates">Updates</h3>
+<ul>
+<li>At start, genie asks GitHub for the newest release, at most once a day. A notice with a <b>Download</b> button opens the release page when a newer version exists.</li>
+<li><b>Check for updates…</b> in the genie menu and the palette, and <b>Check now</b> in the settings, check at once. The settings show the version and the result, and turn the checks at start off.</li>
+</ul>
+<h3 id="read-tags-and-filters">Read tags and filters</h3>
+<ul>
+<li>Read cards list MAPQ, the insert size of a pair and the small tags of the read as fields. Click a field to keep or hide reads by its value, or to keep reads with at least or at most a number.</li>
+<li><b>Group by this tag</b> groups the reads by the value of any tag, for example CB or PS, with up to 30 groups. <b>Color by this tag</b> gives the 5 most common values the track colors.</li>
+<li>The read track menu hides reads under MAPQ 1, 10, 20 or 30, and shows secondary, supplementary and QC-failed reads on request. Sessions keep these settings.</li>
+</ul>
+<h3 id="whole-genome">Whole genome</h3>
+<ul>
+<li>Type <code>All</code> in the locus box, or click the new button right of the zoom buttons, to see all main chromosomes side by side, each as wide as its share of the genome.</li>
+<li>Signal, copy number, feature and variant tracks show their data or density on one scale for all chromosomes.</li>
+<li>Click a chromosome to show it, or drag across a part to show that region. Back, forward and sessions keep the whole-genome view.</li>
+</ul>
+<h3 id="densities">Densities</h3>
+<ul>
+<li>Variant tracks wider than 1 Mb and feature tracks wider than 10 Mb show the number of variants or features per Mb. Before, they asked you to zoom in.</li>
+<li>For a file with a tabix or CSI index from htslib, genie estimates the density from the index alone, also for large files on the web.</li>
+</ul>
+<h3 id="protein-changes">Protein changes</h3>
+<ul>
+<li>A variant card shows the change of the variant on the transcripts of the open feature tracks in HGVS notation, for example &quot;BRCA1 p.Arg1699Trp · c.5095C&gt;T&quot;.</li>
+<li>genie names substitutions, new stop codons, frameshifts, and deletions and insertions that keep the frame. A variant near an exon edge shows &quot;splice site&quot;. A variant out of the coding sequence shows its place and its c. position, for example &quot;5′ UTR · c.-14G&gt;A&quot; or &quot;intron · c.92+5G&gt;A&quot;.</li>
+<li>A deletion of whole exons shows &quot;exon deletion&quot;, and a deletion of the whole transcript shows &quot;transcript deletion&quot;.</li>
+<li>As HGVS asks, genie moves an insertion or a deletion in a repeat to the 3′ end of the transcript, and names an insertion of the bases before it as a duplication, for example &quot;c.417dup&quot; or &quot;p.Lys2dup&quot;.</li>
+<li>A change of the stop codon shows the extension, for example &quot;p.Ter148GluextTer?&quot;. An allele with unknown bases (N) shows &quot;p.?&quot;.</li>
+<li>The card shows up to 3 transcripts, with the protein changes first, and the number of the other transcripts.</li>
+</ul>
+<h3 id="sample-groups">Sample groups</h3>
+<ul>
+<li>genie opens sample tables: tab or comma separated files with a header line, the <code>.panel</code> files of the 1000 Genomes Project, IGV sample information files, and PLINK <code>.fam</code> and <code>.ped</code> files. One table applies to all variant and copy number tracks of the session.</li>
+<li>Genotype and copy number cards show the fields of their sample. Click a field to group, sort or color the rows by it. A group has a band with its value and its number of samples. A strip at the left of each row shows the 8 most common values in 8 colors, or a ramp from grey to blue for numbers.</li>
+<li>While a field groups a variant track, the card of a site shows the allele frequency of each group, for example &quot;EUR · AF 0.12 · 1,006 alleles&quot;.</li>
+<li>The track menu and the palette turn the fields on and off. Sessions keep the table and the fields of each track.</li>
+<li>genie opens clinical files from cBioPortal as sample tables, with the names of their first line. Values such as <code>[Not Available]</code> count as missing.</li>
+<li>genie reads the first lines of a <code>.txt</code> file to know if it is a track hub, a loop list or a sample table, also for a file on the web.</li>
+</ul>
+<h3 id="primer-pairs">Primer pairs</h3>
+<ul>
+<li><b>Primers</b> in the find bar finds the PCR products of a forward and a reverse primer on the two strands, up to 4,000 bp long. The 5 bases at the 3′ end of each primer must match.</li>
+<li>In the lane, a product is a line with a block for each primer. Enter goes to the next product, and its card shows its length, its strand, its mismatches and its primers.</li>
+</ul>
+<h3 id="sashimi-plots">Sashimi plots</h3>
+<ul>
+<li><b>Sashimi plot</b> in the menu of a read track shows its coverage as an area and its splice junctions as arcs above and below the area, each with its number of reads.</li>
+<li><b>Arcs ≥</b> hides the junctions with few reads. <b>Shared scale</b> gives the Sashimi plots of several samples one range. Export image saves the plots as PNG or SVG.</li>
+</ul>
+<h3 id="variant-table">Variant table</h3>
+<ul>
+<li><b>Variant table</b> in the menu of a variant track shows its variants in view in a table under the tracks. Each field is a column: the alleles, the counts of the calls, Quality, Filter, the annotations and the INFO fields.</li>
+<li>Click a column name to sort the rows, type to find rows, and click a row to go to its variant. <b>Export TSV</b> saves the rows.</li>
+</ul>
+<h3 id="liftover">Liftover</h3>
+<ul>
+<li><b>Lift over…</b> in the track menu moves the data of a track from a different assembly to the assembly in view with a UCSC chain file, for example <code>hg19ToHg38.over.chain.gz</code>. It works for feature, variant, signal, interaction, copy number, table and GWAS tracks.</li>
+<li>Features keep their exons and coding parts. On a chain to the opposite strand, features change strand and variants show the reverse complement of their alleles.</li>
+<li>The locus box finds the names of a lifted track at their new places. Sessions keep the chain file of each track. <b>Remove lift</b> shows the data at its own places again.</li>
+<li><b>Lift…</b> under the region list moves the regions from a different assembly to the assembly in view.</li>
+</ul>
+<h3 id="gwas-tracks">GWAS tracks</h3>
+<ul>
+<li>genie opens GWAS summary statistics as Manhattan plots: of the GWAS Catalog, PLINK 2, REGENIE, SAIGE and BOLT-LMM. genie knows them by their header line or by their names (<code>.glm.*</code>, <code>.regenie</code>).</li>
+<li>A dot shows the -log10 p of each variant. A line marks 5×10⁻⁸, and the dots over it are vermillion. The whole-genome view shows all chromosomes, with a lighter color for every second one.</li>
+<li>The card of a dot shows its row, for example its rsID, alleles, beta and p-value.</li>
+<li>genie reads only the part in view of a file with a tabix index, and all of a file without an index up to 1 GB.</li>
+</ul>
+<h3 id="table-tracks">Table tracks</h3>
+<ul>
+<li>genie opens tab-separated tables with a tabix index as table tracks, for example the CADD scores. The header line names the columns.</li>
+<li>A table track shows a column of numbers as a signal, at first the last one. The track menu selects a different column, or shows the rows as features with all their columns in the card. Sessions keep the choice.</li>
+</ul>
+<h3 id="bcf-files">BCF files</h3>
+<ul>
+<li>genie opens BCF files, the binary VCF files of bcftools, with their CSI index, from your computer and from the web. They have all the features of VCF tracks: genotypes, cards, filters, annotations, structural variants, densities from the index and sample groups.</li>
+<li>A BCF file without an index opens if it is 50 MB or less.</li>
+</ul>
+<h3 id="hi-c-contact-maps">Hi-C contact maps</h3>
+<ul>
+<li>genie opens the <code>.hic</code> files of Juicer (versions 6 to 9) as Hi-C tracks, also from the web and from track hubs (type <code>hic</code>). The contacts show as a triangle over the diagonal, from light grey to vermillion.</li>
+<li>The size of the bins follows the zoom. genie reads only the blocks of the matrix that the view needs.</li>
+<li>The track menu selects the normalization of the file (for example KR or SCALE, or none) and observed/expected ratios in blue and vermillion. Sessions keep both.</li>
+<li>The card of a contact shows its two bins, their distance, the value and the normalization.</li>
+</ul>
+<h3 id="structural-variants">Structural variants</h3>
+<ul>
+<li>Structural variants show over their full length in the colors of their type: dark grey for deletions, vermillion for duplications, green for inversions and purple for insertions. genie finds them by SVTYPE, by symbolic alleles such as <code>&lt;DEL&gt;</code>, and by breakends.</li>
+<li>Lines with ends show the confidence intervals of the start and the end (CIPOS and CIEND).</li>
+<li>Breakends (BND) are arcs to their other ends in a lane above the sites, or stubs when the other end is on another chromosome.</li>
+<li>genie finds the other end of a breakend in its alternate allele, or in CHR2 with POS2, END2 or END, as gnomAD-SV and other callers write it. A breakend takes one base, also when its END is on the other side. CTX translocations are breakends too.</li>
+<li>Complex rearrangements, such as the CPX records of gnomAD-SV, show over their full length. Their card says &quot;Complex rearrangement&quot;.</li>
+<li>The card says the type, the length, the other end of a breakend and if the call is imprecise, for example &quot;Deletion · 2,345 bp · imprecise&quot;.</li>
+</ul>
+<h3 id="variant-annotations">Variant annotations</h3>
+<ul>
+<li>Variant cards show the annotations of Ensembl VEP (<code>CSQ</code>), SnpEff (<code>ANN</code>) and bcftools csq (<code>BCSQ</code>): the 3 most severe, one line for each with the gene, the consequence, the impact and the HGVS changes, and the number of the others.</li>
+<li>The fields Consequence, Impact, Gene and Biotype list the values of all annotations of a variant. Click a value to keep or hide the variants with it, for example to keep only HIGH.</li>
+<li>The other columns of the first annotation show as fields, for example <code>CSQ SIFT</code> and <code>CSQ PolyPhen</code>.</li>
+<li>The annotations do not count in the 400 characters of INFO that genie keeps, so long annotations do not push out the other INFO fields.</li>
+</ul>
+<h3 id="cloud-addresses">Cloud addresses</h3>
+<ul>
+<li>genie opens files in public buckets of Amazon S3 and Google Cloud Storage from their <code>s3://</code> and <code>gs://</code> addresses, for example the 1000 Genomes data on AWS and the gnomAD data on Google Cloud. The addresses work in Open URL, in track hubs, in sessions and on the command line.</li>
+<li>If a bucket is not public, the message tells you that genie reads only public buckets.</li>
+</ul>
+<h3 id="packages">Packages</h3>
+<ul>
+<li>The Windows installer and the macOS disk image do not ask you to accept the license. The packages contain the license as the file LICENSE.txt.</li>
+</ul>
+<h3 id="fixes">Fixes</h3>
+<ul>
+<li>A card breaks a word that is too long for one line, for example a long variant name. Before, the word went past the edge of the card.</li>
+<li>The Open dialog lists copy number files (<code>.seg</code>, <code>.cns</code>, <code>.cnr</code>) and BEDPE files with the tracks.</li>
+<li>For a genome on the web, genie reads only the repeat masks of the 2bit file near the view. Before, the first bases of each human chromosome read 2 to 3.5 MB of masks.</li>
+<li>A track that loads while you zoom in loads again for the new view. Before, a feature track could keep the density of the wide view.</li>
+<li>If two INFO descriptions give the same short label, the variant card shows the INFO IDs, for example <code>AF_EUR</code> and <code>AF_EUR_unrel</code>.</li>
+<li>Old bigBed files without a count of BED fields open. Before, they failed with &quot;A number is not valid&quot;.</li>
+<li>The names of files on the web show their escaped characters, for example <code>+</code> for <code>%2B</code>.</li>
+<li>The message for a file that genie cannot open lists all track types.</li>
+<li>genie checks the CRC of each block of a file compressed with bgzip. A damaged block gives an error. Before, a damaged BAM file could give wrong reads, and genie could stop for minutes on a read with a very long CIGAR.</li>
+<li>genie rejects a BAM read whose CIGAR does not fit the length of its bases, as htslib does.</li>
+<li>A test gives cut and damaged copies of all test files to all readers. Each reader must give an error or data, and must not stop or hang.</li>
+<li>A file that stops before the end of its data gives the message &quot;The file stops before the end of its data. Make sure that the file is complete.&quot; Before, the message was &quot;failed to fill whole buffer&quot;.</li>
+<li>The card of a variant with no ID shows its change once, as its title. Before, the change was also the first line of the card.</li>
+</ul>
+<h2 id="v0.2.0">0.2.0 <a href="https://github.com/collide2954/genie/releases/tag/v0.2.0">Release page</a></h2>
+<p>genie opens track files as they come, also when they have no index or are not sorted.</p>
+<h3 id="files-without-an-index">Files without an index</h3>
+<ul>
+<li>genie opens track files that have no index. It makes the index in its cache folder for BAM files, and for VCF, BED, GFF3, GTF and bedGraph files compressed with bgzip.</li>
+<li>Plain and gzip track files of any size open. genie makes a copy compressed with bgzip, and it sorts files that are not sorted by position, for example GTF files from GENCODE or Ensembl.</li>
+<li>Track files on the web that have no index download into the cache folder, up to 1 GB. A stopped download continues from where it stopped.</li>
+<li>While genie prepares a file, the track shows the progress. Click × on the track to stop.</li>
+<li>The settings panel shows the space that the copies and indexes use. <b>Clear</b> removes them.</li>
+</ul>
+<h2 id="v0.1.1">0.1.1 <a href="https://github.com/collide2954/genie/releases/tag/v0.1.1">Release page</a></h2>
+<p>Fixes for Windows and the Linux AppImage.</p>
+<ul>
+<li>Windows: genie starts on computers that do not have the Visual C++ Redistributable. genie.exe now contains the C runtime.</li>
+<li>Windows: genie opens without a console window.</li>
+<li>Windows: the Start menu entry, the desktop shortcut and <code>.genie</code> files show the genie icon.</li>
+<li>Windows: <code>genie-cli.exe</code>, in the same folder as genie.exe, runs commands in a terminal, for example <code>genie-cli snapshot work.genie regions.bed pictures</code>.</li>
+<li>Linux: the AppImage finds files from the folder that you run it in, for example in <code>./genie-0.1.1-linux-x86_64.AppImage snapshot work.genie regions.bed pictures</code>.</li>
+<li>Before each release, the release workflow installs or opens each package and makes images with it.</li>
+</ul>
+<h2 id="v0.1.0">0.1.0 <a href="https://github.com/collide2954/genie/releases/tag/v0.1.0">Release page</a></h2>
+<p>The first release of genie, a genome browser for Windows, macOS and Linux.</p>
+<h3 id="genomes-and-files">Genomes and files</h3>
+<ul>
+<li>Ten genomes from the UCSC Genome Browser: human (hg38, hg19, T2T), mouse (mm39, mm10), rat, zebrafish, fly, worm and yeast. Each genome opens with its genes and its chromosome bands. <b>Use offline</b> keeps a genome on your computer.</li>
+<li>Sequences: FASTA (also bgzip) and 2bit. Features: BED, GFF3, GTF and bigBed. Reads: BAM. Variants: VCF. Signal: bigWig and bedGraph.</li>
+<li>Files on your computer and on web servers. genie reads only the parts of a file that the view needs.</li>
+<li>A list of public UCSC tracks for each genome, for example MANE, GENCODE, ClinVar, dbSNP, phyloP and ENCODE cCREs.</li>
+</ul>
+<h3 id="tracks">Tracks</h3>
+<ul>
+<li>Put the pointer on a feature, a read or a variant to see its data and the fields of its file. Click a field to filter the track or to label the features with it.</li>
+<li>Reads: coverage, mismatches, colors for unusual pairs, sorting and grouping by phase or strand, the other parts of split reads, and a light color for reads that are placed in more than one spot.</li>
+<li>RNA-seq: an arc for each splice junction, with its number of reads and its strand.</li>
+<li>Long reads: colors for base modifications such as 5mC and 5hmC, from the MM and ML tags.</li>
+<li>Variants: sites in the colors of their bases and a row of genotypes for each sample.</li>
+<li>Signal: bars or lines, a fixed or shared range, and two or more tracks in one lane.</li>
+</ul>
+<h3 id="navigation">Navigation</h3>
+<ul>
+<li>Type a locus, a gene name or a variant ID. Go back and forward through your jumps.</li>
+<li>Keep regions in a list, and import or export them as BED files.</li>
+<li>Show two to four loci side by side.</li>
+</ul>
+<h3 id="images-and-automation">Images and automation</h3>
+<ul>
+<li>Save the view as a PNG or an SVG image. Copy the locus, the sequence or a card.</li>
+<li>Save and open sessions. genie keeps your last session.</li>
+<li><code>genie snapshot</code> makes one image for each region of a BED file, without a window.</li>
+<li>Other programs can control genie with IGV batch commands on port 60151.</li>
+</ul>
+<h3 id="packages">Packages</h3>
+<ul>
+<li>A Windows installer, a macOS disk image for Apple silicon and Intel, and a Linux AppImage and .deb package.</li>
+<li>The packages are not signed. The README tells how to open genie the first time.</li>
+</ul>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

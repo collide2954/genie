@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+<rect width="24" height="24" rx="5.5" fill="#1F1F1F"/>
+<g fill="none">
+<path d="M9.92 7.90L14.08 7.90" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+<path d="M9.92 9.95L14.08 9.95" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+<path d="M9.92 14.05L14.08 14.05" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+<path d="M9.92 16.10L14.08 16.10" stroke="#FFFFFF" stroke-width="1" stroke-linecap="round"/>
+<path d="M16.05 4.00L15.54 4.31L14.94 4.62L14.27 4.92L13.55 5.23L12.78 5.54L12.00 5.85L11.22 6.15" stroke="#B784E0" stroke-width="1.75" stroke-linecap="round"/>
+<path d="M12.00 18.15L11.22 18.46L10.45 18.77L9.73 19.08L9.06 19.38L8.46 19.69L7.95 20.00" stroke="#1AAE84" stroke-width="1.75" stroke-linecap="round"/>
+<path d="M16.05 4.00L15.54 4.31L14.94 4.62L14.27 4.92L13.55 5.23L12.78 5.54L12.00 5.85L11.22 6.15" stroke="#B784E0" stroke-width="1.75"/>
+<path d="M11.22 6.15L10.45 6.46L9.73 6.77L9.06 7.08L8.46 7.38L7.95 7.69L7.54 8.00" stroke="#1AAE84" stroke-width="1.75"/>
+<path d="M7.54 8.00L7.24 8.31L7.06 8.62L7.00 8.92L7.06 9.23L7.24 9.54L7.54 9.85L7.95 10.15" stroke="#B784E0" stroke-width="1.75"/>
+<path d="M7.95 10.15L8.46 10.46L9.06 10.77L9.73 11.08L10.45 11.38L11.22 11.69L12.00 12.00L12.78 12.31" stroke="#1AAE84" stroke-width="1.75"/>
+<path d="M12.78 12.31L13.55 12.62L14.27 12.92L14.94 13.23L15.54 13.54L16.05 13.85L16.46 14.15" stroke="#B784E0" stroke-width="1.75"/>
+<path d="M16.46 14.15L16.76 14.46L16.94 14.77L17.00 15.08L16.94 15.38L16.76 15.69L16.46 16.00L16.05 16.31" stroke="#1AAE84" stroke-width="1.75"/>
+<path d="M16.05 16.31L15.54 16.62L14.94 16.92L14.27 17.23L13.55 17.54L12.78 17.85L12.00 18.15" stroke="#B784E0" stroke-width="1.75"/>
+<path d="M12.00 18.15L11.22 18.46L10.45 18.77L9.73 19.08L9.06 19.38L8.46 19.69L7.95 20.00" stroke="#1AAE84" stroke-width="1.75"/>
+<path d="M7.95 4.00L8.46 4.31L9.06 4.62L9.73 4.92L10.45 5.23L11.22 5.54L12.00 5.85L12.78 6.15L13.55 6.46L14.27 6.77L14.94 7.08L15.54 7.38L16.05 7.69L16.46 8.00L16.76 8.31L16.94 8.62L17.00 8.92L16.94 9.23L16.76 9.54L16.46 9.85L16.05 10.15L15.54 10.46L14.94 10.77L14.27 11.08L13.55 11.38L12.78 11.69L12.00 12.00L11.22 12.31L10.45 12.62L9.73 12.92L9.06 13.23L8.46 13.54L7.95 13.85L7.54 14.15L7.24 14.46L7.06 14.77L7.00 15.08L7.06 15.38L7.24 15.69L7.54 16.00L7.95 16.31L8.46 16.62L9.06 16.92L9.73 17.23L10.45 17.54L11.22 17.85L12.00 18.15L12.78 18.46L13.55 18.77L14.27 19.08L14.94 19.38L15.54 19.69L16.05 20.00" stroke="#FFFFFF" stroke-width="1.75" stroke-linecap="round"/>
+</g>
+</svg>

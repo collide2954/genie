@@ -461,6 +461,16 @@ The tests give cut and damaged copies of each test file to the readers: 3 copies
 cargo test -p genie --bin genie sweep -- --ignored
 ```
 
+## Website
+
+The project page in `docs/` comes from the pages in `site/`, this README (the manual), the changelog, the keys of genie and its logo. A test fails when a file in `docs/` is out of date. To write the files again:
+
+```bash
+GENIE_WRITE_SITE=1 cargo test -p genie --bin genie site
+```
+
+The clips of the tutorial and the pictures are files in `docs/clips/` and `docs/images/`.
+
 ## Crates
 
 | Crate | Contents |

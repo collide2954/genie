@@ -1,0 +1,17 @@
+[session]
+reference = https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.2bit
+genome = hg38
+locus = chr17:43,044,295-43,084,294
+
+[track]
+file = hg38/RefSeq Select.bed
+name = RefSeq Select
+
+[track]
+file = https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/clinvar.vcf.gz
+name = ClinVar GRCh37, lifted
+lift = https://hgdownload.soe.ucsc.edu/goldenPath/hg19/liftOver/hg19ToHg38.over.chain.gz
+
+[track]
+file = https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+name = ClinVar GRCh38

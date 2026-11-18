@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files · genie</title>
+<meta name="description" content="The genie manual: files, files on the web.">
+<meta property="og:title" content="Files · genie">
+<meta property="og:description" content="The genie manual: files, files on the web.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/manual/files.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<script src="../site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="../tutorial.html">Tutorial</a>
+      <a href="../manual/index.html" aria-current="page">Manual</a>
+      <a href="../examples.html">Examples</a>
+      <a href="../keys.html">Keys</a>
+      <a href="../changelog.html">Changelog</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="../index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap manual">
+<aside>
+  <input class="search" type="search" placeholder="Find in the manual" aria-label="Find in the manual" data-index="search.json">
+  <ul class="results"></ul>
+  <nav aria-label="Manual">
+    <ul>
+      <li><a href="install.html">Install</a></li>
+      <li><a href="genomes.html">Genomes and tracks</a></li>
+      <li><a href="files.html" aria-current="page">Files</a>
+        <ul>
+          <li><a href="#files">Files</a></li>
+          <li><a href="#files-on-the-web">Files on the web</a></li>
+        </ul>
+      </li>
+      <li><a href="navigation.html">Navigation</a></li>
+      <li><a href="tracks.html">Tracks</a></li>
+      <li><a href="sessions.html">Sessions and images</a></li>
+      <li><a href="automation.html">Automation</a></li>
+      <li><a href="settings.html">Settings and updates</a></li>
+      <li><a href="development.html">Development</a></li>
+    </ul>
+  </nav>
+</aside>
+<article class="prose">
+<h1 id="files">Files</h1>
+<div class="table"><table>
+<thead><tr><th>Kind</th><th>Formats</th></tr></thead>
+<tbody>
+<tr><td>Reference sequence</td><td>FASTA (<code>.fa</code>, <code>.fasta</code>, <code>.fna</code>, <code>.fas</code>), FASTA compressed with bgzip (<code>.fa.gz</code>), UCSC 2bit (<code>.2bit</code>)</td></tr>
+<tr><td>Feature track</td><td>BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (<code>.bb</code>)</td></tr>
+<tr><td>Alignment track</td><td>BAM; CRAM 3.0 and 3.1</td></tr>
+<tr><td>Variant track</td><td>VCF (plain, gzip or bgzip); BCF (<code>.bcf</code>) with its CSI index (<code>.bcf.csi</code>)</td></tr>
+<tr><td>Signal track</td><td>bigWig (<code>.bw</code>); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip)</td></tr>
+<tr><td>Interaction track</td><td>bigInteract (<code>.bb</code>); BEDPE (<code>.bedpe</code>, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (<code>.txt</code>, plain or gzip)</td></tr>
+<tr><td>Hi-C track</td><td>Juicer <code>.hic</code>, versions 6 to 9</td></tr>
+<tr><td>Table track</td><td>Tab-separated tables compressed with bgzip and indexed with <code>tabix -s -b -e</code>, for example the CADD scores (<code>.tsv.gz</code>, <code>.txt.gz</code> and others, with <code>.tbi</code> or <code>.csi</code>)</td></tr>
+<tr><td>GWAS track</td><td>Summary statistics of the GWAS Catalog, PLINK 2 (<code>.glm.linear</code>, <code>.glm.logistic</code>), REGENIE (<code>.regenie</code>), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index</td></tr>
+<tr><td>Copy number track</td><td>SEG (<code>.seg</code>, as from TCGA, DNAcopy or GISTIC); CNVkit (<code>.cns</code>, <code>.cnr</code>); GATK ModelSegments (<code>.seg</code>). Plain or gzip, up to 50 MB</td></tr>
+<tr><td>Sample table</td><td>Tab or comma separated text with a header line (<code>.tsv</code>, <code>.csv</code>, <code>.txt</code>, <code>.panel</code> from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK <code>.fam</code> and <code>.ped</code>. Plain or gzip, up to 64 MB</td></tr>
+<tr><td>Session</td><td>genie session (<code>.genie</code>)</td></tr>
+</tbody></table></div>
+<p>Open a genome or a reference sequence first. Then open tracks or drop them on the window.</p>
+<p>If a FASTA file has no index (<code>.fai</code>, and <code>.gzi</code> for bgzip), genie makes the index and keeps it in its cache folder. For a large file, this can take some seconds. To make the indexes before you open the file:</p>
+<pre><code>bgzip genome.fa &amp;&amp; samtools faidx genome.fa.gz</code></pre>
+<h3 id="files-without-an-index">Files without an index</h3>
+<p>If a track file has an index next to it (<code>.tbi</code>, <code>.csi</code>, <code>.bai</code> or <code>.crai</code>), genie uses that index. If the file has no index, genie prepares the file in its cache folder:</p>
+<ul>
+<li>A sorted BAM file, a CRAM file or a sorted bgzip file gets an index. genie does not copy the file.</li>
+<li>A BCF file without its CSI index opens if it is 50 MB or less: genie reads all of it. Index larger BCF files with <code>bcftools index</code>.</li>
+<li>A plain or gzip file gets a copy compressed with bgzip, and an index. Plain files up to 50 MB open directly, without a copy.</li>
+<li>A file that is not sorted by position gets a sorted copy, for example a GTF file from GENCODE or Ensembl, or a BAM file from an aligner. genie sorts on disk, so the size of the file is not limited by memory.</li>
+</ul>
+<p>While genie prepares a file, the track shows the step and the progress, for example &quot;Sorting genes.gtf.gz… 45 %&quot;. The track shows its data when the work is complete. To stop the work, click × on the track.</p>
+<p>genie keeps the copies and indexes until you clear them. The settings panel shows the space that they use. Click <b>Clear</b> to remove them. genie keeps the files of open tracks. If a track file changes, genie prepares it again.</p>
+<p>You can also prepare files yourself, for example to use them in other programs. To prepare a BED track:</p>
+<pre><code>sort -k1,1 -k2,2n genes.bed | bgzip &gt; genes.bed.gz &amp;&amp; tabix -p bed genes.bed.gz</code></pre>
+<p>For GFF3 and GTF, sort by columns 1 and 4 and use <code>tabix -p gff</code>:</p>
+<pre><code>sort -k1,1 -k4,4n genes.gtf | bgzip &gt; genes.gtf.gz &amp;&amp; tabix -p gff genes.gtf.gz</code></pre>
+<p>genie shows features when the view is 10 Mb or less. Wider views show the density of the features: bigBed files from their zoom levels, other files as the number of features per Mb. For a file with a tabix or CSI index, genie estimates the density from the index, without reading the features. This needs an index from htslib (tabix, bcftools or samtools), which counts the records of each contig.</p>
+<p>To prepare a BAM track:</p>
+<pre><code>samtools sort -o reads.bam reads.sam &amp;&amp; samtools index reads.bam</code></pre>
+<p>A CRAM file keeps the bases of a read as differences from a reference. genie uses the reference that is open, so open the genome or the FASTA file that made the CRAM file. Each part of a CRAM file has the MD5 of its reference bases. If the open reference is different there, the track says &quot;The reference is not the reference of the CRAM file here.&quot; and does not show wrong bases. CRAM files that hold their own reference, or that do not need one, open with any reference. genie reads CRAM 3.0 and 3.1 files with gzip, rANS and rANS Nx16 compression. This is what most archives and samtools make by default. genie does not read the arithmetic coder, fqzcomp and the name tokenizer of CRAM 3.1, and bzip2 and lzma blocks. The <code>small</code> and <code>archive</code> profiles of samtools use them.</p>
+<p>genie shows reads when the view is 30 kb or less. It hides QC-fail and secondary reads. By default, it also hides duplicate reads and soft clips, and it keeps 100 reads for each 50 bp.</p>
+<p>To prepare a large VCF track:</p>
+<pre><code>bgzip calls.vcf &amp;&amp; tabix -p vcf calls.vcf.gz</code></pre>
+<p>genie shows variants when the view is 1 Mb or less. Wider views show the number of variants per Mb, estimated from the index as for feature files. Put the pointer on the bars to see the density, for example &quot;About 520 variants per Mb&quot;.</p>
+<p>To prepare a large bedGraph track:</p>
+<pre><code>sort -k1,1 -k2,2n signal.bedGraph | bgzip &gt; signal.bedGraph.gz &amp;&amp; tabix -p bed signal.bedGraph.gz</code></pre>
+<p>genie shows bigWig tracks and plain bedGraph tracks at all zoom levels. It shows a bedGraph track that has a tabix index when the view is 10 Mb or less. For the best speed, convert bedGraph to bigWig with bedGraphToBigWig.</p>
+<p>A bedMethyl file from <code>modkit pileup</code> is a BED file. To prepare a large bedMethyl track:</p>
+<pre><code>sort -k1,1 -k2,2n calls.bed | bgzip &gt; calls.bedMethyl.gz &amp;&amp; tabix -p bed calls.bedMethyl.gz</code></pre>
+<p>genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.</p>
+<h2 id="files-on-the-web">Files on the web</h2>
+<p>genie can open reference sequences and tracks from a web server. To open a file from the web:</p>
+<ol>
+<li>Push Ctrl+U (Cmd+U on macOS) or click the link button.</li>
+<li>Type the address of the file. The address must start with <code>https://</code>, <code>http://</code>, <code>s3://</code> or <code>gs://</code>.</li>
+<li>Push Enter.</li>
+</ol>
+<p>You can also give addresses as arguments:</p>
+<pre><code>cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/data/reads.bam</code></pre>
+<ul>
+<li>genie reads only the parts of a file that the view needs. The server must send parts of files (HTTP range requests). If the server sends only full files, genie opens only files of 4 MB or less.</li>
+<li>genie looks for the index on the same server. The address of an index is the address of the file with the index extension, for example <code>reads.bam.bai</code>.</li>
+<li>If a track file on the web has no index, genie downloads the file into its cache folder and prepares it there, as for files on your computer. The limit is 1 GB. If you stop a download, it continues from where it stopped the next time that you open the file. genie does not make indexes for FASTA files from the web.</li>
+<li>genie reads plain BED, GFF3, GTF, VCF, bedGraph and bedMethyl files up to 50 MB completely.</li>
+<li>For files that genie reads from the web in parts, the locus box finds names only in bigBed files that have a name index.</li>
+<li>genie keeps up to 64 MB of data from the web in memory. It writes a file from the web to disk only when it must make an index for the file.</li>
+<li>genie opens files in public buckets of Amazon S3 and Google Cloud Storage, for example <code>s3://1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam</code> or <code>gs://gcp-public-data--gnomad/release/4.1/vcf/genomes/gnomad.genomes.v4.1.sites.chr21.vcf.bgz</code>. genie reads them through the HTTPS addresses of the buckets. It does not sign requests, so it cannot open private buckets or Requester Pays buckets.</li>
+<li>genie uses the certificates of the operating system for HTTPS. A connection to an <code>http://</code> address is not secure. genie does not send user names, passwords or cookies.</li>
+<li>Sessions and the recent list keep the addresses of files from the web. genie cannot open a session file from the web.</li>
+</ul>
+</article>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

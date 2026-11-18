@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutorial · genie</title>
+<meta name="description" content="Learn genie in ten short steps: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change tracks, find a sequence and save your work.">
+<meta property="og:title" content="Tutorial · genie">
+<meta property="og:description" content="Learn genie in ten short steps: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change tracks, find a sequence and save your work.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://collide2954.github.io/genie/tutorial.html">
+<meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#181818" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="images/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="site.js" defer></script>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="images/logo.svg" width="18" height="18" alt="">genie</a>
+    <nav aria-label="Site">
+      <a href="tutorial.html" aria-current="page">Tutorial</a>
+      <a href="manual/index.html">Manual</a>
+      <a href="examples.html">Examples</a>
+      <a href="keys.html">Keys</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="faq.html">FAQ</a>
+      <a href="https://github.com/collide2954/genie">GitHub</a>
+    </nav>
+    <a class="button primary small" href="index.html#download">Download</a>
+  </div>
+</header>
+<main>
+<div class="wrap page-head">
+  <h1>Tutorial</h1>
+  <p>Ten short steps show the main work in genie. Each clip shows genie with real data: the human genome hg38 at the BRCA1 gene, with tracks from the UCSC Genome Browser and exome reads of NA12878 from the 1000 Genomes Project.</p>
+  <ol class="contents">
+    <li><a href="#open-a-genome">1 Open a genome</a></li>
+    <li><a href="#go-to-a-gene">2 Go to a gene</a></li>
+    <li><a href="#compare-loci">3 Compare loci</a></li>
+    <li><a href="#add-tracks">4 Add tracks</a></li>
+    <li><a href="#move-and-zoom">5 Move and zoom</a></li>
+    <li><a href="#open-a-file-from-the-web">6 Open a file from the web</a></li>
+    <li><a href="#read-the-details">7 Read the details</a></li>
+    <li><a href="#change-a-track">8 Change a track</a></li>
+    <li><a href="#find-a-sequence">9 Find a sequence</a></li>
+    <li><a href="#save-your-work">10 Save your work</a></li>
+  </ol>
+</div>
+
+<div class="wrap">
+  <section class="step" id="open-a-genome">
+    <div>
+      <h2><span class="number">1</span>Open a genome</h2>
+      <p>When genie starts, it lists ten genomes. Click <b>hg38</b>. genie gets the genome from the UCSC Genome Browser and shows chromosome 1 with its genes and its bands.</p>
+      <p>To use your own sequence, click <b>Open reference</b> and select a FASTA or 2bit file.</p>
+    </div>
+    <figure class="clip"><video data-clip="open-genome" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The start view lists the genomes. A click on hg38 opens chromosome 1 with the RefSeq Select genes."><source src="clips/open-genome-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="go-to-a-gene">
+    <div>
+      <h2><span class="number">2</span>Go to a gene</h2>
+      <p>Click the locus box at the top, or push <kbd>Ctrl</kbd>+<kbd>L</kbd> (<kbd>Cmd</kbd>+<kbd>L</kbd> on macOS). Type a gene name, for example <b>BRCA1</b>, and push <kbd>Enter</kbd>.</p>
+      <p>You can also type a locus, for example <code>chr17:43,044,295-43,125,364</code>, or a variant ID.</p>
+    </div>
+    <figure class="clip"><video data-clip="go-to-gene" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="BRCA1 is typed in the locus box. genie goes to the BRCA1 gene on chromosome 17."><source src="clips/go-to-gene-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="compare-loci">
+    <div>
+      <h2><span class="number">3</span>Compare loci</h2>
+      <p>Type two to four loci with a space between them, for example <b>BRCA1 BRCA2</b>. genie shows them side by side. Each panel moves and zooms on its own.</p>
+      <p>Click the locus above a panel to show only that locus.</p>
+    </div>
+    <figure class="clip"><video data-clip="several-loci" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="BRCA1 and BRCA2 show side by side. A click on the locus above the BRCA2 panel shows only BRCA2."><source src="clips/several-loci-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="add-tracks">
+    <div>
+      <h2><span class="number">4</span>Add tracks</h2>
+      <p>Click the tracks button (the layers icon). The list has public tracks of the UCSC Genome Browser for the open genome. Click <b>ClinVar</b>, then <b>phyloP 100-way</b>.</p>
+      <p>These files are large, but genie reads only the parts that the view needs. The list also opens track hubs.</p>
+    </div>
+    <figure class="clip"><video data-clip="add-tracks" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The tracks button lists UCSC tracks. ClinVar and phyloP 100-way are added under BRCA1."><source src="clips/add-tracks-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="move-and-zoom">
+    <div>
+      <h2><span class="number">5</span>Move and zoom</h2>
+      <p>Drag the tracks to move along the sequence. To zoom at the pointer, hold <kbd>Ctrl</kbd> (<kbd>Cmd</kbd> on macOS) and turn the mouse wheel.</p>
+      <p>Drag on the ruler to zoom to a range. The <b>−</b> and <b>+</b> buttons next to the locus box zoom out and in.</p>
+    </div>
+    <figure class="clip"><video data-clip="move-zoom" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The view moves left and right, zooms in at the pointer, zooms to a range dragged on the ruler, then zooms out."><source src="clips/move-zoom-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="open-a-file-from-the-web">
+    <div>
+      <h2><span class="number">6</span>Open a file from the web</h2>
+      <p>Click the link button, or push <kbd>Ctrl</kbd>+<kbd>U</kbd>, and type or paste an address. Here, it is the exome of NA12878, a CRAM file of 8.6 GB on Amazon S3. genie reads only the reads in view.</p>
+      <p>To open files on your computer, click the folder button or drop the files on the window. genie opens BAM, CRAM, VCF, BCF, BED, bigWig, Hi-C and many other formats.</p>
+    </div>
+    <figure class="clip"><video data-clip="open-url" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The address of a CRAM file on Amazon S3 is pasted. The reads of an exon of BRCA1 show under ClinVar and phyloP."><source src="clips/open-url-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="read-the-details">
+    <div>
+      <h2><span class="number">7</span>Read the details</h2>
+      <p>Put the pointer on a variant, a read or a feature to see its card. The card shows the data of the file, for example the clinical significance of a ClinVar variant.</p>
+      <p>Click to keep a card open. Click a value in a card to filter the track by it.</p>
+    </div>
+    <figure class="clip"><video data-clip="cards" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="Cards show the data of a ClinVar variant and of a read."><source src="clips/cards-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="change-a-track">
+    <div>
+      <h2><span class="number">8</span>Change a track</h2>
+      <p>Right-click a track for its menu: rows, colors, sorting, grouping and more. Each change shows at once.</p>
+      <p><b>Track settings…</b> in the menu shows all settings of the track in one dialog.</p>
+    </div>
+    <figure class="clip"><video data-clip="track-menu" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The menu of the read track changes how the reads show."><source src="clips/track-menu-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="find-a-sequence">
+    <div>
+      <h2><span class="number">9</span>Find a sequence</h2>
+      <p>Push <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> (<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> on macOS) and type bases. A lane under the ruler shows the matches on the two strands.</p>
+      <p>Push <kbd>Enter</kbd> to go to the next match. You can allow mismatches, or type a pair of primers to see their PCR products.</p>
+    </div>
+    <figure class="clip"><video data-clip="find-sequence" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The find bar finds a sequence in the exon. Enter goes to the next match."><source src="clips/find-sequence-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section class="step" id="save-your-work">
+    <div>
+      <h2><span class="number">10</span>Save your work</h2>
+      <p>Click the save button, or push <kbd>Ctrl</kbd>+<kbd>S</kbd>, to save the genome, the tracks and the view as a session. Open the <code>.genie</code> file later to go back to it.</p>
+      <p>Click the camera button, or push <kbd>Ctrl</kbd>+<kbd>E</kbd>, to save the view as a PNG or an SVG image.</p>
+    </div>
+    <figure class="clip"><video data-clip="save-export" width="1024" height="576" muted loop playsinline controls preload="none" aria-label="The session and an image of the view are saved."><source src="clips/save-export-light.mp4" type="video/mp4"></video></figure>
+  </section>
+
+  <section>
+    <h2>Next</h2>
+    <p>The <a href="manual/index.html">manual</a> tells all that genie does. The <a href="examples.html">examples</a> open sessions with public data, and the <a href="keys.html">keys</a> page lists all keys and mouse actions.</p>
+  </section>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <p>genie uses the Apache-2.0 license. The fonts Inter and JetBrains Mono use the SIL Open Font License 1.1.</p>
+    <p>The pictures show data from the UCSC Genome Browser, ClinVar, gnomAD, ENCODE, the GWAS Catalog, the 1000 Genomes Project and the JBrowse demo data.</p>
+  </div>
+</footer>
+</body>
+</html>

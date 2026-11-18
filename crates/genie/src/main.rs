@@ -35,6 +35,8 @@ mod scratch;
 mod server;
 mod settings;
 mod shortcuts;
+#[cfg(test)]
+mod site;
 mod style;
 mod svg;
 #[cfg(test)]
