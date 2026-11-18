@@ -444,12 +444,14 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             sample,
             groups,
         } => {
+            // A variant with no ID has its change as the title, so the change is not a line too.
+            let mut lines = Vec::new();
             let title = if variant.id.is_empty() {
                 change(variant)
             } else {
+                lines.push(change(variant));
                 variant.id.clone()
             };
-            let mut lines = vec![change(variant)];
             lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
             lines.extend(groups.iter().cloned());
             (title, variant.span, lines)
@@ -1050,6 +1052,36 @@ mod tests {
         let long = site(&"ACGT".repeat(10), &["A"], None, ".");
         assert_eq!(change(&long), "ACGTACGT… (40 bp) > A");
         assert_eq!(genotype("NA1", Call::Het), "NA1 · heterozygous");
+    }
+
+    /// A variant with no ID shows its change as the title, and only there.
+    #[test]
+    fn variants_without_an_id_show_their_change_once() {
+        let card = |id: &str| {
+            let mut variant = site("C", &["T"], None, ".");
+            variant.id = id.to_owned();
+            Card {
+                track: 1,
+                contig: "chr21".to_owned(),
+                detail: Detail::Variant {
+                    variant,
+                    sample: Some(("HG002".to_owned(), Call::Het)),
+                    groups: Vec::new(),
+                },
+                at: Point::ORIGIN,
+                fields: vec![field("DP", "10")],
+                effects: Changes::default(),
+                samples: Vec::new(),
+            }
+        };
+        let text = plain(&card(""));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "C > T");
+        assert_eq!(lines[2..], ["HG002 · heterozygous", "DP: 10"]);
+        let text = plain(&card("rs7"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "rs7");
+        assert_eq!(lines[2..], ["C > T", "HG002 · heterozygous", "DP: 10"]);
     }
 
     #[test]
