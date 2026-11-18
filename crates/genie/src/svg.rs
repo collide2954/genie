@@ -15,6 +15,7 @@ const DROP: f32 = 0.36;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
     Ui,
+    UiStrong,
     Mono,
     MonoStrong,
 }
@@ -23,6 +24,7 @@ impl Face {
     fn attributes(self) -> (&'static str, &'static str) {
         match self {
             Self::Ui => (UI, ""),
+            Self::UiStrong => (UI, " font-weight=\"600\""),
             Self::Mono => (MONO, ""),
             Self::MonoStrong => (MONO, " font-weight=\"700\""),
         }
@@ -31,11 +33,15 @@ impl Face {
     fn font(self) -> iced::Font {
         match self {
             Self::Ui => font::UI,
+            Self::UiStrong => font::UI_STRONG,
             Self::Mono => font::MONO,
             Self::MonoStrong => font::MONO_STRONG,
         }
     }
 }
+
+/// A part of a line of text: its words, face, color and size.
+pub type Part<'a> = (&'a str, Face, Color, f32);
 
 impl From<Font> for Face {
     fn from(font: Font) -> Self {
@@ -124,13 +130,8 @@ impl Svg {
         );
     }
 
-    pub fn spans(
-        &mut self,
-        (x, center): (f32, f32),
-        size: f32,
-        parts: &[(&str, Face, Color)],
-        gap: f32,
-    ) {
+    /// A line of parts on one baseline. The baseline is that of the size of the line.
+    pub fn spans(&mut self, (x, center): (f32, f32), size: f32, parts: &[Part], gap: f32) {
         let _ = write!(
             self.body,
             "<text x=\"{}\" y=\"{}\" font-size=\"{}\">",
@@ -138,7 +139,7 @@ impl Svg {
             number(center + DROP * size),
             number(size)
         );
-        for (index, (content, face, color)) in parts.iter().enumerate() {
+        for (index, (content, face, color, part)) in parts.iter().enumerate() {
             let shift = if index == 0 {
                 String::new()
             } else {
@@ -147,7 +148,8 @@ impl Svg {
             let (family, weight) = face.attributes();
             let _ = write!(
                 self.body,
-                "<tspan{shift} font-family=\"{family}\"{weight}{}>{}</tspan>",
+                "<tspan{shift} font-family=\"{family}\" font-size=\"{}\"{weight}{}>{}</tspan>",
+                number(*part),
                 fill(*color),
                 escape(content)
             );
@@ -392,15 +394,20 @@ mod tests {
     fn lines_of_parts_flow_in_one_text() {
         let mut svg = Svg::new(100.0);
         let parts = [
-            ("ref.fa", Face::Ui, Color::BLACK),
-            ("·", Face::Ui, Color::WHITE),
-            ("chr1:1-10", Face::Mono, Color::WHITE),
+            ("Title", Face::UiStrong, Color::BLACK, 12.0),
+            ("ref.fa", Face::Ui, Color::BLACK, 11.0),
+            ("·", Face::Ui, Color::WHITE, 11.0),
+            ("chr1:1-10", Face::Mono, Color::WHITE, 11.0),
         ];
         svg.spans((8.0, 11.0), 11.0, &parts, 6.0);
         let text = svg.finish(22.0, Color::WHITE);
         assert_eq!(text.matches("<text ").count(), 1, "{text}");
-        assert_eq!(text.matches("<tspan").count(), 3, "{text}");
-        assert_eq!(text.matches("<tspan dx=\"6\"").count(), 2, "{text}");
+        assert_eq!(text.matches("<tspan").count(), 4, "{text}");
+        assert_eq!(text.matches("<tspan dx=\"6\"").count(), 3, "{text}");
+        assert!(
+            text.contains("font-size=\"12\" font-weight=\"600\""),
+            "{text}"
+        );
         assert!(text.contains(">chr1:1-10</tspan></text>"), "{text}");
     }
 

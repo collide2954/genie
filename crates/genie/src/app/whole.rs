@@ -333,6 +333,32 @@ mod tests {
         assert_eq!(panels(&restored).len(), 3);
     }
 
+    /// A number as SVG files write it: at most two decimals, without trailing zeros.
+    fn written(value: f32) -> String {
+        let text = format!("{value:.2}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    }
+
+    #[test]
+    fn figures_of_the_whole_genome_name_each_chromosome_at_its_width() {
+        use iced_test::simulator;
+
+        let mut genie = genie();
+        go(&mut genie, "All");
+        let session = genie.session.as_ref().unwrap();
+        let widths = session.widths(1_000.0);
+        let svg = genie.figure(session);
+        assert!(svg.contains(">All</tspan>"), "{svg}");
+        assert!(!svg.contains(">chr2:1-1,000</text>"), "{svg}");
+        let middle = widths[0] + super::PANEL_GAP + widths[1] / 2.0;
+        let name = format!("<text x=\"{}\"", written(middle));
+        let at = svg.find(&name).unwrap_or_else(|| panic!("{name}\n{svg}"));
+        let line = svg[at..].lines().next().unwrap_or_default();
+        assert!(line.ends_with(">2</text>"), "{line}");
+        let mut ui = simulator(genie.export_view(session));
+        assert!(ui.find("2").is_ok());
+    }
+
     #[test]
     fn chromosome_names_show_where_they_fit() {
         assert_eq!(super::name("chr21", 18.0).as_deref(), Some("21"));

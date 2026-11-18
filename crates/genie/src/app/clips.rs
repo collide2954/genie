@@ -103,7 +103,7 @@ fn runs(message: &Message) -> bool {
     match message {
         Message::Command(command) => !matches!(
             command,
-            Command::Open | Command::Export | Command::SaveSession | Command::Copy
+            Command::Open | Command::SaveSession | Command::Copy
         ),
         Message::Genome(_)
         | Message::Opened(_)
@@ -766,7 +766,13 @@ fn save_export() {
         recorder.wait();
         recorder.hold(1.6);
         recorder.click("export", 0.7);
-        recorder.hold(0.6);
+        recorder.hold(0.5);
+        recorder.type_text("BRCA1", |text| {
+            Message::Figure(crate::app::Figuring::Title(text))
+        });
+        recorder.hold(0.5);
+        recorder.click("figure-export", 0.6);
+        recorder.hold(0.4);
         recorder.apply(Message::ExportPicked(Some(folder.join("brca1.png"))));
         recorder.wait();
         recorder.hold(2.0);

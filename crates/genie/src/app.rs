@@ -17,6 +17,7 @@ use iced::{
 
 use crate::card::{Card, Changes};
 use crate::chrome::{self, Action};
+use crate::export::Figure;
 use crate::hub::Hub;
 use crate::location::Location;
 use crate::motion::{self, Transition};
@@ -63,6 +64,7 @@ mod updates;
 mod view;
 mod whole;
 
+pub(crate) use export::Figuring;
 pub(crate) use lift::Lifting;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
@@ -155,6 +157,7 @@ enum Popup {
     Track(u64),
     Palette,
     Hub,
+    Export,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -295,6 +298,8 @@ struct Session {
     genome: bool,
     /// The sample table that groups, sorts and colors the samples of the tracks.
     samples: Option<samples::Samples>,
+    /// The title and the parts of exported images.
+    figure: Figure,
 }
 
 #[derive(Debug)]
@@ -345,6 +350,7 @@ impl Session {
             preparing: Vec::new(),
             genome: false,
             samples: None,
+            figure: Figure::default(),
         }
     }
 
@@ -698,6 +704,7 @@ pub enum Message {
     /// The names of the features of a track, with the number of the lift of the track.
     NamesLoaded((u64, u16), Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
+    Figure(Figuring),
     ExportPicked(Option<PathBuf>),
     SessionPicked(Option<PathBuf>),
     Exported(Result<PathBuf, String>, bool),
@@ -1094,9 +1101,7 @@ impl Genie {
             Message::Pan(panel, dx) => return self.pan(panel, dx),
             Message::Zoom(panel, factor, anchor) => return self.zoom(panel, factor, anchor),
             Message::Resized(width) => return self.resize(width),
-            Message::TileLoaded(generation, key, result) => {
-                self.tile_loaded(generation, key, result);
-            }
+            Message::TileLoaded(at, key, result) => self.tile_loaded(at, key, result),
             Message::LocusEdited(text) => self.edit_locus(text),
             Message::LocusSubmitted => return self.submit_locus(),
             Message::SuggestionChosen(position) => return self.choose(position),
@@ -1104,6 +1109,7 @@ impl Genie {
             Message::Frame(now) => self.frame(now),
             Message::Overview(sweep) => return self.sweep_overview(sweep),
             Message::Ruler(panel, sweep) => return self.sweep_ruler(panel, sweep),
+            Message::Figure(figuring) => return self.figuring(figuring),
             Message::ExportPicked(path) => return self.export_to(path),
             Message::SessionPicked(path) => return self.session_picked(path),
             Message::Exported(result, cut) => return self.exported(result, cut),
@@ -1333,9 +1339,9 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Arranging, Caching, Copying, Drafting, Filtering, Genie, Lane, Lifting, Message,
-        Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming, Sampling,
-        Sweep, Tabling, mouse_button, shortcut, window_event,
+        Address, Arranging, Caching, Copying, Drafting, Figuring, Filtering, Genie, Lane, Lifting,
+        Message, Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming,
+        Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -3873,6 +3879,7 @@ mod tests {
             regions: Vec::new(),
             hubs: Vec::new(),
             samples: None,
+            figure: crate::export::Figure::default(),
         };
         let mut genie = Genie::default();
         let _ = genie.restore(saved);
@@ -3958,6 +3965,7 @@ mod tests {
             regions: Vec::new(),
             hubs: Vec::new(),
             samples: None,
+            figure: crate::export::Figure::default(),
         };
         let mut genie = Genie {
             last: Some(last),
@@ -6743,6 +6751,125 @@ mod tests {
             assert!(ui.find(text).is_ok(), "{text}");
         }
         assert!(ui.find(selector::id("overview")).is_err());
+    }
+
+    #[test]
+    fn exports_ask_for_a_title_and_the_parts_of_the_figure() {
+        let mut genie = with_track();
+        let _ = genie.update(Message::Command(Command::Export));
+        for text in [
+            "Export image",
+            "Title",
+            "Scale bar",
+            "Region bands",
+            "Export…",
+        ] {
+            assert!(shows(&genie, text), "{text}");
+        }
+        let _ = genie.update(Message::Figure(Figuring::Title("TP53 promoter".to_owned())));
+        let _ = genie.update(Message::Figure(Figuring::Scale));
+        let _ = genie.update(Message::Figure(Figuring::Bands));
+        let figure = &genie.session.as_ref().unwrap().figure;
+        assert_eq!(
+            figure,
+            &crate::export::Figure {
+                title: "TP53 promoter".to_owned(),
+                scale: false,
+                bands: false,
+            }
+        );
+        let _ = genie.update(Message::Figure(Figuring::Export));
+        assert!(!shows(&genie, "Export image"));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.figure.title, "TP53 promoter");
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        assert!(!restored.session.as_ref().unwrap().figure.scale);
+    }
+
+    /// A genie with a track and a region in view that exports a figure with a title.
+    fn titled() -> Genie {
+        let mut genie = with_track();
+        let session = genie.session.as_mut().unwrap();
+        let exon = Some("Exon 2".to_owned());
+        session.marks.add(0, Region::between(100, 300), exon);
+        session.figure.title = " TP53 promoter ".to_owned();
+        genie
+    }
+
+    #[test]
+    fn figures_show_the_title_the_scale_bar_and_the_regions_in_view() {
+        let genie = titled();
+        let session = genie.session.as_ref().unwrap();
+        let svg = genie.figure(session);
+        for text in [">TP53 promoter</tspan>", ">Exon 2</text>", ">100 bp</text>"] {
+            assert!(svg.contains(text), "{text}\n{svg}");
+        }
+        let mut ui = simulator(genie.export_view(session));
+        assert!(ui.find("TP53 promoter").is_ok());
+        assert!(ui.find(selector::id("figure-bands")).is_ok());
+        assert!(ui.find(selector::id("scale-bar")).is_ok());
+    }
+
+    #[test]
+    fn figures_leave_out_the_parts_that_are_off() {
+        let mut genie = titled();
+        let session = genie.session.as_mut().unwrap();
+        session.figure = crate::export::Figure {
+            title: String::new(),
+            scale: false,
+            bands: false,
+        };
+        let session = genie.session.as_ref().unwrap();
+        let svg = genie.figure(session);
+        for text in ["TP53 promoter", ">Exon 2</text>", ">100 bp</text>"] {
+            assert!(!svg.contains(text), "{text}\n{svg}");
+        }
+        let mut ui = simulator(genie.export_view(session));
+        assert!(ui.find(selector::id("figure-bands")).is_err());
+        assert!(ui.find(selector::id("scale-bar")).is_err());
+    }
+
+    #[test]
+    fn figures_with_panels_show_a_scale_bar_for_each_panel() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:101-200 chr1:401-900");
+        let session = genie.session.as_ref().unwrap();
+        let svg = genie.figure(session);
+        for text in [">10 bp</text>", ">50 bp</text>"] {
+            assert!(svg.contains(text), "{text}\n{svg}");
+        }
+        let mut ui = simulator(genie.export_view(session));
+        assert!(ui.find(selector::id("scale-bar-1")).is_ok());
+    }
+
+    /// The number of pixels of a row of an image, from `from` to `to`, that are much darker or
+    /// lighter than the top left pixel.
+    fn inked(image: &export::Image, y: f32, (from, to): (u32, u32)) -> usize {
+        let pixel = |x: u32, y: u32| image.rgba[((y * image.width + x) * 4) as usize];
+        let background = pixel(4, 4);
+        let y = (2.0 * y) as u32;
+        (from..to)
+            .filter(|&x| pixel(x, y).abs_diff(background) > 60)
+            .count()
+    }
+
+    #[test]
+    fn scale_bars_show_at_the_end_of_the_caption_and_of_each_header() {
+        use super::export::CAPTION_HEIGHT;
+        use super::view::HEADER_HEIGHT;
+
+        let mut genie = with_track();
+        let session = genie.session.as_ref().unwrap();
+        let image = export::render(genie.export_view(session), genie.width, &genie.theme());
+        let middle = CAPTION_HEIGHT / 2.0;
+        assert!(inked(&image.unwrap(), middle, (1_790, 1_980)) > 150);
+        go(&mut genie, "chr1:101-200 chr1:401-900");
+        let session = genie.session.as_ref().unwrap();
+        let image = export::render(genie.export_view(session), genie.width, &genie.theme());
+        let middle = CAPTION_HEIGHT + 1.0 + HEADER_HEIGHT / 2.0;
+        assert!(inked(&image.unwrap(), middle, (1_890, 1_980)) > 80);
     }
 
     #[test]

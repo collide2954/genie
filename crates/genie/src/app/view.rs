@@ -234,6 +234,7 @@ impl Genie {
             .or_else(|| (self.popup == Some(Popup::Help)).then(crate::help::view))
             .or_else(|| self.app_menu())
             .or_else(|| self.track_dialog())
+            .or_else(|| self.export_dialog())
             .or_else(|| self.hub_dialog())
             .or_else(|| self.palette_view())
         {
@@ -1645,12 +1646,21 @@ fn note<'a>(hidden: usize) -> Element<'a, Message> {
         .into()
 }
 
+/// The ruler of a panel of an image. For the whole genome, the name of the chromosome.
 pub(super) fn ruler_view<'a>(session: &Session, panel: usize) -> Element<'a, Message> {
-    let (_, viewport) = session.view(panel);
-    let ruler = container(scene::view(
-        ruler::scene(viewport, RULER_HEIGHT),
-        RULER_HEIGHT,
-    ));
+    let (contig, viewport) = session.view(panel);
+    let ruler = if session.genome {
+        let contig = &session.reference.assembly.contigs()[contig].name;
+        let name = whole::name(contig, viewport.width() as f32).unwrap_or_default();
+        container(text(name).size(11).style(style::muted))
+            .center_x(Length::Fill)
+            .center_y(RULER_HEIGHT)
+    } else {
+        container(scene::view(
+            ruler::scene(viewport, RULER_HEIGHT),
+            RULER_HEIGHT,
+        ))
+    };
     if panel > 0 {
         return ruler.id(format!("ruler-{panel}")).into();
     }

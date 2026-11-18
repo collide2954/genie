@@ -35,7 +35,11 @@ impl Draft {
     }
 }
 
-fn line<'a>(label: &'static str, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+/// A line of a dialog: a muted label and its content.
+pub fn line<'a>(
+    label: &'static str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     row![
         text(label).size(11).style(style::muted).width(LABEL),
         content.into()

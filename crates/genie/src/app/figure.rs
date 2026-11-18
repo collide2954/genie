@@ -1,18 +1,20 @@
 use genie_render::scene::{Align, Primitive};
-use genie_render::{alignments, ruler, sequence, translation};
+use genie_render::{alignments, bands, ruler, sequence, translation};
 use iced::Color;
 use iced::theme::Base;
 
 use crate::scene::{CHIP, CHIP_EDGE};
-use crate::svg::{self, Face, Svg};
+use crate::svg::{self, Face, Part, Svg};
 use crate::theme::{DataColors, Tokens, data, tokens};
 use crate::track::Track;
 
-use super::export::{CAPTION_HEIGHT, CAPTION_SIZE};
+use super::export::{
+    BAR_INSET, CAPTION_HEIGHT, CAPTION_SIZE, TITLE_SIZE, band_rows, one_caption, panel_bands,
+};
 use super::view::{
     BASE_HEIGHT, Body, EMPTY_HEIGHT, HEADER_HEIGHT, LABEL_SIZE, RULER_HEIGHT, body, members, shapes,
 };
-use super::{Genie, PANEL_GAP, Session, panel_width};
+use super::{Genie, PANEL_GAP, Session, whole};
 
 const LINE_HEIGHT: f32 = 1.3;
 const HINT_SIZE: f32 = 11.0;
@@ -22,7 +24,8 @@ const LOCUS_INSET: f32 = 10.0;
 struct Page<'a> {
     svg: Svg,
     width: f32,
-    count: usize,
+    /// The left edge and the width of each panel.
+    panels: Vec<(f32, f32)>,
     colors: (&'a Tokens, &'a DataColors),
 }
 
@@ -31,17 +34,9 @@ impl Page<'_> {
         self.svg.rect(0.0, y, self.width, 1.0, self.colors.0.line);
     }
 
-    fn column(&self) -> f32 {
-        panel_width(self.width, self.count)
-    }
-
-    fn left(&self, panel: usize) -> f32 {
-        panel as f32 * (self.column() + PANEL_GAP)
-    }
-
     fn gaps(&mut self, y: f32, height: f32) {
-        for panel in 1..self.count {
-            let x = self.left(panel) - PANEL_GAP;
+        for panel in 1..self.panels.len() {
+            let x = self.panels[panel].0 - PANEL_GAP;
             self.svg.rect(x, y, PANEL_GAP, height, self.colors.0.line);
         }
     }
@@ -70,8 +65,8 @@ impl Page<'_> {
     }
 
     fn draw_in(&mut self, panel: usize, (y, height): (f32, f32), parts: &[(&[Primitive], f32)]) {
-        let x = self.left(panel);
-        self.svg.clip((x, y, self.column(), height));
+        let (x, width) = self.panels[panel];
+        self.svg.clip((x, y, width, height));
         for (primitives, top) in parts {
             self.draw(primitives, (x, *top));
         }
@@ -80,41 +75,102 @@ impl Page<'_> {
 }
 
 impl Page<'_> {
-    fn head(&mut self, session: &Session) -> f32 {
+    /// The first line: the title, the reference and the locus, and the scale bar.
+    fn caption(&mut self, session: &Session) {
         let tokens = self.colors.0;
         let (label, locus) = (session.reference.label(), session.locus());
-        let mut caption = vec![(label.as_str(), Face::Ui, tokens.text)];
-        if self.count == 1 {
-            caption.push(("·", Face::Ui, tokens.muted));
-            caption.push((locus.as_str(), Face::Mono, tokens.muted));
+        let mut caption: Vec<Part> = Vec::new();
+        if let Some(title) = session.figure.title() {
+            caption.push((title, Face::UiStrong, tokens.text, TITLE_SIZE));
+            caption.push(("·", Face::Ui, tokens.muted, CAPTION_SIZE));
+        }
+        caption.push((label.as_str(), Face::Ui, tokens.text, CAPTION_SIZE));
+        let single = one_caption(session);
+        if single {
+            caption.push(("·", Face::Ui, tokens.muted, CAPTION_SIZE));
+            caption.push((locus.as_str(), Face::Mono, tokens.muted, CAPTION_SIZE));
         }
         self.svg
             .spans((8.0, CAPTION_HEIGHT / 2.0), CAPTION_SIZE, &caption, GAP);
+        if single && session.figure.scale {
+            let (_, viewport) = session.view(0);
+            let right = self.width - BAR_INSET;
+            let bar = ruler::scale_bar(viewport, right, CAPTION_HEIGHT / 2.0);
+            self.draw(&bar, (0.0, 0.0));
+        }
+    }
+
+    /// The header of each panel: its locus and its scale bar.
+    fn headers(&mut self, session: &Session, y: f32) {
+        let tokens = self.colors.0;
+        for panel in 0..self.panels.len() {
+            let (left, width) = self.panels[panel];
+            let at = (left + LOCUS_INSET, y + HEADER_HEIGHT / 2.0);
+            let locus = session.locus_at(panel);
+            let (size, color) = (CAPTION_SIZE, tokens.text);
+            self.svg
+                .text(at, &locus, size, Face::Mono, color, Align::Start);
+            if session.figure.scale {
+                let (_, viewport) = session.view(panel);
+                let bar = ruler::scale_bar(viewport, width - BAR_INSET, HEADER_HEIGHT / 2.0);
+                self.draw_in(panel, (y, HEADER_HEIGHT), &[(&bar, y)]);
+            }
+        }
+        self.gaps(y, HEADER_HEIGHT);
+    }
+
+    /// The ruler of each panel. For the whole genome, the names of the chromosomes.
+    fn rulers(&mut self, session: &Session, y: f32) {
+        let muted = self.colors.0.muted;
+        let contigs = session.reference.assembly.contigs();
+        for panel in 0..self.panels.len() {
+            let (contig, viewport) = session.view(panel);
+            if session.genome {
+                let (left, width) = self.panels[panel];
+                if let Some(name) = whole::name(&contigs[contig].name, width) {
+                    let at = (left + width / 2.0, y + RULER_HEIGHT / 2.0);
+                    self.svg
+                        .text(at, &name, CAPTION_SIZE, Face::Ui, muted, Align::Center);
+                }
+            } else {
+                let ticks = ruler::scene(viewport, RULER_HEIGHT);
+                self.draw_in(panel, (y, RULER_HEIGHT), &[(&ticks, y)]);
+            }
+        }
+        self.gaps(y, RULER_HEIGHT);
+    }
+
+    /// The bands of the regions in view, when the figure shows them. Gives the height they take.
+    fn bands(&mut self, session: &Session, y: f32) -> f32 {
+        let Some(rows) = band_rows(session) else {
+            return 0.0;
+        };
+        let height = rows as f32 * bands::ROW_HEIGHT;
+        for panel in 0..self.panels.len() {
+            let (primitives, _) = panel_bands(session, panel);
+            self.draw_in(panel, (y, height), &[(&primitives, y)]);
+        }
+        self.gaps(y, height);
+        self.hairline(y + height);
+        height + 1.0
+    }
+
+    fn head(&mut self, session: &Session) -> f32 {
+        self.caption(session);
         let mut y = CAPTION_HEIGHT;
         self.hairline(y);
         y += 1.0;
-        if self.count > 1 {
-            for panel in 0..self.count {
-                let at = (self.left(panel) + LOCUS_INSET, y + HEADER_HEIGHT / 2.0);
-                let locus = session.locus_at(panel);
-                let (size, color) = (CAPTION_SIZE, tokens.text);
-                self.svg
-                    .text(at, &locus, size, Face::Mono, color, Align::Start);
-            }
-            self.gaps(y, HEADER_HEIGHT);
+        if !one_caption(session) {
+            self.headers(session, y);
             y += HEADER_HEIGHT;
             self.hairline(y);
             y += 1.0;
         }
-        for panel in 0..self.count {
-            let (_, viewport) = session.view(panel);
-            let ticks = ruler::scene(viewport, RULER_HEIGHT);
-            self.draw_in(panel, (y, RULER_HEIGHT), &[(&ticks, y)]);
-        }
-        self.gaps(y, RULER_HEIGHT);
+        self.rulers(session, y);
         y += RULER_HEIGHT;
         self.hairline(y);
-        y + 1.0
+        y += 1.0;
+        y + self.bands(session, y)
     }
 
     fn lane(&mut self, session: &Session, track: &Track, y: f32, padding: f32) -> f32 {
@@ -123,7 +179,7 @@ impl Page<'_> {
         let height = track.height.unwrap_or(tallest.height);
         let top = y + padding;
         for (panel, shape) in shapes.into_iter().enumerate() {
-            let (x, column) = (self.left(panel), self.column());
+            let (x, column) = self.panels[panel];
             self.svg.clip((x, y, column, height + 2.0 * padding));
             match body(session, track, panel, shape, true) {
                 Body::Hint(words) => self.svg.text(
@@ -180,17 +236,27 @@ impl Page<'_> {
 impl Genie {
     pub(super) fn figure(&self, session: &Session) -> String {
         let theme = self.theme();
+        let mut left = 0.0;
+        let panels = session
+            .widths(self.width)
+            .into_iter()
+            .map(|width| {
+                let panel = (left, width);
+                left += width + PANEL_GAP;
+                panel
+            })
+            .collect();
         let mut page = Page {
             svg: Svg::new(self.width),
             width: self.width,
-            count: session.count(),
+            panels,
             colors: (tokens(&theme), data(&theme)),
         };
         let mut y = page.head(session);
         let padding = self.settings.density.padding();
         let frames = session.reading.frames();
         let block = BASE_HEIGHT + frames.len() as f32 * translation::ROW_HEIGHT;
-        for panel in 0..page.count {
+        for panel in 0..page.panels.len() {
             let (contig, viewport) = session.view(panel);
             let chunks = || self.tiles.chunks(contig, viewport.visible());
             let bases = sequence::scene(viewport, chunks(), BASE_HEIGHT, session.reading.reverse);

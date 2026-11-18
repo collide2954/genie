@@ -16,6 +16,34 @@ use crate::font;
 pub const LIMIT: f32 = 8_192.0;
 const SCALE: f32 = 2.0;
 
+/// What exported images show besides the view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Figure {
+    /// The title at the start of the caption. Empty for no title.
+    pub title: String,
+    /// A scale bar at the end of the caption, or of the header of each panel.
+    pub scale: bool,
+    /// The regions in view, as bands under the ruler.
+    pub bands: bool,
+}
+
+impl Default for Figure {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            scale: true,
+            bands: true,
+        }
+    }
+}
+
+impl Figure {
+    /// The title without the spaces around it, if there is one.
+    pub fn title(&self) -> Option<&str> {
+        Some(self.title.trim()).filter(|title| !title.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
     pub width: u32,

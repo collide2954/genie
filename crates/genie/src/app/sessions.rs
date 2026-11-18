@@ -63,6 +63,7 @@ impl Genie {
             return;
         }
         session.reading = saved.reading;
+        session.figure.clone_from(&saved.figure);
         let genome = saved.locus.as_deref().is_some_and(|locus| {
             super::whole::is_genome(locus)
                 && session.reference.assembly.find(locus.trim()).is_none()
@@ -172,6 +173,7 @@ impl Genie {
                 .samples
                 .as_ref()
                 .map(|samples| samples.location.clone()),
+            figure: session.figure.clone(),
         })
     }
 

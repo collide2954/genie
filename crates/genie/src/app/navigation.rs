@@ -92,7 +92,7 @@ impl Genie {
                 self.sweep = None;
                 Task::none()
             }
-            Command::Export => self.export(),
+            Command::Export => self.open_export(),
             Command::SaveSession => self.save_session(),
             Command::Copy => self.copy(),
             Command::Diagnostics => {

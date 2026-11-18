@@ -1,4 +1,5 @@
 pub mod alignments;
+pub mod bands;
 pub mod contacts;
 pub mod features;
 pub mod links;

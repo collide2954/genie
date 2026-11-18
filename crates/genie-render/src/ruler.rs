@@ -12,6 +12,11 @@ const MINOR_SPACING: f64 = 10.0;
 const LABEL_SIZE: f32 = 11.0;
 const LABEL_OFFSET: f32 = 4.0;
 const MONO_ADVANCE: f32 = 0.6;
+const BAR_SHARE: f32 = 1.0 / 6.0;
+const BAR_LEAST: f32 = 24.0;
+const BAR_MOST: f32 = 120.0;
+const BAR_TICK: f32 = 6.0;
+const BAR_GAP: f32 = 6.0;
 
 pub fn scene(viewport: Viewport, height: f32) -> Vec<Primitive> {
     let scale = viewport.scale();
@@ -45,6 +50,56 @@ pub fn scene(viewport: Viewport, height: f32) -> Vec<Primitive> {
         position += minor;
     }
     primitives
+}
+
+/// A scale bar for figures: a line of a round length that ends at `right`, centered on `middle`,
+/// with the length on its left. The length is the longest 1, 2 or 5 step that takes at most a
+/// sixth of the width (24 to 120 pixels), and one base when no step is that short.
+pub fn scale_bar(viewport: Viewport, right: f32, middle: f32) -> Vec<Primitive> {
+    let scale = viewport.scale();
+    let most = f64::from((viewport.width() as f32 * BAR_SHARE).clamp(BAR_LEAST, BAR_MOST));
+    let step = steps()
+        .take_while(|&step| step as f64 / scale <= most)
+        .last()
+        .unwrap_or(1);
+    let span = (step as f64 / scale) as f32;
+    let left = right - span;
+    let end = |x| Primitive::Rect {
+        x,
+        y: middle - BAR_TICK / 2.0,
+        width: 1.0,
+        height: BAR_TICK,
+        paint: Paint::Text,
+    };
+    vec![
+        Primitive::Rect {
+            x: left,
+            y: middle - 0.5,
+            width: span,
+            height: 1.0,
+            paint: Paint::Text,
+        },
+        end(left),
+        end(right - 1.0),
+        Primitive::Text {
+            x: left - BAR_GAP,
+            y: middle,
+            content: Cow::Owned(length(step)),
+            size: LABEL_SIZE,
+            paint: Paint::Muted,
+            font: Font::Ui,
+            align: Align::End,
+        },
+    ]
+}
+
+/// A round length with the unit of its size: 500 bp, 20 kb, 1 Mb.
+fn length(bases: u64) -> String {
+    if bases < 1_000 {
+        format!("{bases} bp")
+    } else {
+        label(bases, bases)
+    }
 }
 
 fn tick(x: f32, height: f32, length: f32, paint: Paint) -> Primitive {
@@ -91,7 +146,7 @@ fn steps() -> impl Iterator<Item = u64> {
 mod tests {
     use genie_core::{Region, Viewport};
 
-    use super::{label, major_step, minor_step, scene};
+    use super::{label, major_step, minor_step, scale_bar, scene};
     use crate::scene::{Paint, Primitive};
 
     fn ticks(primitives: &[Primitive], paint: Paint) -> Vec<(f32, f32)> {
@@ -173,6 +228,47 @@ mod tests {
         assert_eq!(minor_step(5_000, 1.0, 600.0), Some(1_000));
         assert_eq!(minor_step(5_000, 1.0, 2_000.0), None);
         assert_eq!(minor_step(1, 1.0, 1.0), None);
+    }
+
+    fn bar(primitives: &[Primitive]) -> (f32, f32) {
+        match primitives.first() {
+            Some(Primitive::Rect { x, width, .. }) => (*x, *width),
+            other => panic!("no bar: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scale_bars_take_the_longest_round_length_that_fits() {
+        let viewport = Viewport::new(10_000, 1_000.0).show(Region::between(0, 1_000));
+        let primitives = scale_bar(viewport, 990.0, 11.0);
+        assert_eq!(bar(&primitives), (890.0, 100.0));
+        assert_eq!(labels(&primitives), [(884.0, "100 bp".to_owned())]);
+        let ends: Vec<f32> = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Rect { x, height, .. } if *height > 1.0 => Some(*x),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, [890.0, 989.0]);
+    }
+
+    #[test]
+    fn scale_bars_name_kilobases_and_megabases() {
+        let kilobases = Viewport::new(100_000, 1_000.0).show(Region::between(0, 50_000));
+        assert_eq!(labels(&scale_bar(kilobases, 1_000.0, 11.0))[0].1, "5 kb");
+        let megabases = Viewport::new(50_000_000, 1_000.0).show(Region::between(0, 20_000_000));
+        let primitives = scale_bar(megabases, 1_000.0, 11.0);
+        assert_eq!(labels(&primitives)[0].1, "2 Mb");
+        assert_eq!(bar(&primitives), (900.0, 100.0));
+    }
+
+    #[test]
+    fn scale_bars_keep_one_base_at_the_deepest_zoom() {
+        let viewport = Viewport::new(1_000, 120.0).show(Region::between(0, 3));
+        let primitives = scale_bar(viewport, 120.0, 11.0);
+        assert_eq!(bar(&primitives), (88.0, 32.0));
+        assert_eq!(labels(&primitives)[0].1, "1 bp");
     }
 
     #[test]

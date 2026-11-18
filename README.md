@@ -338,7 +338,7 @@ A Sashimi plot shows the coverage of an RNA-seq read track and the splice juncti
 - **Arcs ≥** in the track menu hides the junctions with fewer reads, for example 5 or 10.
 - To compare samples, show each read track as a Sashimi plot, give each track a different color, and turn on **Shared scale** in the menu of each track. The tracks then use the same range of coverage.
 - Put the pointer on an arc to see its junction: the position, the reads, the strand and the length of the intron.
-- To save the plots as an image, push Ctrl+E (Cmd+E on macOS), then save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.
+- To save the plots as an image, push Ctrl+E (Cmd+E on macOS), click Export… and save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.
 - Click **Sashimi plot** again to see the reads. Sessions keep the Sashimi plot, the **Arcs ≥** setting and the shared scale of each track.
 
 ## Liftover
@@ -378,7 +378,15 @@ If a file is in the folder of the session file, the session file has its path re
 
 ## Export
 
-To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. The image uses the current theme.
+To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The export dialog opens:
+
+- **Title**: the title at the start of the first line of the image. Keep it empty for no title.
+- **Scale bar**: a line of a round length, for example 10 kb, at the end of the first line. If the view has several loci, each panel has its own scale bar.
+- **Region bands**: the regions in view (see [Regions](#regions)), as grey bands under the ruler. The name of a region is in its band, or next to it if the band is too short. Regions that overlap go on different rows.
+
+Push Enter or click Export…, then select the file. The session keeps the title and the two settings.
+
+The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. In the whole-genome view, the image shows the name of each chromosome. The image uses the current theme.
 
 - If the file name ends with `.svg`, genie saves an SVG image. The SVG has shapes and text that you can edit, for example in Inkscape or Illustrator. The text uses the fonts Inter and JetBrains Mono. If a computer does not have these fonts, it uses similar fonts.
 - Other names give a PNG image. The scale of a PNG image is 2. Its maximum height is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.
@@ -400,6 +408,7 @@ The command to use depends on how you got genie:
 
 - genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.
 - The name of an image is the name of the region (BED column 4) or the locus, for example `chr1_1001-2000.png`. If two regions have the same name, genie adds `-2`, `-3` and so on.
+- The title of an image is the name of its region. For a region without a name, the title is that of the session. The scale bar and the region bands follow the session too. To set them, use the export dialog and save the session.
 - `--width POINTS` sets the width of the view, from 200 to 4,096 (default 1,280). A PNG image has two pixels for each point. `--theme dark` uses the dark theme. The default is light. `--format svg` saves SVG images. The default is PNG.
 - genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.
 - The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.

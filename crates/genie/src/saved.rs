@@ -12,6 +12,7 @@ use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::{Operation, Scale, Style};
 
+use crate::export::Figure;
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
 use crate::track::{
@@ -45,6 +46,8 @@ pub struct Saved {
     pub hubs: Vec<Location>,
     /// The sample table of the session.
     pub samples: Option<Location>,
+    /// The title and the parts of exported images.
+    pub figure: Figure,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +100,10 @@ impl SavedTrack {
         }
     }
 }
+
+/// The keys of the parts of exported images that somebody can turn off.
+const SCALE_BAR: &str = "scale bar";
+const REGION_BANDS: &str = "region bands";
 
 /// The keys of the fields that group, sort and color the samples of a track.
 const GROUP_SAMPLES: &str = "group samples";
@@ -178,6 +185,8 @@ impl Saved {
             .section("samples")
             .and_then(|section| section.value("file"))
             .map(|text| read(text, base));
+        let figure = document.section("figure");
+        let figure_value = |key| figure.and_then(|section| section.value(key));
         Ok(Self {
             reference: read(reference, base),
             genome: value("genome").map(str::to_owned),
@@ -187,6 +196,11 @@ impl Saved {
             regions,
             hubs,
             samples,
+            figure: Figure {
+                title: figure_value("title").unwrap_or_default().to_owned(),
+                scale: figure_value(SCALE_BAR) != Some("off"),
+                bands: figure_value(REGION_BANDS) != Some("off"),
+            },
         })
     }
 
@@ -222,6 +236,19 @@ impl Saved {
         }
         if let Some(samples) = &self.samples {
             sections.push(section("samples", vec![("file", written(samples, base))]));
+        }
+        let mut figure = Vec::new();
+        if let Some(title) = self.figure.title() {
+            figure.push(("title", title.to_owned()));
+        }
+        if !self.figure.scale {
+            figure.push((SCALE_BAR, "off".to_owned()));
+        }
+        if !self.figure.bands {
+            figure.push((REGION_BANDS, "off".to_owned()));
+        }
+        if !figure.is_empty() {
+            sections.push(section("figure", figure));
         }
         ini::write(&Document { sections })
     }
@@ -574,6 +601,7 @@ mod tests {
     use genie_core::samples::Choice;
 
     use super::{Saved, SavedRegion, SavedTrack, is_session};
+    use crate::export::Figure;
     use crate::location::Location;
     use crate::reading::{Frames, Reading};
     use crate::track::{Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing};
@@ -744,7 +772,30 @@ mod tests {
                 Location::parse("https://example.org/hub.txt").unwrap(),
             ],
             samples: Some(Location::File(base().join("groups.tsv"))),
+            figure: Figure::default(),
         }
+    }
+
+    #[test]
+    fn sessions_keep_the_title_and_the_parts_of_figures() {
+        let text = saved().text(&base());
+        assert!(!text.contains("[figure]"), "{text}");
+        let mut titled = saved();
+        titled.figure = Figure {
+            title: "TP53 promoter".to_owned(),
+            scale: false,
+            bands: false,
+        };
+        let text = titled.text(&base());
+        for line in [
+            "[figure]",
+            "title = TP53 promoter",
+            "scale bar = off",
+            "region bands = off",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+        assert_eq!(Saved::parse(&text, &base()), Ok(titled));
     }
 
     #[test]

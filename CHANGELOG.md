@@ -10,6 +10,11 @@
 - **Virtual 4C from here** in the menu of a Hi-C track shows the contacts of one place with each bin in view, in a lane under the map.
 - A signal track can compare its values with another signal track: **Compare with** in the track menu shows the log2 ratio, the ratio or the difference of the two tracks at each pixel, for example ChIP over input.
 
+### Images
+
+- Ctrl+E opens the export dialog. It gives the image a title, a scale bar and the regions in view as grey bands with their names. The session keeps the title and the settings.
+- `genie snapshot` gives each image the name of its region as the title.
+
 ### Website
 
 - A tutorial shows the main work in ten short clips of genie with real data: open a genome, go to a gene, compare loci, add tracks, move and zoom, open reads from the web, read cards, change a track, find a sequence and save the work.
@@ -26,6 +31,7 @@
 - The track menus of interaction, Hi-C, copy number and table tracks have the correct height. Before, genie made space for items that these menus do not have, so a menu near the bottom of the window could move up too far.
 - In a bigBed card, each item of a list keeps its place, and an item without a value (empty, `-inf` or `nan`) shows as –. Before, the card did not show empty items, so the alleles of dbSNP did not agree with the frequencies, and the card showed `-inf`.
 - A bigBed card shows the term of a Sequence Ontology number, for example `5_prime_UTR_variant (SO:0001623)` for 1623 in dbSNP. The card does not show 0, which is no term.
+- An SVG image of the whole genome gives each chromosome its width, as the view does. Before, all chromosomes had the same width. Images of the whole genome show the name of each chromosome, as the view does, and not a ruler.
 
 ## 0.3.1
 

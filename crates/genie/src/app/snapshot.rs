@@ -154,9 +154,20 @@ pub(super) fn run(request: &Request, report: &mut dyn FnMut(String)) -> Result<u
     let mut failed = 0;
     let extension = if request.svg { "svg" } else { "png" };
     let names = image_names(&regions, extension);
+    let title = genie
+        .session
+        .as_ref()
+        .map(|session| session.figure.title.clone())
+        .unwrap_or_default();
     for (index, (entry, name)) in regions.iter().zip(names).enumerate() {
         let number = index + 1;
         let path = request.folder.join(&name);
+        let shown = if entry.name.is_empty() {
+            title.clone()
+        } else {
+            entry.name.clone()
+        };
+        genie.on_session(|session| session.figure.title = shown);
         let result = genie
             .visit(entry)
             .and_then(|()| genie.save(path, request.svg));
@@ -465,6 +476,33 @@ mod tests {
             svg.starts_with("<svg") && svg.contains(">geneA</text>"),
             "{svg}"
         );
+    }
+
+    #[test]
+    fn snapshots_take_the_region_name_as_the_title() {
+        let scratch = Scratch::new("snapshot-titles");
+        scratch.file("ref.fa", format!(">chr1\n{}\n", "ACGT".repeat(250)));
+        scratch.file("ref.fa.fai", FAI);
+        let session = scratch.file(
+            "work.genie",
+            "[session]\nreference = ref.fa\n[figure]\ntitle = Study A\n",
+        );
+        let regions = scratch.file("regions.bed", "chr1\t100\t400\tgeneA\nchr1\t0\t50\n");
+        let folder = session.with_file_name("pictures");
+        let request = Request {
+            session,
+            regions,
+            folder: folder.clone(),
+            width: 400.0,
+            dark: false,
+            svg: true,
+        };
+        assert_eq!(run(&request, &mut |_| {}), Ok(0));
+        let named = fs::read_to_string(folder.join("geneA.svg")).unwrap();
+        assert!(named.contains(">geneA</tspan>"), "{named}");
+        assert!(!named.contains("Study A"), "{named}");
+        let plain = fs::read_to_string(folder.join("chr1_1-50.svg")).unwrap();
+        assert!(plain.contains(">Study A</tspan>"), "{plain}");
     }
 
     #[test]

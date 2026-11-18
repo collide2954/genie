@@ -64,7 +64,14 @@
 <p>To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its <code>.genie</code> file. genie keeps the last session when you close it, and the start view can restore it.</p>
 <p>If a file is in the folder of the session file, the session file has its path relative to that folder.</p>
 <h2 id="export">Export</h2>
-<p>To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. The image uses the current theme.</p>
+<p>To save the view as an image, push Ctrl+E (Cmd+E on macOS) or click the camera button. The export dialog opens:</p>
+<ul>
+<li><b>Title</b>: the title at the start of the first line of the image. Keep it empty for no title.</li>
+<li><b>Scale bar</b>: a line of a round length, for example 10 kb, at the end of the first line. If the view has several loci, each panel has its own scale bar.</li>
+<li><b>Region bands</b>: the regions in view (see <a href="navigation.html#regions">Regions</a>), as grey bands under the ruler. The name of a region is in its band, or next to it if the band is too short. Regions that overlap go on different rows.</li>
+</ul>
+<p>Push Enter or click Export…, then select the file. The session keeps the title and the two settings.</p>
+<p>The image shows the locus, the ruler and all tracks, also the tracks that are not on the screen. If the view has several loci, the image shows each panel with its locus and its ruler. In the whole-genome view, the image shows the name of each chromosome. The image uses the current theme.</p>
 <ul>
 <li>If the file name ends with <code>.svg</code>, genie saves an SVG image. The SVG has shapes and text that you can edit, for example in Inkscape or Illustrator. The text uses the fonts Inter and JetBrains Mono. If a computer does not have these fonts, it uses similar fonts.</li>
 <li>Other names give a PNG image. The scale of a PNG image is 2. Its maximum height is 16,384 px. If the view is taller, the image shows only the top part, and genie tells you.</li>
@@ -82,6 +89,7 @@
 <ul>
 <li>genie opens the session (the genome or reference, the tracks and their settings). Then it goes to each region and saves a PNG file in the folder. If the folder does not exist, genie makes it. Each image shows one region, also if the session has several loci.</li>
 <li>The name of an image is the name of the region (BED column 4) or the locus, for example <code>chr1_1001-2000.png</code>. If two regions have the same name, genie adds <code>-2</code>, <code>-3</code> and so on.</li>
+<li>The title of an image is the name of its region. For a region without a name, the title is that of the session. The scale bar and the region bands follow the session too. To set them, use the export dialog and save the session.</li>
 <li><code>--width POINTS</code> sets the width of the view, from 200 to 4,096 (default 1,280). A PNG image has two pixels for each point. <code>--theme dark</code> uses the dark theme. The default is light. <code>--format svg</code> saves SVG images. The default is PNG.</li>
 <li>genie writes one line for each region. If genie cannot make an image for a region, it writes the reason and continues with the next region.</li>
 <li>The exit code is 0 if genie saved all images, 1 if one or more images are missing, and 2 if the command is not correct.</li>
