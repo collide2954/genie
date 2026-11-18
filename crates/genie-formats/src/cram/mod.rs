@@ -143,6 +143,15 @@ pub(crate) fn block(bytes: &mut Bytes, major: u8) -> Result<Block, Error> {
     if major >= 3 {
         bytes.take(4)?;
     }
+    // A block of no bytes is empty, whatever its method, as htslib reads it: htsjdk writes empty
+    // blocks with a codec and nothing for it to decode.
+    if raw == 0 {
+        return Ok(Block {
+            content,
+            id,
+            data: Vec::new(),
+        });
+    }
     let data = match method {
         0 => data.to_vec(),
         1 => gzip::inflate(data)?,
@@ -442,7 +451,8 @@ mod tests {
     use genie_core::Region;
     use genie_core::alignment::Alignment;
 
-    use super::{Cram, Fetch, crai, substitutions};
+    use super::bits::Bytes;
+    use super::{Cram, Fetch, block, crai, substitutions};
     use crate::bgzf::Bgzf;
     use crate::{Error, Reason, bai, bam, gzip};
 
@@ -577,6 +587,23 @@ mod tests {
         let mut reads = Vec::new();
         cram.records(&mut reader, fetch, |id, read| reads.push((id, read)))?;
         Ok(reads)
+    }
+
+    /// htsjdk writes an empty block with its method, for example rANS, and no data to decode, as
+    /// in the 1000 Genomes `GRCh38` CRAM files. htslib reads a block of no bytes as empty, whatever
+    /// its method.
+    #[test]
+    fn empty_blocks_need_no_decoding() {
+        let crc = [0; 4];
+        // Method 4 (rANS), content 4 (external), id 7, packed size, raw size 0, data, CRC.
+        let bare = [&[4, 4, 7, 0, 0][..], &crc].concat();
+        let header = [&[4, 4, 7, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..], &crc].concat();
+        for bytes in [bare, header] {
+            let found = block(&mut Bytes::new(&bytes), 3).unwrap();
+            assert_eq!((found.content, found.id, found.data.len()), (4, 7, 0));
+        }
+        let cut = [&[4, 4, 7, 2, 1, 0xAA, 0xBB][..], &crc].concat();
+        assert!(block(&mut Bytes::new(&cut), 3).is_err());
     }
 
     #[test]
