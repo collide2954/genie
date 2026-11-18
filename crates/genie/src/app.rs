@@ -3851,6 +3851,7 @@ mod tests {
             location: PathBuf::from(format!("/data/{name}")).into(),
             name: None,
             over: None,
+            compare: None,
             mode: None,
             hue: Hue::Blue,
             height: None,
@@ -3941,6 +3942,7 @@ mod tests {
                 location: PathBuf::from("/data/reads.bam").into(),
                 name: None,
                 over: None,
+                compare: None,
                 mode: None,
                 hue: Hue::Blue,
                 height: None,
@@ -5084,8 +5086,8 @@ mod tests {
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
             let session = genie.session.as_ref().unwrap();
-            let links = super::view::links(session, &session.tracks[0]).1.len();
-            let expected = menu::height(&session.tracks[0], links);
+            let sections = super::view::links(session, &session.tracks[0]);
+            let expected = menu::height(&session.tracks[0], &sections);
             let mut ui = simulator(genie.view());
             let height = ui.find(selector::id("menu")).unwrap().bounds().height;
             assert!(
@@ -5448,6 +5450,105 @@ mod tests {
         let _ = genie.update(Message::TrackChanged(1, Change::Overlay(0)));
         let _ = genie.update(Message::TrackChanged(0, Change::Remove));
         assert_eq!(overlays(&genie), [(None, Hue::Green)]);
+    }
+
+    /// Two signal tracks: coverage.bedGraph (1 on 1-100, 4 on 101-200) compared with
+    /// other.bedGraph (3 on 1-100, 1 on 101-200).
+    fn with_compared() -> Genie {
+        let mut genie = with_signal();
+        let _ = genie.update(Message::TrackOpened(Ok(other_signal())));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[1];
+        track.slot.wanted = Some((0, region));
+        let values = vec![
+            Summary::single(Region::between(0, 100), 3.0),
+            Summary::single(Region::between(100, 200), 1.0),
+        ];
+        let loaded = Loaded::signal(region, values, 1);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Compare(Some(1))));
+        genie
+    }
+
+    #[test]
+    fn signal_tracks_compare_with_another_signal_track() {
+        use genie_render::signal::Operation;
+        let mut genie = with_compared();
+        let math = genie.session.as_ref().unwrap().tracks[0].plot.math;
+        let log2 = crate::track::Math {
+            other: 1,
+            operation: Operation::Log2Ratio,
+        };
+        assert_eq!(math, Some(log2));
+        assert!(shows(&genie, "log2 ratio to other.bedGraph"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(150.0, 20.0))));
+        assert!(shows(&genie, "Log2 ratio 1.322"));
+        let _ = genie.update(Message::TrackChanged(
+            0,
+            Change::Operation(Operation::Difference),
+        ));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(50.0, 20.0))));
+        assert!(shows(&genie, "Difference -2"));
+        assert!(shows(&genie, "difference to other.bedGraph"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Compare(None)));
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].plot.math, None);
+        let _ = genie.update(Message::TrackChanged(0, Change::Compare(Some(1))));
+        let _ = genie.update(Message::TrackChanged(1, Change::Remove));
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].plot.math, None);
+    }
+
+    #[test]
+    fn signal_menus_offer_a_comparison_and_its_operations() {
+        let at = Point::new(100.0, 200.0);
+        let mut genie = with_two_signals();
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert!(shows(&genie, "Compare with"));
+        assert!(shows(&genie, "Overlay on"));
+        let mut genie = with_compared();
+        let _ = genie.update(Message::TrackMenu(0, at));
+        for item in ["Log2 ratio", "Ratio", "Difference", "Stop comparing"] {
+            assert!(shows(&genie, item), "{item}");
+        }
+        assert!(!shows(&genie, "Overlay on"));
+        let _ = genie.update(Message::TrackMenu(1, at));
+        assert!(!shows(&genie, "Overlay on"));
+    }
+
+    #[test]
+    fn sessions_keep_comparisons_whatever_opens_first() {
+        use genie_render::signal::Operation;
+        let mut genie = with_compared();
+        let _ = genie.update(Message::TrackChanged(
+            0,
+            Change::Operation(Operation::Ratio),
+        ));
+        let saved = genie.saved().unwrap();
+        let text = saved.text(std::path::Path::new("/data"));
+        assert!(
+            text.contains("compare = 2") && text.contains("math = ratio"),
+            "{text}"
+        );
+        let saved = crate::saved::Saved::parse(&text, std::path::Path::new("/data")).unwrap();
+        let comparisons: Vec<_> = saved.tracks.iter().map(|track| track.compare).collect();
+        assert_eq!(comparisons, [Some((1, Operation::Ratio)), None]);
+        let mut other = opened();
+        other.restoring = Some(saved);
+        other.waiting = 2;
+        let _ = other.update(Message::TrackOpened(Ok(other_signal())));
+        let _ = other.update(Message::TrackOpened(Ok(signal_source(signal_table()))));
+        let session = other.session.as_ref().unwrap();
+        let named = |name: &str| {
+            session
+                .tracks
+                .iter()
+                .find(|track| track.source.name == name)
+                .unwrap()
+        };
+        let ratio = crate::track::Math {
+            other: named("other.bedGraph").id,
+            operation: Operation::Ratio,
+        };
+        assert_eq!(named("coverage.bedGraph").plot.math, Some(ratio));
     }
 
     #[test]

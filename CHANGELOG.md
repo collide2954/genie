@@ -5,6 +5,7 @@
 ### New tracks
 
 - genie opens splice junction files as junction tracks: the `SJ.out.tab` files of STAR, and the junction BED files of TopHat and regtools. Each junction is an arc in the color of its strand, higher and thicker for more reads, and its card shows the fields of the file, such as the multi-mapping reads and the splice motif.
+- A signal track can compare its values with another signal track: **Compare with** in the track menu shows the log2 ratio, the ratio or the difference of the two tracks at each pixel, for example ChIP over input.
 
 ### Website
 

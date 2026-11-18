@@ -22,7 +22,7 @@ use crate::escape::Escape;
 use crate::genome;
 use crate::grip::Grip;
 use crate::icon::{self, Icon};
-use crate::menu::{self, Place};
+use crate::menu::{self, Place, Section};
 use crate::navigator::Navigator;
 use crate::reading;
 use crate::recent::Entry;
@@ -822,7 +822,15 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
     }
 }
 
+/// The chip at the right of a track: the comparison of a signal track, or the number of the
+/// features that a filter keeps. A click opens the track menu.
 fn count_chip<'a>(session: &Session, track: &Track, panel: usize) -> Option<Element<'a, Message>> {
+    let id = track.id;
+    if let Some(math) = track.plot.math {
+        let other = session.tracks.iter().find(|other| other.id == math.other)?;
+        let words = format!("{} to {}", math.operation.label(), other.name);
+        return Some(Context::left(label(words), move |at| Message::TrackMenu(id, at)).into());
+    }
     if track.filter.rules.is_empty() {
         return None;
     }
@@ -844,7 +852,6 @@ fn count_chip<'a>(session: &Session, track: &Track, panel: usize) -> Option<Elem
         || FILTER_HINT.to_owned(),
         |(shown, total)| format!("{} of {}", grouped(shown as u64), grouped(total as u64)),
     );
-    let id = track.id;
     Some(Context::left(label(words), move |at| Message::TrackMenu(id, at)).into())
 }
 
@@ -878,7 +885,7 @@ fn signal_body(
     height: f32,
 ) -> Body {
     let (_, viewport) = session.view(panel);
-    let columns = signal_columns(track, viewport, summaries);
+    let columns = shown_columns(session, track, panel, summaries);
     let Some(scale) = signal_scale(session, track, panel, &columns) else {
         return Body::Space(height);
     };
@@ -1223,11 +1230,11 @@ fn genome_range(session: &Session, track: &Track) -> Option<String> {
         return None;
     }
     (0..session.count()).find_map(|panel| {
-        let (contig, viewport) = session.view(panel);
+        let (contig, _) = session.view(panel);
         let Content::Signal(data) = &track.slot(panel).data(contig)?.content else {
             return None;
         };
-        let columns = signal_columns(track, viewport, &data.summaries);
+        let columns = shown_columns(session, track, panel, &data.summaries);
         signal_scale(session, track, panel, &columns).map(signal::label)
     })
 }
@@ -1472,16 +1479,59 @@ pub(super) fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track>
 }
 
 fn member_columns(session: &Session, member: &Track, panel: usize) -> Option<Vec<signal::Column>> {
-    let (contig, viewport) = session.view(panel);
+    let (contig, _) = session.view(panel);
     let Content::Signal(data) = &member.slot(panel).data(contig)?.content else {
         return None;
     };
-    Some(signal_columns(member, viewport, &data.summaries))
+    Some(shown_columns(session, member, panel, &data.summaries))
 }
 
-pub(super) fn links(session: &Session, track: &Track) -> (&'static str, Vec<(String, Message)>) {
+/// The columns that a signal track shows in a panel: its own values, or their comparison with
+/// the values of another track. A comparison shows nothing until both tracks have values.
+pub(super) fn shown_columns(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    summaries: &[genie_core::signal::Summary],
+) -> Vec<signal::Column> {
+    let (contig, viewport) = session.view(panel);
+    let own = signal_columns(track, viewport, summaries);
+    let Some(math) = track.plot.math else {
+        return own;
+    };
+    let other = session.tracks.iter().find(|other| other.id == math.other);
+    let Some((other, Content::Signal(data))) = other.and_then(|other| {
+        let content = &other.slot(panel).data(contig)?.content;
+        Some((other, content))
+    }) else {
+        return Vec::new();
+    };
+    let theirs = signal_columns(other, viewport, &data.summaries);
+    signal::compare(viewport, &own, &theirs, math.operation)
+}
+
+/// The sections of the menu of a signal track that link it with other signal tracks: the
+/// operations of its comparison, the tracks that overlay it, or the tracks to overlay or to
+/// compare with.
+pub(super) fn links(session: &Session, track: &Track) -> Vec<Section> {
     if !track.source.has_signal() || track.over.is_some() {
-        return ("", Vec::new());
+        return Vec::new();
+    }
+    let id = track.id;
+    if track.plot.math.is_some() {
+        let mut items: Vec<(String, Message)> = signal::Operation::ALL
+            .into_iter()
+            .map(|operation| {
+                let change = Message::TrackChanged(id, Change::Operation(operation));
+                (operation.title().to_owned(), change)
+            })
+            .collect();
+        let stop = Message::TrackChanged(id, Change::Compare(None));
+        items.push(("Stop comparing".to_owned(), stop));
+        return vec![Section {
+            heading: "Comparison",
+            items,
+        }];
     }
     let members = members(session, track);
     if !members.is_empty() {
@@ -1492,18 +1542,41 @@ pub(super) fn links(session: &Session, track: &Track) -> (&'static str, Vec<(Str
                 (member.name.clone(), change)
             })
             .collect();
-        return ("Separate", items);
+        return vec![Section {
+            heading: "Separate",
+            items,
+        }];
     }
-    let items = session
+    let others: Vec<&Track> = session
         .tracks
         .iter()
-        .filter(|other| other.id != track.id && other.over.is_none() && other.source.has_signal())
+        .filter(|other| other.id != id && other.over.is_none() && other.source.has_signal())
+        .collect();
+    let overlay = others
+        .iter()
+        .filter(|other| other.plot.math.is_none())
         .map(|other| {
-            let change = Message::TrackChanged(track.id, Change::Overlay(other.id));
+            let change = Message::TrackChanged(id, Change::Overlay(other.id));
             (other.name.clone(), change)
         })
         .collect();
-    ("Overlay on", items)
+    let compare = others
+        .iter()
+        .map(|other| {
+            let change = Message::TrackChanged(id, Change::Compare(Some(other.id)));
+            (other.name.clone(), change)
+        })
+        .collect();
+    vec![
+        Section {
+            heading: "Overlay on",
+            items: overlay,
+        },
+        Section {
+            heading: "Compare with",
+            items: compare,
+        },
+    ]
 }
 
 pub(super) fn body_height(session: &Session, track: &Track) -> f32 {

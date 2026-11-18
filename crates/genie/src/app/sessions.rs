@@ -9,7 +9,7 @@ use crate::location::Location;
 use crate::paths::{self, file_name};
 use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
-use crate::track::Options;
+use crate::track::{Options, Plot, Track};
 
 use super::{Genie, LAST, Message};
 
@@ -122,6 +122,10 @@ impl Genie {
                     over: track
                         .over
                         .and_then(|base| session.tracks.iter().position(|other| other.id == base)),
+                    compare: track.plot.math.and_then(|math| {
+                        let place = |other: &Track| other.id == math.other;
+                        Some((session.tracks.iter().position(place)?, math.operation))
+                    }),
                     mode: track.mode,
                     hue: track.hue,
                     height: track.height,
@@ -129,7 +133,10 @@ impl Genie {
                         lift: 0,
                         ..track.options
                     },
-                    plot: track.plot,
+                    plot: Plot {
+                        math: None,
+                        ..track.plot
+                    },
                     filter: track.filter.clone(),
                     modification: track.modification.clone(),
                     normalization: track.normalization(),

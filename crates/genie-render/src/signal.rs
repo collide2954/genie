@@ -110,6 +110,108 @@ pub fn density(columns: Vec<Column>) -> Vec<Column> {
         .collect()
 }
 
+/// How a signal track shows its values against the values of another signal track. A ratio adds
+/// 1 to each value, so that a value of 0 gives no infinity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    /// The log2 of the ratio of the two values, each plus 1.
+    Log2Ratio,
+    /// The ratio of the two values, each plus 1.
+    Ratio,
+    /// The first value less the second value.
+    Difference,
+}
+
+impl Operation {
+    pub const ALL: [Self; 3] = [Self::Log2Ratio, Self::Ratio, Self::Difference];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Log2Ratio => "log2 ratio",
+            Self::Ratio => "ratio",
+            Self::Difference => "difference",
+        }
+    }
+
+    /// The label with a capital letter, for the start of a line.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Log2Ratio => "Log2 ratio",
+            Self::Ratio => "Ratio",
+            Self::Difference => "Difference",
+        }
+    }
+
+    fn apply(self, own: f64, other: f64) -> f64 {
+        match self {
+            Self::Log2Ratio => ((own + 1.0) / (other + 1.0)).log2(),
+            Self::Ratio => (own + 1.0) / (other + 1.0),
+            Self::Difference => own - other,
+        }
+    }
+}
+
+/// The columns of a track against the columns of another track in the same view: in each
+/// stretch of pixels where both have a value, the operation of their two means.
+pub fn compare(
+    viewport: Viewport,
+    own: &[Column],
+    other: &[Column],
+    operation: Operation,
+) -> Vec<Column> {
+    let mut found: Vec<Column> = Vec::new();
+    let mut theirs = 0;
+    for column in own {
+        let end = column.x + column.width;
+        let mut x = column.x;
+        while x < end {
+            while other
+                .get(theirs)
+                .is_some_and(|their| their.x + their.width <= x)
+            {
+                theirs += 1;
+            }
+            let Some(their) = other.get(theirs).filter(|their| their.x < end) else {
+                break;
+            };
+            let (from, to) = (x.max(their.x), end.min(their.x + their.width));
+            let value = operation.apply(column.bin.mean(), their.bin.mean());
+            if value.is_finite() {
+                push_value(&mut found, viewport, (from, to), value);
+            }
+            x = to;
+        }
+    }
+    found
+}
+
+/// Adds a stretch of pixels with a value, as a column of its own or as a part of the last
+/// column when that column ends there with the same value.
+fn push_value(found: &mut Vec<Column>, viewport: Viewport, (from, to): (f32, f32), value: f64) {
+    let base = |x: f32| viewport.to_bp(f64::from(x)).floor().max(0.0) as u64;
+    let span = Region::between(base(from), base(to).max(base(from) + 1));
+    let level = value as f32;
+    if let Some(last) = found.last_mut()
+        && (last.x + last.width - from).abs() < 0.5
+        && last.bin.min.to_bits() == level.to_bits()
+    {
+        last.width = to - last.x;
+        last.span = last.span.hull(span);
+        return;
+    }
+    found.push(Column {
+        x: from,
+        width: to - from,
+        span,
+        bin: Bin {
+            count: 1.0,
+            min: level,
+            max: level,
+            sum: value,
+        },
+    });
+}
+
 pub fn range(columns: &[Column]) -> Option<Scale> {
     let first = columns.first()?;
     let (min, max) = columns
@@ -272,11 +374,56 @@ mod tests {
     use genie_core::signal::{Bin, Summary};
     use genie_core::{Region, Viewport};
 
-    use super::{Column, Scale, Style, columns, density, hit, range, scene, traces};
+    use super::{
+        Column, Operation, Scale, Style, columns, compare, density, hit, range, scene, traces,
+    };
     use crate::scene::{Hue, Paint, Primitive};
 
     fn view(start: u64, end: u64) -> Viewport {
         Viewport::new(1_000_000, 100.0).show(Region::between(start, end))
+    }
+
+    fn wide(x: f32, width: f32, mean: f32) -> Column {
+        Column {
+            width,
+            ..column(x, mean, mean, mean)
+        }
+    }
+
+    #[test]
+    fn compared_columns_take_the_operation_of_the_two_means_where_both_have_values() {
+        let own = [wide(0.0, 4.0, 3.0), wide(6.0, 1.0, 7.0)];
+        let other = [
+            wide(0.0, 2.0, 1.0),
+            wide(2.0, 2.0, 3.0),
+            wide(7.0, 1.0, 9.0),
+        ];
+        let shown = |own: &[Column], other: &[Column], operation| -> Vec<(f32, f32, f64, Region)> {
+            compare(view(0, 100), own, other, operation)
+                .iter()
+                .map(|column| (column.x, column.width, column.bin.mean(), column.span))
+                .collect()
+        };
+        let (left, right) = (Region::between(0, 2), Region::between(2, 4));
+        assert_eq!(
+            shown(&own, &other, Operation::Log2Ratio),
+            [(0.0, 2.0, 1.0, left), (2.0, 2.0, 0.0, right)]
+        );
+        assert_eq!(
+            shown(&own, &other, Operation::Ratio),
+            [(0.0, 2.0, 2.0, left), (2.0, 2.0, 1.0, right)]
+        );
+        assert_eq!(
+            shown(&own, &other, Operation::Difference),
+            [(0.0, 2.0, 2.0, left), (2.0, 2.0, 0.0, right)]
+        );
+        let same = [wide(0.0, 2.0, 3.0), wide(2.0, 2.0, 3.0)];
+        assert_eq!(
+            shown(&own[..1], &same, Operation::Difference),
+            [(0.0, 4.0, 0.0, Region::between(0, 4))]
+        );
+        assert_eq!(shown(&own, &[], Operation::Ratio), []);
+        assert_eq!(Operation::Log2Ratio.label(), "log2 ratio");
     }
 
     fn value(start: u64, end: u64, value: f32) -> Summary {

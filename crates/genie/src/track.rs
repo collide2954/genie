@@ -22,7 +22,7 @@ use genie_render::features::Mode;
 use genie_render::rows;
 use genie_render::samples::Rows;
 use genie_render::scene::Hue;
-use genie_render::signal::{Scale, Style};
+use genie_render::signal::{Operation, Scale, Style};
 
 use crate::location::{Location, Reader};
 
@@ -417,6 +417,14 @@ impl Default for Options {
     }
 }
 
+/// A comparison of the values of a signal track with the values of another signal track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Math {
+    /// The other track.
+    pub other: u64,
+    pub operation: Operation,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Plot {
     pub style: Style,
@@ -428,6 +436,8 @@ pub struct Plot {
     pub sashimi: bool,
     /// The fewest reads of a splice junction that the Sashimi plot of a read track shows.
     pub junction_reads: u32,
+    /// The comparison that a signal track shows instead of its own values.
+    pub math: Option<Math>,
 }
 
 impl Default for Plot {
@@ -443,6 +453,7 @@ impl Default for Plot {
             range: None,
             sashimi: false,
             junction_reads: 1,
+            math: None,
         }
     }
 }
@@ -1477,6 +1488,10 @@ pub enum Change {
     Remove,
     Overlay(u64),
     Separate,
+    /// Show the values of a signal track against the values of another signal track, or stop.
+    Compare(Option<u64>),
+    /// The operation of the comparison of a signal track.
+    Operation(Operation),
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -1568,7 +1583,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Up | Change::Down => {}
         Change::Remove => {
             tracks.remove(position);
-            free(tracks, id);
+            removed(tracks, id);
         }
         Change::Overlay(base) => overlay(tracks, position, base),
         Change::Separate => {
@@ -1576,6 +1591,53 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
                 free(tracks, id);
             }
         }
+        Change::Compare(other) => compare(tracks, position, other),
+        Change::Operation(operation) => operate(&mut tracks[position], operation),
+    }
+}
+
+/// Frees the tracks that overlay a removed track, and stops the comparisons with it.
+fn removed(tracks: &mut [Track], id: u64) {
+    free(tracks, id);
+    for track in tracks
+        .iter_mut()
+        .filter(|track| track.plot.math.is_some_and(|math| math.other == id))
+    {
+        track.plot.math = None;
+    }
+}
+
+/// Changes the operation of the comparison of a signal track.
+fn operate(track: &mut Track, operation: Operation) {
+    if let Some(math) = &mut track.plot.math {
+        math.operation = operation;
+    }
+}
+
+/// True for a track that is not in an overlay: it overlays no track, and no track overlays it.
+fn alone(tracks: &[Track], track: &Track) -> bool {
+    track.over.is_none() && !tracks.iter().any(|other| other.over == Some(track.id))
+}
+
+/// Compares a signal track with another signal track, or stops: its lane shows the log2 ratio of
+/// their values until another operation is chosen. A track in an overlay cannot compare.
+fn compare(tracks: &mut [Track], position: usize, other: Option<u64>) {
+    let Some(other) = other else {
+        tracks[position].plot.math = None;
+        return;
+    };
+    let track = &tracks[position];
+    let fits = track.source.has_signal()
+        && alone(tracks, track)
+        && other != track.id
+        && tracks
+            .iter()
+            .any(|known| known.id == other && known.source.has_signal());
+    if fits {
+        tracks[position].plot.math = Some(Math {
+            other,
+            operation: Operation::Log2Ratio,
+        });
     }
 }
 
@@ -1588,9 +1650,14 @@ fn free(tracks: &mut [Track], base: u64) {
 fn overlay(tracks: &mut [Track], position: usize, base: u64) {
     let id = tracks[position].id;
     let fits = tracks[position].source.has_signal()
+        && tracks[position].plot.math.is_none()
         && !tracks.iter().any(|track| track.over == Some(id))
         && tracks.iter().any(|track| {
-            track.id == base && track.id != id && track.over.is_none() && track.source.has_signal()
+            track.id == base
+                && track.id != id
+                && track.over.is_none()
+                && track.plot.math.is_none()
+                && track.source.has_signal()
         });
     if !fits {
         return;

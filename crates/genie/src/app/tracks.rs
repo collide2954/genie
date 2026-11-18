@@ -33,7 +33,7 @@ use crate::tiles::{Key, TILING};
 use crate::track::{self, Change, Content, Loaded, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
-use super::view::{body_height, segment_range, signal_columns, signal_scale};
+use super::view::{body_height, segment_range, shown_columns, signal_scale};
 use super::{
     Filtering, Genie, Lane, Lifting, Message, Opening, Popup, Preparation, Preparing, Ranging,
     Renaming, Session, Status,
@@ -364,7 +364,7 @@ impl Genie {
         let Content::Signal(data) = &track.data(session.contig)?.content else {
             return None;
         };
-        let columns = signal_columns(track, session.viewport, &data.summaries);
+        let columns = shown_columns(session, track, 0, &data.summaries);
         signal_scale(session, track, 0, &columns)
     }
 
@@ -492,12 +492,13 @@ impl Genie {
                 if let Some(detail) = site_detail(track, viewport, &data.sites, x) {
                     detail
                 } else {
-                    let columns = signal_columns(track, viewport, &data.summaries);
+                    let columns = shown_columns(session, track, panel, &data.summaries);
                     let column = signal::hit(&columns, x)?;
                     Detail::Signal {
                         span: column.span,
                         bin: column.bin,
                         unit: track.source.unit(),
+                        measure: track.plot.math.map(|math| math.operation.title()),
                     }
                 }
             }
@@ -909,6 +910,25 @@ impl Genie {
                 .collect();
             for (member, base) in links {
                 track::change(&mut session.tracks, member, Change::Overlay(base));
+            }
+            let comparisons: Vec<(u64, u64, signal::Operation)> = session
+                .tracks
+                .iter()
+                .filter(|track| track.plot.math.is_none())
+                .filter_map(|track| {
+                    let (other, operation) =
+                        saved.tracks[saved_at(&track.source.location)?].compare?;
+                    let location = &saved.tracks.get(other)?.location;
+                    let other = session
+                        .tracks
+                        .iter()
+                        .find(|known| known.source.location == *location)?;
+                    Some((track.id, other.id, operation))
+                })
+                .collect();
+            for (id, other, operation) in comparisons {
+                track::change(&mut session.tracks, id, Change::Compare(Some(other)));
+                track::change(&mut session.tracks, id, Change::Operation(operation));
             }
         } else {
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));

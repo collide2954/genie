@@ -65,6 +65,8 @@ pub enum Detail {
         bin: Bin,
         /// The records that a density counts per Mb, for example "variants".
         unit: Option<&'static str>,
+        /// What the value is when it is not a value of the file, for example "Log2 ratio".
+        measure: Option<&'static str>,
     },
     Match {
         pattern: String,
@@ -398,9 +400,27 @@ pub fn signal_facts(bin: Bin) -> (String, Option<String>) {
     (format!("Mean {}", amount(bin.mean())), Some(range))
 }
 
-fn signal_content(span: Region, bin: Bin, unit: Option<&str>) -> (String, Region, Vec<String>) {
+/// The title, the span and the lines of the card of a signal: a value, a density or a measure
+/// such as a log2 ratio.
+fn signal_content(detail: &Detail) -> (String, Region, Vec<String>) {
+    let Detail::Signal {
+        span,
+        bin,
+        unit,
+        measure,
+    } = *detail
+    else {
+        return (String::new(), Region::between(0, 0), Vec::new());
+    };
     if let Some(unit) = unit {
         return (density_title(bin.mean(), unit), span, Vec::new());
+    }
+    if let Some(measure) = measure {
+        return (
+            format!("{measure} {}", amount(bin.mean())),
+            span,
+            Vec::new(),
+        );
     }
     let (title, range) = signal_facts(bin);
     (title, span, range.into_iter().collect())
@@ -438,7 +458,7 @@ fn product_content(
 
 fn content(detail: &Detail) -> (String, Region, Vec<String>) {
     match detail {
-        Detail::Signal { span, bin, unit } => signal_content(*span, *bin, *unit),
+        Detail::Signal { .. } => signal_content(detail),
         Detail::Variant {
             variant,
             sample,
@@ -1149,6 +1169,7 @@ mod tests {
                     sum: mean * 2_000_000.0,
                 },
                 unit: Some("variants"),
+                measure: None,
             };
             let card = Card {
                 track: 1,

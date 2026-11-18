@@ -10,7 +10,7 @@ use genie_formats::ini::{self, Document, Section};
 use genie_render::alignments::Look;
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
-use genie_render::signal::{Scale, Style};
+use genie_render::signal::{Operation, Scale, Style};
 
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
@@ -58,6 +58,8 @@ pub struct SavedTrack {
     pub location: Location,
     pub name: Option<String>,
     pub over: Option<usize>,
+    /// The place of the other track of the comparison of a signal track, and the operation.
+    pub compare: Option<(usize, Operation)>,
     pub mode: Option<Mode>,
     pub hue: Hue,
     pub height: Option<f32>,
@@ -80,6 +82,7 @@ impl SavedTrack {
             location,
             name: None,
             over: None,
+            compare: None,
             mode: None,
             hue: Hue::default(),
             height: None,
@@ -126,6 +129,7 @@ impl Saved {
                         .value("overlay")
                         .and_then(|text| text.parse::<usize>().ok())
                         .and_then(|number| number.checked_sub(1)),
+                    compare: comparison(section),
                     mode: section.value("mode").and_then(|name| find(&MODES, name)),
                     hue: section
                         .value("color")
@@ -133,25 +137,7 @@ impl Saved {
                         .unwrap_or_default(),
                     height: section.value("height").and_then(|text| text.parse().ok()),
                     options: options(section),
-                    plot: Plot {
-                        style: if section.value("style") == Some("line") {
-                            Style::Line
-                        } else {
-                            Style::Bars
-                        },
-                        linked: section.value("scale") == Some("shared"),
-                        look: Look {
-                            pairs: section.value("pairs") != Some("off"),
-                            mods: section.value("modifications") == Some("on"),
-                        },
-                        colors: section.value("colors") != Some("off"),
-                        range: section.value("range").and_then(range),
-                        sashimi: section.value("sashimi") == Some("on"),
-                        junction_reads: section
-                            .value("junction reads")
-                            .and_then(|text| text.parse().ok())
-                            .unwrap_or(1),
-                    },
+                    plot: plot(section),
                     filter: Filter {
                         rules: section
                             .entries
@@ -255,6 +241,50 @@ pub fn is_session(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(EXTENSION))
 }
 
+/// The look of a track. A comparison with another track is not a part of it in a file, because
+/// it needs the place of the other track.
+fn plot(section: &Section) -> Plot {
+    Plot {
+        style: if section.value("style") == Some("line") {
+            Style::Line
+        } else {
+            Style::Bars
+        },
+        linked: section.value("scale") == Some("shared"),
+        look: Look {
+            pairs: section.value("pairs") != Some("off"),
+            mods: section.value("modifications") == Some("on"),
+        },
+        colors: section.value("colors") != Some("off"),
+        range: section.value("range").and_then(range),
+        sashimi: section.value("sashimi") == Some("on"),
+        junction_reads: section
+            .value("junction reads")
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(1),
+        math: None,
+    }
+}
+
+/// The comparison of a signal track: the place of the other track, counted from 1 in the file,
+/// and the operation, by default the log2 ratio.
+fn comparison(section: &Section) -> Option<(usize, Operation)> {
+    let other = section
+        .value("compare")?
+        .parse::<usize>()
+        .ok()?
+        .checked_sub(1)?;
+    let operation = section
+        .value("math")
+        .and_then(|name| {
+            Operation::ALL
+                .into_iter()
+                .find(|operation| operation.label() == name)
+        })
+        .unwrap_or(Operation::Log2Ratio);
+    Some((other, operation))
+}
+
 /// The entries of the section of a track.
 fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)> {
     let mut entries = vec![("file", written(&track.location, base))];
@@ -263,6 +293,10 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if let Some(over) = track.over {
         entries.push(("overlay", (over + 1).to_string()));
+    }
+    if let Some((other, operation)) = track.compare {
+        entries.push(("compare", (other + 1).to_string()));
+        entries.push(("math", operation.label().to_owned()));
     }
     if let Some(mode) = track.mode {
         entries.push(("mode", name(&MODES, mode).to_owned()));
@@ -619,6 +653,7 @@ mod tests {
                     location: Location::File(base().join("reads.bam")),
                     name: Some("Tumor A".to_owned()),
                     over: None,
+                    compare: None,
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
@@ -641,14 +676,8 @@ mod tests {
                     lift: None,
                 },
                 SavedTrack {
-                    location: Location::File(PathBuf::from("/elsewhere/genes.bed.gz")),
-                    name: None,
-                    over: None,
-                    mode: None,
                     hue: Hue::Vermillion,
-                    height: None,
                     options: ratios(),
-                    plot: Plot::default(),
                     filter: Filter {
                         rules: vec![
                             rule("Clinical significance", Test::Keep("Pathogenic".to_owned())),
@@ -658,15 +687,14 @@ mod tests {
                         ],
                         label: Some("Gene symbol".to_owned()),
                     },
-                    modification: None,
                     normalization: Some("KR".to_owned()),
-                    declared: None,
                     choice: Choice {
                         group: Some("super_pop".to_owned()),
                         sort: Some("age".to_owned()),
                         color: Some("sex".to_owned()),
                     },
                     lift: Some(chains),
+                    ..SavedTrack::plain(Location::File(PathBuf::from("/elsewhere/genes.bed.gz")))
                 },
                 SavedTrack {
                     over: Some(0),

@@ -116,12 +116,18 @@ fn junction_row<'a>(track: &Track) -> Element<'a, Message> {
         .into()
 }
 
-pub fn height(track: &Track, links: usize) -> f32 {
-    let extra = if links == 0 {
-        0.0
-    } else {
-        HEADING_HEIGHT + links as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
-    };
+/// Items of a track menu under a heading, such as the other tracks to overlay or to compare with.
+pub struct Section {
+    pub heading: &'static str,
+    pub items: Vec<(String, Message)>,
+}
+
+pub fn height(track: &Track, sections: &[Section]) -> f32 {
+    let extra: f32 = sections
+        .iter()
+        .filter(|section| !section.items.is_empty())
+        .map(|section| HEADING_HEIGHT + section.items.len() as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT)
+        .sum();
     let filter = &track.filter;
     let rules = if filter.is_empty() {
         0.0
@@ -580,10 +586,10 @@ pub fn view<'a>(
     mode: Mode,
     place: &Place,
     range: Option<&(String, String)>,
-    (heading, links): (&'static str, Vec<(String, Message)>),
+    sections: Vec<Section>,
 ) -> Element<'a, Message> {
     let id = track.id;
-    let count = links.len();
+    let size = height(track, &sections);
     let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
         item(label, Message::TrackChanged(id, change), chosen, enabled)
     };
@@ -642,11 +648,15 @@ pub fn view<'a>(
             .push(container(row(swatches).spacing(6).padding([3, 8])).id("swatches"))
             .push(separator());
     }
-    if count > 0 {
+    for section in sections
+        .into_iter()
+        .filter(|section| !section.items.is_empty())
+    {
         content = content
-            .push(self::heading(heading))
+            .push(self::heading(section.heading))
             .extend(
-                links
+                section
+                    .items
                     .into_iter()
                     .map(|(label, message)| link(label, message)),
             )
@@ -673,12 +683,7 @@ pub fn view<'a>(
     } else {
         FILTER_WIDTH
     };
-    sized(
-        content,
-        place.at,
-        place.window,
-        (width, height(track, count)),
-    )
+    sized(content, place.at, place.window, (width, size))
 }
 
 /// The items at the top of the track menu: the settings dialog, and the variant table of a
