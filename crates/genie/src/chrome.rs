@@ -183,6 +183,8 @@ pub struct LocusField {
     /// The widest the box can be, in pixels: the room that the tools and the window buttons at
     /// its right leave in the window.
     pub room: u16,
+    /// True in a narrow window: the bar hides the buttons that the genie menu also has.
+    pub narrow: bool,
 }
 
 /// The width of the zoom buttons after the locus box, with the gap before them.
@@ -191,15 +193,34 @@ const ZOOM_WIDTH: f32 = 8.0 + 4.0 * TOOL_SIZE + 3.0 * TOOL_GAP;
 const TOOLS_WIDTH: f32 = 6.0 * TOOL_SIZE + 5.0 * TOOL_GAP;
 /// The narrowest locus box, when the window has less room.
 const LOCUS_MIN_WIDTH: f32 = 120.0;
+/// The width of the buttons that a narrow window hides because the genie menu also has them:
+/// save, export, help, settings and the whole genome.
+const MENU_TOOLS: f32 = 5.0 * (TOOL_SIZE + TOOL_GAP);
 
-/// The room for the locus box in a window of this width: what the buttons after it leave.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-pub fn locus_room(controls: Controls, window: f32) -> u16 {
+/// The room that all buttons after the locus box leave for it in a window of this width.
+fn free(controls: Controls, window: f32) -> f32 {
     let buttons = match controls {
         Controls::Native => 0.0,
         Controls::Custom => 3.0 * WINDOW_BUTTON_WIDTH,
     };
-    let room = window - locus_x(controls) - ZOOM_WIDTH - TOOLS_WIDTH - END_GAP - buttons;
+    window - locus_x(controls) - ZOOM_WIDTH - TOOLS_WIDTH - END_GAP - buttons
+}
+
+/// True when a window of this width is too narrow for all buttons and the narrowest locus box.
+/// The bar then hides the buttons that the genie menu also has.
+pub fn narrow(controls: Controls, window: f32) -> bool {
+    free(controls, window) < LOCUS_MIN_WIDTH
+}
+
+/// The room for the locus box in a window of this width: what the buttons after it leave.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn locus_room(controls: Controls, window: f32) -> u16 {
+    let room = free(controls, window);
+    let room = if narrow(controls, window) {
+        room + MENU_TOOLS
+    } else {
+        room
+    };
     // The room is clamped to the range of u16 first, so the cast keeps its value.
     room.clamp(0.0, f32::from(u16::MAX)).floor() as u16
 }
@@ -244,6 +265,7 @@ pub fn title_bar<'a>(
     locus: Option<LocusField>,
 ) -> Element<'a, Message> {
     let brand = brand_button();
+    let narrow = locus.as_ref().is_some_and(|field| field.narrow);
     let regions = locus.is_some().then(|| {
         tool(
             Icon::Bookmark,
@@ -252,7 +274,7 @@ pub fn title_bar<'a>(
             Message::Regions(Regions::Toggle),
         )
     });
-    let save = locus.is_some().then(|| {
+    let save = (locus.is_some() && !narrow).then(|| {
         let words = format!("Save session ({})", keys('S'));
         tool(
             Icon::Save,
@@ -261,7 +283,7 @@ pub fn title_bar<'a>(
             Message::Command(Command::SaveSession),
         )
     });
-    let export = locus.is_some().then(|| {
+    let export = (locus.is_some() && !narrow).then(|| {
         let words = format!("Export PNG ({})", keys('E'));
         tool(
             Icon::Camera,
@@ -270,6 +292,16 @@ pub fn title_bar<'a>(
             Message::Command(Command::Export),
         )
     });
+    let help = (!narrow).then(|| {
+        tool(
+            Icon::Help,
+            "help",
+            "Keys and mouse (F1)",
+            Message::Command(Command::Help),
+        )
+    });
+    let settings =
+        (!narrow).then(|| tool(Icon::Gear, "settings", "Settings", Message::ToggleSettings));
     let theme = match appearance {
         Icon::Sun => "Theme: light",
         Icon::Moon => "Theme: dark",
@@ -293,13 +325,8 @@ pub fn title_bar<'a>(
         regions,
         save,
         export,
-        tool(
-            Icon::Help,
-            "help",
-            "Keys and mouse (F1)",
-            Message::Command(Command::Help)
-        ),
-        tool(Icon::Gear, "settings", "Settings", Message::ToggleSettings),
+        help,
+        settings,
         tool(appearance, "appearance", theme, Message::CycleAppearance)
     ]
     .spacing(TOOL_GAP)
@@ -384,18 +411,31 @@ fn locus_box<'a>(field: LocusField) -> Element<'a, Message> {
         .on_input(Message::LocusEdited)
         .on_submit(Message::LocusSubmitted);
     let words = format!("Go to a locus, a name or a variant ID ({})", keys('L'));
-    row![tip(input, words, tooltip::Position::Bottom), zoom()]
-        .push(
-            field
-                .error
-                .map(|error| text(error).size(11).style(style::muted)),
-        )
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .into()
+    row![
+        tip(input, words, tooltip::Position::Bottom),
+        zoom(field.narrow)
+    ]
+    .push(
+        field
+            .error
+            .map(|error| text(error).size(11).style(style::muted)),
+    )
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
 }
 
-fn zoom<'a>() -> Element<'a, Message> {
+/// The zoom buttons. A `narrow` bar has no button for the whole genome, which the genie menu also
+/// has.
+fn zoom<'a>(narrow: bool) -> Element<'a, Message> {
+    let genome = (!narrow).then(|| {
+        tool(
+            Icon::Genome,
+            "whole-genome",
+            "Show the whole genome (type All)",
+            Message::Command(Command::Genome),
+        )
+    });
     row![
         tool(
             Icon::Minus,
@@ -415,12 +455,7 @@ fn zoom<'a>() -> Element<'a, Message> {
             "Show the whole chromosome",
             Message::Command(Command::Whole)
         ),
-        tool(
-            Icon::Genome,
-            "whole-genome",
-            "Show the whole genome (type All)",
-            Message::Command(Command::Genome)
-        ),
+        genome,
     ]
     .spacing(TOOL_GAP)
     .into()
@@ -573,8 +608,8 @@ mod tests {
     use iced_test::simulator::{self, simulator};
 
     use super::{
-        Action, Controls, Edge, GENOME, LOCUS, LOCUS_WIDTH, LocusField, WINDOW_BUTTON_WIDTH,
-        genome_x, locus_room, locus_x, resize_handles, title_bar,
+        Action, Controls, Edge, GENOME, LOCUS, LOCUS_MIN_WIDTH, LOCUS_WIDTH, LocusField,
+        WINDOW_BUTTON_WIDTH, genome_x, locus_room, locus_x, narrow, resize_handles, title_bar,
     };
     use crate::app::{Message, Regions};
     use crate::icon::Icon;
@@ -637,6 +672,7 @@ mod tests {
             genome: "hg38".to_owned(),
             about: "Human GRCh38".to_owned(),
             room: u16::MAX,
+            narrow: false,
         }
     }
 
@@ -796,6 +832,45 @@ mod tests {
         }
         let width = ui.find(selector::id(LOCUS)).unwrap().bounds().width;
         assert!(width >= LOCUS_WIDTH, "{width}");
+    }
+
+    /// In the narrowest window, the bar hides the buttons that the genie menu also has, so the
+    /// other buttons stay in the window and the locus box keeps its narrowest width.
+    #[test]
+    fn the_bar_fits_the_narrowest_window() {
+        let window = super::settings().min_size.unwrap().width;
+        let one = "chr1:1,000-2,000";
+        let two = "chr17:43,044,295-43,125,364 chr13:32,315,508-32,400,268";
+        for (controls, last) in [
+            (Controls::Custom, "close"),
+            (Controls::Native, "appearance"),
+        ] {
+            assert!(narrow(controls, window), "{controls:?}");
+            assert!(!narrow(controls, 1280.0), "{controls:?}");
+            for value in [one, two] {
+                let locus = LocusField {
+                    room: locus_room(controls, window),
+                    narrow: narrow(controls, window),
+                    ..field(value, None)
+                };
+                let bar = title_bar(controls, Icon::Monitor, Some(locus));
+                let mut ui = iced_test::Simulator::with_size(
+                    iced::Settings::default(),
+                    (window, 300.0),
+                    bar,
+                );
+                let end = ui.find(selector::id(last)).unwrap().bounds();
+                assert!(end.x + end.width <= window + 0.5, "{controls:?} {end:?}");
+                let width = ui.find(selector::id(LOCUS)).unwrap().bounds().width;
+                assert!(width >= LOCUS_MIN_WIDTH - 0.5, "{controls:?} {width}");
+                for id in ["save", "export", "help", "settings", "whole-genome"] {
+                    assert!(ui.find(selector::id(id)).is_err(), "{controls:?} {id}");
+                }
+                for id in ["regions", "zoom-in", "whole", "appearance"] {
+                    assert!(ui.find(selector::id(id)).is_ok(), "{controls:?} {id}");
+                }
+            }
+        }
     }
 
     #[test]

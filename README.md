@@ -206,6 +206,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 
 - Drag the tracks to move along the sequence. Turn the wheel with Ctrl (Cmd on macOS) to zoom. Push the arrow keys to move and + or - to zoom. The buttons right of the locus box zoom out, zoom in, show the whole chromosome and show the [whole genome](#whole-genome).
 - Click the genie logo for a menu with the main actions and their keys. Push Ctrl+K (Cmd+K on macOS) to find an action by its words, for example "group phase", then push Enter. Push F1 or click the ? button to see all keys and mouse actions.
+- In a narrow window, the title bar hides the buttons that the genie menu also has: save, export, help, settings and the whole genome. Then the other buttons and the locus box stay in the window.
 - Drag on the ruler to zoom to that range. Push Escape to stop the drag.
 - To go back to an earlier view, push Alt+Left (Cmd+[ on macOS), push the back button of the mouse or click the back arrow left of the locus box. Alt+Right (Cmd+] on macOS) goes forward again. genie keeps the last 100 jumps: the locus box, name search, ruler drags, region and feature jumps and changes of contig. Moves and zooms do not add a step.
 - Push Ctrl+F or Ctrl+B (Cmd on macOS) to go to the next or the previous feature or variant of the track under the pointer. The search continues on the next contigs. The track menu has the same items.

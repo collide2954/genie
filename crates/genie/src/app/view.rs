@@ -176,6 +176,7 @@ impl Genie {
                 genome,
                 about,
                 room: chrome::locus_room(Controls::CURRENT, self.window.width),
+                narrow: chrome::narrow(Controls::CURRENT, self.window.width),
             }
         });
         let mut layers = stack![column![
