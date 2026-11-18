@@ -1824,11 +1824,12 @@ pub fn has_index(location: &Location) -> bool {
         .any(|suffix| location.with_suffix(suffix).open().is_ok())
 }
 
-/// True for the Hi-C files of Juicer.
+/// True for Hi-C files: the `.hic` files of Juicer, and cooler files (`.cool`, `.mcool`).
 pub fn is_hic(name: &str) -> bool {
     Path::new(name)
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("hic"))
+        || genie_formats::cool::is_cooler(name)
 }
 
 /// True for copy number segment files: SEG, and `CNVkit` `.cns` and `.cnr`.
@@ -3459,6 +3460,40 @@ mod tests {
             (coarse.map.bin, coarse.normalization.as_str()),
             (1_000, "SCALE")
         );
+    }
+
+    #[test]
+    fn cooler_files_open_as_contact_maps() {
+        let source = open(fixture("contacts.mcool")).unwrap();
+        assert!(source.has_contacts());
+        assert_eq!(source.contigs(), ["chr1", "chr2"]);
+        let names = ["NONE".to_owned(), "weight".to_owned()];
+        assert_eq!(source.normalizations(None), (&names[..], 1));
+        let best = contact_map(&source, 4, Showing::default());
+        assert_eq!(
+            (best.map.bin, best.normalization.as_str()),
+            (1_000, "weight")
+        );
+        assert_eq!(best.map.contacts.len(), 3);
+        assert_eq!(best.map.value(0, 1), Some(10.0));
+        assert_eq!(best.map.value(1, 1), Some(32.0));
+        let counts = Showing {
+            normalization: Some(0),
+            ratio: false,
+        };
+        assert_eq!(contact_map(&source, 4, counts).map.value(0, 1), Some(5.0));
+        let ratios = contact_map(
+            &source,
+            4,
+            Showing {
+                ratio: true,
+                ..counts
+            },
+        )
+        .map;
+        assert_eq!(ratios.value(0, 1), Some(1.0));
+        assert!((ratios.value(0, 0).unwrap() - 10.0 / 9.0).abs() < 1e-6);
+        assert_eq!(contact_map(&source, 100, Showing::default()).map.bin, 2_000);
     }
 
     #[test]

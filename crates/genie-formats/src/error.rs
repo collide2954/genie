@@ -51,6 +51,10 @@ pub enum Reason {
     HicVersion,
     NotBcf,
     BadBcf,
+    NotHdf5,
+    BadHdf5,
+    Hdf5Feature,
+    NotCooler,
 }
 
 impl fmt::Display for Error {
@@ -132,6 +136,10 @@ impl fmt::Display for Reason {
             Self::HicVersion => "genie reads Hi-C files of version 6 to 9",
             Self::NotBcf => "the file is not a BCF file of version 2",
             Self::BadBcf => "a BCF record is not valid",
+            Self::NotHdf5 => "the file is not an HDF5 file",
+            Self::BadHdf5 => "a part of the HDF5 file is not valid",
+            Self::Hdf5Feature => "the HDF5 file uses a storage that genie cannot read",
+            Self::NotCooler => "the file is not a cooler file of Hi-C contacts",
         })
     }
 }

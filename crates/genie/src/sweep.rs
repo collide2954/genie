@@ -33,6 +33,7 @@ const FIXTURES: &[(&str, &[&str])] = &[
     ("interact.bb", &[]),
     ("snps.bb", &[]),
     ("contacts.hic", &[]),
+    ("contacts.mcool", &[]),
     ("cram.bam", &["cram.bam.bai"]),
     ("cram.bam.bai", &["cram.bam"]),
     ("cram30.cram", &["cram30.cram.crai"]),
