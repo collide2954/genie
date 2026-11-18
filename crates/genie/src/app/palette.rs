@@ -35,6 +35,11 @@ fn read_actions(track: &Track) -> Vec<Action> {
         change(Change::Pairs),
     ));
     actions.push(Action::new(
+        "View as pairs",
+        name,
+        change(Change::Toggle(Toggle::Mates)),
+    ));
+    actions.push(Action::new(
         "Color by modification",
         name,
         change(Change::Mods),

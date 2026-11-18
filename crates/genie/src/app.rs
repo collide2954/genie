@@ -4973,6 +4973,18 @@ mod tests {
     }
 
     #[test]
+    fn read_menus_view_the_mates_of_a_pair_on_one_row() {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("View as pairs").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::TrackChanged(0, Change::Toggle(Toggle::Mates))));
+        let _ = genie.update(Message::TrackChanged(0, Change::Toggle(Toggle::Mates)));
+        assert!(genie.session.as_ref().unwrap().tracks[0].options.mates);
+    }
+
+    #[test]
     fn toggling_a_filter_reloads_the_reads() {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackChanged(0, Change::Toggle(Toggle::Duplicates)));

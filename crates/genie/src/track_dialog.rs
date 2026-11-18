@@ -8,7 +8,7 @@ use iced::{Alignment, Element, Length};
 use crate::app::{Drafting, Lane, Message, Ranging};
 use crate::icon::{self, Icon};
 use crate::menu::{self, GROUPS, JUNCTION_FLOORS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
-use crate::track::{Change, Track};
+use crate::track::{Change, Toggle, Track};
 use crate::{font, style};
 
 const WIDTH: f32 = 440.0;
@@ -113,6 +113,14 @@ fn read_lines<'a>(track: &Track) -> Vec<Element<'a, Message>> {
                 })),
             ),
             line("Colors", choices(colors)),
+            line(
+                "Pairs",
+                choices([(
+                    "View as pairs",
+                    change(Change::Toggle(Toggle::Mates)),
+                    options.is_on(Toggle::Mates),
+                )]),
+            ),
         ];
     let modifications = menu::modification_items(track);
     if !modifications.is_empty() {

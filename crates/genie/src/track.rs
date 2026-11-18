@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE};
+use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE, SECONDARY, SUPPLEMENTARY};
 use genie_core::association::Association;
 use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
@@ -354,7 +354,10 @@ impl Values {
     }
 }
 
+/// The options that change the data that a track loads. The flags are toggles of the read menu,
+/// each on its own, so they stay flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Options {
     pub duplicates: bool,
     pub clips: bool,
@@ -372,6 +375,8 @@ pub struct Options {
     /// A number that changes each time the lift of the track changes, so that data of the
     /// earlier lift does not show.
     pub lift: u16,
+    /// Whether the two mates of a pair share a row, with a line between them.
+    pub mates: bool,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -413,6 +418,7 @@ impl Default for Options {
             contacts: Showing::default(),
             table: Pick::default(),
             lift: 0,
+            mates: false,
         }
     }
 }
@@ -467,6 +473,8 @@ pub enum Toggle {
     Secondary,
     Supplementary,
     Failed,
+    /// The two mates of a pair on one row, with a line between them.
+    Mates,
 }
 
 impl Options {
@@ -481,6 +489,7 @@ impl Options {
             Toggle::Secondary => &mut options.kinds.secondary,
             Toggle::Supplementary => &mut options.kinds.supplementary,
             Toggle::Failed => &mut options.kinds.failed,
+            Toggle::Mates => &mut options.mates,
         };
         *flag = !*flag;
         options
@@ -508,6 +517,7 @@ impl Options {
             Toggle::Secondary => self.kinds.secondary,
             Toggle::Supplementary => self.kinds.supplementary,
             Toggle::Failed => self.kinds.failed,
+            Toggle::Mates => self.mates,
         }
     }
 }
@@ -531,6 +541,8 @@ pub struct Pile {
     pub count: usize,
     pub groups: Vec<(usize, String)>,
     pub grouping: Grouping,
+    /// Whether the two mates of a pair share a row.
+    pub mates: bool,
     /// The text values of the tag that groups the reads.
     pub values: Values,
     /// The hue of each read when the track colors reads by a tag, or nothing.
@@ -600,14 +612,47 @@ fn fewer(keys: &mut [GroupKey]) {
     }
 }
 
+/// The rows of some reads: each read in the first free row, or with `mates` the two mates of
+/// each pair in the first row that is free from the start of one mate to the end of the other.
+fn layout(reads: &[Read], chosen: &[usize], mates: bool) -> Vec<usize> {
+    let extent = |&index: &usize| reads[index].extent;
+    if !mates {
+        return rows::pack(chosen, extent, READ_GAP);
+    }
+    let mut units: Vec<(Region, Vec<usize>)> = Vec::new();
+    let mut open: HashMap<&str, usize> = HashMap::new();
+    for (place, &index) in chosen.iter().enumerate() {
+        let read = &reads[index];
+        let alignment = &read.alignment;
+        let primary =
+            alignment.has(PAIRED) && !alignment.has(SECONDARY) && !alignment.has(SUPPLEMENTARY);
+        if primary {
+            if let Some(unit) = open.remove(alignment.name.as_str()) {
+                units[unit].0 = units[unit].0.hull(read.extent);
+                units[unit].1.push(place);
+                continue;
+            }
+            open.insert(&alignment.name, units.len());
+        }
+        units.push((read.extent, vec![place]));
+    }
+    let packed = rows::pack(&units, |(span, _)| *span, READ_GAP);
+    let mut rows = vec![0; chosen.len()];
+    for ((_, places), row) in units.iter().zip(packed) {
+        for &place in places {
+            rows[place] = row;
+        }
+    }
+    rows
+}
+
 fn pack(
     reads: &[Read],
     members: &[usize],
-    (grouping, values): (Grouping, &Values),
+    (grouping, values, mates): (Grouping, &Values, bool),
 ) -> (Vec<usize>, Vec<(usize, String)>) {
-    let extent = |&index: &usize| reads[index].extent;
     if grouping == Grouping::None {
-        return (rows::pack(members, extent, READ_GAP), Vec::new());
+        return (layout(reads, members, mates), Vec::new());
     }
     let mut keys: Vec<(u8, i64)> = members
         .iter()
@@ -636,12 +681,12 @@ fn pack(
             .filter(|&place| keys[place] == key)
             .collect();
         let chosen: Vec<usize> = places.iter().map(|&place| members[place]).collect();
-        let layout = rows::pack(&chosen, extent, READ_GAP);
-        for (&place, &row) in places.iter().zip(&layout) {
+        let stacked = layout(reads, &chosen, mates);
+        for (&place, &row) in places.iter().zip(&stacked) {
             rows[place] = next + row;
         }
         groups.push((next, group_label(grouping, key, values)));
-        next += count(&layout);
+        next += count(&stacked);
     }
     (rows, groups)
 }
@@ -697,7 +742,11 @@ impl Pile {
                 span.start() <= visible.end() && span.end() >= visible.start()
             })
             .collect();
-        let (packed, groups) = pack(&self.reads, &shown, (self.grouping, &self.values));
+        let (packed, groups) = pack(
+            &self.reads,
+            &shown,
+            (self.grouping, &self.values, self.mates),
+        );
         let mut rows = vec![0; self.reads.len()];
         for (&index, &row) in shown.iter().zip(&packed) {
             rows[index] = row;
@@ -855,7 +904,7 @@ impl Loaded {
             })
             .collect();
         let members: Vec<usize> = (0..reads.len()).collect();
-        let (rows, groups) = pack(&reads, &members, (options.group, &values));
+        let (rows, groups) = pack(&reads, &members, (options.group, &values, options.mates));
         let count = count(&rows);
         let hues = options
             .color
@@ -884,6 +933,7 @@ impl Loaded {
                 count,
                 groups,
                 grouping: options.group,
+                mates: options.mates,
                 values,
                 hues,
             })),
@@ -4587,6 +4637,57 @@ mod tests {
         track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 2)));
         assert_eq!(track.data(0).unwrap().count(), 1);
         assert_eq!(track.slot.wanted, Some((0, region(0, 300))));
+    }
+
+    /// When a read track shows pairs, the two mates of a pair share a row, and the pair takes the
+    /// room from the start of one mate to the end of the other.
+    #[test]
+    fn pairs_put_the_two_mates_of_a_pair_on_one_row() {
+        let mate = |name: &str, start| Alignment {
+            name: name.to_owned(),
+            flags: PAIRED,
+            ..alignment(start, vec![(Op::Match, 10)])
+        };
+        let reads = vec![
+            mate("A", 10),
+            mate("B", 15),
+            alignment(30, vec![(Op::Match, 10)]),
+            mate("A", 50),
+            mate("B", 70),
+        ];
+        let options = Options {
+            mates: true,
+            ..Options::default()
+        };
+        let Content::Reads(pile) = piled(region(0, 100), reads, options).content else {
+            panic!("expected reads");
+        };
+        assert!(pile.mates);
+        let rows_of = |rows: &[usize]| {
+            let row = |name: &str, start: u64| {
+                let place = pile
+                    .reads
+                    .iter()
+                    .position(|read| read.alignment.name == name && read.alignment.start == start);
+                rows[place.unwrap()]
+            };
+            (
+                [row("A", 10), row("A", 50)],
+                [row("B", 15), row("B", 70)],
+                row("read30", 30),
+            )
+        };
+        for rows in [pile.rows.clone(), pile.packed(region(0, 100)).0] {
+            let ([a, a_mate], [b, b_mate], single) = rows_of(&rows);
+            assert_eq!(a, a_mate);
+            assert_eq!(b, b_mate);
+            assert!(a != b && single != a && single != b, "{rows:?}");
+        }
+        assert!(
+            Options::default()
+                .toggled(Toggle::Mates)
+                .is_on(Toggle::Mates)
+        );
     }
 
     #[test]

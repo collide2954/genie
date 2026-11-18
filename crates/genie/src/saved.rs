@@ -472,6 +472,7 @@ fn options(section: &Section) -> Options {
             None => Pick::Auto,
         },
         lift: 0,
+        mates: on("mates"),
     }
 }
 
@@ -481,6 +482,9 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
     let mut entries = Vec::new();
     if options.duplicates {
         entries.push(("duplicates", on()));
+    }
+    if options.mates {
+        entries.push(("mates", on()));
     }
     if options.clips {
         entries.push(("clips", on()));
@@ -624,6 +628,7 @@ mod tests {
             contacts: Showing::default(),
             table: Pick::Rows,
             lift: 0,
+            mates: true,
         }
     }
 

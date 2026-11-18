@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use genie_core::alignment::{Alignment, Gap, Op, Pairing};
 use genie_core::methylation::Site;
@@ -575,18 +576,68 @@ pub fn reads(
     mode: Mode,
     look: Look,
 ) -> Vec<Primitive> {
-    painted(viewport, reads, rows, groups, mode, (look, &[]))
+    painted(viewport, reads, rows, groups, mode, (look, &[], false))
 }
 
-/// The reads like `reads`, with a hue for each read when the track colors reads by a tag. An
-/// empty list of hues keeps the colors of `look`.
+/// The lines between the two mates of each pair that share a row, at the middle of the row.
+fn mate_lines(
+    viewport: Viewport,
+    reads: &[Read],
+    rows: &[usize],
+    groups: &[(usize, String)],
+    mode: Mode,
+) -> Vec<Primitive> {
+    let (row_height, offset, size) = shape(mode);
+    let mut found: HashMap<(&str, usize), Vec<usize>> = HashMap::new();
+    for (index, (read, &row)) in reads.iter().zip(rows).enumerate() {
+        found
+            .entry((read.alignment.name.as_str(), row))
+            .or_default()
+            .push(index);
+    }
+    let mut pairs: Vec<(usize, usize, usize)> = found
+        .into_iter()
+        .filter_map(|((_, row), indices)| match indices[..] {
+            [first, second] => Some((row, first, second)),
+            _ => None,
+        })
+        .collect();
+    pairs.sort_unstable();
+    let px = |bp: u64| viewport.to_px(bp as f64) as f32;
+    let width = viewport.width() as f32;
+    pairs
+        .into_iter()
+        .filter_map(|(row, first, second)| {
+            let (left, right) = (reads[first].extent, reads[second].extent);
+            let (left, right) = if left.start() <= right.start() {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            let x = px(left.end()).max(-1.0);
+            let end = px(right.start()).min(width + 1.0);
+            let top = row as f32 * row_height + offset + bands(row, groups);
+            (end > x).then_some(Primitive::Rect {
+                x,
+                y: top + size / 2.0 - 0.5,
+                width: end - x,
+                height: 1.0,
+                paint: Paint::Muted,
+            })
+        })
+        .collect()
+}
+
+/// The reads like `reads`, with a hue for each read when the track colors reads by a tag, and a
+/// line between the mates of each pair on one row when the track shows `mates`. An empty list of
+/// hues keeps the colors of `look`.
 pub fn painted(
     viewport: Viewport,
     reads: &[Read],
     rows: &[usize],
     groups: &[(usize, String)],
     mode: Mode,
-    (look, hues): (Look, &[Option<Hue>]),
+    (look, hues, mates): (Look, &[Option<Hue>], bool),
 ) -> Vec<Primitive> {
     let (row_height, offset, size) = shape(mode);
     let visible = viewport.visible();
@@ -605,7 +656,11 @@ pub fn painted(
             paint,
         }
     };
-    let mut primitives = Vec::new();
+    let mut primitives = if mates {
+        mate_lines(viewport, reads, rows, groups, mode)
+    } else {
+        Vec::new()
+    };
     let mut marks = Vec::new();
     for (index, (read, &row)) in reads.iter().zip(rows).enumerate() {
         let span = read.extent;
@@ -713,7 +768,7 @@ fn bucket(base: u8) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use genie_core::alignment::{Alignment, Op, Pairing, Part, REVERSE};
+    use genie_core::alignment::{Alignment, Op, PAIRED, Pairing, Part, REVERSE};
     use genie_core::pileup::{Coverage, Junction, Read};
     use genie_core::{Region, Strand, Viewport};
 
@@ -721,7 +776,7 @@ mod tests {
 
     use super::{
         LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, coverage, fit, hit, methylation,
-        methylation_height, methylation_hit, reads,
+        methylation_height, methylation_hit, painted, reads,
     };
     use crate::features::Mode;
     use crate::scene::{Align, Base, Hue, Paint, Primitive, Shade};
@@ -1039,6 +1094,30 @@ mod tests {
         assert_eq!(at(5.0, 29.0), None);
     }
 
+    /// When a read track shows pairs, a line joins the two mates of a pair on one row.
+    #[test]
+    fn mates_on_one_row_are_joined_by_a_line() {
+        let mate = |start| {
+            let mut read = read(start, PAIRED, vec![(Op::Match, 10)], &[b'A'; 10]);
+            read.alignment.name = "pair1".to_owned();
+            read
+        };
+        let single = read(30, PAIRED, vec![(Op::Match, 10)], &[b'A'; 10]);
+        let reads = [mate(10), mate(60), single];
+        let lines = |mates: bool, rows: &[usize]| {
+            let look = (Look::default(), &[] as &[Option<Hue>], mates);
+            let primitives = painted(view(0, 100), &reads, rows, &[], Mode::Expanded, look);
+            rects(&primitives)
+                .into_iter()
+                .filter(|(_, paint)| *paint == Paint::Muted)
+                .collect::<Vec<_>>()
+        };
+        let line = ([20.0, 4.5, 40.0, 1.0], Paint::Muted);
+        assert_eq!(lines(true, &[0, 0, 1]), [line]);
+        assert_eq!(lines(false, &[0, 0, 1]), []);
+        assert_eq!(lines(true, &[0, 1, 2]), []);
+    }
+
     /// A junction track can be taller than the lane of a read track: its arcs rise higher.
     #[test]
     fn taller_lanes_raise_the_arcs() {
@@ -1209,7 +1288,7 @@ mod tests {
             &[0, 1, 2],
             &[],
             Mode::Expanded,
-            (PAIRS, &hues),
+            (PAIRS, &hues, false),
         ));
         let paints: Vec<Paint> = found.into_iter().map(|(_, paint)| paint).collect();
         assert_eq!(

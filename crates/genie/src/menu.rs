@@ -18,7 +18,7 @@ use crate::track::{Change, Format, Grouping, Pick, Toggle, Track, tag_name};
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
 const COLORED_HEIGHT: f32 = 290.5;
-const READS_HEIGHT: f32 = 500.1;
+const READS_HEIGHT: f32 = 522.7;
 const VARIANTS_HEIGHT: f32 = 234.5;
 const SIGNAL_HEIGHT: f32 = 271.5;
 const HEADING_HEIGHT: f32 = 21.0;
@@ -536,6 +536,11 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     items.push(mapq_row(track));
     items.push(separator());
     items.push(item("Color unusual pairs", Change::Pairs, look.pairs));
+    items.push(item(
+        "View as pairs",
+        Change::Toggle(Toggle::Mates),
+        options.is_on(Toggle::Mates),
+    ));
     items.push(item("Color by modification", Change::Mods, look.mods));
     items.extend(modification_items(track));
     items.push(item("Sashimi plot", Change::Sashimi, track.plot.sashimi));
