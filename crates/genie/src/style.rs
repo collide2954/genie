@@ -29,14 +29,14 @@ pub fn locus(theme: &Theme, status: text_input::Status) -> text_input::Style {
 
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let tokens = tokens(theme);
-    let background = if is_active(status) {
-        tokens.accent.scale_alpha(0.88)
-    } else {
-        tokens.accent
+    let (background, text_color) = match status {
+        button::Status::Disabled => (tokens.line, tokens.muted),
+        _ if is_active(status) => (tokens.accent.scale_alpha(0.88), tokens.on_accent),
+        _ => (tokens.accent, tokens.on_accent),
     };
     button::Style {
         background: Some(background.into()),
-        text_color: tokens.on_accent,
+        text_color,
         border: Border::default().rounded(6),
         ..button::Style::default()
     }
@@ -150,4 +150,22 @@ pub fn window_control(theme: &Theme, status: button::Status) -> button::Style {
 
 fn is_active(status: button::Status) -> bool {
     matches!(status, button::Status::Hovered | button::Status::Pressed)
+}
+
+#[cfg(test)]
+mod tests {
+    use iced::widget::button::Status;
+
+    use super::primary;
+    use crate::theme::{dark, light, tokens};
+
+    #[test]
+    fn disabled_primary_buttons_look_off() {
+        for theme in [light(), dark()] {
+            let on = primary(&theme, Status::Active);
+            let off = primary(&theme, Status::Disabled);
+            assert_ne!(off.background, on.background);
+            assert_eq!(off.text_color, tokens(&theme).muted);
+        }
+    }
 }
