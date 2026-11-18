@@ -123,6 +123,11 @@ const TEXTS: &[(&str, &str)] = &[
          chr1\t950\t2050\tJUNC1\t12\t+\t950\t2050\t255,0,0\t2\t50,50\t0,1050\n\
          chr2\t60\t340\tJUNC2\t3\t-\t60\t340\t0,0,255\t2\t40,40\t0,240\n",
     ),
+    (
+        "assembly.paf",
+        "ctg1\t9000\t100\t2100\t-\tchr1\t5000\t100\t2100\t1900\t2000\t60\ttp:A:P\tcg:Z:900M100D1000M\n\
+         ctg2\t800\t0\t800\t+\tchr2\t1000\t100\t900\t790\t800\t255\tNM:i:10\n",
+    ),
 ];
 
 fn data() -> PathBuf {

@@ -4,7 +4,7 @@ use std::io::{BufRead, Read, Seek};
 use genie_core::{Feature, Region};
 
 pub use crate::table::Table;
-use crate::{Error, Reason, bed, bgzf::Bgzf, gff, gtf, tabix::Index};
+use crate::{Error, Reason, bed, bgzf::Bgzf, gff, gtf, paf, tabix::Index};
 
 const PASSES: usize = 4;
 
@@ -28,12 +28,12 @@ pub fn names(kind: Kind, mut reader: impl BufRead) -> Result<Vec<Entry>, Error> 
         if line.starts_with("##FASTA") {
             break;
         }
-        entries.extend(match kind {
-            Kind::Bed => bed::parse(line)
+        entries.extend(match kind.lines() {
+            Some(parse) => parse(line)
                 .ok()
                 .flatten()
                 .and_then(|(contig, feature)| bed_name(contig, &feature)),
-            Kind::Gff | Kind::Gtf => kind.records()(line)
+            None => kind.records()(line)
                 .ok()
                 .flatten()
                 .as_ref()
@@ -68,9 +68,13 @@ pub enum Kind {
     Bed,
     Gff,
     Gtf,
+    /// The pairwise alignments of minimap2 and other aligners, on their target.
+    Paf,
 }
 
 type Parse = fn(&str) -> Result<Option<gff::Record>, Reason>;
+/// A parser of a line with one feature, which gives the contig and the feature.
+type Line = fn(&str) -> Result<Option<(&str, Feature)>, Reason>;
 
 impl Kind {
     pub fn of(name: &str) -> Option<Self> {
@@ -83,7 +87,18 @@ impl Kind {
             "bed" => Some(Self::Bed),
             "gff" | "gff3" => Some(Self::Gff),
             "gtf" => Some(Self::Gtf),
+            "paf" => Some(Self::Paf),
             _ => None,
+        }
+    }
+
+    /// The parser of a kind with one feature on each line: BED and PAF. GFF and GTF files join
+    /// several lines into a feature.
+    fn lines(self) -> Option<Line> {
+        match self {
+            Self::Bed => Some(bed::parse),
+            Self::Paf => Some(paf::parse),
+            Self::Gff | Self::Gtf => None,
         }
     }
 
@@ -128,14 +143,14 @@ pub fn read_table(
             line: number,
             reason,
         };
-        match kind {
-            Kind::Bed => {
-                if let Some((contig, feature)) = bed::parse(line).map_err(failed)? {
+        match kind.lines() {
+            Some(parse) => {
+                if let Some((contig, feature)) = parse(line).map_err(failed)? {
                     entries.extend(bed_name(contig, &feature));
                     rows.push((contig.to_owned(), feature.span(), feature));
                 }
             }
-            Kind::Gff | Kind::Gtf => {
+            None => {
                 if let Some(record) = kind.records()(line).map_err(failed)? {
                     entries.extend(gff_name(&record));
                     let slot = *slots.entry(record.contig.clone()).or_insert_with(|| {
@@ -162,38 +177,34 @@ pub fn query<R: Read + Seek>(
     contig: &str,
     region: Region,
 ) -> Result<(Region, Vec<Feature>), Error> {
-    match kind {
-        Kind::Bed => {
-            let mut features = Vec::new();
-            index.query(reader, contig, region, |line| {
-                if let Some((_, feature)) = bed::parse(line).map_err(Error::Invalid)? {
-                    features.push(feature);
-                }
-                Ok(())
-            })?;
-            Ok((region, features))
-        }
-        Kind::Gff | Kind::Gtf => {
-            let mut wanted = region;
-            for pass in 1.. {
-                let mut records = Vec::new();
-                index.query(reader, contig, wanted, |line| {
-                    if let Some(record) = kind.records()(line).map_err(Error::Invalid)? {
-                        records.push(record);
-                    }
-                    Ok(())
-                })?;
-                let hull = records
-                    .iter()
-                    .fold(wanted, |hull, record| hull.hull(record.span));
-                if hull == wanted || pass == PASSES {
-                    return Ok((wanted, kind.assemble(records)));
-                }
-                wanted = hull;
+    if let Some(parse) = kind.lines() {
+        let mut features = Vec::new();
+        index.query(reader, contig, region, |line| {
+            if let Some((_, feature)) = parse(line).map_err(Error::Invalid)? {
+                features.push(feature);
             }
-            unreachable!()
-        }
+            Ok(())
+        })?;
+        return Ok((region, features));
     }
+    let mut wanted = region;
+    for pass in 1.. {
+        let mut records = Vec::new();
+        index.query(reader, contig, wanted, |line| {
+            if let Some(record) = kind.records()(line).map_err(Error::Invalid)? {
+                records.push(record);
+            }
+            Ok(())
+        })?;
+        let hull = records
+            .iter()
+            .fold(wanted, |hull, record| hull.hull(record.span));
+        if hull == wanted || pass == PASSES {
+            return Ok((wanted, kind.assemble(records)));
+        }
+        wanted = hull;
+    }
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -209,7 +220,7 @@ mod tests {
             Bgzf,
             tests::{block, file},
         },
-        tabix::tests::{BED, Bins, GFF, index},
+        tabix::tests::{BED, Bins, GFF, PAF, index},
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -223,6 +234,7 @@ mod tests {
         let preset = match kind {
             Kind::Bed => BED,
             Kind::Gff | Kind::Gtf => GFF,
+            Kind::Paf => PAF,
         };
         let index = index(preset, &["chr1"], &[(bins, &[0])]);
         let mut reader = Bgzf::new(Cursor::new(file(&[text.as_bytes()])));
@@ -276,7 +288,33 @@ mod tests {
         assert_eq!(Kind::of("Genes.BED"), Some(Kind::Bed));
         assert_eq!(Kind::of("gencode.gff3.gz"), Some(Kind::Gff));
         assert_eq!(Kind::of("refseq.gff.bgz"), Some(Kind::Gff));
+        assert_eq!(Kind::of("asm.paf.gz"), Some(Kind::Paf));
         assert_eq!(Kind::of("calls.vcf.gz"), None);
+    }
+
+    #[test]
+    fn paf_files_give_alignments_on_their_target_with_the_query_names() {
+        let lines = [
+            "q1\t500\t0\t100\t+\tchr1\t1000\t10\t110\t95\t100\t60",
+            "q2\t500\t0\t100\t-\tchr1\t1000\t300\t400\t99\t100\t60",
+            "q3\t500\t0\t100\t+\tchr2\t1000\t10\t110\t99\t100\t60",
+        ];
+        let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
+        let (table, found) = read_table(Kind::Paf, text.as_bytes()).unwrap();
+        assert_eq!(
+            found,
+            [
+                entry("q1", "chr1", 10, 110),
+                entry("q2", "chr1", 300, 400),
+                entry("q3", "chr2", 10, 110)
+            ]
+        );
+        let near = table.query("chr1", region(250, 350));
+        assert_eq!(near.len(), 1);
+        assert_eq!(near[0].name(), "q2");
+        let (_, indexed) = run(Kind::Paf, &lines[..2], region(0, 200));
+        assert_eq!(indexed.len(), 1);
+        assert_eq!(indexed[0].name(), "q1");
     }
 
     #[test]

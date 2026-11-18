@@ -128,6 +128,7 @@ fn kind(name: &str) -> Option<Kind> {
     Some(Kind::Text(match features::Kind::of(name)? {
         features::Kind::Bed => Layout::BED,
         features::Kind::Gff | features::Kind::Gtf => Layout::GFF,
+        features::Kind::Paf => Layout::PAF,
     }))
 }
 
@@ -658,6 +659,30 @@ mod tests {
         let source = track::open_with(file, Some(prepared)).unwrap();
         assert_eq!(source.name, "genes.bed");
         assert_eq!(feature_names(&source, "chr1"), ["a", "c"]);
+    }
+
+    #[test]
+    fn large_paf_files_are_sorted_by_their_target() {
+        let scratch = Scratch::new("prepare-paf");
+        let cache = folder(&scratch).join("cache");
+        let line = |query: &str, contig: &str, start: u64| {
+            format!(
+                "{query}\t500\t0\t100\t+\t{contig}\t1000\t{start}\t{}\t99\t100\t60\n",
+                start + 100
+            )
+        };
+        let text = [
+            line("c", "chr1", 300),
+            line("d", "chr2", 5),
+            line("a", "chr1", 100),
+        ]
+        .concat();
+        let file: Location = scratch.file("asm.paf", text).into();
+        let (prepared, steps) = prepare(&file, &cache);
+        assert!(steps.contains(&Step::Sorting), "{steps:?}");
+        let source = track::open_with(file, Some(prepared)).unwrap();
+        assert_eq!(feature_names(&source, "chr1"), ["a", "c"]);
+        assert_eq!(feature_names(&source, "chr2"), ["d"]);
     }
 
     #[test]

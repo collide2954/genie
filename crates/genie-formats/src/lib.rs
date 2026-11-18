@@ -35,6 +35,7 @@ pub mod icon;
 pub mod ini;
 pub mod junctions;
 pub mod md5;
+pub mod paf;
 pub mod png;
 pub mod remote;
 pub mod samples;

@@ -98,7 +98,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | --- | --- |
 | Reference sequence | FASTA (`.fa`, `.fasta`, `.fna`, `.fas`), FASTA compressed with bgzip (`.fa.gz`), UCSC 2bit (`.2bit`) |
 | Feature track | BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (`.bb`) |
-| Alignment track | BAM; CRAM 3.0 and 3.1 |
+| Alignment track | BAM; CRAM 3.0 and 3.1; PAF from minimap2, wfmash and other aligners (`.paf`, plain, gzip or bgzip) |
 | Variant track | VCF (plain, gzip or bgzip); BCF (`.bcf`) with its CSI index (`.bcf.csi`) |
 | Signal track | bigWig (`.bw`); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip) |
 | Interaction track | bigInteract (`.bb`); BEDPE (`.bedpe`, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (`.txt`, plain or gzip) |
@@ -178,6 +178,19 @@ sort -k1,1 -k2,2n calls.bed | bgzip > calls.bedMethyl.gz && tabix -p bed calls.b
 ```
 
 genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.
+
+### PAF alignments
+
+A PAF file from minimap2, wfmash or another aligner shows each alignment on its target sequence, as a feature with the name of the query. So make the PAF file with the reference in view as the target, for example `minimap2 -cx asm5 genome.fa other.fa > other.paf`.
+
+- If a line has a CIGAR (the `cg` tag, from `minimap2 -c`), each deletion of 50 bases or more from the target splits the alignment into blocks with a thin line between them, as the exons of a transcript.
+- The card shows the place on the query, for example `contig_7:1001-4100`, the identity (matches / alignment block length), the matches, the block length, MAPQ and the short tags, such as the type (primary, secondary or inversion), the edits (NM) and the divergence (dv). Filters work on these fields, for example **Identity (%)** at least 95 or **Type** primary.
+- Type a query name in the locus box to go to its alignment.
+- A plain PAF file up to 50 MB opens directly. genie sorts and indexes larger files in its cache. To prepare a PAF file yourself:
+
+```bash
+sort -k6,6 -k8,8n other.paf | bgzip > other.paf.gz && tabix -0 -s6 -b8 -e9 other.paf.gz
+```
 
 ## Files on the web
 

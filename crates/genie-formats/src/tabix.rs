@@ -47,6 +47,12 @@ impl Layout {
         columns: [1, 2, 0],
         skip: 0,
     };
+    /// PAF files on their target, as `tabix -0 -s6 -b8 -e9` indexes them.
+    pub const PAF: Self = Self {
+        format: ZERO_BASED,
+        columns: [6, 8, 9],
+        skip: 0,
+    };
 
     /// A table with the contig, the start and the end in these columns (from 1), with
     /// positions counted from 1, as `tabix -s -b -e` indexes it.
@@ -674,6 +680,7 @@ pub mod tests {
 
     pub const BED: [usize; 4] = [0x10000, 1, 2, 3];
     pub const GFF: [usize; 4] = [0, 1, 4, 5];
+    pub const PAF: [usize; 4] = [0x10000, 6, 8, 9];
     pub const VCF: [usize; 4] = [2, 1, 2, 0];
 
     pub type Bins<'a> = &'a [(u32, &'a [(u64, u64)])];

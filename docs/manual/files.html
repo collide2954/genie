@@ -64,7 +64,7 @@
 <tbody>
 <tr><td>Reference sequence</td><td>FASTA (<code>.fa</code>, <code>.fasta</code>, <code>.fna</code>, <code>.fas</code>), FASTA compressed with bgzip (<code>.fa.gz</code>), UCSC 2bit (<code>.2bit</code>)</td></tr>
 <tr><td>Feature track</td><td>BED, GFF3 and GTF (plain, gzip or bgzip); bigBed (<code>.bb</code>)</td></tr>
-<tr><td>Alignment track</td><td>BAM; CRAM 3.0 and 3.1</td></tr>
+<tr><td>Alignment track</td><td>BAM; CRAM 3.0 and 3.1; PAF from minimap2, wfmash and other aligners (<code>.paf</code>, plain, gzip or bgzip)</td></tr>
 <tr><td>Variant track</td><td>VCF (plain, gzip or bgzip); BCF (<code>.bcf</code>) with its CSI index (<code>.bcf.csi</code>)</td></tr>
 <tr><td>Signal track</td><td>bigWig (<code>.bw</code>); bedGraph (plain, gzip or bgzip); bedMethyl from modkit (plain, gzip or bgzip)</td></tr>
 <tr><td>Interaction track</td><td>bigInteract (<code>.bb</code>); BEDPE (<code>.bedpe</code>, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (<code>.txt</code>, plain or gzip)</td></tr>
@@ -107,6 +107,15 @@
 <p>A bedMethyl file from <code>modkit pileup</code> is a BED file. To prepare a large bedMethyl track:</p>
 <pre><code>sort -k1,1 -k2,2n calls.bed | bgzip &gt; calls.bedMethyl.gz &amp;&amp; tabix -p bed calls.bedMethyl.gz</code></pre>
 <p>genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.</p>
+<h3 id="paf-alignments">PAF alignments</h3>
+<p>A PAF file from minimap2, wfmash or another aligner shows each alignment on its target sequence, as a feature with the name of the query. So make the PAF file with the reference in view as the target, for example <code>minimap2 -cx asm5 genome.fa other.fa &gt; other.paf</code>.</p>
+<ul>
+<li>If a line has a CIGAR (the <code>cg</code> tag, from <code>minimap2 -c</code>), each deletion of 50 bases or more from the target splits the alignment into blocks with a thin line between them, as the exons of a transcript.</li>
+<li>The card shows the place on the query, for example <code>contig_7:1001-4100</code>, the identity (matches / alignment block length), the matches, the block length, MAPQ and the short tags, such as the type (primary, secondary or inversion), the edits (NM) and the divergence (dv). Filters work on these fields, for example <b>Identity (%)</b> at least 95 or <b>Type</b> primary.</li>
+<li>Type a query name in the locus box to go to its alignment.</li>
+<li>A plain PAF file up to 50 MB opens directly. genie sorts and indexes larger files in its cache. To prepare a PAF file yourself:</li>
+</ul>
+<pre><code>sort -k6,6 -k8,8n other.paf | bgzip &gt; other.paf.gz &amp;&amp; tabix -0 -s6 -b8 -e9 other.paf.gz</code></pre>
 <h2 id="files-on-the-web">Files on the web</h2>
 <p>genie can open reference sequences and tracks from a web server. To open a file from the web:</p>
 <ol>

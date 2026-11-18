@@ -2107,6 +2107,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
             match kind {
                 Kind::Bed => bed::fields(feature.extra()),
                 Kind::Gff | Kind::Gtf => gff::fields(feature.extra()),
+                Kind::Paf => genie_formats::paf::fields(feature.extra()),
             }
         }
         Format::Columns(file) => file.fields(feature.extra()),
@@ -4263,6 +4264,45 @@ mod tests {
         assert_eq!(loaded.count(), 1);
         let names = names(&source, &assembly(), None).unwrap();
         assert_eq!(names.find("geneb").unwrap().contig, 1);
+    }
+
+    #[test]
+    fn paf_files_show_alignments_with_the_place_on_the_query() {
+        let scratch = Scratch::new("paf");
+        let text = "contig_9\t9000\t100\t2100\t-\tchr1\t1000\t100\t900\t760\t800\t60\ttp:A:P\tcg:Z:200M100D500M\n";
+        let source = open(scratch.file("asm.paf", text)).unwrap();
+        assert!(matches!(
+            source.format,
+            Format::Features(FeatureFile::Table {
+                kind: Kind::Paf,
+                ..
+            })
+        ));
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 1_000),
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        )
+        .unwrap();
+        let Content::Features(annotation) = &loaded.content else {
+            panic!("no features");
+        };
+        let feature = &annotation.features[0];
+        assert_eq!(feature.name(), "contig_9");
+        assert_eq!(feature.blocks(), [region(100, 300), region(400, 900)]);
+        let fields = feature_fields(&source, feature);
+        assert_eq!(fields[0].value, "contig_9:101-2100");
+        assert!(
+            fields
+                .iter()
+                .any(|field| field.label == "Identity (%)" && field.value == "95.0")
+        );
+        let names = names(&source, &assembly(), None).unwrap();
+        assert_eq!(names.find("contig_9").unwrap().contig, 0);
     }
 
     #[test]

@@ -1265,6 +1265,7 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "cnr",
                     "hic",
                     "tab",
+                    "paf",
                 ],
             )
             .add_filter(
