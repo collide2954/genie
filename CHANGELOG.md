@@ -18,7 +18,7 @@
 ### Genomes
 
 - **Other NCBI assemblies…** in the start view and **NCBI assembly…** in the genome menu find an assembly of UCSC GenArk by its species, its common name or its accession, then open its hub and its genome. Open URL and Open a track hub also take an accession such as `GCF_016699485.2`. Outdated assemblies come last.
-- The genome of an assembly hub opens with the contig sizes of its `chromSizes` file, so a 2bit file on the web needs a few requests, not one for each contig.
+- The genome of an assembly hub opens with the contig sizes of its `chromSizes` file, so a 2bit file on the web needs a few requests, not one for each contig. Sessions keep the sizes file.
 
 ### Images
 

@@ -205,13 +205,14 @@ impl Genie {
             .iter()
             .map(|track| local(&track.location, genome.as_ref(), folder.as_deref()))
             .collect();
-        let reference = match (&genome, &folder) {
-            (Some(genome), Some(folder)) => genome::open(genome, folder, SystemTime::now())?,
-            _ => reference::open(
-                saved.reference.clone(),
-                paths::cache_dir().as_deref(),
-                &mut |_| {},
-            )?,
+        let cache = paths::cache_dir();
+        let reference = match (&genome, &folder, &saved.sizes) {
+            (Some(genome), Some(folder), _) => genome::open(genome, folder, SystemTime::now())?,
+            (_, _, Some(sizes)) => {
+                let location = saved.reference.clone();
+                reference::open_sized(location, sizes, cache.as_deref(), &mut |_| {})?
+            }
+            _ => reference::open(saved.reference.clone(), cache.as_deref(), &mut |_| {})?,
         };
         let samples = saved.samples.clone();
         self.pending.clone_from(&tracks);

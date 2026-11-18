@@ -771,6 +771,17 @@ mod tests {
     }
 
     #[test]
+    fn sessions_keep_the_sizes_file_of_a_hub_genome() {
+        let scratch = Scratch::new("app-hub-sizes");
+        let fasta = scratch.file("myAsm.fa", ">chr1\nACGT\n");
+        let sizes = Location::File(scratch.file("myAsm.sizes", "chr1\t4\n"));
+        let reference = crate::reference::open_sized(fasta, &sizes, None, &mut |_| {}).unwrap();
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Opened(Ok(Arc::new(reference))));
+        assert_eq!(genie.saved().unwrap().sizes, Some(sizes));
+    }
+
+    #[test]
     fn sessions_keep_hubs_and_open_hub_tracks_by_their_type() {
         let scratch = Scratch::new("app-hub-session");
         let location = local_hub(&scratch);

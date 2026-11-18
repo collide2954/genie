@@ -37,6 +37,8 @@ const HUES: [(&str, Hue); 5] = [
 #[derive(Debug, Clone, PartialEq)]
 pub struct Saved {
     pub reference: Location,
+    /// The file of the contig sizes of the reference, as the `chromSizes` file of a hub genome.
+    pub sizes: Option<Location>,
     pub genome: Option<String>,
     pub locus: Option<String>,
     pub reading: Reading,
@@ -189,6 +191,7 @@ impl Saved {
         let figure_value = |key| figure.and_then(|section| section.value(key));
         Ok(Self {
             reference: read(reference, base),
+            sizes: value("sizes").map(|text| read(text, base)),
             genome: value("genome").map(str::to_owned),
             locus: value("locus").map(str::to_owned),
             reading,
@@ -206,6 +209,9 @@ impl Saved {
 
     pub fn text(&self, base: &Path) -> String {
         let mut session = vec![("reference", written(&self.reference, base))];
+        if let Some(sizes) = &self.sizes {
+            session.push(("sizes", written(sizes, base)));
+        }
         if let Some(genome) = &self.genome {
             session.push(("genome", genome.clone()));
         }
@@ -682,6 +688,7 @@ mod tests {
         let chains = Location::File(base().join("chains").join("hg19ToHg38.over.chain.gz"));
         Saved {
             reference: Location::File(base().join("data").join("ref.fa.gz")),
+            sizes: None,
             genome: None,
             locus: Some("chr1:51,971-52,030".to_owned()),
             reading: Reading {
@@ -862,10 +869,15 @@ mod tests {
     fn sessions_keep_addresses_as_written() {
         let mut saved = saved();
         saved.reference = Location::parse("https://example.org/hg38.2bit").unwrap();
+        saved.sizes = Location::parse("https://example.org/hg38.chrom.sizes.txt").ok();
         saved.tracks[0].location = Location::parse("https://example.org/a.bam?k=1").unwrap();
         let text = saved.text(&base());
         assert!(
             text.contains("reference = https://example.org/hg38.2bit"),
+            "{text}"
+        );
+        assert!(
+            text.contains("sizes = https://example.org/hg38.chrom.sizes.txt"),
             "{text}"
         );
         assert!(

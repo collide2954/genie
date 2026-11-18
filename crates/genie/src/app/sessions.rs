@@ -40,9 +40,12 @@ impl Genie {
             .iter()
             .map(|track| local(&track.location, genome.as_ref(), folder.as_deref()))
             .collect();
-        let task = match &genome {
-            Some(genome) => self.open_genome(&genome.id),
-            None => self.open(saved.reference.clone()),
+        let task = match (&genome, &saved.sizes) {
+            (Some(genome), _) => self.open_genome(&genome.id),
+            (None, Some(sizes)) => {
+                self.open_reference(saved.reference.clone(), Some(sizes.clone()))
+            }
+            (None, None) => self.open(saved.reference.clone()),
         };
         self.pending = tracks;
         self.hubs_next = saved.hubs.iter().map(|hub| (hub.clone(), false)).collect();
@@ -110,6 +113,7 @@ impl Genie {
         let contigs = session.reference.assembly.contigs();
         Some(Saved {
             reference: session.reference.location.clone(),
+            sizes: session.reference.sizes.clone(),
             genome: session.reference.genome.clone(),
             locus: Some(session.locus()),
             reading: session.reading,

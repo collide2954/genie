@@ -25,6 +25,9 @@ pub struct Reference {
     pub name: String,
     pub assembly: Assembly,
     pub genome: Option<String>,
+    /// The file of contig sizes that the reference opened with, as the `chromSizes` file of a
+    /// hub genome. Sessions keep it.
+    pub sizes: Option<Location>,
     source: Source,
     order: Vec<usize>,
     bands: Vec<Vec<Band>>,
@@ -82,7 +85,9 @@ pub fn open_sized(
             Extras::default()
         }
     };
-    open_with(location, &extras, cache, progress)
+    let mut reference = open_with(location, &extras, cache, progress)?;
+    reference.sizes = Some(sizes.clone());
+    Ok(reference)
 }
 
 fn read_sizes(location: &Location) -> Result<HashMap<String, u64>, String> {
@@ -203,6 +208,7 @@ impl Reference {
             location,
             assembly: Assembly::new(sorted),
             genome: None,
+            sizes: None,
             source,
             order,
             bands: Vec::new(),
@@ -555,6 +561,7 @@ mod tests {
         let sized = open_sized(at("/far.2bit"), &at("/far.sizes"), None, &mut |_| {}).unwrap();
         assert_eq!(lengths(&sized), [8, 4, 12]);
         assert_eq!(server.requests(), 2);
+        assert_eq!(sized.sizes, Some(at("/far.sizes")));
         assert_eq!(sized.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
         let fallback = open_sized(at("/far.2bit"), &at("/none.sizes"), None, &mut |_| {}).unwrap();
         assert_eq!(lengths(&fallback), [8, 4, 12]);

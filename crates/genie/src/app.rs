@@ -3893,6 +3893,7 @@ mod tests {
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
+            sizes: None,
             genome: None,
             locus: None,
             reading: crate::reading::Reading::default(),
@@ -3963,6 +3964,7 @@ mod tests {
     fn welcome_offers_to_restore_the_last_session() {
         let last = crate::saved::Saved {
             reference: PathBuf::from("/data/hg38.fa").into(),
+            sizes: None,
             genome: None,
             locus: Some("chr1:1,000-2,000".to_owned()),
             reading: crate::reading::Reading::default(),
