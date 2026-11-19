@@ -4,6 +4,7 @@ use genie_core::{Named, Region, Span, Target, Viewport};
 use iced::Task;
 use iced::widget::operation;
 
+use crate::card::{Card, Detail};
 use crate::chrome;
 use crate::shortcuts::Command;
 use crate::track::{self, Lift, Source};
@@ -210,6 +211,60 @@ impl Genie {
         self.width = width;
         self.hover = None;
         self.on_session(|session| session.resize(width));
+        self.fetch()
+    }
+
+    /// Shows the read of the pinned card and its mate side by side, in two panels of the width
+    /// of the panel of the read, each with the read or the mate in its middle.
+    pub(super) fn view_mate(&mut self) -> Task<Message> {
+        let width = self.width;
+        let Some(Card {
+            contig: own,
+            detail:
+                Detail::Read {
+                    read,
+                    mate: Some(other),
+                    ..
+                },
+            ..
+        }) = &self.pinned
+        else {
+            return Task::none();
+        };
+        let (Some(mate), Some(session)) = (read.mate, &mut self.session) else {
+            return Task::none();
+        };
+        let assembly = &session.reference.assembly;
+        let (Some(own), Some(other)) = (assembly.find(own), assembly.find(other)) else {
+            return Task::none();
+        };
+        let length = read.end().saturating_sub(read.start);
+        let span = (0..session.count())
+            .map(|panel| session.frame(panel))
+            .find(|(contig, viewport)| {
+                let visible = viewport.visible();
+                *contig == own && visible.start() <= read.start && read.start < visible.end()
+            })
+            .map_or(session.viewport, |(_, viewport)| viewport)
+            .visible()
+            .len()
+            .max(1);
+        let window = |contig: usize, middle: u64| {
+            let size = assembly.contigs()[contig].length;
+            let start = middle
+                .saturating_sub(span / 2)
+                .min(size.saturating_sub(span));
+            Target {
+                contig,
+                span: Span::Region(Region::between(start, (start + span).min(size))),
+            }
+        };
+        let targets = [
+            window(own, read.start + length / 2),
+            window(other, mate.start + length / 2),
+        ];
+        session.split(&targets, width);
+        (self.hover, self.pinned) = (None, None);
         self.fetch()
     }
 

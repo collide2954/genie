@@ -814,8 +814,20 @@ fn field_row<'a>(
     .into()
 }
 
-/// The title of a card. A pinned card has a close button, and a pinned read card a BLAT button.
-fn heading<'a>(title: String, pinned: bool, read: bool) -> Element<'a, Message> {
+/// The buttons of a pinned card: BLAT for a read, and View mate for a read with a mapped mate.
+fn buttons(detail: &Detail) -> (bool, bool) {
+    match detail {
+        Detail::Read { read, mate, .. } => {
+            let mapped = read.has(PAIRED) && !read.has(MATE_UNMAPPED) && read.mate.is_some();
+            (true, mapped && mate.is_some())
+        }
+        _ => (false, false),
+    }
+}
+
+/// The title of a card. A pinned card has a close button, and a pinned read card a BLAT button
+/// and, when its mate is mapped, a button that shows the read and its mate side by side.
+fn heading<'a>(title: String, pinned: bool, (read, mate): (bool, bool)) -> Element<'a, Message> {
     let mut heading = row![
         text(title)
             .font(font::UI_STRONG)
@@ -825,6 +837,14 @@ fn heading<'a>(title: String, pinned: bool, read: bool) -> Element<'a, Message> 
     ]
     .spacing(4)
     .align_y(Align::Center);
+    if pinned && mate {
+        heading = heading.push(
+            button(text("View mate").size(11))
+                .padding([1, 6])
+                .style(style::ghost)
+                .on_press(Message::ViewMate),
+        );
+    }
     if pinned && read {
         heading = heading.push(
             button(text("BLAT").size(11))
@@ -912,7 +932,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
     let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
     let locus = locus(card, span);
     let mut body = column![
-        heading(title, pinned, matches!(card.detail, Detail::Read { .. })),
+        heading(title, pinned, buttons(&card.detail)),
         text(locus.to_string())
             .font(font::MONO)
             .size(11)

@@ -6,6 +6,7 @@
 
 - genie opens splice junction files as junction tracks: the `SJ.out.tab` files of STAR, and the junction BED files of TopHat and regtools. Each junction is an arc in the color of its strand, higher and thicker for more reads, and its card shows the fields of the file, such as the multi-mapping reads and the splice motif.
 - **View as pairs** in the menu of a read track puts the two mates of each pair on one row, with a line between them.
+- **View mate** in the open card of a read shows the read and its mate side by side, also when the mate is on another chromosome.
 - An insertion of 10 bases or more in a read, as in long reads, shows its length in a purple box in every view. The read card of an insertion under the pointer shows its length, its place and its bases.
 - genie opens cooler files (`.cool` and `.mcool`) as Hi-C tracks, with their balancing weights as normalizations. It has its own reader of the HDF5 files that cooler writes.
 - **Virtual 4C from here** in the menu of a Hi-C track shows the contacts of one place with each bin in view, in a lane under the map.

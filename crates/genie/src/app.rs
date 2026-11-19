@@ -711,6 +711,8 @@ pub enum Message {
     Address(Address),
     Modifiers(keyboard::Modifiers),
     CardClosed,
+    /// Shows the read of the pinned card and its mate side by side.
+    ViewMate,
     /// The names of the features of a track, with the number of the lift of the track.
     NamesLoaded((u64, u16), Result<Arc<Names>, String>),
     Looked(Option<Named>, String),
@@ -1071,6 +1073,7 @@ impl Genie {
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
+            Message::ViewMate => return self.view_mate(),
             Message::Filter(id, filtering) => return self.filter(id, filtering),
             Message::Field(choice) => self.choose_field(choice),
             Message::Visit(locus) => return self.show_locus(locus),
@@ -2386,6 +2389,63 @@ mod tests {
             Some("genie cannot find chrZ.")
         );
         assert_eq!(genie.session.as_ref().unwrap().count(), 1);
+    }
+
+    /// A pinned read card has a button that shows the read and its mate side by side, in two
+    /// panels of the width of the view: the mate can be far away or on another chromosome.
+    #[test]
+    fn the_mate_of_a_pinned_read_opens_in_a_second_panel() {
+        use crate::card::{Card, Detail};
+        use genie_core::alignment::{Alignment, MATE_UNMAPPED, Mate, Op, PAIRED, Tags};
+
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-300");
+        settle(&mut genie);
+        let read = |flags| Alignment {
+            name: "pair7".to_owned(),
+            start: 150,
+            flags,
+            mapq: 60,
+            cigar: vec![(Op::Match, 100)],
+            bases: vec![b'A'; 100],
+            qualities: Vec::new(),
+            mate: Some(Mate {
+                contig: 1,
+                start: 400,
+                insert: 0,
+            }),
+            tags: Tags::default(),
+        };
+        let pin = |genie: &mut Genie, read: Alignment| {
+            genie.pinned = Some(Card {
+                track: 0,
+                contig: "chr1".to_owned(),
+                samples: Vec::new(),
+                detail: Detail::Read {
+                    read,
+                    mate: Some("chr2".to_owned()),
+                    same: false,
+                    insertion: None,
+                },
+                at: Point::ORIGIN,
+                fields: Vec::new(),
+                effects: Changes::default(),
+            });
+        };
+        pin(&mut genie, read(PAIRED));
+        let mut ui = simulator(genie.view());
+        ui.click("View mate").unwrap();
+        assert!(
+            ui.into_messages()
+                .any(|message| message == Message::ViewMate)
+        );
+        let _ = genie.update(Message::ViewMate);
+        settle(&mut genie);
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.locus(), "chr1:101-300 chr2:301-500");
+        assert!(genie.pinned.is_none());
+        pin(&mut genie, read(PAIRED | MATE_UNMAPPED));
+        assert!(!shows(&genie, "View mate"));
     }
 
     #[test]
