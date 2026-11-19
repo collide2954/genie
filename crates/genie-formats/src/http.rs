@@ -463,7 +463,7 @@ fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
     loop {
         let answer = {
             let _turn = Turn::take(current.origin());
-            exchange(&current, start, last)?
+            exchange(&current, Request::Part { start, last })?
         };
         match answer.status {
             206 => {
@@ -514,24 +514,71 @@ fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
                 current = current.resolve(location)?;
             }
             429 | 503 => {
-                let wait = answer
-                    .header("retry-after")
-                    .and_then(|value| value.trim().parse().ok())
-                    .map_or(Duration::from_secs(1 << tries), Duration::from_secs);
-                if tries >= TRIES || wait > LONGEST_WAIT {
-                    return Err(remote(format!(
-                        "The server of {} is busy ({} {}). Try again later.",
-                        url.shown(),
-                        answer.status,
-                        answer.reason
-                    )));
-                }
+                let wait = busy_wait(url, &answer, tries)?;
                 tries += 1;
                 std::thread::sleep(wait);
             }
             status => return Err(refused(url, status, &answer.reason)),
         }
     }
+}
+
+/// Posts a body of a kind, such as `application/json`, and gives the answer of the server. A
+/// busy server gets the body again, as in [`fetch`].
+pub fn post(url: &Url, kind: &str, body: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut current = url.clone();
+    let (mut redirects, mut tries) = (0, 1);
+    loop {
+        let answer = {
+            let _turn = Turn::take(current.origin());
+            exchange(&current, Request::Post { kind, body })?
+        };
+        match answer.status {
+            200 => return Ok(answer.body),
+            307 | 308 => {
+                redirects += 1;
+                if redirects > REDIRECTS {
+                    return Err(remote(format!(
+                        "The address {} has too many redirects.",
+                        url.shown()
+                    )));
+                }
+                let location = answer.header("location").ok_or_else(|| bad_answer(url))?;
+                current = current.resolve(location)?;
+            }
+            429 | 503 => {
+                let wait = busy_wait(url, &answer, tries)?;
+                tries += 1;
+                std::thread::sleep(wait);
+            }
+            status => return Err(refused(url, status, &answer.reason)),
+        }
+    }
+}
+
+/// How long genie waits before it asks a busy server again: the seconds of its Retry-After, or
+/// longer after each try. An error after the last try, or when the server asks for a long wait.
+fn busy_wait(url: &Url, answer: &Answer, tries: u32) -> Result<Duration, Error> {
+    let wait = answer
+        .header("retry-after")
+        .and_then(|value| value.trim().parse().ok())
+        .map_or(Duration::from_secs(1 << tries), Duration::from_secs);
+    if tries >= TRIES || wait > LONGEST_WAIT {
+        return Err(remote(format!(
+            "The server of {} is busy ({} {}). Try again later.",
+            url.shown(),
+            answer.status,
+            answer.reason
+        )));
+    }
+    Ok(wait)
+}
+
+/// What genie asks a server for: a part of a file, or the answer to a body that it posts.
+#[derive(Debug, Clone, Copy)]
+enum Request<'a> {
+    Part { start: u64, last: u64 },
+    Post { kind: &'a str, body: &'a [u8] },
 }
 
 /// The number of requests that genie has in work with each server.
@@ -687,14 +734,25 @@ impl Connection {
         })
     }
 
-    fn send(&mut self, url: &Url, start: u64, last: u64) -> Result<(Answer, bool), Error> {
-        let request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {AGENT}\r\nAccept-Encoding: identity\r\nRange: bytes={start}-{last}\r\n\r\n",
-            url.target,
-            url.authority()
-        );
+    fn send(&mut self, url: &Url, request: Request<'_>) -> Result<(Answer, bool), Error> {
+        let head = match request {
+            Request::Part { start, last } => format!(
+                "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {AGENT}\r\nAccept-Encoding: identity\r\nRange: bytes={start}-{last}\r\n\r\n",
+                url.target,
+                url.authority()
+            ),
+            Request::Post { kind, body } => format!(
+                "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {AGENT}\r\nAccept-Encoding: identity\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n\r\n",
+                url.target,
+                url.authority(),
+                body.len()
+            ),
+        };
         let stream = self.reader.get_mut();
-        stream.write_all(request.as_bytes())?;
+        stream.write_all(head.as_bytes())?;
+        if let Request::Post { body, .. } = request {
+            stream.write_all(body)?;
+        }
         stream.flush()?;
         self.receive(url)
     }
@@ -753,10 +811,10 @@ impl Connection {
     }
 }
 
-fn exchange(url: &Url, start: u64, last: u64) -> Result<Answer, Error> {
+fn exchange(url: &Url, request: Request<'_>) -> Result<Answer, Error> {
     let origin = url.origin();
     if let Some(mut connection) = take(&origin) {
-        match connection.send(url, start, last) {
+        match connection.send(url, request) {
             Ok((answer, keep)) => {
                 if keep {
                     give(origin, connection);
@@ -770,7 +828,7 @@ fn exchange(url: &Url, start: u64, last: u64) -> Result<Answer, Error> {
     }
     let mut connection = Connection::open(url)?;
     let (answer, keep) = connection
-        .send(url, start, last)
+        .send(url, request)
         .map_err(|error| failed(url, error))?;
     if keep {
         give(origin, connection);
@@ -912,8 +970,22 @@ fn remote(message: String) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{Url, download_in, fetch, get, refused};
+    use super::{Url, download_in, fetch, get, post, refused};
     use crate::server::serve;
+
+    /// A post sends its body and gives the answer. A busy server gets the body again.
+    #[test]
+    fn posts_send_their_body_and_ask_busy_servers_again() {
+        let server = serve(Vec::new());
+        let echo = Url::parse(&server.url("/echo")).unwrap();
+        let body = br#"{"query": "a"}"#;
+        assert_eq!(post(&echo, "application/json", body).unwrap(), body);
+        let busy = Url::parse(&server.url("/busy/echo")).unwrap();
+        assert_eq!(post(&busy, "text/plain", b"again").unwrap(), b"again");
+        assert_eq!(server.requests(), 4);
+        let missing = Url::parse(&server.url("/missing")).unwrap();
+        assert!(post(&missing, "text/plain", b"x").is_err());
+    }
 
     #[test]
     fn urls_keep_their_parts() {

@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -142,6 +142,7 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, counts: &Counts) 
         }
         let target = line.split_whitespace().nth(1).unwrap_or("/").to_owned();
         let mut range = None;
+        let mut length = 0;
         loop {
             let mut header = String::new();
             if reader.read_line(&mut header).unwrap_or(0) == 0 {
@@ -159,6 +160,13 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, counts: &Counts) 
                     end.parse::<usize>().unwrap(),
                 ));
             }
+            if let Some(value) = header.strip_prefix("Content-Length: ") {
+                length = value.parse::<usize>().unwrap_or(0);
+            }
+        }
+        let mut posted = vec![0; length];
+        if reader.read_exact(&mut posted).is_err() {
+            return;
         }
         counts.requests.fetch_add(1, Ordering::SeqCst);
         let _work = Work::new(counts);
@@ -168,6 +176,14 @@ fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, counts: &Counts) 
             let head =
                 format!("HTTP/1.1 {status}\r\nRetry-After: {wait}\r\nContent-Length: 0\r\n\r\n");
             if writer.write_all(head.as_bytes()).is_err() {
+                return;
+            }
+            continue;
+        }
+        // The body of a post comes back as the answer.
+        if path == "/echo" {
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\n\r\n");
+            if writer.write_all(head.as_bytes()).is_err() || writer.write_all(&posted).is_err() {
                 return;
             }
             continue;
