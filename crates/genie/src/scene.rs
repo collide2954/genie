@@ -341,6 +341,19 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
                             marks.get_or_insert_with(|| Frame::with_bounds(renderer, bounds));
                         stroke_mark(frame, primitive, bounds, (tokens, data));
                     }
+                    Primitive::Ribbon { corners, paint } => {
+                        let frame =
+                            marks.get_or_insert_with(|| Frame::with_bounds(renderer, bounds));
+                        let at = |(x, y): (f32, f32)| Point::new(bounds.x + x, bounds.y + y);
+                        let path = Path::new(|builder| {
+                            builder.move_to(at(corners[0]));
+                            for corner in &corners[1..] {
+                                builder.line_to(at(*corner));
+                            }
+                            builder.close();
+                        });
+                        frame.fill(&path, color(*paint, tokens, data));
+                    }
                     Primitive::Rect {
                         x,
                         y,

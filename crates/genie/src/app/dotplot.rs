@@ -9,6 +9,8 @@ use genie_core::{Feature, Span, Strand, Target, grouped};
 use genie_formats::fields::Rule;
 use genie_formats::paf;
 use genie_render::dotplot::{self as render, Coloring, Marks};
+use genie_render::scene::Primitive;
+use genie_render::synteny;
 use iced::widget::{button, column, container, responsive, row, space, text};
 use iced::{Alignment, Element, Length, Point, Task};
 
@@ -45,6 +47,8 @@ pub enum Plotting {
     /// Shows the whole plot.
     Whole,
     Color(Coloring),
+    /// Shows the synteny view of the alignments when true, else the dot plot.
+    Synteny(bool),
 }
 
 /// The dot plot of a track. It stays when the tracks show again, so that Back can show it again
@@ -57,6 +61,9 @@ pub(super) struct DotPlot {
     /// The part of the plot in view, or None for the whole plot.
     pub window: Option<Window>,
     pub coloring: Coloring,
+    /// True for the synteny view: the targets in a row at the top, the queries in a row at the
+    /// bottom, and a band for each alignment.
+    pub synteny: bool,
     /// The alignments, once genie has read them, or why genie could not read them.
     plot: Option<Result<Arc<Plot>, String>>,
     /// The identities at the two ends of the identity scale of the alignments.
@@ -79,6 +86,7 @@ impl DotPlot {
             shown: true,
             window: shown.window,
             coloring: Coloring::default(),
+            synteny: false,
             plot: None,
             identities: (0.0, 1.0),
             reading: 0,
@@ -113,6 +121,48 @@ impl DotPlot {
 
     fn forget_pointer(&mut self) {
         (self.pointer, self.pressed, self.chosen) = (None, None, None);
+    }
+
+    /// The alignment under a place of the view that shows.
+    fn hit_at(&self, plot: &Plot, size: (f32, f32), place: (f32, f32)) -> Option<usize> {
+        let window = self.window_of(plot);
+        if self.synteny {
+            synteny::hit(plot, window, size, place)
+        } else {
+            render::hit(plot, window, size, place)
+        }
+    }
+
+    /// The part of the plot for a drag from one place to another, in the view that shows: a box
+    /// of the dot plot, or a range of a row of the synteny view.
+    fn zoomed(
+        &self,
+        plot: &Plot,
+        size: (f32, f32),
+        (from, to): ((f32, f32), (f32, f32)),
+    ) -> Option<Window> {
+        let window = self.window_of(plot);
+        if self.synteny {
+            synteny::zoomed(plot, window, size, from, to)
+        } else {
+            render::zoomed(window, size, from, to)
+        }
+    }
+
+    /// The picture of the view that shows, for a space of `size` pixels.
+    fn scene(&self, plot: &Plot, size: (f32, f32)) -> Vec<Primitive> {
+        let marks = Marks {
+            coloring: self.coloring,
+            identities: self.identities,
+            chosen: self.chosen,
+            dragged: self.dragged(),
+        };
+        let window = self.window_of(plot);
+        if self.synteny {
+            synteny::scene(plot, window, size, marks)
+        } else {
+            render::scene(plot, window, size, marks)
+        }
     }
 }
 
@@ -205,6 +255,13 @@ impl Genie {
                 if let Some(plot) = self.plot_mut() {
                     plot.coloring = coloring;
                 }
+            }
+            Plotting::Synteny(synteny) => {
+                if let Some(plot) = self.plot_mut() {
+                    plot.synteny = synteny;
+                    plot.forget_pointer();
+                }
+                self.hover = None;
             }
         }
         Task::none()
@@ -311,13 +368,14 @@ impl Genie {
             return;
         };
         let place = (pointer.local.x, pointer.local.y);
-        plot.chosen = render::hit(&data, plot.window_of(&data), size, place);
+        plot.chosen = plot.hit_at(&data, size, place);
         self.hover = plot
             .chosen
             .map(|index| card(plot.track, &data, index, pointer.at));
     }
 
-    /// Ends a drag: a box zooms in, and a click on an alignment shows it in the tracks.
+    /// Ends a drag: a box or a range zooms in, and a click on an alignment shows it in the
+    /// tracks.
     fn plot_released(&mut self) -> Task<Message> {
         let Some(plot) = self.plot_mut() else {
             return Task::none();
@@ -328,15 +386,14 @@ impl Genie {
         let Some(data) = plot.data().cloned() else {
             return Task::none();
         };
-        let window = plot.window_of(&data);
         let to = (pointer.local.x, pointer.local.y);
         if (from.0 - to.0).abs().max((from.1 - to.1).abs()) >= SLOP {
-            if let Some(zoomed) = render::zoomed(window, size, from, to) {
+            if let Some(zoomed) = plot.zoomed(&data, size, (from, to)) {
                 self.zoom_plot(Some(zoomed));
             }
             return Task::none();
         }
-        match render::hit(&data, window, size, to) {
+        match plot.hit_at(&data, size, to) {
             Some(index) => self.go_to_alignment(&data, index),
             None => Task::none(),
         }
@@ -393,14 +450,7 @@ pub(super) fn plot_view<'a>(session: &'a Session, plot: &'a DotPlot) -> Element<
         Some(Ok(data)) if data.hits.is_empty() => hint(ALL_HIDDEN.to_owned()),
         Some(Ok(data)) => responsive(move |size| {
             let size = (size.width, size.height);
-            let marks = Marks {
-                coloring: plot.coloring,
-                identities: plot.identities,
-                chosen: plot.chosen,
-                dragged: plot.dragged(),
-            };
-            let primitives = render::scene(data, plot.window_of(data), size, marks);
-            scene::view(primitives, size.1)
+            scene::view(plot.scene(data, size), size.1)
                 .on_hover(move |pointer| Message::Plot(Plotting::Hovered(pointer, size)))
                 .on_press(|_| Message::Plot(Plotting::Pressed))
                 .on_release(Message::Plot(Plotting::Released))
@@ -462,14 +512,21 @@ fn bar<'a>(plot: &DotPlot, name: &str) -> Element<'a, Message> {
         .window
         .is_some()
         .then_some(Message::Plot(Plotting::Whole));
-    let title = text(format!("Dot plot · {name}"))
+    let (view, other_view) = if plot.synteny {
+        ("Synteny", "Dot plot view")
+    } else {
+        ("Dot plot", "Synteny view")
+    };
+    let title = text(format!("{view} · {name}"))
         .font(font::UI_STRONG)
         .size(12);
+    let views = Message::Plot(Plotting::Synteny(!plot.synteny));
     let row = row![title]
         .push(counts)
         .push(space::horizontal())
         .push(text(legend).size(11).style(style::muted))
         .push(ghost(switch, Some(Message::Plot(Plotting::Color(other)))))
+        .push(ghost(other_view, Some(views)))
         .push(ghost("Whole plot", whole))
         .push(close)
         .spacing(8)
@@ -674,6 +731,37 @@ mod tests {
             &genie,
             "Identity 95.0 % or less light · 100.0 % dark"
         ));
+    }
+
+    #[test]
+    fn the_synteny_view_shows_the_alignments_as_bands_between_two_rows() {
+        let scratch = Scratch::new("dotplot-synteny");
+        let mut genie = opened(&scratch);
+        let _ = genie.update(Message::Plot(Plotting::Synteny(true)));
+        assert!(shows(&genie, "Synteny · asm.paf"));
+        assert!(shows(&genie, "Dot plot view"));
+        // The rows are 984 pixels wide from 8, with 4,000 bases of targets at the top and 3,000
+        // bases of queries at the bottom, so the band of ctgA on chr1:1-1,000 goes from 8-254
+        // at the top to 8-336 at the bottom.
+        point(&mut genie, 100.0, 300.0);
+        assert!(shows(&genie, "ctgA"), "the card of the band");
+        assert!(shows(&genie, "chr1:1-1,000"));
+        point(&mut genie, 8.0, 10.0);
+        let _ = genie.update(Message::Plot(Plotting::Pressed));
+        point(&mut genie, 254.0, 10.0);
+        let _ = genie.update(Message::Plot(Plotting::Released));
+        let zoomed = genie_core::dotplot::Window {
+            across: Region::between(0, 1_000),
+            down: Region::between(0, 1_020),
+        };
+        assert_eq!(
+            window(&genie),
+            Some(zoomed),
+            "the queries follow the targets"
+        );
+        let _ = genie.update(Message::Plot(Plotting::Synteny(false)));
+        assert!(shows(&genie, "Dot plot · asm.paf"));
+        assert_eq!(window(&genie), Some(zoomed), "the dot plot keeps the zoom");
     }
 
     #[test]

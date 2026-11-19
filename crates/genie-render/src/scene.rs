@@ -156,6 +156,12 @@ pub enum Primitive {
         width: f32,
         paint: Paint,
     },
+    /// A filled band with four corners in the order of its sides. A band whose sides cross
+    /// fills the two halves.
+    Ribbon {
+        corners: [(f32, f32); 4],
+        paint: Paint,
+    },
 }
 
 impl Primitive {
@@ -179,6 +185,11 @@ impl Primitive {
             Self::Line { from, to, .. } => {
                 from.1 += by;
                 to.1 += by;
+            }
+            Self::Ribbon { corners, .. } => {
+                for corner in corners {
+                    corner.1 += by;
+                }
             }
         }
         self
@@ -241,6 +252,10 @@ mod tests {
                 width: 1.0,
                 paint: Paint::Muted,
             },
+            Primitive::Ribbon {
+                corners: [(1.0, 2.0), (3.0, 2.0), (3.0, 2.0), (1.0, 2.0)],
+                paint: Paint::Muted,
+            },
         ];
         let tops: Vec<f32> = primitives
             .into_iter()
@@ -251,8 +266,12 @@ mod tests {
                 | Primitive::Label { y, .. } => y,
                 Primitive::Arc { base, .. } => base,
                 Primitive::Line { from, to, .. } => from.1.min(to.1),
+                Primitive::Ribbon { corners, .. } => corners
+                    .iter()
+                    .map(|corner| corner.1)
+                    .fold(f32::INFINITY, f32::min),
             })
             .collect();
-        assert_eq!(tops, [12.0; 6]);
+        assert_eq!(tops, [12.0; 7]);
     }
 }

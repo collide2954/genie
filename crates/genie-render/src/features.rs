@@ -439,8 +439,11 @@ mod tests {
                     assert_eq!(paint, Paint::Text);
                     continue;
                 }
-                Primitive::Label { .. } | Primitive::Arc { .. } | Primitive::Line { .. } => {
-                    panic!("features have no range labels, arcs or lines")
+                Primitive::Label { .. }
+                | Primitive::Arc { .. }
+                | Primitive::Line { .. }
+                | Primitive::Ribbon { .. } => {
+                    panic!("features have no range labels, arcs, lines or bands")
                 }
             };
             assert_eq!(paint, Paint::Hue(Hue::Green));

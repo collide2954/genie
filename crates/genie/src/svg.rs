@@ -183,6 +183,20 @@ impl Svg {
         );
     }
 
+    /// A filled shape with corners at the points, in their order.
+    pub fn polygon(&mut self, points: &[(f32, f32)], color: Color) {
+        let points: Vec<String> = points
+            .iter()
+            .map(|(x, y)| format!("{},{}", number(*x), number(*y)))
+            .collect();
+        let _ = writeln!(
+            self.body,
+            "<polygon points=\"{}\"{}/>",
+            points.join(" "),
+            fill(color)
+        );
+    }
+
     pub fn stroke(&mut self, points: &[(f32, f32)], color: Color, width: f32) {
         let points: Vec<String> = points
             .iter()
@@ -308,6 +322,10 @@ pub fn draw(
                 let points = [(left + from.0, top + from.1), (left + to.0, top + to.1)];
                 svg.stroke(&points, color(*paint, tokens, data), *width);
             }
+            Primitive::Ribbon { corners, paint } => {
+                let points = corners.map(|(x, y)| (left + x, top + y));
+                svg.polygon(&points, color(*paint, tokens, data));
+            }
         }
     }
 }
@@ -374,6 +392,10 @@ mod tests {
             Align::Center,
         );
         svg.stroke(&[(0.0, 0.0), (2.0, 3.0), (0.0, 6.0)], Color::BLACK, 1.0);
+        svg.polygon(
+            &[(0.0, 0.0), (4.0, 0.0), (6.0, 9.5), (1.0, 9.5)],
+            Color::BLACK,
+        );
         let text = svg.finish(40.0, Color::WHITE);
         assert!(
             text.starts_with(
@@ -396,6 +418,10 @@ mod tests {
         assert!(text.contains("Inter"), "{text}");
         assert!(text.contains("JetBrains Mono"), "{text}");
         assert!(text.contains("<polyline points=\"0,0 2,3 0,6\""), "{text}");
+        assert!(
+            text.contains("<polygon points=\"0,0 4,0 6,9.5 1,9.5\" fill=\"#000000\"/>"),
+            "{text}"
+        );
         assert!(text.trim_end().ends_with("</svg>"), "{text}");
     }
 

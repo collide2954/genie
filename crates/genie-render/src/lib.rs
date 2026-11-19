@@ -16,5 +16,6 @@ pub mod scene;
 pub mod segments;
 pub mod sequence;
 pub mod signal;
+pub mod synteny;
 pub mod translation;
 pub mod variants;

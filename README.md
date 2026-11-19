@@ -409,6 +409,15 @@ A dot plot compares two assemblies with the alignments of a [PAF file](#paf-alig
 - The plot shows only the alignments that the filter of the track keeps, for example the alignments with **Identity (%)** at least 95, or with **Type** primary. When the filter changes, genie reads the file again.
 - Click × at the right of the bar to show the tracks again.
 
+### Synteny view
+
+Click **Synteny view** in the bar of the dot plot to see the same alignments in two rows: the targets in a row at the top and the queries in a row at the bottom, in the order of the plot. A band joins the two parts of each alignment. The band of a reverse alignment crosses over itself, so an inversion shows as a cross.
+
+- Drag along the top row to zoom in to a part of the targets. The bottom row then shows the parts of the queries that align with it. Drag along the bottom row to zoom in to a part of the queries. A zoom leaves out the parts at the two ends of the other row that hold one aligned base in 20, so that a few repeats far away do not stretch the row.
+- The view shows only the parts of the alignments that have both ends in view.
+- Put the pointer on a band to see its card, and click it to show the alignment in the tracks, as in the dot plot. The colors, the filter and **Whole plot** also work as in the dot plot.
+- The two views share the zoom. Click **Dot plot view** to go back.
+
 ## Liftover
 
 A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the `liftOver` folder of each genome, for example `hg19ToHg38.over.chain.gz`.

@@ -120,9 +120,9 @@ fn paint(hit: &Hit, marks: &Marks) -> (Paint, u8) {
     }
 }
 
-/// The part of the line of an alignment in a window, in pixels of the plot area. None when the
-/// line is not in the window.
-fn line(plot: &Plot, window: Window, area: Area, hit: &Hit) -> Option<((f32, f32), (f32, f32))> {
+/// The part of the line of an alignment in a window, in bases: its two ends, from the end nearer
+/// to the first base of the alignment on the target. None when the line is not in the window.
+pub fn clip(plot: &Plot, window: Window, hit: &Hit) -> Option<((f64, f64), (f64, f64))> {
     let ((x0, y0), (x1, y1)) = plot.line(hit);
     let (x0, y0, x1, y1) = (x0 as f64, y0 as f64, x1 as f64, y1 as f64);
     let (mut low, mut high) = (0.0_f64, 1.0_f64);
@@ -141,13 +141,16 @@ fn line(plot: &Plot, window: Window, area: Area, hit: &Hit) -> Option<((f32, f32
     if low > high {
         return None;
     }
-    let at = |t: f64| {
-        (
-            area.x(window, x0 + t * (x1 - x0)),
-            area.y(window, y0 + t * (y1 - y0)),
-        )
-    };
+    let at = |t: f64| (x0 + t * (x1 - x0), y0 + t * (y1 - y0));
     Some((at(low), at(high)))
+}
+
+/// The part of the line of an alignment in a window, in pixels of the plot area. None when the
+/// line is not in the window.
+fn line(plot: &Plot, window: Window, area: Area, hit: &Hit) -> Option<((f32, f32), (f32, f32))> {
+    let (first, last) = clip(plot, window, hit)?;
+    let at = |(across, down): (f64, f64)| (area.x(window, across), area.y(window, down));
+    Some((at(first), at(last)))
 }
 
 fn rect(x: f32, y: f32, width: f32, height: f32) -> Primitive {

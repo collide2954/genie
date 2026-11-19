@@ -169,6 +169,14 @@
 <li>The plot shows only the alignments that the filter of the track keeps, for example the alignments with <b>Identity (%)</b> at least 95, or with <b>Type</b> primary. When the filter changes, genie reads the file again.</li>
 <li>Click × at the right of the bar to show the tracks again.</li>
 </ul>
+<h3 id="synteny-view">Synteny view</h3>
+<p>Click <b>Synteny view</b> in the bar of the dot plot to see the same alignments in two rows: the targets in a row at the top and the queries in a row at the bottom, in the order of the plot. A band joins the two parts of each alignment. The band of a reverse alignment crosses over itself, so an inversion shows as a cross.</p>
+<ul>
+<li>Drag along the top row to zoom in to a part of the targets. The bottom row then shows the parts of the queries that align with it. Drag along the bottom row to zoom in to a part of the queries. A zoom leaves out the parts at the two ends of the other row that hold one aligned base in 20, so that a few repeats far away do not stretch the row.</li>
+<li>The view shows only the parts of the alignments that have both ends in view.</li>
+<li>Put the pointer on a band to see its card, and click it to show the alignment in the tracks, as in the dot plot. The colors, the filter and <b>Whole plot</b> also work as in the dot plot.</li>
+<li>The two views share the zoom. Click <b>Dot plot view</b> to go back.</li>
+</ul>
 <h2 id="liftover">Liftover</h2>
 <p>A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the <code>liftOver</code> folder of each genome, for example <code>hg19ToHg38.over.chain.gz</code>.</p>
 <ul>
