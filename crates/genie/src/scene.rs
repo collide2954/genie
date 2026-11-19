@@ -328,11 +328,14 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
         _style: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        let Some(shown) = visible(bounds, viewport) else {
+            return;
+        };
         let (tokens, data) = (tokens(theme), data(theme));
-        renderer.with_layer(bounds, |renderer| {
+        renderer.with_layer(shown, |renderer| {
             let mut marks: Option<Frame> = None;
             for primitive in &self.primitives {
                 match primitive {
@@ -421,6 +424,12 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
             }
         });
     }
+}
+
+/// The part of the bounds of a scene that shows: the part inside the viewport, for example the
+/// part of a tall lane that a scroll area shows. None when no part shows.
+fn visible(bounds: Rectangle, viewport: &Rectangle) -> Option<Rectangle> {
+    bounds.intersection(viewport)
 }
 
 fn stroke_mark(
@@ -617,6 +626,29 @@ mod tests {
         let faded = color(Paint::Plain(Shade::Faded), &DARK, &DARK_DATA);
         assert_eq!(rgb(plain), rgb(DARK_DATA.coverage));
         assert!(faded.a < plain.a, "{faded:?} {plain:?}");
+    }
+
+    /// A tall lane in a scroll area draws only the part that the scroll area shows, so that it
+    /// does not paint over a table under the tracks.
+    #[test]
+    fn scenes_draw_only_the_part_in_view() {
+        let bounds = iced::Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 400.0,
+        };
+        let viewport = iced::Rectangle {
+            y: 50.0,
+            height: 100.0,
+            ..bounds
+        };
+        assert_eq!(super::visible(bounds, &viewport), Some(viewport));
+        let below = iced::Rectangle {
+            y: 500.0,
+            ..viewport
+        };
+        assert_eq!(super::visible(bounds, &below), None);
     }
 
     #[test]
