@@ -275,6 +275,12 @@ fn big_gene_pred_features_take_gene_names() {
         .unwrap();
     let names: Vec<&str> = features.iter().map(Feature::name).collect();
     assert_eq!(names, ["GENEA", "GENEB", "GENEC"]);
+    let ids: Vec<Option<&str>> = features.iter().map(Feature::id).collect();
+    assert_eq!(
+        ids,
+        [Some("ENST01.1"), Some("ENST02.3"), Some("ENST03.2")],
+        "the transcript IDs stay with the features"
+    );
     assert_eq!(features[0].blocks().len(), 2);
     let plain = Index::read(&mut File::open(data("genes.bb")).unwrap()).unwrap();
     let mut reader = File::open(data("genes.bb")).unwrap();
@@ -282,6 +288,7 @@ fn big_gene_pred_features_take_gene_names() {
         .features(&mut reader, "chr1", Region::between(0, 20_000))
         .unwrap();
     assert_eq!(first[0].name(), "chr1_001");
+    assert_eq!(first[0].id(), None);
 }
 
 fn labeled(fields: Vec<Field>) -> Vec<(String, String)> {

@@ -157,7 +157,7 @@ fn feature(
         .filter_map(|&column| fields.get(column - 3))
         .find(|value| !value.is_empty() && **value != "none");
     Ok(match label {
-        Some(label) => feature.with_name(*label),
+        Some(label) => feature.with_label(*label),
         None => feature,
     })
 }

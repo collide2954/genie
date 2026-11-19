@@ -18,6 +18,7 @@ pub struct Feature {
     coding: Option<Region>,
     color: Option<[u8; 3]>,
     extra: String,
+    id: Option<String>,
 }
 
 impl Feature {
@@ -30,6 +31,7 @@ impl Feature {
             coding: Some(span),
             color: None,
             extra: String::new(),
+            id: None,
         }
     }
 
@@ -37,6 +39,20 @@ impl Feature {
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
+    }
+
+    /// Shows a label, as a gene name, in place of the name, and keeps the name as the ID of the
+    /// feature, as the ID of a transcript.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        let name = std::mem::replace(&mut self.name, label.into());
+        self.id = Some(name);
+        self
+    }
+
+    /// The name in the file of a feature that shows a label in place of it.
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
     }
 
     #[must_use]
@@ -138,6 +154,14 @@ mod tests {
         let feature = Feature::new("NM_1", region(10, 20), Strand::Forward).with_name("ABC1");
         assert_eq!(feature.name(), "ABC1");
         assert_eq!(feature.span(), region(10, 20));
+        assert_eq!(feature.id(), None);
+    }
+
+    #[test]
+    fn a_label_keeps_the_name_of_the_file_as_the_id() {
+        let feature = Feature::new("ENST01.1", region(10, 20), Strand::Forward).with_label("ABC1");
+        assert_eq!(feature.name(), "ABC1");
+        assert_eq!(feature.id(), Some("ENST01.1"));
     }
 
     #[test]
