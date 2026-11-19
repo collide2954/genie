@@ -367,6 +367,7 @@ Push Ctrl+Shift+T (Cmd+Shift+T on macOS) or click the list button in the title b
 - Click the eye of a row to hide the track or to show it again. A hidden track does not show in the view or in exports, and genie does not read its data. Sessions keep hidden tracks. **Hide** in the track menu also hides a track.
 - Type words in **Find a track** to show only the rows whose names have all the words.
 - Right-click a row for the track menu.
+- Drag the name of a row to change the order of the tracks. While you drag, the panel shows the new order. A track in a folder moves among the tracks of its folder, and a loose track or a folder moves among the loose tracks and the folders.
 - To put a track in a folder, right-click the track in the panel or in its lane, then click a folder under **Folder**, or click **New folder…** and type the name. The track goes after the other tracks of the folder. **Out of the folder** takes it out.
 - A folder row shows the number of its tracks. Click its arrow to fold or unfold its rows, and its eye to hide or show all its tracks in one step. Right-click it to rename the folder or to remove it. The tracks of a removed folder stay. Sessions keep the folders.
 

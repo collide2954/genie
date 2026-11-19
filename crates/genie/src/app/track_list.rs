@@ -12,6 +12,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Task};
 
 use crate::context::Context;
+use crate::grip::Grip;
 use crate::icon::{self, Icon};
 use crate::menu;
 use crate::track::{self, Change};
@@ -22,6 +23,8 @@ use super::{Genie, Message, Session};
 /// The width of the panel.
 pub(super) const WIDTH: f32 = 240.0;
 const ROW_HEIGHT: f32 = 22.0;
+/// The height of a row with the gap under it.
+pub(super) const ROW_STEP: f32 = ROW_HEIGHT + 1.0;
 const SEARCH: &str = "track-search";
 const NAME: &str = "folder-name";
 /// The indent of the tracks of a folder.
@@ -44,6 +47,17 @@ pub enum Listing {
     Named,
     /// Folds the rows of a folder, or shows them again.
     Fold(String),
+    /// A row that a drag moves, and how far from where it was.
+    Moved(Grab, f32),
+    /// Puts the row of the drag at its new place.
+    Dropped,
+}
+
+/// What a drag in the panel moves: a track, or a folder with its tracks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Grab {
+    Track(u64),
+    Folder(String),
 }
 
 /// What a folder does: with one track, or with all its tracks.
@@ -75,6 +89,8 @@ pub(super) struct TrackList {
     folded: BTreeSet<String>,
     /// The name field and its text.
     naming: Option<(Naming, String)>,
+    /// The row that a drag moves, and how far.
+    moving: Option<(Grab, f32)>,
 }
 
 /// A track row of the panel: a track, its name, its color, the track that it overlays, and
@@ -106,6 +122,12 @@ pub(super) enum Item {
 /// The rows of the panel in the order of the tracks: each folder before its tracks. With words
 /// in the field, only the tracks whose names hold all the words, in any case, and their folders.
 pub(super) fn items(session: &Session, list: Option<&TrackList>) -> Vec<Item> {
+    let tracks: Vec<&track::Track> = session.tracks.iter().collect();
+    rows_in(&tracks, list)
+}
+
+/// The rows of the panel for tracks in an order.
+fn rows_in(tracks: &[&track::Track], list: Option<&TrackList>) -> Vec<Item> {
     let query = list.map_or(String::new(), |list| list.query.to_lowercase());
     let words: Vec<&str> = query.split_whitespace().collect();
     let found = |name: &str| {
@@ -113,20 +135,20 @@ pub(super) fn items(session: &Session, list: Option<&TrackList>) -> Vec<Item> {
         words.iter().all(|word| name.contains(word))
     };
     let name_of = |id: u64| {
-        let other = session.tracks.iter().find(|track| track.id == id);
+        let other = tracks.iter().find(|track| track.id == id);
         other.map(|track| track.name.clone())
     };
     let mut items = Vec::new();
     let mut seen: Vec<&str> = Vec::new();
-    for track in &session.tracks {
+    for track in tracks {
         if let Some(folder) = track.folder.as_deref() {
             if seen.contains(&folder) {
                 continue;
             }
             seen.push(folder);
-            let members: Vec<&track::Track> = session
-                .tracks
+            let members: Vec<&track::Track> = tracks
                 .iter()
+                .copied()
                 .filter(|other| other.folder.as_deref() == Some(folder))
                 .collect();
             let shown: Vec<&&track::Track> = members
@@ -168,6 +190,117 @@ fn row_of(track: &track::Track, over: Option<String>, inside: bool) -> Row {
         over,
         inside,
     }
+}
+
+/// The middle of a row of the panel, from the top of the rows.
+fn middle(index: usize) -> f32 {
+    (index as f32 + 0.5) * ROW_STEP
+}
+
+/// The order of the tracks after a drop: a track of a folder moves among the tracks of its
+/// folder, and a loose track or a folder among the loose tracks and the folders. None when the
+/// row of the drag does not show.
+fn reorder(session: &Session, list: &TrackList, grab: &Grab, delta: f32) -> Option<Vec<u64>> {
+    let shown = items(session, Some(list));
+    let row = |id: u64| {
+        let found = shown
+            .iter()
+            .position(|item| matches!(item, Item::Track(row) if row.id == id));
+        found.map(middle)
+    };
+    let header = |name: &str| {
+        shown
+            .iter()
+            .position(|item| matches!(item, Item::Folder { name: found, .. } if found == name))
+    };
+    let tracks = &session.tracks;
+    let pointer = delta
+        + match grab {
+            Grab::Track(id) => row(*id)?,
+            Grab::Folder(name) => middle(header(name)?),
+        };
+    let inside = match grab {
+        Grab::Track(id) => tracks
+            .iter()
+            .find(|track| track.id == *id)
+            .and_then(|track| track.folder.clone()),
+        Grab::Folder(_) => None,
+    };
+    if let (Some(folder), Grab::Track(id)) = (inside, grab) {
+        let members: Vec<u64> = tracks
+            .iter()
+            .filter(|track| track.folder.as_ref() == Some(&folder))
+            .map(|track| track.id)
+            .collect();
+        let units: Vec<Vec<u64>> = members.iter().map(|member| vec![*member]).collect();
+        let centers: Vec<Option<f32>> = members.iter().map(|member| row(*member)).collect();
+        let dragged = members.iter().position(|member| member == id)?;
+        let order = moved(units, &centers, dragged, pointer);
+        let mut order = order.into_iter().flatten();
+        return Some(
+            tracks
+                .iter()
+                .map(|track| {
+                    if track.folder.as_ref() == Some(&folder) {
+                        order.next().unwrap_or(track.id)
+                    } else {
+                        track.id
+                    }
+                })
+                .collect(),
+        );
+    }
+    let mut units: Vec<Vec<u64>> = Vec::new();
+    let mut centers: Vec<Option<f32>> = Vec::new();
+    let mut names: Vec<Option<&str>> = Vec::new();
+    for track in tracks {
+        match track.folder.as_deref() {
+            Some(folder) if names.contains(&Some(folder)) => {}
+            Some(folder) => {
+                let members: Vec<u64> = tracks
+                    .iter()
+                    .filter(|other| other.folder.as_deref() == Some(folder))
+                    .map(|other| other.id)
+                    .collect();
+                let lowest = members.iter().rev().find_map(|member| row(*member));
+                centers.push(header(folder).map(|top| {
+                    let bottom = lowest.unwrap_or(middle(top));
+                    f32::midpoint(middle(top), bottom)
+                }));
+                units.push(members);
+                names.push(Some(folder));
+            }
+            None => {
+                units.push(vec![track.id]);
+                centers.push(row(track.id));
+                names.push(None);
+            }
+        }
+    }
+    let dragged = match grab {
+        Grab::Track(id) => units.iter().position(|unit| unit == &[*id]),
+        Grab::Folder(name) => names.iter().position(|found| *found == Some(name.as_str())),
+    }?;
+    Some(moved(units, &centers, dragged, pointer).concat())
+}
+
+/// Units after a move of one of them: it goes before the first other unit that shows at or
+/// under the pointer, or last.
+fn moved(
+    mut units: Vec<Vec<u64>>,
+    centers: &[Option<f32>],
+    dragged: usize,
+    pointer: f32,
+) -> Vec<Vec<u64>> {
+    let unit = units.remove(dragged);
+    let mut centers = centers.to_vec();
+    centers.remove(dragged);
+    let at = centers
+        .iter()
+        .position(|center| center.is_some_and(|center| center >= pointer))
+        .unwrap_or(units.len());
+    units.insert(at, unit);
+    units
 }
 
 /// The names of the folders of the tracks, in the order of the tracks.
@@ -220,8 +353,30 @@ impl Genie {
                     list.folded.insert(folder);
                 }
             }
+            Listing::Moved(grab, delta) => {
+                if let Some(list) = &mut self.track_list {
+                    list.moving = Some((grab, delta));
+                }
+            }
+            Listing::Dropped => self.drop_row(),
         }
         Task::none()
+    }
+
+    /// Puts the tracks in the order of the drop of a row.
+    fn drop_row(&mut self) {
+        let (Some(list), Some(session)) = (&mut self.track_list, &mut self.session) else {
+            return;
+        };
+        let Some((grab, delta)) = list.moving.take() else {
+            return;
+        };
+        if let Some(order) = reorder(session, list, &grab, delta) {
+            let place = |id: u64| order.iter().position(|known| *known == id);
+            session
+                .tracks
+                .sort_by_key(|track| place(track.id).unwrap_or(usize::MAX));
+        }
     }
 
     /// Shows the panel with the name field.
@@ -350,7 +505,18 @@ impl Genie {
                     .on_submit(Message::TrackList(Listing::Named)),
             );
         }
-        let rows = items(session, Some(list)).into_iter().map(item_view);
+        let order = list
+            .moving
+            .as_ref()
+            .and_then(|(grab, delta)| reorder(session, list, grab, *delta));
+        let tracks: Vec<&track::Track> = match &order {
+            Some(order) => order
+                .iter()
+                .filter_map(|id| session.tracks.iter().find(|track| track.id == *id))
+                .collect(),
+            None => session.tracks.iter().collect(),
+        };
+        let rows = rows_in(&tracks, Some(list)).into_iter().map(item_view);
         let rows = scrollable(Column::with_children(rows).spacing(1))
             .direction(Direction::Vertical(
                 Scrollbar::new().width(6).scroller_width(6).margin(0),
@@ -389,6 +555,17 @@ impl Genie {
     }
 }
 
+/// A part of a row that a drag moves.
+fn grip<'a>(content: impl Into<Element<'a, Message>>, grab: Grab) -> Element<'a, Message> {
+    let content = container(content).width(Length::Fill);
+    Grip::new(
+        content,
+        move |delta| Message::TrackList(Listing::Moved(grab.clone(), delta)),
+        Message::TrackList(Listing::Dropped),
+    )
+    .into()
+}
+
 fn eye<'a>(hidden: bool, message: Message) -> button::Button<'a, Message> {
     let icon = if hidden { Icon::EyeOff } else { Icon::Eye };
     button(icon::view(icon, 12.0))
@@ -418,15 +595,21 @@ fn item_view<'a>(item: Item) -> Element<'a, Message> {
             .style(style::ghost)
             .on_press(Message::TrackList(Listing::Fold(name.clone())));
             let visible = Message::Folder(name.clone(), Foldering::Visible(hidden));
-            let line = row![
-                fold,
-                container(eye(hidden, visible)).id(format!("folder-eye-{name}")),
+            let grab = Grab::Folder(name.clone());
+            let label = row![
                 icon::view(Icon::Open, 12.0),
                 text(name.clone())
                     .size(12)
                     .font(font::UI_STRONG)
                     .wrapping(text::Wrapping::None),
                 text(count.to_string()).size(11).style(style::muted),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            let line = row![
+                fold,
+                container(eye(hidden, visible)).id(format!("folder-eye-{name}")),
+                grip(label, grab),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -454,13 +637,7 @@ fn row_view<'a>(row: Row) -> Element<'a, Message> {
         .width(8)
         .height(8)
         .style(move |theme| style::dot(theme, hue));
-    let mut line = row![
-        space().width(if inside { INDENT } else { 0.0 }),
-        container(eye(
-            hidden,
-            Message::TrackChanged(id, Change::Visible(hidden))
-        ))
-        .id(format!("eye-{id}")),
+    let mut label = row![
         dot,
         text(name)
             .size(12)
@@ -470,13 +647,21 @@ fn row_view<'a>(row: Row) -> Element<'a, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
     if let Some(base) = over {
-        line = line.push(
+        label = label.push(
             text(format!("on {base}"))
                 .size(11)
                 .wrapping(text::Wrapping::None)
                 .style(style::muted),
         );
     }
+    let visible = Message::TrackChanged(id, Change::Visible(hidden));
+    let line = row![
+        space().width(if inside { INDENT } else { 0.0 }),
+        container(eye(hidden, visible)).id(format!("eye-{id}")),
+        grip(label, Grab::Track(id)),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
     let line = container(line.height(ROW_HEIGHT))
         .id(format!("row-{id}"))
         .width(Length::Fill)

@@ -2156,6 +2156,59 @@ mod tests {
             .collect()
     }
 
+    /// A drag of a row moves a loose track or a folder among the loose tracks and the folders,
+    /// and a track of a folder among the tracks of its folder. Each drop is one step to undo.
+    #[test]
+    fn rows_of_the_panel_move_by_drag() {
+        use super::track_list::{Foldering, Grab, Listing, ROW_STEP};
+
+        let mut genie = opened();
+        for name in ["a.bed.gz", "b.bed.gz", "c.bed.gz", "d.bed.gz"] {
+            let _ = genie.update(Message::TrackOpened(Ok(source(name))));
+        }
+        let ids: Vec<u64> = genie
+            .session
+            .as_ref()
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .collect();
+        let _ = genie.update(Message::Command(Command::TrackList));
+        for id in [ids[2], ids[3]] {
+            let _ = genie.update(Message::Folder("F".to_owned(), Foldering::Add(id)));
+        }
+        let drag = |genie: &mut Genie, grab: Grab, rows: f32| {
+            let _ = genie.update(Message::TrackList(Listing::Moved(grab, rows * ROW_STEP)));
+            let _ = genie.update(Message::TrackList(Listing::Dropped));
+        };
+        drag(&mut genie, Grab::Track(ids[0]), 1.6);
+        assert_eq!(
+            panel_items(&genie),
+            ["b.bed.gz", "a.bed.gz", "F (2)", "  c.bed.gz", "  d.bed.gz"]
+        );
+        drag(&mut genie, Grab::Folder("F".to_owned()), -2.2);
+        assert_eq!(
+            panel_items(&genie),
+            ["F (2)", "  c.bed.gz", "  d.bed.gz", "b.bed.gz", "a.bed.gz"]
+        );
+        drag(&mut genie, Grab::Track(ids[3]), -1.6);
+        assert_eq!(
+            panel_items(&genie),
+            ["F (2)", "  d.bed.gz", "  c.bed.gz", "b.bed.gz", "a.bed.gz"]
+        );
+        drag(&mut genie, Grab::Track(ids[1]), -2.6);
+        assert_eq!(
+            panel_items(&genie),
+            ["b.bed.gz", "F (2)", "  d.bed.gz", "  c.bed.gz", "a.bed.gz"]
+        );
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert_eq!(
+            panel_items(&genie),
+            ["F (2)", "  d.bed.gz", "  c.bed.gz", "b.bed.gz", "a.bed.gz"]
+        );
+    }
+
     /// Folders group tracks in the panel. A track joins a folder at its end, the eye of a folder
     /// hides or shows all its tracks in one step, and a folder folds its rows.
     #[test]
