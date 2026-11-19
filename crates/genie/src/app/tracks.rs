@@ -270,7 +270,7 @@ impl Genie {
             .tracks
             .iter()
             .map(|track| {
-                if track.over.is_some() {
+                if track.over.is_some() || track.hidden {
                     0.0
                 } else {
                     body_height(session, track) + 2.0 * padding + 1.0
@@ -620,10 +620,17 @@ impl Genie {
         let wanted = visible.expand(visible.len(), length);
         let step = track::step(viewport.scale());
         let reference = &session.reference;
+        let hidden: Vec<u64> = session
+            .tracks
+            .iter()
+            .filter(|track| track.hidden)
+            .map(|track| track.id)
+            .collect();
         session
             .tracks
             .iter_mut()
             .filter(|track| only.is_none_or(|id| track.id == id))
+            .filter(|track| !track.hidden && track.over.is_none_or(|base| !hidden.contains(&base)))
             .filter(|track| track.needs_at(panel, contig, visible, step))
             .filter_map(|track| {
                 let name = track.contigs[contig].clone()?;
@@ -1221,6 +1228,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.mode = found.mode;
     track.hue = found.hue;
     track.height = found.height;
+    track.hidden = found.hidden;
     track.options = track::Options {
         lift: track.options.lift,
         ..found.options

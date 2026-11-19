@@ -79,6 +79,8 @@ pub struct SavedTrack {
     pub choice: Choice,
     /// The chain file that moves the data of the track to the assembly in view.
     pub lift: Option<Location>,
+    /// A hidden track does not show and does not load its data.
+    pub hidden: bool,
 }
 
 impl SavedTrack {
@@ -99,6 +101,7 @@ impl SavedTrack {
             declared: None,
             choice: Choice::default(),
             lift: None,
+            hidden: false,
         }
     }
 }
@@ -167,6 +170,7 @@ impl Saved {
                         color: section.value(COLOR_SAMPLES).map(str::to_owned),
                     },
                     lift: section.value("lift").map(|text| read(text, base)),
+                    hidden: section.value("hidden") == Some("on"),
                 })
             })
             .collect();
@@ -341,6 +345,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     entries.push(("color", name(&HUES, track.hue).to_owned()));
     if let Some(height) = track.height {
         entries.push(("height", height.to_string()));
+    }
+    if track.hidden {
+        entries.push(("hidden", "on".to_owned()));
     }
     entries.extend(option_entries(track.options));
     if track.plot.style == Style::Line {
@@ -721,6 +728,7 @@ mod tests {
                     }),
                     choice: Choice::default(),
                     lift: None,
+                    hidden: false,
                 },
                 SavedTrack {
                     hue: Hue::Vermillion,
@@ -741,6 +749,7 @@ mod tests {
                         color: Some("sex".to_owned()),
                     },
                     lift: Some(chains),
+                    hidden: true,
                     ..SavedTrack::plain(Location::File(PathBuf::from("/elsewhere/genes.bed.gz")))
                 },
                 SavedTrack {
@@ -862,6 +871,7 @@ mod tests {
             "{text}"
         );
         assert_eq!(text.matches("lift =").count(), 1, "{text}");
+        assert_eq!(text.matches("hidden = on").count(), 1, "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(saved()));
     }
 

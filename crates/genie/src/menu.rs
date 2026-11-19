@@ -146,7 +146,7 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
     } else {
         0.0
     };
-    LINK_HEIGHT
+    2.0 * LINK_HEIGHT
         + table
         + SEPARATOR_HEIGHT
         + kind_height(track)
@@ -694,6 +694,7 @@ pub fn view<'a>(
                 place.position + 1 < place.count,
             ),
             separator(),
+            item("Hide", Change::Visible(false), false, true),
             item("Remove", Change::Remove, false, true),
         ]);
     let width = if track.filter.is_empty() {

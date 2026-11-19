@@ -516,7 +516,7 @@ impl Genie {
             column![self.sequence_row(session), line(0)]
         };
         for (index, track) in session.tracks.iter().enumerate() {
-            if track.over.is_some() {
+            if track.over.is_some() || track.hidden {
                 continue;
             }
             let draft = self
@@ -1513,7 +1513,7 @@ pub(super) fn members<'a>(session: &'a Session, track: &Track) -> Vec<&'a Track>
     session
         .tracks
         .iter()
-        .filter(|other| other.over == Some(track.id))
+        .filter(|other| other.over == Some(track.id) && !other.hidden)
         .collect()
 }
 

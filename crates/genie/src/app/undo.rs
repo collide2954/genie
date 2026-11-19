@@ -27,6 +27,7 @@ struct Kept {
     source: Arc<Source>,
     name: String,
     over: Option<u64>,
+    hidden: bool,
     hue: Hue,
     mode: Option<Mode>,
     options: Options,
@@ -48,8 +49,21 @@ impl PartialEq for Kept {
         };
         lifts
             && Arc::ptr_eq(&self.source, &other.source)
-            && (self.id, &self.name, self.over, self.hue, self.mode)
-                == (other.id, &other.name, other.over, other.hue, other.mode)
+            && (
+                self.id,
+                &self.name,
+                self.over,
+                self.hidden,
+                self.hue,
+                self.mode,
+            ) == (
+                other.id,
+                &other.name,
+                other.over,
+                other.hidden,
+                other.hue,
+                other.mode,
+            )
             && (self.options, &self.plot, self.height, &self.filter)
                 == (other.options, &other.plot, other.height, &other.filter)
             && (
@@ -73,6 +87,7 @@ impl Kept {
             source: Arc::clone(&track.source),
             name: track.name.clone(),
             over: track.over,
+            hidden: track.hidden,
             hue: track.hue,
             mode: track.mode,
             options: track.options,
@@ -96,6 +111,7 @@ impl Kept {
         };
         track.name = self.name;
         track.over = self.over;
+        track.hidden = self.hidden;
         track.hue = self.hue;
         track.mode = self.mode;
         track.options = self.options;
@@ -114,6 +130,9 @@ impl Kept {
         track.forget_kept();
         track.forget();
         track.refilter();
+        if track.hidden {
+            track.drop_data();
+        }
     }
 }
 

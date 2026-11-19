@@ -3206,6 +3206,35 @@ mod tests {
         assert_eq!(hue(&genie), Hue::Orange);
     }
 
+    /// A hidden track leaves the view and loads nothing. Shown again, it loads and shows again.
+    #[test]
+    fn hidden_tracks_leave_the_view_and_load_nothing() {
+        let mut genie = opened();
+        for name in ["a.bed.gz", "b.bed.gz"] {
+            let _ = genie.update(Message::TrackOpened(Ok(source(name))));
+        }
+        for track in &mut genie.session.as_mut().unwrap().tracks {
+            track.contigs = vec![Some("1".to_owned()), None];
+        }
+        let first = genie.session.as_ref().unwrap().tracks[0].id;
+        let wanted = |genie: &Genie, at: usize| {
+            genie.session.as_ref().unwrap().tracks[at]
+                .slot
+                .wanted
+                .is_some()
+        };
+        let _ = genie.update(Message::TrackChanged(first, Change::Visible(false)));
+        go(&mut genie, "chr1:101-200");
+        assert_eq!((wanted(&genie, 0), wanted(&genie, 1)), (false, true));
+        assert!(!shows(&genie, "a.bed.gz"));
+        assert!(shows(&genie, "b.bed.gz"));
+        let _ = genie.update(Message::TrackChanged(first, Change::Visible(true)));
+        assert!(wanted(&genie, 0));
+        assert!(shows(&genie, "a.bed.gz"));
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert!(genie.session.as_ref().unwrap().tracks[0].hidden);
+    }
+
     /// A drag of the bottom edge of a lane sends many messages, and makes one step.
     #[test]
     fn a_drag_of_a_lane_is_one_step() {
@@ -4028,6 +4057,7 @@ mod tests {
             declared: None,
             choice: genie_core::samples::Choice::default(),
             lift: None,
+            hidden: false,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4122,6 +4152,7 @@ mod tests {
                 declared: None,
                 choice: genie_core::samples::Choice::default(),
                 lift: None,
+                hidden: false,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),

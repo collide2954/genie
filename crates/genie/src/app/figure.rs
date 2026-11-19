@@ -277,7 +277,11 @@ impl Genie {
         y += block + 2.0 * padding;
         page.hairline(y);
         y += 1.0;
-        for track in session.tracks.iter().filter(|track| track.over.is_none()) {
+        for track in session
+            .tracks
+            .iter()
+            .filter(|track| track.over.is_none() && !track.hidden)
+        {
             y = page.lane(session, track, y, padding);
         }
         page.svg.finish(y, theme.base().background_color)

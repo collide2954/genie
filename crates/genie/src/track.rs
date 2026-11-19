@@ -499,7 +499,8 @@ impl Options {
         options
     }
 
-    /// The options after a change of what a Hi-C map or a table shows.
+    /// The options after a change of what a Hi-C map or a table shows, of the lowest MAPQ of
+    /// the reads, or of the tag that colors the reads.
     #[must_use]
     pub fn changed(self, change: Change) -> Self {
         let mut options = self;
@@ -507,6 +508,14 @@ impl Options {
             Change::Normalization(place) => options.contacts.normalization = Some(place),
             Change::Ratio => options.contacts.ratio = !options.contacts.ratio,
             Change::Column(pick) => options.table = pick,
+            Change::Mapq(floor) => options.mapq = floor,
+            Change::Color(name) => {
+                options.color = if options.color == Some(name) {
+                    None
+                } else {
+                    Some(name)
+                };
+            }
             _ => {}
         }
         options
@@ -1111,6 +1120,8 @@ pub struct Track {
     pub source: Arc<Source>,
     pub name: String,
     pub over: Option<u64>,
+    /// A hidden track does not show and does not load its data.
+    pub hidden: bool,
     pub contigs: Vec<Option<String>>,
     pub names: Option<Arc<Names>>,
     pub hue: Hue,
@@ -1168,6 +1179,7 @@ impl Track {
             id,
             name: source.name.clone(),
             over: None,
+            hidden: false,
             source,
             contigs,
             names: None,
@@ -1467,6 +1479,22 @@ impl Track {
         }
     }
 
+    /// Shows the track, or hides it and drops its data.
+    pub fn set_visible(&mut self, visible: bool) {
+        self.hidden = !visible;
+        if self.hidden {
+            self.drop_data();
+        }
+    }
+
+    /// Drops the data of every panel, so that a hidden track costs no memory.
+    pub fn drop_data(&mut self) {
+        for slot in std::iter::once(&mut self.slot).chain(self.extra.iter_mut()) {
+            (slot.loaded, slot.shown, slot.wanted) = (None, None, None);
+            (slot.error, slot.order) = (None, None);
+        }
+    }
+
     pub fn data(&self, contig: usize) -> Option<&Loaded> {
         self.slot.data(contig)
     }
@@ -1575,6 +1603,8 @@ pub enum Change {
     Operation(Operation),
     /// The viewpoint of the virtual 4C of a Hi-C track, or none to stop it.
     Viewpoint(Option<u64>),
+    /// Show the track, or hide it: a hidden track does not show and drops its data.
+    Visible(bool),
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -1584,6 +1614,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
     match change {
         Change::Mode(mode) => tracks[position].mode = Some(mode),
         Change::Hue(hue) => tracks[position].hue = hue,
+        Change::Visible(visible) => tracks[position].set_visible(visible),
         Change::Style(style) => tracks[position].plot.style = style,
         Change::Link => {
             let plot = &mut tracks[position].plot;
@@ -1642,21 +1673,11 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             track.options = track.options.toggled(toggle);
             track.forget();
         }
-        Change::Mapq(floor) => {
-            let track = &mut tracks[position];
-            track.options.mapq = floor;
-            track.forget();
-        }
-        Change::Color(name) => {
-            let track = &mut tracks[position];
-            track.options.color = if track.options.color == Some(name) {
-                None
-            } else {
-                Some(name)
-            };
-            track.forget();
-        }
-        Change::Normalization(_) | Change::Ratio | Change::Column(_) => {
+        Change::Mapq(_)
+        | Change::Color(_)
+        | Change::Normalization(_)
+        | Change::Ratio
+        | Change::Column(_) => {
             let track = &mut tracks[position];
             track.options = track.options.changed(change);
             track.forget();

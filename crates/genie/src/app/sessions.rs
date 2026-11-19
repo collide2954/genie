@@ -152,6 +152,7 @@ impl Genie {
                         .as_ref()
                         .map(|lift| lift.location.clone())
                         .or_else(|| track.lifting.clone()),
+                    hidden: track.hidden,
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved
