@@ -123,6 +123,33 @@ fn tracks_actions(session: &Session) -> Vec<Action> {
     actions
 }
 
+/// The actions that show a view of a track: its variant table, its dot plot or its DMR table.
+fn view_actions(track: &Track) -> Vec<Action> {
+    let (id, name) = (track.id, track.name.as_str());
+    let views = [
+        (
+            track.source.has_variants(),
+            "Show the variant table",
+            Message::Table(Tabling::Open(id)),
+        ),
+        (
+            track.source.is_paf(),
+            "Show the dot plot",
+            Message::Plot(super::Plotting::Open(id)),
+        ),
+        (
+            track.shows_difference(),
+            "Show the DMR table",
+            Message::Dmrs(super::Dmring::Open(id)),
+        ),
+    ];
+    views
+        .into_iter()
+        .filter(|(shown, ..)| *shown)
+        .map(|(_, label, message)| Action::new(label, name, message))
+        .collect()
+}
+
 fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
     let change = move |change| Message::TrackChanged(id, change);
@@ -132,21 +159,8 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
         Message::TrackSettings(id),
     )];
     actions.extend(sample_actions(track, fields));
+    actions.extend(view_actions(track));
     let source = &track.source;
-    if source.has_variants() {
-        actions.push(Action::new(
-            "Show the variant table",
-            name,
-            Message::Table(Tabling::Open(id)),
-        ));
-    }
-    if source.is_paf() {
-        actions.push(Action::new(
-            "Show the dot plot",
-            name,
-            Message::Plot(super::Plotting::Open(id)),
-        ));
-    }
     if !source.has_signal() && !source.has_links() && !source.has_junctions() {
         actions.extend(
             MODES.map(|(label, mode)| Action::new(label, name, change(Change::Mode(mode)))),

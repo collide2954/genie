@@ -1334,6 +1334,16 @@ impl Track {
             .or_else(|| pile.methylation.busiest().map(str::to_owned))
     }
 
+    /// True when the track shows a methylation difference: of the groups of its reads, or of
+    /// its bedMethyl group and the group of a track that it compares with.
+    pub fn shows_difference(&self) -> bool {
+        let compares = self
+            .plot
+            .math
+            .is_some_and(|math| math.operation == genie_render::signal::Operation::Methylation);
+        (self.source.has_reads() && self.plot.look.difference) || compares
+    }
+
     /// The methylation difference of the first two groups of reads in view, when the track shows
     /// it: the names of the two groups, and the difference at each site.
     pub fn methylation_difference(

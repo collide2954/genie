@@ -143,6 +143,9 @@ impl Genie {
                     track: id,
                     ..VariantTable::default()
                 });
+                if self.table.is_some() {
+                    self.dmrs = None;
+                }
             }
             Tabling::Close => self.table = None,
             Tabling::Sort(column) => {
@@ -185,7 +188,7 @@ impl Genie {
         Task::none()
     }
 
-    fn track_named(&self, id: u64) -> Option<String> {
+    pub(super) fn track_named(&self, id: u64) -> Option<String> {
         let session = self.session.as_ref()?;
         let track = session.tracks.iter().find(|track| track.id == id)?;
         Some(track.name.clone())

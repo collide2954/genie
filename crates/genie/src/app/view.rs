@@ -392,7 +392,7 @@ impl Genie {
     fn session_body<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let main = if let Some(plot) = session.shown_plot() {
             super::dotplot::plot_view(session, plot)
-        } else if let Some(table) = self.table_view(session) {
+        } else if let Some(table) = self.table_view(session).or_else(|| self.dmr_view(session)) {
             column![self.browser(session), table].into()
         } else {
             self.browser(session)
@@ -1621,6 +1621,59 @@ pub(super) fn group_difference(
     let (second, theirs) = methyl_group(session, other, track);
     let differences = genie_core::methylation::difference(&sites(&mine), &sites(&theirs));
     Some(((first, second), differences))
+}
+
+/// The methylation difference that a track shows in a panel: of the first two groups of its
+/// reads, or of its group of bedMethyl tracks and the group of the track that it compares with.
+/// The names of the groups and the difference at each site.
+pub(super) fn shown_difference(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+) -> Option<((String, String), Vec<genie_core::methylation::Difference>)> {
+    if let Some(found) = group_difference(session, track, panel) {
+        return Some(found);
+    }
+    let (contig, _) = session.view(panel);
+    let Content::Reads(pile) = &track.slot(panel).data(contig)?.content else {
+        return None;
+    };
+    track.methylation_difference(pile)
+}
+
+/// What the methylation difference of a track in a panel comes from, to know when it changes:
+/// the settings of the track and the loaded data of the tracks of its groups.
+pub(super) fn difference_inputs(session: &Session, track: &Track, panel: usize) -> Vec<usize> {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+
+    let (contig, _) = session.view(panel);
+    let pointer = |member: &Track| {
+        member
+            .slot(panel)
+            .data(contig)
+            .map_or(0, |data| std::ptr::from_ref(data) as usize)
+    };
+    let modification = BuildHasherDefault::<DefaultHasher>::default().hash_one(&track.modification);
+    let mut found = vec![
+        usize::from(track.plot.look.difference),
+        usize::from(track.plot.look.mods),
+        modification as usize,
+    ];
+    let other = track
+        .plot
+        .math
+        .filter(|math| is_methylation(*math))
+        .and_then(|math| session.tracks.iter().find(|other| other.id == math.other));
+    if let Some(other) = other {
+        let (_, mine) = methyl_group(session, track, other);
+        let (_, theirs) = methyl_group(session, other, track);
+        found.extend(mine.into_iter().map(pointer));
+        found.push(0);
+        found.extend(theirs.into_iter().map(pointer));
+    } else {
+        found.push(pointer(track));
+    }
+    found
 }
 
 /// The columns that a signal track shows in a panel: its own values, or their comparison with

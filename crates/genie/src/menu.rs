@@ -7,7 +7,7 @@ use iced::widget::{Column, button, column, container, opaque, pin, row, space, t
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Filtering, Lifting, Message, Plotting, Ranging, Renaming, Sampling, Tabling, active,
+    Dmring, Filtering, Lifting, Message, Plotting, Ranging, Renaming, Sampling, Tabling, active,
     arranging_words,
 };
 use crate::chrome::keys;
@@ -143,6 +143,10 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         arranged as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
     };
     let table = if track.source.has_variants() || track.source.is_paf() {
+        LINK_HEIGHT
+    } else {
+        0.0
+    } + if track.shows_difference() {
         LINK_HEIGHT
     } else {
         0.0
@@ -734,6 +738,10 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
     if track.source.is_paf() {
         let open = Message::Plot(Plotting::Open(id));
         items = items.push(item("Dot plot", open, false, true));
+    }
+    if track.shows_difference() {
+        let open = Message::Dmrs(Dmring::Open(id));
+        items = items.push(item("DMR table", open, false, true));
     }
     items.push(separator())
 }

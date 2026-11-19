@@ -43,6 +43,7 @@ mod caching;
 #[cfg(test)]
 mod clips;
 mod copy;
+mod dmrs;
 mod dotplot;
 mod effects;
 mod export;
@@ -72,6 +73,7 @@ mod whole;
 
 pub(crate) use assemblies::Assembling;
 pub(crate) use blat::Blatting;
+pub(crate) use dmrs::Dmring;
 pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
 pub(crate) use gnomad::Gnomading;
@@ -147,6 +149,8 @@ pub struct Genie {
     palette: Option<crate::palette::State>,
     finder: Option<find::Finder>,
     table: Option<table::VariantTable>,
+    /// The table of the DMRs of the methylation difference of a track.
+    dmrs: Option<dmrs::DmrTable>,
     field_draft: Option<String>,
     hubs: Vec<Arc<Hub>>,
     hub_view: Option<hubs::View>,
@@ -247,6 +251,7 @@ impl Default for Genie {
             palette: None,
             finder: None,
             table: None,
+            dmrs: None,
             field_draft: None,
             hubs: Vec::new(),
             hub_view: None,
@@ -788,6 +793,8 @@ pub enum Message {
     Plot(Plotting),
     /// The gnomAD frequencies of the variant of the open card.
     Gnomad(Gnomading),
+    /// The table of the DMRs of a methylation difference.
+    Dmrs(Dmring),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1060,12 +1067,15 @@ impl Genie {
         let task = self.handle(message);
         self.keep_step(before);
         self.refresh_table();
+        self.refresh_dmrs();
         let plot = self.refresh_plot();
         self.answer();
         self.stats.update = started.elapsed();
         Task::batch([task, plot])
     }
 
+    /// Sends each message to the work that it asks for, with one arm for each kind of message.
+    #[allow(clippy::too_many_lines)]
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CycleAppearance => {
@@ -1104,7 +1114,9 @@ impl Genie {
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
             Message::Lift(lifting) => return self.lift(lifting),
-            Message::Table(_) | Message::Plot(_) => return self.pane_message(message),
+            Message::Table(_) | Message::Plot(_) | Message::Dmrs(_) => {
+                return self.pane_message(message);
+            }
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
@@ -1182,11 +1194,12 @@ impl Genie {
         }
     }
 
-    /// The messages of the variant table and of the dot plot.
+    /// The messages of the variant table, of the dot plot and of the DMR table.
     fn pane_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Table(tabling) => self.tabling(tabling),
             Message::Plot(plotting) => self.plotting(plotting),
+            Message::Dmrs(dmring) => self.dmring(dmring),
             _ => Task::none(),
         }
     }
