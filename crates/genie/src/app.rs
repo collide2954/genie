@@ -2723,6 +2723,51 @@ mod tests {
         assert!(!shows(&genie, "View mate"));
     }
 
+    /// A spliced read and its mate show their starts: the panels leave out the introns of the
+    /// read when they find its middle, as in RNA-seq reads.
+    #[test]
+    fn spliced_reads_and_their_mates_show_their_starts() {
+        use crate::card::{Card, Detail};
+        use genie_core::alignment::{Alignment, Mate, Op, PAIRED, Tags};
+
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-300");
+        settle(&mut genie);
+        let read = Alignment {
+            name: "spliced".to_owned(),
+            start: 150,
+            flags: PAIRED,
+            mapq: 60,
+            cigar: vec![(Op::Match, 50), (Op::Skip, 600), (Op::Match, 50)],
+            bases: vec![b'A'; 100],
+            qualities: Vec::new(),
+            mate: Some(Mate {
+                contig: 0,
+                start: 700,
+                insert: 0,
+            }),
+            tags: Tags::default(),
+        };
+        genie.pinned = Some(Card {
+            track: 0,
+            contig: "chr1".to_owned(),
+            samples: Vec::new(),
+            detail: Detail::Read {
+                read,
+                mate: Some("chr1".to_owned()),
+                same: true,
+                insertion: None,
+            },
+            at: Point::ORIGIN,
+            fields: Vec::new(),
+            effects: Changes::default(),
+        });
+        let _ = genie.update(Message::ViewMate);
+        settle(&mut genie);
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.locus(), "chr1:101-300 chr1:651-850");
+    }
+
     #[test]
     fn loci_that_fail_keep_every_panel() {
         let mut genie = opened();

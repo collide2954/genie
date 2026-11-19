@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use genie_core::alignment::Op;
 use genie_core::{Named, Region, Span, Target, Viewport};
 use iced::Task;
 use iced::widget::operation;
@@ -218,7 +219,7 @@ impl Genie {
     }
 
     /// Shows the read of the pinned card and its mate side by side, in two panels of the width
-    /// of the panel of the read, each with the read or the mate in its middle.
+    /// of the panel of the read, each with the start of the read or of the mate near its middle.
     pub(super) fn view_mate(&mut self) -> Task<Message> {
         let width = self.width;
         let Some(Card {
@@ -241,7 +242,14 @@ impl Genie {
         let (Some(own), Some(other)) = (assembly.find(own), assembly.find(other)) else {
             return Task::none();
         };
-        let length = read.end().saturating_sub(read.start);
+        // The bases of the read on the reference without its introns, so that a spliced read
+        // and its mate show their starts.
+        let length: u64 = read
+            .cigar
+            .iter()
+            .filter(|(op, _)| op.consumes_reference() && *op != Op::Skip)
+            .map(|(_, length)| u64::from(*length))
+            .sum();
         let span = (0..session.count())
             .map(|panel| session.frame(panel))
             .find(|(contig, viewport)| {
