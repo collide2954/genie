@@ -1122,6 +1122,8 @@ pub struct Track {
     pub over: Option<u64>,
     /// A hidden track does not show and does not load its data.
     pub hidden: bool,
+    /// The folder of the track in the tracks panel. The tracks of a folder follow each other.
+    pub folder: Option<String>,
     pub contigs: Vec<Option<String>>,
     pub names: Option<Arc<Names>>,
     pub hue: Hue,
@@ -1180,6 +1182,7 @@ impl Track {
             name: source.name.clone(),
             over: None,
             hidden: false,
+            folder: None,
             source,
             contigs,
             names: None,
@@ -1699,6 +1702,21 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Operation(operation) => operate(&mut tracks[position], operation),
         Change::Viewpoint(viewpoint) => tracks[position].plot.viewpoint = viewpoint,
     }
+}
+
+/// Puts a track in a folder after the other tracks of the folder, or takes it out of its folder
+/// after the tracks that stay in it, so that the tracks of each folder follow each other.
+pub fn file(tracks: &mut Vec<Track>, position: usize, folder: Option<String>) {
+    let mut track = tracks.remove(position);
+    let block = folder.as_ref().or(track.folder.as_ref());
+    let last = block.and_then(|name| {
+        tracks
+            .iter()
+            .rposition(|other| other.folder.as_ref() == Some(name))
+    });
+    track.folder = folder.filter(|name| !name.trim().is_empty());
+    let at = last.map_or(position.min(tracks.len()), |last| last + 1);
+    tracks.insert(at, track);
 }
 
 /// Frees the tracks that overlay a removed track, and stops the comparisons with it.

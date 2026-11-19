@@ -110,6 +110,8 @@ pub struct Genie {
     menu: Option<(u64, Point)>,
     sequence_menu: Option<Point>,
     copy_menu: Option<(Option<u64>, Point)>,
+    /// The menu of a folder of the tracks panel, and where it opens.
+    folder_menu: Option<(String, Point)>,
     resize: Option<(u64, f32)>,
     moving: Option<(u64, f32)>,
     lane_hover: Option<u64>,
@@ -207,6 +209,7 @@ impl Default for Genie {
             menu: None,
             sequence_menu: None,
             copy_menu: None,
+            folder_menu: None,
             resize: None,
             moving: None,
             lane_hover: None,
@@ -766,6 +769,10 @@ pub enum Message {
     Assemblies(Assembling),
     Blat(Blatting),
     TrackList(track_list::Listing),
+    /// Shows, hides, renames or removes a folder of the tracks panel.
+    Folder(String, track_list::Foldering),
+    /// Opens the menu of a folder of the tracks panel at a place.
+    FolderMenu(String, Point),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1099,7 +1106,9 @@ impl Genie {
             Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Blat(blatting) => return self.blatting(blatting),
-            Message::TrackList(listing) => return self.listing(listing),
+            Message::TrackList(_) | Message::Folder(..) | Message::FolderMenu(..) => {
+                return self.panel_message(message);
+            }
             Message::Update(updating) => return self.updating(updating),
             Message::Samples(sampling) => return self.sampling(sampling),
             Message::Lane(id, lane) => self.lane(id, lane),
@@ -2100,17 +2109,113 @@ mod tests {
             "{messages:?}"
         );
         let _ = genie.update(hide);
-        let rows = |genie: &Genie, query: &str| -> Vec<(String, bool)> {
-            let session = genie.session.as_ref().unwrap();
-            let rows = track_list::rows(session, query);
-            rows.into_iter().map(|row| (row.name, row.hidden)).collect()
-        };
-        let a = ("a.bed.gz".to_owned(), true);
-        let b = ("b.bed.gz".to_owned(), false);
-        assert_eq!(rows(&genie, ""), [a, b.clone()]);
-        assert_eq!(rows(&genie, " B.BED "), [b]);
+        assert_eq!(panel_items(&genie), ["a.bed.gz hidden", "b.bed.gz"]);
+        let _ = genie.update(Message::TrackList(Listing::Query(" B.BED ".to_owned())));
+        assert_eq!(panel_items(&genie), ["b.bed.gz"]);
         let _ = genie.update(Message::Command(Command::TrackList));
         assert!(!shows(&genie, "2 tracks"));
+        assert_eq!(
+            track_list::items(genie.session.as_ref().unwrap(), None).len(),
+            2
+        );
+    }
+
+    /// The rows of the tracks panel as words: a folder with the number of its tracks, and a
+    /// track in a folder after two spaces.
+    fn panel_items(genie: &Genie) -> Vec<String> {
+        use super::track_list::{self, Item};
+
+        let session = genie.session.as_ref().unwrap();
+        let mark = |on: bool, word: &str| {
+            if on {
+                format!(" {word}")
+            } else {
+                String::new()
+            }
+        };
+        track_list::items(session, genie.track_list.as_ref())
+            .into_iter()
+            .map(|item| match item {
+                Item::Folder {
+                    name,
+                    count,
+                    hidden,
+                    folded,
+                } => format!(
+                    "{name} ({count}){}{}",
+                    mark(hidden, "hidden"),
+                    mark(folded, "folded")
+                ),
+                Item::Track(row) => format!(
+                    "{}{}{}",
+                    if row.inside { "  " } else { "" },
+                    row.name,
+                    mark(row.hidden, "hidden")
+                ),
+            })
+            .collect()
+    }
+
+    /// Folders group tracks in the panel. A track joins a folder at its end, the eye of a folder
+    /// hides or shows all its tracks in one step, and a folder folds its rows.
+    #[test]
+    fn folders_group_tracks_in_the_panel() {
+        use super::track_list::{Foldering, Listing};
+
+        let mut genie = opened();
+        for name in ["a.bed.gz", "b.bed.gz", "c.bed.gz"] {
+            let _ = genie.update(Message::TrackOpened(Ok(source(name))));
+        }
+        let ids: Vec<u64> = genie
+            .session
+            .as_ref()
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .collect();
+        let _ = genie.update(Message::TrackMenu(ids[2], Point::ORIGIN));
+        assert!(shows(&genie, "New folder…"));
+        let _ = genie.update(Message::TrackList(Listing::Name(ids[2])));
+        assert!(shows(&genie, "Name of the new folder"));
+        let _ = genie.update(Message::TrackList(Listing::Draft("Signals".to_owned())));
+        let _ = genie.update(Message::TrackList(Listing::Named));
+        let _ = genie.update(Message::TrackList(Listing::Toggle));
+        let _ = genie.update(Message::TrackMenu(ids[0], Point::ORIGIN));
+        assert!(shows(&genie, "Signals"));
+        let _ = genie.update(Message::MenuDismissed);
+        let _ = genie.update(Message::TrackList(Listing::Toggle));
+        let folder = |foldering| Message::Folder("Signals".to_owned(), foldering);
+        let _ = genie.update(folder(Foldering::Add(ids[0])));
+        assert_eq!(
+            panel_items(&genie),
+            ["b.bed.gz", "Signals (2)", "  c.bed.gz", "  a.bed.gz"]
+        );
+        let _ = genie.update(folder(Foldering::Visible(false)));
+        assert_eq!(
+            panel_items(&genie),
+            [
+                "b.bed.gz",
+                "Signals (2) hidden",
+                "  c.bed.gz hidden",
+                "  a.bed.gz hidden"
+            ]
+        );
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert_eq!(panel_items(&genie)[1], "Signals (2)");
+        let _ = genie.update(Message::TrackList(Listing::Fold("Signals".to_owned())));
+        assert_eq!(panel_items(&genie), ["b.bed.gz", "Signals (2) folded"]);
+        let _ = genie.update(Message::TrackList(Listing::Fold("Signals".to_owned())));
+        let _ = genie.update(folder(Foldering::Take(ids[2])));
+        assert_eq!(
+            panel_items(&genie),
+            ["b.bed.gz", "Signals (1)", "  a.bed.gz", "c.bed.gz"]
+        );
+        let _ = genie.update(folder(Foldering::Rename("Coverage".to_owned())));
+        assert_eq!(panel_items(&genie)[1], "Coverage (1)");
+        let gone = Message::Folder("Coverage".to_owned(), Foldering::Remove);
+        let _ = genie.update(gone);
+        assert_eq!(panel_items(&genie), ["b.bed.gz", "a.bed.gz", "c.bed.gz"]);
     }
 
     fn right_click(ui: &mut iced_test::Simulator<'_, Message>, at: Point) {
@@ -4118,6 +4223,7 @@ mod tests {
             choice: genie_core::samples::Choice::default(),
             lift: None,
             hidden: false,
+            folder: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4213,6 +4319,7 @@ mod tests {
                 choice: genie_core::samples::Choice::default(),
                 lift: None,
                 hidden: false,
+                folder: None,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),

@@ -339,6 +339,7 @@ impl Genie {
         self.field_draft = None;
         self.sequence_menu = None;
         self.copy_menu = None;
+        self.folder_menu = None;
         self.popup = None;
         self.address = None;
         self.range_draft = None;
@@ -1229,6 +1230,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.hue = found.hue;
     track.height = found.height;
     track.hidden = found.hidden;
+    track.folder.clone_from(&found.folder);
     track.options = track::Options {
         lift: track.options.lift,
         ..found.options

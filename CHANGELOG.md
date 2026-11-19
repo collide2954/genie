@@ -18,6 +18,7 @@
 ### Tracks panel
 
 - Ctrl+Shift+T or the list button shows the tracks panel at the left of the tracks: a row for each track with an eye that hides or shows it, a field that finds tracks by name, and the track menu on a right-click. A hidden track does not show and genie does not read its data. **Hide** in the track menu also hides a track.
+- Folders group tracks in the panel: **Folder** in the track menu puts a track in a folder or makes a new one. A folder folds its rows, and its eye hides or shows all its tracks. Sessions keep hidden tracks and folders.
 
 ### Undo
 

@@ -153,6 +153,7 @@ impl Genie {
                         .map(|lift| lift.location.clone())
                         .or_else(|| track.lifting.clone()),
                     hidden: track.hidden,
+                    folder: track.folder.clone(),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

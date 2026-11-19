@@ -28,6 +28,7 @@ struct Kept {
     name: String,
     over: Option<u64>,
     hidden: bool,
+    folder: Option<String>,
     hue: Hue,
     mode: Option<Mode>,
     options: Options,
@@ -71,11 +72,13 @@ impl PartialEq for Kept {
                 &self.declared,
                 &self.choice,
                 &self.lifting,
+                &self.folder,
             ) == (
                 &other.modification,
                 &other.declared,
                 &other.choice,
                 &other.lifting,
+                &other.folder,
             )
     }
 }
@@ -88,6 +91,7 @@ impl Kept {
             name: track.name.clone(),
             over: track.over,
             hidden: track.hidden,
+            folder: track.folder.clone(),
             hue: track.hue,
             mode: track.mode,
             options: track.options,
@@ -112,6 +116,7 @@ impl Kept {
         track.name = self.name;
         track.over = self.over;
         track.hidden = self.hidden;
+        track.folder = self.folder;
         track.hue = self.hue;
         track.mode = self.mode;
         track.options = self.options;
@@ -195,7 +200,9 @@ fn records(message: &Message) -> bool {
         | Message::Palette(..)
         | Message::Port(..)
         | Message::Find(..)
-        | Message::Table(..) => true,
+        | Message::Table(..)
+        | Message::TrackList(..)
+        | Message::Folder(..) => true,
         _ => false,
     }
 }

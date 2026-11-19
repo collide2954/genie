@@ -232,6 +232,7 @@ impl Genie {
             .track_menu()
             .or_else(|| self.reading_menu())
             .or_else(|| self.copy_menu())
+            .or_else(|| self.folder_menu())
             .or_else(panel)
             .or_else(|| self.address_view())
             .or_else(|| self.genome_menu())
@@ -1595,7 +1596,40 @@ fn trio_section(track: &Track) -> Option<Section> {
     })
 }
 
+/// The folder items of a track menu: the other folders of the tracks panel, a new folder, and
+/// out of the folder of the track.
+fn folder_section(session: &Session, track: &Track) -> Section {
+    use super::track_list::Foldering;
+
+    let id = track.id;
+    let mut items: Vec<(String, Message)> = super::track_list::folders(session)
+        .into_iter()
+        .filter(|name| track.folder.as_ref() != Some(name))
+        .map(|name| {
+            let add = Message::Folder(name.clone(), Foldering::Add(id));
+            (name, add)
+        })
+        .collect();
+    let new = Message::TrackList(super::Listing::Name(id));
+    items.push(("New folder…".to_owned(), new));
+    if let Some(folder) = &track.folder {
+        let out = Message::Folder(folder.clone(), Foldering::Take(id));
+        items.push(("Out of the folder".to_owned(), out));
+    }
+    Section {
+        heading: "Folder",
+        items,
+    }
+}
+
+/// The sections of a track menu: the links of the kind of the track, then its folder.
 pub(super) fn links(session: &Session, track: &Track) -> Vec<Section> {
+    let mut sections = kind_links(session, track);
+    sections.push(folder_section(session, track));
+    sections
+}
+
+fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
     if track.source.has_variants() {
         return trio_section(track).into_iter().collect();
     }

@@ -81,6 +81,8 @@ pub struct SavedTrack {
     pub lift: Option<Location>,
     /// A hidden track does not show and does not load its data.
     pub hidden: bool,
+    /// The folder of the track in the tracks panel.
+    pub folder: Option<String>,
 }
 
 impl SavedTrack {
@@ -102,6 +104,7 @@ impl SavedTrack {
             choice: Choice::default(),
             lift: None,
             hidden: false,
+            folder: None,
         }
     }
 }
@@ -171,6 +174,7 @@ impl Saved {
                     },
                     lift: section.value("lift").map(|text| read(text, base)),
                     hidden: section.value("hidden") == Some("on"),
+                    folder: section.value("folder").map(str::to_owned),
                 })
             })
             .collect();
@@ -348,6 +352,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if track.hidden {
         entries.push(("hidden", "on".to_owned()));
+    }
+    if let Some(folder) = &track.folder {
+        entries.push(("folder", folder.clone()));
     }
     entries.extend(option_entries(track.options));
     if track.plot.style == Style::Line {
@@ -729,6 +736,7 @@ mod tests {
                     choice: Choice::default(),
                     lift: None,
                     hidden: false,
+                    folder: None,
                 },
                 SavedTrack {
                     hue: Hue::Vermillion,
@@ -770,6 +778,7 @@ mod tests {
                         kind: "bigWig".to_owned(),
                         index: None,
                     }),
+                    folder: Some("Signals".to_owned()),
                     ..SavedTrack::plain(Location::File(base().join("coverage.bw")))
                 },
             ],
@@ -872,6 +881,7 @@ mod tests {
         );
         assert_eq!(text.matches("lift =").count(), 1, "{text}");
         assert_eq!(text.matches("hidden = on").count(), 1, "{text}");
+        assert_eq!(text.matches("folder = Signals").count(), 1, "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(saved()));
     }
 
