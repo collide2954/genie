@@ -30,6 +30,10 @@ pub enum Command {
     Diagnostics,
     SaveSession,
     Copy,
+    /// Undoes the last work on tracks or region marks.
+    Undo,
+    /// Does the last undone work again.
+    Redo,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -61,6 +65,11 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         Key::Character("e" | "E") if modifiers.command() => Some(Command::Export),
         Key::Character("s" | "S") if modifiers.command() => Some(Command::SaveSession),
         Key::Character("c" | "C") if modifiers.command() => Some(Command::Copy),
+        Key::Character("z" | "Z") if modifiers.command() && modifiers.shift() => {
+            Some(Command::Redo)
+        }
+        Key::Character("z" | "Z") if modifiers.command() => Some(Command::Undo),
+        Key::Character("y" | "Y") if modifiers.command() => Some(Command::Redo),
         _ => None,
     }
 }
@@ -133,6 +142,21 @@ mod tests {
             Some(Command::AddRegion)
         );
         assert_eq!(command(&character("d"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_z_undoes_and_command_y_or_shift_z_redoes() {
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(
+            command(&character("z"), Modifiers::COMMAND),
+            Some(Command::Undo)
+        );
+        assert_eq!(
+            command(&character("y"), Modifiers::COMMAND),
+            Some(Command::Redo)
+        );
+        assert_eq!(command(&character("Z"), shift), Some(Command::Redo));
+        assert_eq!(command(&character("z"), Modifiers::empty()), None);
     }
 
     #[test]

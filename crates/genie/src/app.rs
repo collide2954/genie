@@ -62,6 +62,7 @@ mod table;
 mod track_settings;
 mod tracks;
 mod ucsc;
+mod undo;
 mod updates;
 mod view;
 mod whole;
@@ -310,6 +311,8 @@ struct Session {
     samples: Option<samples::Samples>,
     /// The title and the parts of exported images.
     figure: Figure,
+    /// The steps of the work on tracks and region marks, to undo and to redo.
+    steps: undo::Steps,
 }
 
 #[derive(Debug)]
@@ -361,6 +364,7 @@ impl Session {
             genome: false,
             samples: None,
             figure: Figure::default(),
+            steps: undo::Steps::default(),
         }
     }
 
@@ -1024,7 +1028,9 @@ impl Genie {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         let started = Instant::now();
+        let before = self.undo_point(&message);
         let task = self.handle(message);
+        self.keep_step(before);
         self.refresh_table();
         self.answer();
         self.stats.update = started.elapsed();
@@ -3159,6 +3165,77 @@ mod tests {
 
     fn marks(genie: &Genie) -> Vec<genie_core::Mark> {
         genie.session.as_ref().unwrap().marks.all().to_vec()
+    }
+
+    /// Ctrl+Z undoes the work on tracks and region marks step by step, and Ctrl+Y does it again.
+    /// A message that changes nothing is not a step, and new work drops the steps to redo.
+    #[test]
+    fn undo_and_redo_step_through_the_work_on_tracks() {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(source("a.bed.gz"))));
+        let _ = genie.update(Message::TrackOpened(Ok(source("b.bed.gz"))));
+        let names = |genie: &Genie| -> Vec<String> {
+            let tracks = &genie.session.as_ref().unwrap().tracks;
+            tracks.iter().map(|track| track.name.clone()).collect()
+        };
+        let hue = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].hue;
+        let (first, plain) = (genie.session.as_ref().unwrap().tracks[0].id, hue(&genie));
+        let undo = || Message::Command(Command::Undo);
+        let redo = || Message::Command(Command::Redo);
+        let _ = genie.update(Message::TrackChanged(first, Change::Hue(Hue::Purple)));
+        let _ = genie.update(Message::TrackChanged(first, Change::Hue(Hue::Purple)));
+        let _ = genie.update(Message::TrackChanged(first, Change::Remove));
+        assert_eq!(names(&genie), ["b.bed.gz"]);
+        let _ = genie.update(undo());
+        assert_eq!(names(&genie), ["a.bed.gz", "b.bed.gz"]);
+        assert_eq!(hue(&genie), Hue::Purple);
+        let _ = genie.update(undo());
+        assert_eq!(hue(&genie), plain);
+        let _ = genie.update(undo());
+        assert_eq!(names(&genie), ["a.bed.gz"]);
+        for _ in 0..3 {
+            let _ = genie.update(redo());
+        }
+        assert_eq!(names(&genie), ["b.bed.gz"]);
+        let _ = genie.update(redo());
+        assert!(shows(&genie, "Nothing to redo."));
+        let _ = genie.update(undo());
+        let _ = genie.update(Message::TrackChanged(first, Change::Hue(Hue::Orange)));
+        let _ = genie.update(redo());
+        assert!(shows(&genie, "Nothing to redo."));
+        assert_eq!(hue(&genie), Hue::Orange);
+    }
+
+    /// A drag of the bottom edge of a lane sends many messages, and makes one step.
+    #[test]
+    fn a_drag_of_a_lane_is_one_step() {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(source("a.bed.gz"))));
+        let id = genie.session.as_ref().unwrap().tracks[0].id;
+        let height = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].height;
+        for delta in [10.0, 20.0, 30.0] {
+            let _ = genie.update(Message::Lane(id, Lane::Resized(delta)));
+        }
+        let _ = genie.update(Message::Lane(id, Lane::Released));
+        assert!(height(&genie).is_some());
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert_eq!(height(&genie), None);
+        assert_eq!(genie.session.as_ref().unwrap().tracks.len(), 1);
+    }
+
+    #[test]
+    fn undo_takes_back_a_region_mark() {
+        let mut genie = opened();
+        go(&mut genie, "chr1:101-200");
+        let _ = genie.update(Message::Command(Command::AddRegion));
+        assert_eq!(marks(&genie).len(), 1);
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert_eq!(marks(&genie).len(), 0);
+        let _ = genie.update(Message::Command(Command::Redo));
+        assert_eq!(marks(&genie).len(), 1);
+        let _ = genie.update(Message::Command(Command::Undo));
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert!(shows(&genie, "Nothing to undo."));
     }
 
     #[test]

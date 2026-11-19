@@ -109,6 +109,11 @@ pub fn groups() -> [Group; 6] {
                 (keys('E'), "Export an image"),
                 (keys('C'), "Copy the locus or a card"),
                 ("Right-click the ruler".to_owned(), "Copy the sequence"),
+                (keys('Z'), "Undo the last work on tracks"),
+                (
+                    format!("{}, {}", keys('Y'), crate::chrome::shift_keys('Z')),
+                    "Redo",
+                ),
             ],
         ),
         group(

@@ -300,6 +300,8 @@ impl Genie {
                 ),
                 Action::new("Show the regions", "", Message::Regions(Regions::Toggle)),
                 Action::new("Copy the locus", keys('C'), command(Command::Copy)),
+                Action::new("Undo", keys('Z'), command(Command::Undo)),
+                Action::new("Redo", keys('Y'), command(Command::Redo)),
                 Action::new(
                     "Find a sequence…",
                     chrome::shift_keys('F'),

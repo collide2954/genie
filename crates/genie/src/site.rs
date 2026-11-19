@@ -58,7 +58,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
     (
         "sessions",
         "Sessions and images",
-        &["Sessions", "Export", "Images from the command line"],
+        &["Undo", "Sessions", "Export", "Images from the command line"],
     ),
     (
         "automation",

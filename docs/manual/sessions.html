@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sessions and images · genie</title>
-<meta name="description" content="The genie manual: sessions, export, images from the command line.">
+<meta name="description" content="The genie manual: undo, sessions, export, images from the command line.">
 <meta property="og:title" content="Sessions and images · genie">
-<meta property="og:description" content="The genie manual: sessions, export, images from the command line.">
+<meta property="og:description" content="The genie manual: undo, sessions, export, images from the command line.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/sessions.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -47,6 +47,7 @@
       <li><a href="tracks.html">Tracks</a></li>
       <li><a href="sessions.html" aria-current="page">Sessions and images</a>
         <ul>
+          <li><a href="#undo">Undo</a></li>
           <li><a href="#sessions">Sessions</a></li>
           <li><a href="#export">Export</a></li>
           <li><a href="#images-from-the-command-line">Images from the command line</a></li>
@@ -60,6 +61,13 @@
 </aside>
 <article class="prose">
 <h1>Sessions and images</h1>
+<h2 id="undo">Undo</h2>
+<p>Push Ctrl+Z (Cmd+Z on macOS) to undo the last work on tracks and regions: open, remove, move or change a track, filter it, overlay or compare it, group its samples, lift it, or add, rename or remove a region. Push Ctrl+Y or Ctrl+Shift+Z (Cmd+Shift+Z on macOS) to do it again. The palette has <b>Undo</b> and <b>Redo</b> too.</p>
+<ul>
+<li>genie keeps the last 100 steps of the open reference. A new step drops the steps that you can redo.</li>
+<li>Moves of the view are not steps: Back and Forward go to earlier views.</li>
+<li>A track that comes back loads its data again.</li>
+</ul>
 <h2 id="sessions">Sessions</h2>
 <p>To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its <code>.genie</code> file. genie keeps the last session when you close it, and the start view can restore it.</p>
 <p>If a file is in the folder of the session file, the session file has its path relative to that folder.</p>

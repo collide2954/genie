@@ -96,6 +96,8 @@ impl Genie {
             Command::Export => self.open_export(),
             Command::SaveSession => self.save_session(),
             Command::Copy => self.copy(),
+            Command::Undo => self.undo(false),
+            Command::Redo => self.undo(true),
             Command::Diagnostics => {
                 if cfg!(debug_assertions) {
                     self.diagnostics = !self.diagnostics;

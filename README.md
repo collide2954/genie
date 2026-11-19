@@ -420,6 +420,14 @@ If the sample table gives the father and the mother of a sample, and the variant
 - At a site with more than one alternate allele, a heterozygous call can have two alternate alleles. There, genie tells only the errors that no alleles can explain.
 - A son has one X chromosome, from his mother. So genie checks X only for daughters, and it does not check Y and the mitochondria. The sex of a child comes from the PLINK sex or from a field with the name `Sex` or `Gender` (male, female, M, F, 1 or 2).
 
+## Undo
+
+Push Ctrl+Z (Cmd+Z on macOS) to undo the last work on tracks and regions: open, remove, move or change a track, filter it, overlay or compare it, group its samples, lift it, or add, rename or remove a region. Push Ctrl+Y or Ctrl+Shift+Z (Cmd+Shift+Z on macOS) to do it again. The palette has **Undo** and **Redo** too.
+
+- genie keeps the last 100 steps of the open reference. A new step drops the steps that you can redo.
+- Moves of the view are not steps: Back and Forward go to earlier views.
+- A track that comes back loads its data again.
+
 ## Sessions
 
 To save the reference, the tracks (with their names, colors, ranges, overlays, sample fields and chain files), the view, the regions, the track hubs and the sample table as a session, push Ctrl+S (Cmd+S on macOS) or click the save button. To open a session, open its `.genie` file. genie keeps the last session when you close it, and the start view can restore it.
