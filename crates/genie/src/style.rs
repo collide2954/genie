@@ -56,6 +56,15 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// A small round mark in the color of a track.
+pub fn dot(theme: &Theme, hue: Hue) -> container::Style {
+    container::Style {
+        background: Some(data(theme).hues[hue as usize].into()),
+        border: Border::default().rounded(4),
+        ..container::Style::default()
+    }
+}
+
 pub fn swatch(theme: &Theme, status: button::Status, hue: Hue, chosen: bool) -> button::Style {
     let tokens = tokens(theme);
     let ring = if chosen {

@@ -59,6 +59,7 @@ mod samples;
 mod sessions;
 pub mod snapshot;
 mod table;
+mod track_list;
 mod track_settings;
 mod tracks;
 mod ucsc;
@@ -74,6 +75,7 @@ pub(crate) use lift::Lifting;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 pub(crate) use table::Tabling;
+pub(crate) use track_list::Listing;
 use tracks::pick;
 pub(crate) use updates::Updating;
 
@@ -151,6 +153,8 @@ pub struct Genie {
     effects: effects::Effects,
     assemblies: assemblies::Assemblies,
     blat: blat::Blat,
+    /// The tracks panel at the left of the tracks, when it is open.
+    track_list: Option<track_list::TrackList>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,6 +249,7 @@ impl Default for Genie {
             effects: effects::Effects::default(),
             assemblies: assemblies::Assemblies::default(),
             blat: blat::Blat::default(),
+            track_list: None,
         }
     }
 }
@@ -760,6 +765,7 @@ pub enum Message {
     Samples(Sampling),
     Assemblies(Assembling),
     Blat(Blatting),
+    TrackList(track_list::Listing),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1093,6 +1099,7 @@ impl Genie {
             Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Blat(blatting) => return self.blatting(blatting),
+            Message::TrackList(listing) => return self.listing(listing),
             Message::Update(updating) => return self.updating(updating),
             Message::Samples(sampling) => return self.sampling(sampling),
             Message::Lane(id, lane) => self.lane(id, lane),
@@ -2051,6 +2058,59 @@ mod tests {
             &genie,
             "genie copies up to 1 Mb of sequence. Zoom in, or choose a smaller region."
         ));
+    }
+
+    fn left_click(ui: &mut iced_test::Simulator<'_, Message>, at: Point) {
+        ui.point_at(at);
+        let _ = ui.simulate(vec![
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+    }
+
+    /// The tracks panel lists the tracks: the eye of a row hides or shows its track, the field
+    /// finds tracks by name, and a right-click on a row opens the track menu.
+    #[test]
+    fn the_tracks_panel_lists_tracks_with_an_eye_and_a_search() {
+        use super::track_list::{self, Listing};
+
+        let mut genie = opened();
+        for name in ["a.bed.gz", "b.bed.gz"] {
+            let _ = genie.update(Message::TrackOpened(Ok(source(name))));
+        }
+        let first = genie.session.as_ref().unwrap().tracks[0].id;
+        let mut ui = simulator(genie.view());
+        let button = ui.find(selector::id("tracks")).unwrap().bounds().center();
+        left_click(&mut ui, button);
+        let toggle = Message::TrackList(Listing::Toggle);
+        assert!(ui.into_messages().any(|message| message == toggle));
+        let _ = genie.update(toggle);
+        assert!(shows(&genie, "2 tracks"));
+        let mut ui = simulator(genie.view());
+        let eye = ui.find(selector::id(format!("eye-{first}"))).unwrap();
+        left_click(&mut ui, eye.bounds().center());
+        let row = ui.find(selector::id(format!("row-{first}"))).unwrap();
+        let row = row.bounds().center();
+        right_click(&mut ui, row);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        let hide = Message::TrackChanged(first, Change::Visible(false));
+        assert!(messages.contains(&hide), "{messages:?}");
+        assert!(
+            messages.contains(&Message::TrackMenu(first, row)),
+            "{messages:?}"
+        );
+        let _ = genie.update(hide);
+        let rows = |genie: &Genie, query: &str| -> Vec<(String, bool)> {
+            let session = genie.session.as_ref().unwrap();
+            let rows = track_list::rows(session, query);
+            rows.into_iter().map(|row| (row.name, row.hidden)).collect()
+        };
+        let a = ("a.bed.gz".to_owned(), true);
+        let b = ("b.bed.gz".to_owned(), false);
+        assert_eq!(rows(&genie, ""), [a, b.clone()]);
+        assert_eq!(rows(&genie, " B.BED "), [b]);
+        let _ = genie.update(Message::Command(Command::TrackList));
+        assert!(!shows(&genie, "2 tracks"));
     }
 
     fn right_click(ui: &mut iced_test::Simulator<'_, Message>, at: Point) {

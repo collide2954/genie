@@ -359,6 +359,15 @@ The BLAT server of UCSC finds where a sequence aligns in the whole genome, also 
 - Drag the bottom edge of a track to set its height. Double-click the edge to show all rows again.
 - If a track has more than 200,000 shapes to draw in the view, it shows "There is too much to draw here. Zoom in." in place of the data.
 
+### Tracks panel
+
+Push Ctrl+Shift+T (Cmd+Shift+T on macOS) or click the list button in the title bar to show the tracks panel at the left of the tracks. The palette has **Show the tracks** too.
+
+- The panel has a row for each track, in the order of the tracks, with its color and its name. A track that overlays another track shows the name of the other track.
+- Click the eye of a row to hide the track or to show it again. A hidden track does not show in the view or in exports, and genie does not read its data. Sessions keep hidden tracks. **Hide** in the track menu also hides a track.
+- Type words in **Find a track** to show only the rows whose names have all the words.
+- Right-click a row for the track menu.
+
 ## Variant table
 
 - Right-click a variant track and click **Variant table** to see its variants in a table under the tracks. The palette has **Show the variant table**. Click the item again, or click ×, to close the table.

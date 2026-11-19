@@ -34,6 +34,12 @@ pub enum Icon {
     Genome,
     Help,
     Down,
+    /// The tracks panel: lines with a dot before each.
+    List,
+    /// A track that shows.
+    Eye,
+    /// A hidden track.
+    EyeOff,
 }
 
 enum Shape {
@@ -135,9 +141,46 @@ impl Icon {
             Self::Whole => WHOLE,
             Self::Genome => GENOME,
             Self::Down => &[Shape::Polyline(&[[6.0, 9.0], [12.0, 15.0], [18.0, 9.0]])],
+            Self::List => LIST,
+            Self::Eye => EYE,
+            Self::EyeOff => EYE_OFF,
         }
     }
 }
+
+const LIST: &[Shape] = &[
+    Shape::Line([9.0, 6.0], [21.0, 6.0]),
+    Shape::Line([9.0, 12.0], [21.0, 12.0]),
+    Shape::Line([9.0, 18.0], [21.0, 18.0]),
+    Shape::Circle([4.0, 6.0], 0.75),
+    Shape::Circle([4.0, 12.0], 0.75),
+    Shape::Circle([4.0, 18.0], 0.75),
+];
+
+/// The outline of an eye, as two curves from corner to corner.
+const LIDS: Shape = Shape::Polyline(&[
+    [2.0, 12.0],
+    [5.0, 8.0],
+    [8.5, 6.0],
+    [12.0, 5.5],
+    [15.5, 6.0],
+    [19.0, 8.0],
+    [22.0, 12.0],
+    [19.0, 16.0],
+    [15.5, 18.0],
+    [12.0, 18.5],
+    [8.5, 18.0],
+    [5.0, 16.0],
+    [2.0, 12.0],
+]);
+
+const EYE: &[Shape] = &[LIDS, Shape::Circle([12.0, 12.0], 3.0)];
+
+const EYE_OFF: &[Shape] = &[
+    LIDS,
+    Shape::Circle([12.0, 12.0], 3.0),
+    Shape::Line([3.0, 3.0], [21.0, 21.0]),
+];
 
 const MORE: &[Shape] = &[
     Shape::Circle([5.0, 12.0], 1.0),

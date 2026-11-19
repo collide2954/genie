@@ -385,25 +385,37 @@ impl Genie {
         )
     }
 
-    /// The tracks with the variant table under them and the region list at their right.
+    /// The tracks with the variant table under them, the tracks panel at their left and the
+    /// region list at their right.
     fn session_body<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let main = match self.table_view(session) {
             Some(table) => column![self.browser(session), table].into(),
             None => self.browser(session),
         };
-        let width = self.sidebar_width();
-        if width < 0.5 {
-            return main;
+        let line = || {
+            container(space())
+                .width(1)
+                .height(Length::Fill)
+                .style(|theme| container::background(tokens(theme).line))
+        };
+        let mut body = row![];
+        if let Some(list) = self.track_list_view(session) {
+            let list = container(list)
+                .width(super::track_list::WIDTH)
+                .height(Length::Fill)
+                .clip(true);
+            body = body.push(list).push(line());
         }
-        let line = container(space())
-            .width(1)
-            .height(Length::Fill)
-            .style(|theme| container::background(tokens(theme).line));
-        let panel = container(self.sidebar_view(session))
-            .width(width)
-            .height(Length::Fill)
-            .clip(true);
-        row![main, line, panel].into()
+        body = body.push(main);
+        let width = self.sidebar_width();
+        if width >= 0.5 {
+            let panel = container(self.sidebar_view(session))
+                .width(width)
+                .height(Length::Fill)
+                .clip(true);
+            body = body.push(line()).push(panel);
+        }
+        body.into()
     }
 
     fn body(&self) -> Element<'_, Message> {

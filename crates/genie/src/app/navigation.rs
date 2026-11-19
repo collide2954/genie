@@ -98,6 +98,7 @@ impl Genie {
             Command::Copy => self.copy(),
             Command::Undo => self.undo(false),
             Command::Redo => self.undo(true),
+            Command::TrackList => self.listing(super::track_list::Listing::Toggle),
             Command::Diagnostics => {
                 if cfg!(debug_assertions) {
                     self.diagnostics = !self.diagnostics;

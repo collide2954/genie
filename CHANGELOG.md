@@ -15,6 +15,10 @@
 - genie opens PAF files from minimap2, wfmash and other aligners. Each alignment shows on the reference in view with the name of its query, in blocks between the long deletions of its CIGAR. Its card shows the place on the query, the identity, MAPQ and the tags. genie sorts and indexes large PAF files in its cache.
 - A family variant track checks the calls of each child against its parents, from the father and the mother in the sample table (for example a PLINK `.ped` file). The field Inheritance tells the Mendelian errors and the de novo variants, a frame shows around the call of the child, and the track menu has **Only de novo variants** and **Only Mendelian errors**. genie checks X only for daughters.
 
+### Tracks panel
+
+- Ctrl+Shift+T or the list button shows the tracks panel at the left of the tracks: a row for each track with an eye that hides or shows it, a field that finds tracks by name, and the track menu on a right-click. A hidden track does not show and genie does not read its data. **Hide** in the track menu also hides a track.
+
 ### Undo
 
 - Ctrl+Z (Cmd+Z on macOS) undoes the last work on tracks and regions, and Ctrl+Y or Ctrl+Shift+Z does it again, for up to 100 steps. Moves of the view stay with Back and Forward.

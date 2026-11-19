@@ -34,6 +34,8 @@ pub enum Command {
     Undo,
     /// Does the last undone work again.
     Redo,
+    /// Shows the tracks panel, or hides it.
+    TrackList,
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -57,6 +59,9 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
             Some(Command::Find)
         }
         Key::Character("f" | "F") if modifiers.command() => Some(Command::NextFeature),
+        Key::Character("t" | "T") if modifiers.command() && modifiers.shift() => {
+            Some(Command::TrackList)
+        }
         Key::Character("b" | "B") if modifiers.command() => Some(Command::PreviousFeature),
         Key::Character("d" | "D") if modifiers.command() => Some(Command::AddRegion),
         Key::Character("k" | "K") if modifiers.command() => Some(Command::Palette),
@@ -157,6 +162,14 @@ mod tests {
         );
         assert_eq!(command(&character("Z"), shift), Some(Command::Redo));
         assert_eq!(command(&character("z"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn command_shift_t_shows_the_tracks_panel() {
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(command(&character("T"), shift), Some(Command::TrackList));
+        assert_eq!(command(&character("t"), shift), Some(Command::TrackList));
+        assert_eq!(command(&character("t"), Modifiers::COMMAND), None);
     }
 
     #[test]

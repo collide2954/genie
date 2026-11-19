@@ -299,6 +299,11 @@ impl Genie {
                     command(Command::AddRegion),
                 ),
                 Action::new("Show the regions", "", Message::Regions(Regions::Toggle)),
+                Action::new(
+                    "Show the tracks",
+                    chrome::shift_keys('T'),
+                    command(Command::TrackList),
+                ),
                 Action::new("Copy the locus", keys('C'), command(Command::Copy)),
                 Action::new("Undo", keys('Z'), command(Command::Undo)),
                 Action::new("Redo", keys('Y'), command(Command::Redo)),

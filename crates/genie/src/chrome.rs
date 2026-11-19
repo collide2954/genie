@@ -189,8 +189,9 @@ pub struct LocusField {
 
 /// The width of the zoom buttons after the locus box, with the gap before them.
 const ZOOM_WIDTH: f32 = 8.0 + 4.0 * TOOL_SIZE + 3.0 * TOOL_GAP;
-/// The width of the tools at the right of the bar: regions, save, export, help, settings, look.
-const TOOLS_WIDTH: f32 = 6.0 * TOOL_SIZE + 5.0 * TOOL_GAP;
+/// The width of the tools at the right of the bar: tracks, regions, save, export, help,
+/// settings, look.
+const TOOLS_WIDTH: f32 = 7.0 * TOOL_SIZE + 6.0 * TOOL_GAP;
 /// The narrowest locus box, when the window has less room.
 const LOCUS_MIN_WIDTH: f32 = 120.0;
 /// The width of the buttons that a narrow window hides because the genie menu also has them:
@@ -259,14 +260,18 @@ fn brand_button<'a>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn title_bar<'a>(
-    controls: Controls,
-    appearance: Icon,
-    locus: Option<LocusField>,
-) -> Element<'a, Message> {
-    let brand = brand_button();
-    let narrow = locus.as_ref().is_some_and(|field| field.narrow);
-    let regions = locus.is_some().then(|| {
+/// The tools at the right of the bar. A narrow window hides the tools that the genie menu also
+/// has, and the tools for a session show only while a session is open.
+fn tools<'a>(appearance: Icon, open: bool, narrow: bool) -> Element<'a, Message> {
+    let tracks = open.then(|| {
+        tool(
+            Icon::List,
+            "tracks",
+            format!("Tracks ({})", shift_keys('T')),
+            Message::TrackList(crate::app::Listing::Toggle),
+        )
+    });
+    let regions = open.then(|| {
         tool(
             Icon::Bookmark,
             "regions",
@@ -274,7 +279,7 @@ pub fn title_bar<'a>(
             Message::Regions(Regions::Toggle),
         )
     });
-    let save = (locus.is_some() && !narrow).then(|| {
+    let save = (open && !narrow).then(|| {
         let words = format!("Save session ({})", keys('S'));
         tool(
             Icon::Save,
@@ -283,7 +288,7 @@ pub fn title_bar<'a>(
             Message::Command(Command::SaveSession),
         )
     });
-    let export = (locus.is_some() && !narrow).then(|| {
+    let export = (open && !narrow).then(|| {
         let words = format!("Export PNG ({})", keys('E'));
         tool(
             Icon::Camera,
@@ -307,6 +312,28 @@ pub fn title_bar<'a>(
         Icon::Moon => "Theme: dark",
         _ => "Theme: system",
     };
+    row![
+        tracks,
+        regions,
+        save,
+        export,
+        help,
+        settings,
+        tool(appearance, "appearance", theme, Message::CycleAppearance)
+    ]
+    .spacing(TOOL_GAP)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+pub fn title_bar<'a>(
+    controls: Controls,
+    appearance: Icon,
+    locus: Option<LocusField>,
+) -> Element<'a, Message> {
+    let brand = brand_button();
+    let narrow = locus.as_ref().is_some_and(|field| field.narrow);
+    let tools = tools(appearance, locus.is_some(), narrow);
     let navigation = row![files(locus.is_some())]
         .push(
             locus
@@ -321,16 +348,6 @@ pub fn title_bar<'a>(
         .push(locus.map(locus_box))
         .spacing(NAVIGATION_GAP)
         .align_y(Alignment::Center);
-    let tools = row![
-        regions,
-        save,
-        export,
-        help,
-        settings,
-        tool(appearance, "appearance", theme, Message::CycleAppearance)
-    ]
-    .spacing(TOOL_GAP)
-    .align_y(Alignment::Center);
     let mut bar = row![
         brand,
         space().width(BRAND_GAP),

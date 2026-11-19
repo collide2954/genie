@@ -87,6 +87,7 @@ pub fn groups() -> [Group; 6] {
             "Tracks",
             vec![
                 ("Right-click a track".to_owned(), "Track menu"),
+                (shift_keys('T'), "Show the tracks panel"),
                 ("Drag its name".to_owned(), "Move a track"),
                 ("Double-click its name".to_owned(), "Rename a track"),
                 ("Drag the bottom edge".to_owned(), "Set the height"),
