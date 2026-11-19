@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::Region;
 use crate::alignment::{Alignment, REVERSE};
 use crate::modification::{self, MODIFIED_FROM};
 
@@ -198,6 +199,77 @@ pub fn difference(a: &[Site], b: &[Site]) -> Vec<Difference> {
         .collect()
 }
 
+/// What makes a DMR: the least sites of a run, the largest p of a site, the least difference of
+/// a site in percentage points, and the farthest distance in bases between two sites of a run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DmrRule {
+    pub sites: usize,
+    pub p: f64,
+    pub points: f32,
+    pub gap: u64,
+}
+
+impl Default for DmrRule {
+    fn default() -> Self {
+        Self {
+            sites: 3,
+            p: 0.05,
+            points: 10.0,
+            gap: 500,
+        }
+    }
+}
+
+/// A differentially methylated region: a run of sites that differ in the same direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dmr {
+    /// From the first site of the run to the base after its last site.
+    pub span: Region,
+    pub sites: usize,
+    /// The mean difference of the sites in percentage points: group A minus group B.
+    pub points: f32,
+    /// The smallest p of the sites.
+    pub p: f64,
+}
+
+/// The DMRs of the differences at the sites of a contig, in the order of the sites: runs of at
+/// least `rule.sites` sites in a row, each with p under `rule.p` and a difference of at least
+/// `rule.points` in the same direction, with at most `rule.gap` bases between two sites. A site
+/// that does not keep to the rule ends a run.
+pub fn dmrs(differences: &[Difference], rule: DmrRule) -> Vec<Dmr> {
+    let mut found = Vec::new();
+    let mut run: Vec<&Difference> = Vec::new();
+    let close = |run: &mut Vec<&Difference>, found: &mut Vec<Dmr>| {
+        if let (Some(first), Some(last)) = (run.first(), run.last())
+            && run.len() >= rule.sites.max(1)
+        {
+            let points = run.iter().map(|site| site.points).sum::<f32>() / run.len() as f32;
+            found.push(Dmr {
+                span: Region::between(first.position, last.position + 1),
+                sites: run.len(),
+                points,
+                p: run.iter().map(|site| site.p).fold(1.0, f64::min),
+            });
+        }
+        run.clear();
+    };
+    for site in differences {
+        if site.p >= rule.p || site.points.abs() < rule.points {
+            close(&mut run, &mut found);
+            continue;
+        }
+        if let Some(last) = run.last() {
+            let turned = (last.points > 0.0) != (site.points > 0.0);
+            if turned || site.position.saturating_sub(last.position) > rule.gap {
+                close(&mut run, &mut found);
+            }
+        }
+        run.push(site);
+    }
+    close(&mut run, &mut found);
+    found
+}
+
 /// The sites of several sets added at each position: the counts of a group of files.
 pub fn pooled(sets: &[Vec<Site>]) -> Vec<Site> {
     let mut found: BTreeMap<u64, (u32, u32)> = BTreeMap::new();
@@ -247,9 +319,68 @@ pub fn fisher(table: [[u32; 2]; 2]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Site, Tally, difference, fisher, pooled};
+    use super::{Difference, Dmr, DmrRule, Site, Tally, difference, dmrs, fisher, pooled};
+    use crate::Region;
     use crate::alignment::{Alignment, Op, REVERSE, Tags};
     use crate::modification::{Call, Code, Modifications};
+
+    fn changed(position: u64, points: f32, p: f64) -> Difference {
+        let site = Site {
+            position,
+            modified: 0,
+            total: 1,
+        };
+        Difference {
+            position,
+            a: site,
+            b: site,
+            points,
+            p,
+        }
+    }
+
+    /// Four sites up make a DMR. A site without a difference, a turn of direction and a long
+    /// gap each end a run, and runs of fewer than three sites go.
+    #[test]
+    fn dmrs_are_runs_of_sites_that_differ_the_same_way() {
+        let sites = [
+            changed(100, 40.0, 0.01),
+            changed(150, 40.0, 0.01),
+            changed(200, 30.0, 0.02),
+            changed(250, 50.0, 0.001),
+            changed(300, 5.0, 0.3),
+            changed(400, 30.0, 0.01),
+            changed(450, 30.0, 0.01),
+            changed(500, -25.0, 0.001),
+            changed(550, -25.0, 0.002),
+            changed(600, -25.0, 0.003),
+            changed(1_200, -25.0, 0.001),
+            changed(1_250, -25.0, 0.5),
+        ];
+        assert_eq!(
+            dmrs(&sites, DmrRule::default()),
+            [
+                Dmr {
+                    span: Region::between(100, 251),
+                    sites: 4,
+                    points: 40.0,
+                    p: 0.001,
+                },
+                Dmr {
+                    span: Region::between(500, 601),
+                    sites: 3,
+                    points: -25.0,
+                    p: 0.001,
+                },
+            ]
+        );
+        let five = DmrRule {
+            sites: 5,
+            ..DmrRule::default()
+        };
+        assert_eq!(dmrs(&sites, five), [] as [Dmr; 0]);
+        assert_eq!(dmrs(&[], DmrRule::default()), [] as [Dmr; 0]);
+    }
 
     #[test]
     fn fisher_tests_give_the_known_two_sided_values() {
