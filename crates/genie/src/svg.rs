@@ -299,6 +299,15 @@ pub fn draw(
                     .collect();
                 svg.stroke(&points, color(*paint, tokens, data), *width);
             }
+            Primitive::Line {
+                from,
+                to,
+                width,
+                paint,
+            } => {
+                let points = [(left + from.0, top + from.1), (left + to.0, top + to.1)];
+                svg.stroke(&points, color(*paint, tokens, data), *width);
+            }
         }
     }
 }

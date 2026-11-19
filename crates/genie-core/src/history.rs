@@ -1,4 +1,5 @@
 use crate::Region;
+use crate::dotplot::Shown;
 
 const LIMIT: usize = 100;
 
@@ -8,6 +9,8 @@ pub struct Visit {
     pub region: Region,
     /// The whole-genome view, which shows all main chromosomes.
     pub genome: bool,
+    /// The dot plot that shows in place of the tracks.
+    pub plot: Option<Shown>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -59,6 +62,7 @@ mod tests {
             contig,
             region: Region::between(start, start + 100),
             genome: false,
+            plot: None,
         }
     }
 

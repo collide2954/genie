@@ -148,6 +148,14 @@ pub enum Primitive {
         width: f32,
         paint: Paint,
     },
+    /// A straight line from one point to another, with round ends: a line that is shorter than
+    /// its width shows as a dot.
+    Line {
+        from: (f32, f32),
+        to: (f32, f32),
+        width: f32,
+        paint: Paint,
+    },
 }
 
 impl Primitive {
@@ -168,6 +176,10 @@ impl Primitive {
             | Self::Chevron { y, .. }
             | Self::Label { y, .. } => *y += by,
             Self::Arc { base, .. } => *base += by,
+            Self::Line { from, to, .. } => {
+                from.1 += by;
+                to.1 += by;
+            }
         }
         self
     }
@@ -223,6 +235,12 @@ mod tests {
                 width: 1.0,
                 paint: Paint::Muted,
             },
+            Primitive::Line {
+                from: (1.0, 2.0),
+                to: (5.0, 2.0),
+                width: 1.0,
+                paint: Paint::Muted,
+            },
         ];
         let tops: Vec<f32> = primitives
             .into_iter()
@@ -232,8 +250,9 @@ mod tests {
                 | Primitive::Chevron { y, .. }
                 | Primitive::Label { y, .. } => y,
                 Primitive::Arc { base, .. } => base,
+                Primitive::Line { from, to, .. } => from.1.min(to.1),
             })
             .collect();
-        assert_eq!(tops, [12.0; 5]);
+        assert_eq!(tops, [12.0; 6]);
     }
 }

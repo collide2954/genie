@@ -4,6 +4,7 @@ pub mod association;
 mod band;
 pub mod codon;
 pub mod contact;
+pub mod dotplot;
 pub mod effect;
 mod feature;
 mod history;

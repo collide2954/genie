@@ -140,6 +140,13 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
             Message::Table(Tabling::Open(id)),
         ));
     }
+    if source.is_paf() {
+        actions.push(Action::new(
+            "Show the dot plot",
+            name,
+            Message::Plot(super::Plotting::Open(id)),
+        ));
+    }
     if !source.has_signal() && !source.has_links() && !source.has_junctions() {
         actions.extend(
             MODES.map(|(label, mode)| Action::new(label, name, change(Change::Mode(mode)))),

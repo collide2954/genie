@@ -2,11 +2,14 @@
 //! part of a query sequence with a part of a target sequence. genie shows each alignment on its
 //! target, which is the reference in view.
 
-use genie_core::{Feature, Region};
+use std::io::BufRead;
 
-use crate::Reason;
+use genie_core::dotplot::{Builder, Hit, Plot};
+use genie_core::{Feature, Region, Strand};
+
 use crate::bed::{number, strand};
-use crate::fields::Field;
+use crate::fields::{Field, Rule};
+use crate::{Error, Reason};
 
 /// The shortest deletion from the target in the CIGAR of an alignment that splits the alignment
 /// into blocks. Shorter deletions stay in a block.
@@ -50,6 +53,72 @@ pub fn parse(line: &str) -> Result<Option<(&str, Feature)>, Reason> {
         feature = feature.with_blocks(blocks(start, cigar)?);
     }
     Ok(Some((columns[5], feature)))
+}
+
+/// Adds the alignment of a line to a dot plot. False for an empty line or a comment.
+pub fn add(builder: &mut Builder, line: &str) -> Result<bool, Reason> {
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(false);
+    }
+    let columns: Vec<&str> = line.split('\t').collect();
+    if columns.len() < COLUMNS {
+        return Err(Reason::MissingField);
+    }
+    let span =
+        |start: &str, end: &str| Region::new(number(start)?, number(end)?).ok_or(Reason::BadSpan);
+    let on_query = span(columns[2], columns[3])?;
+    let on_target = span(columns[7], columns[8])?;
+    let reverse = strand(columns[4])? == Strand::Reverse;
+    let (query_length, target_length) = (number(columns[1])?, number(columns[6])?);
+    let (matches, block) = (number(columns[9])?, number(columns[10])?);
+    let mapq = (columns[11] != NO_MAPQ)
+        .then(|| columns[11].parse().ok())
+        .flatten();
+    let kind = tag(&columns[COLUMNS..], "tp").and_then(|value| value.chars().next());
+    let query = builder.query(columns[0], query_length);
+    let target = builder.target(columns[5], target_length);
+    builder.push(Hit {
+        query,
+        target,
+        on_query,
+        on_target,
+        reverse,
+        matches,
+        block,
+        mapq,
+        kind,
+    });
+    Ok(true)
+}
+
+/// Adds the alignment of a line to a dot plot when the fields of the line pass the rules of a
+/// filter. False for a line that the rules hide, an empty line or a comment.
+pub fn keep(builder: &mut Builder, line: &str, rules: &[Rule]) -> Result<bool, Reason> {
+    let blank = line.is_empty() || line.starts_with('#');
+    if !rules.is_empty() && !blank && !crate::fields::passes(rules, &fields(line)) {
+        return Ok(false);
+    }
+    add(builder, line)
+}
+
+/// The alignments of all lines of a PAF file that pass the rules of a filter, for a dot plot.
+pub fn alignments(mut reader: impl BufRead, rules: &[Rule]) -> Result<Builder, Error> {
+    let mut builder = Builder::default();
+    let mut bytes = Vec::new();
+    let mut number = 0;
+    loop {
+        bytes.clear();
+        if reader.read_until(b'\n', &mut bytes)? == 0 {
+            return Ok(builder);
+        }
+        number += 1;
+        let text = String::from_utf8_lossy(&bytes);
+        let line = text.trim_end_matches(['\n', '\r']);
+        keep(&mut builder, line, rules).map_err(|reason| Error::Format {
+            line: number,
+            reason,
+        })?;
+    }
 }
 
 /// The value of a tag, as `NM:i:3` holds 3 for NM.
@@ -140,6 +209,35 @@ pub fn fields(line: &str) -> Vec<Field> {
     found
 }
 
+/// The fields of an alignment of a dot plot, as [`fields`] gives them for its line: the place on
+/// the query, the identity, the matches, the block length, MAPQ and the type.
+pub fn plot_fields(plot: &Plot, hit: &Hit) -> Vec<Field> {
+    let field = |label: &str, value: String| Field {
+        label: label.to_owned(),
+        value,
+    };
+    let query = &plot.queries[hit.query];
+    let place = format!(
+        "{}:{}-{}",
+        query.name,
+        hit.on_query.start() + 1,
+        hit.on_query.end()
+    );
+    let mut found = vec![field("Query", place)];
+    if hit.block > 0 {
+        let identity = format!("{:.1}", hit.identity() * 100.0);
+        found.push(field("Identity (%)", identity));
+    }
+    found.push(field("Matches", hit.matches.to_string()));
+    found.push(field("Block length", hit.block.to_string()));
+    found.extend(hit.mapq.map(|mapq| field("MAPQ", mapq.to_string())));
+    found.extend(
+        hit.kind
+            .map(|kind| field("Type", self::kind(&kind.to_string()).to_owned())),
+    );
+    found
+}
+
 /// The type of an alignment that minimap2 gives in the `tp` tag.
 fn kind(value: &str) -> &str {
     match value {
@@ -152,10 +250,73 @@ fn kind(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use genie_core::dotplot::Builder;
     use genie_core::{Region, Strand};
 
-    use super::{fields, is_paf, parse};
+    use super::{add, alignments, fields, is_paf, parse, plot_fields};
+
+    #[test]
+    fn plot_alignments_have_the_fields_of_their_lines() {
+        let mut builder = Builder::default();
+        add(&mut builder, LINE).unwrap();
+        let plot = builder.finish(|_| None);
+        let (_, feature) = parse(LINE).unwrap().unwrap();
+        let mut wanted = fields(feature.extra());
+        let others = ["Query length", "Edits", "Divergence"];
+        wanted.retain(|field| !others.contains(&field.label.as_str()));
+        assert_eq!(plot_fields(&plot, &plot.hits[0]), wanted);
+    }
     use crate::Reason;
+    use crate::fields::{Rule, Test};
+
+    #[test]
+    fn files_give_the_alignments_that_the_filter_keeps() {
+        let text = format!("{LINE}\r\nq\t100\t0\t100\t+\tchr2\t1000\t10\t110\t100\t100\t255\n\n");
+        let all = alignments(text.as_bytes(), &[]).unwrap().finish(|_| None);
+        assert_eq!(all.hits.len(), 2);
+        let rule = Rule {
+            label: "Identity (%)".to_owned(),
+            test: Test::AtLeast(95.0),
+        };
+        let kept = alignments(text.as_bytes(), &[rule])
+            .unwrap()
+            .finish(|_| None);
+        assert_eq!(kept.hits.len(), 1);
+        assert_eq!(kept.queries[0].name, "q");
+        let broken = alignments("# header\nx\t1\n".as_bytes(), &[]).unwrap_err();
+        assert_eq!(broken.to_string(), "Line 2: a field is missing.");
+    }
+
+    #[test]
+    fn lines_add_their_alignment_to_a_dot_plot() {
+        let mut builder = Builder::default();
+        assert_eq!(add(&mut builder, ""), Ok(false));
+        assert_eq!(add(&mut builder, "# comment"), Ok(false));
+        assert_eq!(add(&mut builder, LINE), Ok(true));
+        let plain = "q\t100\t0\t100\t+\tchr2\t1000\t10\t110\t100\t100\t255";
+        assert_eq!(add(&mut builder, plain), Ok(true));
+        let wrong = "bad\t100\t50\t10\t+\tchr3\t1000\t10\t110\t100\t100\t60";
+        assert_eq!(add(&mut builder, wrong), Err(Reason::BadSpan));
+        let plot = builder.finish(|name| (name == "chr1").then_some(0));
+        let names: Vec<&str> = plot
+            .targets
+            .iter()
+            .map(|target| target.name.as_str())
+            .collect();
+        assert_eq!(names, ["chr1", "chr2"]);
+        assert_eq!(plot.targets[0].length, 248_956_422);
+        assert_eq!(plot.queries[0].name, "contig_7");
+        assert_eq!(plot.queries[0].length, 50_000);
+        let hit = plot.hits[0];
+        assert_eq!(hit.on_query, Region::between(1_000, 4_100));
+        assert_eq!(hit.on_target, Region::between(20_000, 23_200));
+        assert!(hit.reverse);
+        assert_eq!((hit.matches, hit.block), (2_900, 3_200));
+        assert_eq!((hit.mapq, hit.kind), (Some(60), Some('P')));
+        let other = plot.hits[1];
+        assert!(!other.reverse);
+        assert_eq!((other.mapq, other.kind), (None, None));
+    }
 
     const LINE: &str = "contig_7\t50000\t1000\t4100\t-\tchr1\t248956422\t20000\t23200\t2900\t3200\t60\ttp:A:P\tNM:i:300\tdv:f:0.0123\tcg:Z:1000M100D2000M10I100M";
 

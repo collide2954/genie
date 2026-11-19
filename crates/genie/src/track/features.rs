@@ -1,10 +1,12 @@
 use std::io::BufReader;
 
+use genie_core::dotplot::Builder;
 use genie_core::signal::Tally;
 use genie_core::{Feature, Region};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::{self, Entry, Kind};
-use genie_formats::fields;
+use genie_formats::fields::{self, Rule};
+use genie_formats::paf;
 use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
@@ -177,6 +179,30 @@ impl FeatureFile {
             }
         }
         .map_err(|error| error.to_string())
+    }
+
+    /// The alignments of a PAF file that pass the rules of a filter, for a dot plot. genie reads
+    /// all lines of the file.
+    pub fn alignments(&self, location: &Location, rules: &[Rule]) -> Result<Builder, String> {
+        match self {
+            Self::Table {
+                kind: Kind::Paf,
+                table,
+                ..
+            } => {
+                let mut builder = Builder::default();
+                for feature in table.items() {
+                    paf::keep(&mut builder, feature.extra(), rules)
+                        .map_err(|reason| genie_formats::Error::Invalid(reason).to_string())?;
+                }
+                Ok(builder)
+            }
+            Self::Indexed {
+                kind: Kind::Paf, ..
+            } => paf::alignments(Bgzf::new(location.open()?), rules)
+                .map_err(|error| error.to_string()),
+            _ => Err("The track is not a PAF file.".to_owned()),
+        }
     }
 
     pub fn find(&self, location: &Location, name: &str) -> Vec<(String, Feature)> {

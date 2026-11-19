@@ -194,6 +194,22 @@ impl Source {
         matches!(self.format, Format::Variants(_))
     }
 
+    /// True for the pairwise alignments of a PAF file, which a dot plot can show.
+    pub fn is_paf(&self) -> bool {
+        matches!(
+            self.format,
+            Format::Features(
+                FeatureFile::Table {
+                    kind: Kind::Paf,
+                    ..
+                } | FeatureFile::Indexed {
+                    kind: Kind::Paf,
+                    ..
+                }
+            )
+        )
+    }
+
     pub fn can_jump(&self) -> bool {
         matches!(self.format, Format::Features(_) | Format::Variants(_))
     }

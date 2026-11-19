@@ -121,6 +121,7 @@ impl Genie {
         if !session.enter_genome(width) {
             return Task::none();
         }
+        session.hide_plot();
         if session.visit() != before {
             session.history.record(before);
         }

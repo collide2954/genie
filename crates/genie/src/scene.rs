@@ -336,7 +336,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Scene<'_, Message> {
             let mut marks: Option<Frame> = None;
             for primitive in &self.primitives {
                 match primitive {
-                    Primitive::Chevron { .. } | Primitive::Arc { .. } => {
+                    Primitive::Chevron { .. } | Primitive::Arc { .. } | Primitive::Line { .. } => {
                         let frame =
                             marks.get_or_insert_with(|| Frame::with_bounds(renderer, bounds));
                         stroke_mark(frame, primitive, bounds, (tokens, data));
@@ -449,6 +449,18 @@ fn stroke_mark(
                     Point::new(to, base),
                 );
             });
+            (path, *width, *paint)
+        }
+        Primitive::Line {
+            from,
+            to,
+            width,
+            paint,
+        } => {
+            let path = Path::line(
+                Point::new(bounds.x + from.0, bounds.y + from.1),
+                Point::new(bounds.x + to.0, bounds.y + to.1),
+            );
             (path, *width, *paint)
         }
         _ => return,

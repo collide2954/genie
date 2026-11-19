@@ -367,6 +367,7 @@ impl Genie {
             return Task::none();
         };
         let before = session.visit();
+        session.hide_plot();
         session.leave_genome(width);
         session.show(target, self.settings.motion);
         if session.visit() != before {
@@ -400,10 +401,14 @@ impl Genie {
             };
             session.show(target, self.settings.motion);
         }
+        session.hide_plot();
         self.pinned = None;
         self.drop_draft();
         self.hover = None;
-        self.fetch()
+        let plot = visit
+            .plot
+            .map_or_else(Task::none, |shown| self.open_plot(shown, false));
+        Task::batch([self.fetch(), plot])
     }
 
     pub(super) fn sweep_overview(&mut self, sweep: Sweep) -> Task<Message> {

@@ -2,6 +2,7 @@ pub mod alignments;
 pub mod bands;
 pub mod contacts;
 pub mod difference;
+pub mod dotplot;
 pub mod features;
 pub mod links;
 pub mod manhattan;

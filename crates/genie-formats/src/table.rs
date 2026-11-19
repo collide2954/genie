@@ -54,6 +54,13 @@ impl<T: Clone> Table<T> {
         &self.names
     }
 
+    /// All items, contig by contig, and on each contig in the order of their starts.
+    pub fn items(&self) -> impl Iterator<Item = &T> {
+        self.shelves
+            .iter()
+            .flat_map(|shelf| shelf.items.iter().map(|(_, item)| item))
+    }
+
     pub fn query(&self, contig: &str, region: Region) -> Vec<T> {
         let Some(slot) = self.names.iter().position(|name| name == contig) else {
             return Vec::new();
@@ -111,6 +118,8 @@ mod tests {
         assert_eq!(table.query("chr1", Region::between(25, 45)), ["long", "b"]);
         assert_eq!(table.query("chr1", Region::between(500, 600)), ["long"]);
         assert_eq!(table.query("chrX", Region::between(0, 10)), [] as [&str; 0]);
+        let all: Vec<&str> = table.items().copied().collect();
+        assert_eq!(all, ["z", "long", "a", "b"]);
     }
 
     #[test]

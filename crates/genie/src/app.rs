@@ -43,6 +43,7 @@ mod caching;
 #[cfg(test)]
 mod clips;
 mod copy;
+mod dotplot;
 mod effects;
 mod export;
 mod figure;
@@ -70,6 +71,7 @@ mod whole;
 
 pub(crate) use assemblies::Assembling;
 pub(crate) use blat::Blatting;
+pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
 pub(crate) use lift::Lifting;
 use orders::Answer;
@@ -321,6 +323,8 @@ struct Session {
     figure: Figure,
     /// The steps of the work on tracks and region marks, to undo and to redo.
     steps: undo::Steps,
+    /// The dot plot of a PAF track, which shows in place of the tracks.
+    plot: Option<Box<dotplot::DotPlot>>,
 }
 
 #[derive(Debug)]
@@ -373,6 +377,7 @@ impl Session {
             samples: None,
             figure: Figure::default(),
             steps: undo::Steps::default(),
+            plot: None,
         }
     }
 
@@ -563,6 +568,7 @@ impl Session {
             contig: self.contig,
             region: self.destination().visible(),
             genome: self.genome,
+            plot: self.plot.as_ref().and_then(|plot| plot.shown()),
         }
     }
 
@@ -773,6 +779,8 @@ pub enum Message {
     Folder(String, track_list::Foldering),
     /// Opens the menu of a folder of the tracks panel at a place.
     FolderMenu(String, Point),
+    /// The dot plot of a PAF track, in place of the tracks.
+    Plot(Plotting),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1045,9 +1053,10 @@ impl Genie {
         let task = self.handle(message);
         self.keep_step(before);
         self.refresh_table();
+        let plot = self.refresh_plot();
         self.answer();
         self.stats.update = started.elapsed();
-        task
+        Task::batch([task, plot])
     }
 
     fn handle(&mut self, message: Message) -> Task<Message> {
@@ -1088,7 +1097,7 @@ impl Genie {
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
             Message::Lift(lifting) => return self.lift(lifting),
-            Message::Table(tabling) => return self.tabling(tabling),
+            Message::Table(_) | Message::Plot(_) => return self.pane_message(message),
             Message::Address(action) => return self.address(action),
             Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::CardClosed => self.pinned = None,
@@ -1151,6 +1160,15 @@ impl Genie {
             Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
+    }
+
+    /// The messages of the variant table and of the dot plot.
+    fn pane_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Table(tabling) => self.tabling(tabling),
+            Message::Plot(plotting) => self.plotting(plotting),
+            _ => Task::none(),
+        }
     }
 
     fn scrolled(&mut self, offset: f32) {
@@ -3049,9 +3067,11 @@ mod tests {
 
     #[test]
     fn track_settings_show_the_settings_of_each_kind() {
-        let kinds: [(Genie, &[&str]); 3] = [
+        /// A genie with a track of one kind, and the lines of the settings of the kind.
+        type Kind = (fn() -> Genie, &'static [&'static str]);
+        let kinds: [Kind; 3] = [
             (
-                with_reads(),
+                with_reads,
                 &[
                     "Show duplicates",
                     "Group by phase",
@@ -3059,13 +3079,11 @@ mod tests {
                     "Color by modification",
                 ],
             ),
-            (
-                with_signal(),
-                &["Bars", "Line", "Shared scale", "Auto range"],
-            ),
-            (with_filtered(), &["Filter"]),
+            (with_signal, &["Bars", "Line", "Shared scale", "Auto range"]),
+            (with_filtered, &["Filter"]),
         ];
-        for (mut genie, lines) in kinds {
+        for (make, lines) in kinds {
+            let mut genie = make();
             let _ = genie.update(Message::TrackSettings(0));
             let mut ui = simulator(genie.view());
             for line in lines {

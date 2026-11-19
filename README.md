@@ -394,6 +394,21 @@ A Sashimi plot shows the coverage of an RNA-seq read track and the splice juncti
 - To save the plots as an image, push Ctrl+E (Cmd+E on macOS), click Export… and save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.
 - Click **Sashimi plot** again to see the reads. Sessions keep the Sashimi plot, the **Arcs ≥** setting and the shared scale of each track.
 
+## Dot plot
+
+A dot plot compares two assemblies with the alignments of a [PAF file](#paf-alignments), for example from `minimap2 -cx asm5 genome.fa other.fa`. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.
+
+- Right-click a PAF track and click **Dot plot**. The palette also has **Show the dot plot**. The plot shows in place of the tracks. genie reads all lines of the file, so a large file can take some time.
+- Each alignment is a line from its first base on the target to its last. The line goes down for the forward strand and up for the reverse strand, so an inversion is a line that goes up. Blue is the forward strand and vermillion is the reverse strand.
+- Click **Color by identity** to color the lines by their identity: dark for the highest identity, and light for the identity that one alignment in 20 is under, or less. The bar over the plot shows the two identities. Click **Color by strand** to go back.
+- The targets are in the order of the reference. Each query goes next to the place on the targets where most of its bases align. genie does not turn the queries around.
+- The names of the sequences show where they fit. A thin line shows where one sequence stops and the next one starts.
+- Put the pointer on a line to see the card of its alignment: the query and the place on the query, the place on the target, the identity, the matches, the length of the block, MAPQ and the type.
+- Drag a box to zoom in to it. Click **Whole plot** to see all of the plot again.
+- Click a line to show its alignment in the tracks. Back returns to the plot. Back and forward also step through the zooms of the plot.
+- The plot shows only the alignments that the filter of the track keeps, for example the alignments with **Identity (%)** at least 95, or with **Type** primary. When the filter changes, genie reads the file again.
+- Click × at the right of the bar to show the tracks again.
+
 ## Liftover
 
 A chain file moves data from the places of one assembly to the places of a different assembly, for example from hg19 to hg38. UCSC has chain files in the `liftOver` folder of each genome, for example `hg19ToHg38.over.chain.gz`.

@@ -389,9 +389,12 @@ impl Genie {
     /// The tracks with the variant table under them, the tracks panel at their left and the
     /// region list at their right.
     fn session_body<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
-        let main = match self.table_view(session) {
-            Some(table) => column![self.browser(session), table].into(),
-            None => self.browser(session),
+        let main = if let Some(plot) = session.shown_plot() {
+            super::dotplot::plot_view(session, plot)
+        } else if let Some(table) = self.table_view(session) {
+            column![self.browser(session), table].into()
+        } else {
+            self.browser(session)
         };
         let line = || {
             container(space())
