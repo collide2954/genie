@@ -222,6 +222,7 @@ cargo run -p genie -- https://example.org/data/genome.2bit https://example.org/d
 - genie reads plain BED, GFF3, GTF, VCF, bedGraph and bedMethyl files up to 50 MB completely.
 - For files that genie reads from the web in parts, the locus box finds names only in bigBed files that have a name index.
 - genie keeps up to 64 MB of data from the web in memory. It writes a file from the web to disk only when it must make an index for the file.
+- genie sends at most 4 requests at one time to one server, and reads near parts of a file in one request. When a server is busy (HTTP 429 or 503), genie waits as the server asks and tries again, three times at most. If the server asks for a wait of more than 30 seconds, genie stops and tells you.
 - genie opens files in public buckets of Amazon S3 and Google Cloud Storage, for example `s3://1000genomes/phase3/data/HG00096/alignment/HG00096.chrom20.ILLUMINA.bwa.GBR.low_coverage.20120522.bam` or `gs://gcp-public-data--gnomad/release/4.1/vcf/genomes/gnomad.genomes.v4.1.sites.chr21.vcf.bgz`. genie reads them through the HTTPS addresses of the buckets. It does not sign requests, so it cannot open private buckets or Requester Pays buckets.
 - genie uses the certificates of the operating system for HTTPS. A connection to an `http://` address is not secure. genie does not send user names, passwords or cookies.
 - Sessions and the recent list keep the addresses of files from the web. genie cannot open a session file from the web.

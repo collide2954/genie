@@ -9,7 +9,13 @@ use crate::http::{self, Url};
 const BLOCK: u64 = 64 << 10;
 const BUDGET: usize = 64 << 20;
 const RUN: u64 = 16;
-const PARALLEL: usize = 8;
+/// The most requests of pieces that go at one time. The client of genie sends at most 4
+/// requests at once to one server.
+const PARALLEL: usize = 4;
+/// Pieces that are at most this far apart come in one request.
+const GAP: u64 = 64 << 10;
+/// The most bytes that one request of pieces reads.
+const SPAN: u64 = 1 << 20;
 
 #[derive(Debug)]
 pub struct Remote {
@@ -48,21 +54,37 @@ impl Remote {
         self.size
     }
 
+    /// The `N` bytes at each start. Pieces that are less than `GAP` bytes apart come in one
+    /// request, and the requests go in parallel.
     pub fn pieces<const N: usize>(&self, starts: &[u64]) -> Result<Vec<[u8; N]>, Error> {
         let mut found: Vec<Option<[u8; N]>> =
             starts.iter().map(|&start| self.cached(start)).collect();
-        let missing: Vec<usize> = (0..starts.len())
+        let mut missing: Vec<usize> = (0..starts.len())
             .filter(|&index| found[index].is_none())
             .collect();
-        let share = missing.len().div_ceil(PARALLEL).max(1);
+        missing.sort_by_key(|&index| starts[index]);
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for index in missing {
+            let near = groups.last().is_some_and(|group| {
+                let (first, last) = (starts[group[0]], starts[group[group.len() - 1]]);
+                starts[index] <= last + N as u64 + GAP && starts[index] + N as u64 - first <= SPAN
+            });
+            match groups.last_mut() {
+                Some(group) if near => group.push(index),
+                _ => groups.push(vec![index]),
+            }
+        }
+        let share = groups.len().div_ceil(PARALLEL).max(1);
         thread::scope(|scope| {
-            let workers: Vec<_> = missing
+            let workers: Vec<_> = groups
                 .chunks(share)
                 .map(|part| {
                     scope.spawn(move || {
-                        part.iter()
-                            .map(|&index| Ok((index, self.piece(starts[index])?)))
-                            .collect::<Result<Vec<_>, Error>>()
+                        let mut pieces = Vec::new();
+                        for group in part {
+                            pieces.extend(group.iter().copied().zip(self.group(starts, group)?));
+                        }
+                        Ok::<_, Error>(pieces)
                     })
                 })
                 .collect();
@@ -79,19 +101,38 @@ impl Remote {
         Ok(found.into_iter().flatten().collect())
     }
 
+    /// The pieces of a group of starts, in the order of the group, from one request.
+    fn group<const N: usize>(
+        &self,
+        starts: &[u64],
+        group: &[usize],
+    ) -> Result<Vec<[u8; N]>, Error> {
+        let first = starts[group[0]];
+        let end = starts[group[group.len() - 1]] + N as u64;
+        let fetched = http::fetch(&self.url, first, end)?;
+        group
+            .iter()
+            .map(|&index| {
+                let at = usize::try_from(starts[index] - first).unwrap_or(usize::MAX);
+                fetched
+                    .bytes
+                    .get(at..at.saturating_add(N))
+                    .and_then(|piece| piece.try_into().ok())
+                    .ok_or_else(|| {
+                        Error::Remote(format!(
+                            "The server sent too few bytes for {}.",
+                            self.url.shown()
+                        ))
+                    })
+            })
+            .collect()
+    }
+
     fn cached<const N: usize>(&self, start: u64) -> Option<[u8; N]> {
         let index = start / BLOCK;
         let offset = usize::try_from(start - index * BLOCK).ok()?;
         let block = cache().get(&self.key, index)?;
         block.get(offset..offset + N)?.try_into().ok()
-    }
-
-    fn piece<const N: usize>(&self, start: u64) -> Result<[u8; N], Error> {
-        let fetched = http::fetch(&self.url, start, start + N as u64)?;
-        fetched
-            .bytes
-            .try_into()
-            .map_err(|_| Error::Remote(format!("The server sent too few bytes for {}.", self.url)))
     }
 
     fn block(&mut self, index: u64) -> io::Result<Arc<[u8]>> {
@@ -274,24 +315,41 @@ mod tests {
         assert!(server.requests() <= 8, "{}", server.requests());
     }
 
-    #[test]
-    fn pieces_come_from_the_cache_or_from_parallel_requests() {
-        let server = serve(vec![("/a.bin".to_owned(), data(300_000))]);
-        let url = Url::parse(&server.url("/slow/a.bin")).unwrap();
-        let remote = Remote::open(&url).unwrap();
-        let asked = server.requests();
-        let starts = [10, 100_000, 150_000, 200_000, 250_000, 299_996];
-        let pieces: Vec<[u8; 4]> = remote.pieces(&starts).unwrap();
-        let expected: Vec<[u8; 4]> = starts
+    fn expected(size: usize, starts: &[u64]) -> Vec<[u8; 4]> {
+        starts
             .iter()
             .map(|&start| {
                 let start = usize::try_from(start).unwrap();
-                data(300_000)[start..start + 4].try_into().unwrap()
+                data(size)[start..start + 4].try_into().unwrap()
             })
-            .collect();
-        assert_eq!(pieces, expected);
+            .collect()
+    }
+
+    #[test]
+    fn pieces_come_from_the_cache_or_from_parallel_requests() {
+        let server = serve(vec![("/a.bin".to_owned(), data(700_000))]);
+        let url = Url::parse(&server.url("/slow/a.bin")).unwrap();
+        let remote = Remote::open(&url).unwrap();
+        let asked = server.requests();
+        let starts = [10, 100_000, 250_000, 400_000, 550_000, 699_996];
+        let pieces: Vec<[u8; 4]> = remote.pieces(&starts).unwrap();
+        assert_eq!(pieces, expected(700_000, &starts));
         assert_eq!(server.requests(), asked + 5);
         assert!(server.connections() > 1, "{}", server.connections());
+    }
+
+    /// The sizes of the small contigs of a 2bit file are near each other. One request reads
+    /// the pieces that are less than 64 KB apart.
+    #[test]
+    fn near_pieces_come_in_one_request() {
+        let server = serve(vec![("/a.bin".to_owned(), data(600_000))]);
+        let url = Url::parse(&server.url("/a.bin")).unwrap();
+        let remote = Remote::open(&url).unwrap();
+        let asked = server.requests();
+        let starts = [230_000, 200_000, 200_100, 500_000];
+        let pieces: Vec<[u8; 4]> = remote.pieces(&starts).unwrap();
+        assert_eq!(pieces, expected(600_000, &starts));
+        assert_eq!(server.requests(), asked + 2);
     }
 
     #[test]

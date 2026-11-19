@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use rustls::pki_types::ServerName;
@@ -14,6 +14,12 @@ use crate::Error;
 const CONNECT: Duration = Duration::from_secs(10);
 const WAIT: Duration = Duration::from_secs(30);
 const REDIRECTS: usize = 5;
+/// The most requests that genie has in work with one server at one time.
+const AT_ONCE: usize = 4;
+/// The most times that genie asks a busy server for the same thing.
+const TRIES: u32 = 3;
+/// The longest wait that genie takes when a busy server asks it to wait.
+const LONGEST_WAIT: Duration = Duration::from_secs(30);
 const WHOLE: usize = 4 << 20;
 const PART: u64 = 4 << 20;
 const IDLE: usize = 4;
@@ -453,8 +459,12 @@ pub fn fetch(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
 fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
     let last = end.max(start + 1) - 1;
     let mut current = url.clone();
-    for _ in 0..=REDIRECTS {
-        let answer = exchange(&current, start, last)?;
+    let (mut redirects, mut tries) = (0, 1);
+    loop {
+        let answer = {
+            let _turn = Turn::take(current.origin());
+            exchange(&current, start, last)?
+        };
         match answer.status {
             206 => {
                 let wanted = usize::try_from(end - start).unwrap_or(usize::MAX);
@@ -493,16 +503,82 @@ fn fetch_live(url: &Url, start: u64, end: u64) -> Result<Fetched, Error> {
                 });
             }
             301 | 302 | 303 | 307 | 308 => {
+                redirects += 1;
+                if redirects > REDIRECTS {
+                    return Err(remote(format!(
+                        "The address {} has too many redirects.",
+                        url.shown()
+                    )));
+                }
                 let location = answer.header("location").ok_or_else(|| bad_answer(url))?;
                 current = current.resolve(location)?;
+            }
+            429 | 503 => {
+                let wait = answer
+                    .header("retry-after")
+                    .and_then(|value| value.trim().parse().ok())
+                    .map_or(Duration::from_secs(1 << tries), Duration::from_secs);
+                if tries >= TRIES || wait > LONGEST_WAIT {
+                    return Err(remote(format!(
+                        "The server of {} is busy ({} {}). Try again later.",
+                        url.shown(),
+                        answer.status,
+                        answer.reason
+                    )));
+                }
+                tries += 1;
+                std::thread::sleep(wait);
             }
             status => return Err(refused(url, status, &answer.reason)),
         }
     }
-    Err(remote(format!(
-        "The address {} has too many redirects.",
-        url.shown()
-    )))
+}
+
+/// The number of requests that genie has in work with each server.
+struct Gate {
+    busy: Mutex<HashMap<Origin, usize>>,
+    freed: Condvar,
+}
+
+fn gate() -> &'static Gate {
+    static GATE: OnceLock<Gate> = OnceLock::new();
+    GATE.get_or_init(|| Gate {
+        busy: Mutex::default(),
+        freed: Condvar::new(),
+    })
+}
+
+/// A place among the requests in work with a server, at most `AT_ONCE` of them. It frees the
+/// place when it drops.
+struct Turn(Origin);
+
+impl Turn {
+    fn take(origin: Origin) -> Self {
+        let gate = gate();
+        let mut busy = gate.busy.lock().unwrap_or_else(PoisonError::into_inner);
+        while busy.get(&origin).copied().unwrap_or(0) >= AT_ONCE {
+            busy = gate
+                .freed
+                .wait(busy)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *busy.entry(origin.clone()).or_default() += 1;
+        Self(origin)
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let gate = gate();
+        let mut busy = gate.busy.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(count) = busy.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                busy.remove(&self.0);
+            }
+        }
+        gate.freed.notify_all();
+    }
 }
 
 type Origin = (bool, String, u16);
@@ -1122,6 +1198,45 @@ mod tests {
         assert_eq!(server.connections(), 1);
         fetch(&closing, 100, 110).unwrap();
         assert_eq!(server.connections(), 2);
+    }
+
+    /// genie sends at most 4 requests at once to one server, so that the server does not take
+    /// genie for an attack.
+    #[test]
+    fn requests_to_one_server_wait_for_their_turn() {
+        let server = serve(vec![("/a.bin".to_owned(), data())]);
+        let url = Url::parse(&server.url("/hold/a.bin")).unwrap();
+        std::thread::scope(|scope| {
+            for start in 0..12 {
+                let url = &url;
+                scope.spawn(move || fetch(url, start * 10, start * 10 + 5).unwrap());
+            }
+        });
+        assert_eq!(server.requests(), 12);
+        let peak = server.peak();
+        assert!((2..=4).contains(&peak), "{peak}");
+    }
+
+    /// A busy server answers 429 or 503, often with the seconds to wait in Retry-After. genie
+    /// waits and asks again, three times at most, and not when the server asks for a long wait.
+    #[test]
+    fn busy_servers_get_the_same_request_again() {
+        let server = serve(vec![("/a.bin".to_owned(), data())]);
+        let busy = Url::parse(&server.url("/busy/a.bin")).unwrap();
+        assert_eq!(fetch(&busy, 10, 20).unwrap().bytes, data()[10..20]);
+        assert_eq!(server.requests(), 3);
+        let jammed = Url::parse(&server.url("/jammed/a.bin")).unwrap();
+        assert_eq!(
+            fetch(&jammed, 0, 10).unwrap_err().to_string(),
+            format!("The server of {jammed} is busy (503 Service Unavailable). Try again later.")
+        );
+        assert_eq!(server.requests(), 6);
+        let later = Url::parse(&server.url("/later/a.bin")).unwrap();
+        assert_eq!(
+            fetch(&later, 0, 10).unwrap_err().to_string(),
+            format!("The server of {later} is busy (429 Too Many Requests). Try again later.")
+        );
+        assert_eq!(server.requests(), 7);
     }
 
     /// The API key of UCSC and other secrets in an address do not show in messages and logs.

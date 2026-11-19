@@ -3,17 +3,31 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const MEETING: Duration = Duration::from_secs(1);
+/// The time that the server takes for a request of the `/hold` route.
+const HOLD: Duration = Duration::from_millis(100);
+
+/// What the server counts: the connections, the requests, the requests that meet on the
+/// `/slow` route, the requests in work and the most of them at one time, and the requests of
+/// each path.
+#[derive(Default)]
+struct Counts {
+    connections: AtomicUsize,
+    requests: AtomicUsize,
+    inflight: AtomicUsize,
+    working: AtomicUsize,
+    peak: AtomicUsize,
+    paths: Mutex<HashMap<String, usize>>,
+}
 
 pub struct Server {
     pub port: u16,
-    pub connections: Arc<AtomicUsize>,
-    pub requests: Arc<AtomicUsize>,
+    counts: Arc<Counts>,
 }
 
 impl Server {
@@ -22,11 +36,16 @@ impl Server {
     }
 
     pub fn connections(&self) -> usize {
-        self.connections.load(Ordering::SeqCst)
+        self.counts.connections.load(Ordering::SeqCst)
     }
 
     pub fn requests(&self) -> usize {
-        self.requests.load(Ordering::SeqCst)
+        self.counts.requests.load(Ordering::SeqCst)
+    }
+
+    /// The most requests that the server had in work at one time.
+    pub fn peak(&self) -> usize {
+        self.counts.peak.load(Ordering::SeqCst)
     }
 }
 
@@ -34,29 +53,61 @@ pub fn serve(files: Vec<(String, Vec<u8>)>) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let files: Arc<HashMap<String, Vec<u8>>> = Arc::new(files.into_iter().collect());
-    let connections = Arc::new(AtomicUsize::new(0));
-    let requests = Arc::new(AtomicUsize::new(0));
-    let inflight = Arc::new(AtomicUsize::new(0));
-    let (opened, asked) = (Arc::clone(&connections), Arc::clone(&requests));
+    let counts = Arc::new(Counts::default());
+    let shared = Arc::clone(&counts);
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else {
                 break;
             };
-            opened.fetch_add(1, Ordering::SeqCst);
-            let (files, asked, inflight) = (
-                Arc::clone(&files),
-                Arc::clone(&asked),
-                Arc::clone(&inflight),
-            );
-            thread::spawn(move || answer(stream, &files, &asked, &inflight));
+            shared.connections.fetch_add(1, Ordering::SeqCst);
+            let (files, counts) = (Arc::clone(&files), Arc::clone(&shared));
+            thread::spawn(move || answer(stream, &files, &counts));
         }
     });
-    Server {
-        port,
-        connections,
-        requests,
+    Server { port, counts }
+}
+
+/// A request in work: it counts the requests in work and their peak while it lives.
+struct Work<'a>(&'a Counts);
+
+impl<'a> Work<'a> {
+    fn new(counts: &'a Counts) -> Self {
+        let now = counts.working.fetch_add(1, Ordering::SeqCst) + 1;
+        counts.peak.fetch_max(now, Ordering::SeqCst);
+        Self(counts)
     }
+}
+
+impl Drop for Work<'_> {
+    fn drop(&mut self) {
+        self.0.working.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The status and the Retry-After seconds of a busy server, and the rest of the path. The
+/// `/busy` route is busy for the first two requests of each path, the `/jammed` route always,
+/// and the `/later` route asks for an hour.
+type Busy<'a> = (Option<(&'static str, &'static str)>, &'a str);
+
+fn busy<'a>(path: &'a str, counts: &Counts) -> Busy<'a> {
+    let asked = {
+        let mut paths = counts.paths.lock().unwrap_or_else(PoisonError::into_inner);
+        let asked = paths.entry(path.to_owned()).or_default();
+        *asked += 1;
+        *asked
+    };
+    let (twice, path) = route(path, "/busy");
+    let (always, path) = route(path, "/jammed");
+    let (later, path) = route(path, "/later");
+    let answer = if later {
+        Some(("429 Too Many Requests", "3600"))
+    } else if always || (twice && asked <= 2) {
+        Some(("503 Service Unavailable", "0"))
+    } else {
+        None
+    };
+    (answer, path)
 }
 
 struct Meeting<'a>(&'a AtomicUsize);
@@ -78,12 +129,7 @@ impl Drop for Meeting<'_> {
     }
 }
 
-fn answer(
-    stream: TcpStream,
-    files: &HashMap<String, Vec<u8>>,
-    requests: &AtomicUsize,
-    inflight: &AtomicUsize,
-) {
+fn answer(stream: TcpStream, files: &HashMap<String, Vec<u8>>, counts: &Counts) {
     let Ok(copy) = stream.try_clone() else {
         return;
     };
@@ -114,8 +160,18 @@ fn answer(
                 ));
             }
         }
-        requests.fetch_add(1, Ordering::SeqCst);
+        counts.requests.fetch_add(1, Ordering::SeqCst);
+        let _work = Work::new(counts);
         let (path, query) = target.split_once('?').unwrap_or((target.as_str(), ""));
+        let (busy, path) = busy(path, counts);
+        if let Some((status, wait)) = busy {
+            let head =
+                format!("HTTP/1.1 {status}\r\nRetry-After: {wait}\r\nContent-Length: 0\r\n\r\n");
+            if writer.write_all(head.as_bytes()).is_err() {
+                return;
+            }
+            continue;
+        }
         if let Some(rest) = path.strip_prefix("/redirect") {
             let location = if query.is_empty() {
                 rest.to_owned()
@@ -137,7 +193,11 @@ fn answer(
         // No length and no chunks: the data ends where the connection ends.
         let (eof, path) = route(path, "/eof");
         let (slow, path) = route(path, "/slow");
-        let _meeting = slow.then(|| Meeting::new(inflight));
+        let _meeting = slow.then(|| Meeting::new(&counts.inflight));
+        let (hold, path) = route(path, "/hold");
+        if hold {
+            thread::sleep(HOLD);
+        }
         let Some(data) = files.get(path) else {
             let head = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             if writer.write_all(head.as_bytes()).is_err() {
