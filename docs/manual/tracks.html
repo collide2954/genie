@@ -161,10 +161,12 @@
 <h2 id="isoforms">Isoforms</h2>
 <p>The isoforms of a read track with long RNA reads, for example PacBio Iso-Seq or Oxford Nanopore cDNA reads, are the groups of reads with the same splice junctions.</p>
 <ul>
-<li>Right-click a read track and click <b>Isoforms</b>. The palette also has <b>Isoforms</b>. The track then shows the coverage, and under it a row for each isoform with its exons, its name and its number of reads. The isoform with the most reads is at the top.</li>
+<li>Right-click a read track and click <b>Isoforms</b>. The palette also has <b>Isoforms</b>. The track then shows the coverage, and under it a row for each isoform in view with its exons, its name and its number of reads. The isoform with the most reads is at the top.</li>
 <li>Two reads are in the same isoform when they have the same number of splice junctions, and each junction starts and stops in 5 bases or less of the same junction of the other read. The exons of an isoform go from the first base of its reads to the last.</li>
-<li>If a transcript of a feature track in view has the same introns, in 5 bases or less, the isoform has the name of the transcript, for example &quot;GENE-201 · 12 reads&quot;. If not, its name is &quot;novel 1&quot;, &quot;novel 2&quot; and so on.</li>
-<li>An isoform with only 1 read does not get a row. The line under the rows counts these isoforms and the reads without a splice junction.</li>
+<li>Many long reads do not start at the first exon. A read can be a part of a longer isoform: its junctions are the same as a run of junctions of that isoform. Then the read counts for that isoform if its ends stay in the exons at the two ends of the run. If it fits more than one isoform, the isoform with the most reads gets it.</li>
+<li>When a feature track with transcripts is in view, genie first moves the ends of the junctions of the reads. An end that is 20 bases or less from the end of an intron of a transcript moves to that end, because aligners can put the splice sites of noisy reads some bases off.</li>
+<li>If a transcript has the same introns as an isoform, in 5 bases or less, the isoform has the name of the transcript. When the track shows gene names in place of transcript IDs, as GENCODE V48 does, the name also has the ID, for example &quot;HNRNPA1 ENST00000546500.5 · 1,334 reads&quot;. A transcript with an ID gives the name before a transcript without one. If no transcript has the same introns, the name is &quot;novel 1&quot;, &quot;novel 2&quot; and so on.</li>
+<li>An isoform gets a row when it has 2 reads or more and 1 % or more of the spliced reads in view. The line under the rows counts the other isoforms and their reads, and the reads without a splice junction.</li>
 <li>Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.</li>
 <li>Click <b>Isoforms</b> again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.</li>
 </ul>

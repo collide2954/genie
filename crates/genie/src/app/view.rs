@@ -1,5 +1,7 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use genie_core::isoform::Isoform;
 use genie_core::pileup::sort_rows;
 use genie_core::{Feature, Region, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
@@ -1079,14 +1081,21 @@ fn reads_body(
 
 /// The least reads of an isoform with a row of its own.
 const ISOFORM_READS: usize = 2;
+/// An isoform with a row of its own has at least one read in this number of the spliced reads in
+/// view: 1 %.
+const ISOFORM_SHARE: usize = 100;
 /// How far apart two junctions of one isoform can be, in bases.
 const SLACK: u64 = 5;
+/// How far an end of a junction of a read moves to the end of an intron of an open transcript,
+/// in bases.
+const SNAP: u64 = 20;
 /// The height of the line under the isoforms that counts the other reads.
 const OTHERS_HEIGHT: f32 = 16.0;
 
 /// The isoforms of a read track in a panel, as features for the feature lane: each with the name
-/// of the transcript of an open feature track that has the same introns, or "novel" with a
-/// number, and its reads. The line under them counts the other reads.
+/// of the transcript of an open feature track that has the same introns, with its ID when the
+/// track shows a gene name in place of it, or "novel" with a number, and its reads. The line
+/// under them counts the other reads.
 pub(super) struct Isoforms {
     pub features: Vec<Feature>,
     pub rows: Vec<usize>,
@@ -1102,18 +1111,9 @@ fn introns(feature: &Feature) -> Vec<Region> {
         .collect()
 }
 
-/// The height of the isoforms of a pile under its coverage: a row for each isoform, and the line
-/// of the other reads.
-fn isoforms_height(pile: &Pile) -> f32 {
-    let (found, _) = genie_core::isoform::isoforms(&pile.chains.0, SLACK, ISOFORM_READS);
-    found.len() as f32 * features::Mode::Expanded.row_height() + OTHERS_HEIGHT
-}
-
-pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms {
-    let (chains, unspliced) = &pile.chains;
-    let (found, (few, _)) = genie_core::isoform::isoforms(chains, SLACK, ISOFORM_READS);
-    let (contig, _) = session.view(panel);
-    let transcripts: Vec<&Feature> = session
+/// The transcripts of the open feature tracks in a panel: their features with two exons or more.
+fn transcripts(session: &Session, panel: usize, contig: usize) -> Vec<&Feature> {
+    session
         .tracks
         .iter()
         .filter_map(|track| match &track.slot(panel).data(contig)?.content {
@@ -1122,42 +1122,109 @@ pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms
         })
         .flatten()
         .filter(|feature| feature.blocks().len() > 1)
+        .collect()
+}
+
+/// The isoforms of all reads of a pile, the most reads first, after the ends of their junctions
+/// snap to the introns of the transcripts. genie finds them again only when the introns change.
+fn all_isoforms(pile: &Pile, transcripts: &[&Feature]) -> Arc<Vec<Isoform>> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut known: Vec<Region> = transcripts
+        .iter()
+        .flat_map(|transcript| introns(transcript))
         .collect();
+    known.sort_unstable_by_key(|intron| (intron.start(), intron.end()));
+    known.dedup();
+    let mut hasher = DefaultHasher::new();
+    known.hash(&mut hasher);
+    pile.isoforms.get_or(hasher.finish(), || {
+        let snapped = genie_core::isoform::snap(&pile.chains.0, &known, SNAP);
+        genie_core::isoform::isoforms(&snapped, SLACK, 1).0
+    })
+}
+
+/// The height of the isoforms of a pile under its coverage: a row for each isoform, and the line
+/// of the other reads.
+fn isoforms_height(session: &Session, panel: usize, pile: &Pile) -> f32 {
+    let rows = isoforms(session, panel, pile).features.len();
+    rows as f32 * features::Mode::Expanded.row_height() + OTHERS_HEIGHT
+}
+
+/// The name of an isoform: the transcript with the same introns, with an ID before one without,
+/// or "novel" with the next number.
+fn isoform_name(transcripts: &[&Feature], isoform: &Isoform, novel: &mut usize) -> String {
+    let same = || {
+        transcripts.iter().filter(|transcript| {
+            genie_core::isoform::agree(&introns(transcript), &isoform.junctions, SLACK)
+        })
+    };
+    let with_id = same().find_map(|transcript| {
+        let id = transcript.id().filter(|id| *id != transcript.name())?;
+        Some(format!("{} {id}", transcript.name()))
+    });
+    with_id
+        .or_else(|| same().next().map(|transcript| transcript.name().to_owned()))
+        .unwrap_or_else(|| {
+            *novel += 1;
+            format!("novel {novel}")
+        })
+}
+
+/// "1 read" or the number of reads.
+fn reads_text(count: usize) -> String {
+    match count {
+        1 => "1 read".to_owned(),
+        count => format!("{} reads", grouped(count as u64)),
+    }
+}
+
+/// The isoforms in view of a read track in a panel that have 2 reads or more and 1 % or more of
+/// the spliced reads in view, and the line that counts the other isoforms and reads in view.
+pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms {
+    let (contig, viewport) = session.view(panel);
+    let visible = viewport.visible();
+    let seen = |span: &Region| span.intersection(visible).is_some();
+    let transcripts = transcripts(session, panel, contig);
+    let all = all_isoforms(pile, &transcripts);
+    let spliced = pile
+        .chains
+        .0
+        .iter()
+        .flat_map(|chain| &chain.reads)
+        .filter(|read| seen(read))
+        .count();
+    let least = ISOFORM_READS.max(spliced.div_ceil(ISOFORM_SHARE));
+    let (shown, few): (Vec<&Isoform>, Vec<&Isoform>) = all
+        .iter()
+        .filter(|isoform| seen(&isoform.span))
+        .partition(|isoform| isoform.reads >= least);
     let mut novel = 0;
-    let features: Vec<Feature> = found
+    let features: Vec<Feature> = shown
         .iter()
         .map(|isoform| {
-            let named = transcripts
-                .iter()
-                .find(|transcript| {
-                    genie_core::isoform::agree(&introns(transcript), &isoform.junctions, SLACK)
-                })
-                .map(|transcript| transcript.name().to_owned());
-            let name = named.unwrap_or_else(|| {
-                novel += 1;
-                format!("novel {novel}")
-            });
-            let reads = match isoform.reads {
-                1 => "1 read".to_owned(),
-                count => format!("{} reads", grouped(count as u64)),
-            };
+            let name = isoform_name(&transcripts, isoform, &mut novel);
+            let reads = reads_text(isoform.reads);
             Feature::new(format!("{name} · {reads}"), isoform.span, isoform.strand)
                 .with_blocks(isoform.exons())
         })
         .collect();
     let mut parts = Vec::new();
-    match few {
+    let few_reads: usize = few.iter().map(|isoform| isoform.reads).sum();
+    match few.len() {
         0 => {}
-        1 => parts.push("1 isoform of 1 read".to_owned()),
-        count => parts.push(format!("{} isoforms of 1 read", grouped(count as u64))),
-    }
-    match unspliced {
-        0 => {}
-        1 => parts.push("1 read without a splice junction".to_owned()),
+        1 => parts.push(format!("1 more isoform with {}", reads_text(few_reads))),
         count => parts.push(format!(
-            "{} reads without a splice junction",
-            grouped(*count as u64)
+            "{} more isoforms with {}",
+            grouped(count as u64),
+            reads_text(few_reads)
         )),
+    }
+    let unspliced = pile.chains.1.iter().filter(|read| seen(read)).count();
+    if unspliced > 0 {
+        parts.push(format!(
+            "{} without a splice junction",
+            reads_text(unspliced)
+        ));
     }
     let others = if features.is_empty() && parts.is_empty() {
         "No spliced reads in view.".to_owned()
@@ -1534,7 +1601,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         }
         Some(Content::Reads(_)) if track.plot.sashimi => Shape::plain(sashimi::HEIGHT),
         Some(Content::Reads(pile)) if track.plot.isoforms => {
-            Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + isoforms_height(pile))
+            Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + isoforms_height(session, panel, pile))
         }
         Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
             let above = lanes_height(track, pile) + pile.arc_height();

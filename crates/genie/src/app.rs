@@ -5383,8 +5383,9 @@ mod tests {
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
         let region = Region::between(0, 1_000);
-        let transcript = Feature::new("TX1", Region::between(50, 450), Strand::Forward)
-            .with_blocks(vec![Region::between(50, 100), Region::between(300, 450)]);
+        let transcript = Feature::new("ENST1.2", Region::between(50, 450), Strand::Forward)
+            .with_blocks(vec![Region::between(50, 100), Region::between(300, 450)])
+            .with_label("TX1");
         let genes = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
         genes.slot.wanted = Some((0, region));
         let loaded = Loaded::features(region, vec![transcript]);
@@ -5396,7 +5397,7 @@ mod tests {
         assert!(messages.contains(&Message::TrackChanged(0, Change::Isoforms)));
         let _ = genie.update(Message::TrackChanged(0, Change::Isoforms));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 5.0))));
-        assert!(shows(&genie, "TX1 · 3 reads"));
+        assert!(shows(&genie, "TX1 ENST1.2 · 3 reads"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 25.0))));
         assert!(shows(&genie, "novel 1 · 2 reads"));
         let session = genie.session.as_ref().unwrap();
@@ -5407,13 +5408,112 @@ mod tests {
         assert_eq!(shown.features.len(), 2);
         assert_eq!(
             shown.others,
-            "1 isoform of 1 read · 1 read without a splice junction"
+            "1 more isoform with 1 read · 1 read without a splice junction"
         );
         let _ = genie.update(Message::TrackChanged(0, Change::Sashimi));
         let plot = genie.session.as_ref().unwrap().tracks[0].plot;
         assert!(
             plot.sashimi && !plot.isoforms,
             "a Sashimi plot ends the isoforms"
+        );
+    }
+
+    /// Adds a feature track with features on chr1 from 0 to 1,000.
+    fn add_features(genie: &mut Genie, name: &str, features: Vec<genie_core::Feature>) {
+        let source = Arc::new(Source {
+            location: PathBuf::from(format!("/data/{name}")).into(),
+            name: name.to_owned(),
+            data: None,
+            format: Format::Features(FeatureFile::Table {
+                kind: Kind::Bed,
+                table: genie_formats::table::Table::new(Vec::new()),
+                names: Vec::new(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+    }
+
+    /// Isoform rows show the isoforms in view with 1 % or more of the spliced reads in view, after
+    /// their junctions snap to the introns of the open transcripts within 20 bp. A transcript with
+    /// an ID names a row before a transcript without one.
+    #[test]
+    fn isoform_rows_show_the_isoforms_in_view_with_enough_reads() {
+        use genie_core::alignment::{Alignment, Op};
+        use genie_core::{Feature, Strand};
+
+        let mut genie = opened();
+        let (m, n) = (Op::Match, Op::Skip);
+        let chain = |name: &str, count: usize, start: u64, cigar: &[(Op, u32)]| {
+            (0..count)
+                .map(|index| Alignment {
+                    cigar: cigar.to_vec(),
+                    ..read(&format!("{name}{index}"), start)
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut reads = chain("a", 200, 60, &[(m, 40), (n, 200), (m, 100)]);
+        reads.extend(chain("s", 2, 60, &[(m, 52), (n, 188), (m, 100)]));
+        let two = [(m, 40), (n, 200), (m, 50), (n, 70), (m, 30)];
+        reads.extend(chain("c", 3, 60, &two));
+        reads.extend(chain("d", 2, 450, &[(m, 50), (n, 100), (m, 50)]));
+        reads.extend(chain("e", 4, 700, &[(m, 50), (n, 100), (m, 50)]));
+        add_reads(&mut genie, reads);
+        let blocks = vec![Region::between(50, 100), Region::between(300, 450)];
+        let span = Region::between(50, 450);
+        let plain = Feature::new("TX1", span, Strand::Forward).with_blocks(blocks.clone());
+        add_features(&mut genie, "refseq.bed", vec![plain]);
+        let labeled = Feature::new("ENST1.2", span, Strand::Forward)
+            .with_blocks(blocks)
+            .with_label("TX1");
+        add_features(&mut genie, "gencode.bb", vec![labeled]);
+        let _ = genie.update(Message::TrackChanged(0, Change::Isoforms));
+        let shown = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            let Some(Content::Reads(pile)) = session.tracks[0].data(0).map(|data| &data.content)
+            else {
+                panic!("expected reads");
+            };
+            let shown = super::view::isoforms(session, 0, pile);
+            let names: Vec<String> = shown
+                .features
+                .iter()
+                .map(|feature| feature.name().to_owned())
+                .collect();
+            (names, shown.others)
+        };
+        assert_eq!(
+            shown(&genie),
+            (
+                vec![
+                    "TX1 ENST1.2 · 202 reads".to_owned(),
+                    "novel 1 · 4 reads".to_owned(),
+                    "novel 2 · 3 reads".to_owned(),
+                ],
+                "1 more isoform with 2 reads".to_owned()
+            ),
+            "2 reads with a junction 12 bp off join TX1, and 2 reads are under 1 % of 211"
+        );
+        go(&mut genie, "chr1:1-660");
+        settle(&mut genie);
+        assert_eq!(
+            shown(&genie),
+            (
+                vec![
+                    "TX1 ENST1.2 · 202 reads".to_owned(),
+                    "novel 1 · 3 reads".to_owned(),
+                ],
+                "1 more isoform with 2 reads".to_owned()
+            ),
+            "the 4 reads after 700 are out of view"
         );
     }
 

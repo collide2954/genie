@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE, SECONDARY, SUPPLEMENTARY};
 use genie_core::association::Association;
 use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
-use genie_core::isoform::{Chain, Chains};
+use genie_core::isoform::{Chain, Chains, Isoform};
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::samples::{Arrangement, Choice, Table};
@@ -573,8 +573,11 @@ pub struct Pile {
     pub reads: Vec<Read>,
     pub junctions: Vec<Junction>,
     /// The chains of splice junctions of all reads, also the reads that down-sampling hides,
-    /// and the reads without a junction.
-    pub chains: (Vec<Chain>, usize),
+    /// and the first and the last base of each read without a junction.
+    pub chains: (Vec<Chain>, Vec<Region>),
+    /// The isoforms of the chains, which genie finds again only when the introns of the open
+    /// transcripts change.
+    pub isoforms: Memo<Vec<Isoform>>,
     pub methylation: Methylation<GroupKey>,
     pub rows: Vec<usize>,
     pub count: usize,
@@ -586,6 +589,43 @@ pub struct Pile {
     pub values: Values,
     /// The hue of each read when the track colors reads by a tag, or nothing.
     pub hues: Vec<Option<Hue>>,
+}
+
+/// A value that the view finds once and keeps: genie finds it again only when its key changes.
+/// Two memos are equal whatever they keep, so that piles stay equal when only a memo differs.
+pub struct Memo<T>(Mutex<Option<(u64, Arc<T>)>>);
+
+impl<T> Default for Memo<T> {
+    fn default() -> Self {
+        Self(Mutex::new(None))
+    }
+}
+
+impl<T> Memo<T> {
+    /// The value for a key: the kept value when the key is the same, or else a new value.
+    pub fn get_or(&self, key: u64, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut kept = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((known, value)) = kept.as_ref()
+            && *known == key
+        {
+            return Arc::clone(value);
+        }
+        let value = Arc::new(make());
+        *kept = Some((key, Arc::clone(&value)));
+        value
+    }
+}
+
+impl<T> std::fmt::Debug for Memo<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Memo")
+    }
+}
+
+impl<T> PartialEq for Memo<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 pub type GroupKey = (u8, i64);
@@ -972,6 +1012,7 @@ impl Loaded {
                 reads,
                 junctions,
                 chains: chains.finish(),
+                isoforms: Memo::default(),
                 methylation,
                 rows,
                 count,
