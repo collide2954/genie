@@ -5346,6 +5346,77 @@ mod tests {
         assert_eq!(sashimi(&genie, 0), (vec!["0-2".to_owned()], 0, HEIGHT));
     }
 
+    /// Long reads with the same splice junctions, within 5 bp, are one isoform: a row with the
+    /// name of the transcript that has the same introns, or "novel", and the reads.
+    #[test]
+    fn isoforms_join_the_reads_of_one_chain_of_junctions() {
+        use genie_core::alignment::{Alignment, Op};
+        use genie_core::{Feature, Strand};
+
+        let mut genie = opened();
+        let spliced = |name: &str, start, cigar: &[(Op, u32)]| Alignment {
+            cigar: cigar.to_vec(),
+            ..read(name, start)
+        };
+        let (m, n) = (Op::Match, Op::Skip);
+        add_reads(
+            &mut genie,
+            vec![
+                spliced("a1", 60, &[(m, 40), (n, 200), (m, 100)]),
+                spliced("a2", 70, &[(m, 30), (n, 200), (m, 50)]),
+                spliced("a3", 52, &[(m, 50), (n, 198), (m, 60)]),
+                spliced("b1", 60, &[(m, 40), (n, 200), (m, 50), (n, 70), (m, 30)]),
+                spliced("b2", 80, &[(m, 20), (n, 200), (m, 50), (n, 70), (m, 30)]),
+                spliced("c1", 450, &[(m, 50), (n, 100), (m, 50)]),
+                spliced("u1", 700, &[(m, 50)]),
+            ],
+        );
+        let source = Arc::new(Source {
+            location: PathBuf::from("/data/genes.bed").into(),
+            name: "genes.bed".to_owned(),
+            data: None,
+            format: Format::Features(FeatureFile::Table {
+                kind: Kind::Bed,
+                table: genie_formats::table::Table::new(Vec::new()),
+                names: Vec::new(),
+            }),
+        });
+        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let region = Region::between(0, 1_000);
+        let transcript = Feature::new("TX1", Region::between(50, 450), Strand::Forward)
+            .with_blocks(vec![Region::between(50, 100), Region::between(300, 450)]);
+        let genes = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        genes.slot.wanted = Some((0, region));
+        let loaded = Loaded::features(region, vec![transcript]);
+        genes.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Isoforms").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::TrackChanged(0, Change::Isoforms)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Isoforms));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 5.0))));
+        assert!(shows(&genie, "TX1 · 3 reads"));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 25.0))));
+        assert!(shows(&genie, "novel 1 · 2 reads"));
+        let session = genie.session.as_ref().unwrap();
+        let Some(Content::Reads(pile)) = session.tracks[0].data(0).map(|data| &data.content) else {
+            panic!("expected reads");
+        };
+        let shown = super::view::isoforms(session, 0, pile);
+        assert_eq!(shown.features.len(), 2);
+        assert_eq!(
+            shown.others,
+            "1 isoform of 1 read · 1 read without a splice junction"
+        );
+        let _ = genie.update(Message::TrackChanged(0, Change::Sashimi));
+        let plot = genie.session.as_ref().unwrap().tracks[0].plot;
+        assert!(
+            plot.sashimi && !plot.isoforms,
+            "a Sashimi plot ends the isoforms"
+        );
+    }
+
     #[test]
     fn sashimi_plots_can_share_one_scale() {
         let mut genie = opened();

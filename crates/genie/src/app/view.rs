@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use genie_core::pileup::sort_rows;
-use genie_core::{Region, Viewport, grouped, trio};
+use genie_core::{Feature, Region, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
@@ -1054,6 +1054,9 @@ fn reads_body(
         let primitives = sashimi::scene(viewport, &pile.coverage, &pile.junctions, look);
         return Body::Scene(primitives, sashimi::HEIGHT);
     }
+    if track.plot.isoforms {
+        return isoform_body(session, track, panel, pile);
+    }
     let mode = track.mode_at(panel, contig);
     let coverage = alignments::coverage(
         viewport,
@@ -1072,6 +1075,137 @@ fn reads_body(
         )
     });
     Body::Reads { coverage, reads }
+}
+
+/// The least reads of an isoform with a row of its own.
+const ISOFORM_READS: usize = 2;
+/// How far apart two junctions of one isoform can be, in bases.
+const SLACK: u64 = 5;
+/// The height of the line under the isoforms that counts the other reads.
+const OTHERS_HEIGHT: f32 = 16.0;
+
+/// The isoforms of a read track in a panel, as features for the feature lane: each with the name
+/// of the transcript of an open feature track that has the same introns, or "novel" with a
+/// number, and its reads. The line under them counts the other reads.
+pub(super) struct Isoforms {
+    pub features: Vec<Feature>,
+    pub rows: Vec<usize>,
+    pub others: String,
+}
+
+/// The introns of a transcript: the parts between its exons.
+fn introns(feature: &Feature) -> Vec<Region> {
+    feature
+        .blocks()
+        .windows(2)
+        .map(|pair| Region::between(pair[0].end(), pair[1].start()))
+        .collect()
+}
+
+/// The height of the isoforms of a pile under its coverage: a row for each isoform, and the line
+/// of the other reads.
+fn isoforms_height(pile: &Pile) -> f32 {
+    let (found, _) = genie_core::isoform::isoforms(&pile.chains.0, SLACK, ISOFORM_READS);
+    found.len() as f32 * features::Mode::Expanded.row_height() + OTHERS_HEIGHT
+}
+
+pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms {
+    let (chains, unspliced) = &pile.chains;
+    let (found, (few, _)) = genie_core::isoform::isoforms(chains, SLACK, ISOFORM_READS);
+    let (contig, _) = session.view(panel);
+    let transcripts: Vec<&Feature> = session
+        .tracks
+        .iter()
+        .filter_map(|track| match &track.slot(panel).data(contig)?.content {
+            Content::Features(annotation) => Some(&annotation.features),
+            _ => None,
+        })
+        .flatten()
+        .filter(|feature| feature.blocks().len() > 1)
+        .collect();
+    let mut novel = 0;
+    let features: Vec<Feature> = found
+        .iter()
+        .map(|isoform| {
+            let named = transcripts
+                .iter()
+                .find(|transcript| {
+                    genie_core::isoform::agree(&introns(transcript), &isoform.junctions, SLACK)
+                })
+                .map(|transcript| transcript.name().to_owned());
+            let name = named.unwrap_or_else(|| {
+                novel += 1;
+                format!("novel {novel}")
+            });
+            let reads = match isoform.reads {
+                1 => "1 read".to_owned(),
+                count => format!("{} reads", grouped(count as u64)),
+            };
+            Feature::new(format!("{name} · {reads}"), isoform.span, isoform.strand)
+                .with_blocks(isoform.exons())
+        })
+        .collect();
+    let mut parts = Vec::new();
+    match few {
+        0 => {}
+        1 => parts.push("1 isoform of 1 read".to_owned()),
+        count => parts.push(format!("{} isoforms of 1 read", grouped(count as u64))),
+    }
+    match unspliced {
+        0 => {}
+        1 => parts.push("1 read without a splice junction".to_owned()),
+        count => parts.push(format!(
+            "{} reads without a splice junction",
+            grouped(*count as u64)
+        )),
+    }
+    let others = if features.is_empty() && parts.is_empty() {
+        "No spliced reads in view.".to_owned()
+    } else {
+        parts.join(" · ")
+    };
+    Isoforms {
+        rows: (0..features.len()).collect(),
+        features,
+        others,
+    }
+}
+
+/// The coverage of a read track and its isoforms under it, each as a transcript with its reads.
+fn isoform_body(session: &Session, track: &Track, panel: usize, pile: &Pile) -> Body {
+    let (_, viewport) = session.view(panel);
+    let coverage = alignments::coverage(
+        viewport,
+        &pile.coverage,
+        |at| pile.base(at),
+        alignments::COVERAGE_HEIGHT,
+    );
+    let shown = isoforms(session, panel, pile);
+    let mode = features::Mode::Expanded;
+    let mut primitives = features::scene(
+        viewport,
+        &shown.features,
+        &shown.rows,
+        mode,
+        track.hue,
+        true,
+    );
+    let rows = shown.features.len() as f32 * mode.row_height();
+    if !shown.others.is_empty() {
+        primitives.push(Primitive::Text {
+            x: 4.0,
+            y: rows + OTHERS_HEIGHT / 2.0,
+            content: std::borrow::Cow::Owned(shown.others),
+            size: 10.0,
+            paint: genie_render::scene::Paint::Muted,
+            font: genie_render::scene::Font::Ui,
+            align: genie_render::scene::Align::Start,
+        });
+    }
+    Body::Reads {
+        coverage,
+        reads: Some((primitives, rows + OTHERS_HEIGHT)),
+    }
 }
 
 /// The depth at the top of the Sashimi plot of a read track: the deepest coverage in view of the
@@ -1399,6 +1533,9 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Reads(_)) if track.plot.sashimi => Shape::plain(sashimi::HEIGHT),
+        Some(Content::Reads(pile)) if track.plot.isoforms => {
+            Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + isoforms_height(pile))
+        }
         Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
             let above = lanes_height(track, pile) + pile.arc_height();
             if above > 0.0 {

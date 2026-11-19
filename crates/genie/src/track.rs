@@ -7,6 +7,7 @@ use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE, SECONDARY, SUPP
 use genie_core::association::Association;
 use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
+use genie_core::isoform::{Chain, Chains};
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::samples::{Arrangement, Choice, Table};
@@ -449,6 +450,7 @@ pub struct Math {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Plot {
     pub style: Style,
     pub linked: bool,
@@ -457,6 +459,9 @@ pub struct Plot {
     pub range: Option<Scale>,
     /// Whether a read track shows a Sashimi plot: its coverage and its splice junctions.
     pub sashimi: bool,
+    /// Whether a read track shows its isoforms: a row for each chain of splice junctions of its
+    /// reads, in place of the reads.
+    pub isoforms: bool,
     /// The fewest reads of a splice junction that the Sashimi plot of a read track shows.
     pub junction_reads: u32,
     /// The comparison that a signal track shows instead of its own values.
@@ -478,6 +483,7 @@ impl Default for Plot {
             colors: true,
             range: None,
             sashimi: false,
+            isoforms: false,
             junction_reads: 1,
             math: None,
             viewpoint: None,
@@ -566,6 +572,9 @@ pub struct Pile {
     pub offset: u64,
     pub reads: Vec<Read>,
     pub junctions: Vec<Junction>,
+    /// The chains of splice junctions of all reads, also the reads that down-sampling hides,
+    /// and the reads without a junction.
+    pub chains: (Vec<Chain>, usize),
     pub methylation: Methylation<GroupKey>,
     pub rows: Vec<usize>,
     pub count: usize,
@@ -845,6 +854,7 @@ pub struct Gather {
     coverage: Coverage,
     inserts: Inserts,
     junctions: Junctions,
+    chains: Chains,
     methylation: Tally<GroupKey>,
     sampler: Sampler,
     values: Values,
@@ -863,6 +873,7 @@ impl Gather {
             coverage: Coverage::new(region),
             inserts: Inserts::new(contig),
             junctions: Junctions::default(),
+            chains: Chains::default(),
             methylation: Tally::default(),
             sampler: Sampler::new(WINDOW, limit),
             values: Values::default(),
@@ -873,6 +884,7 @@ impl Gather {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
+        self.chains.add(&alignment);
         if let Grouping::Tag(name) = self.options.group
             && let Some(text) = alignment.tags.get(name)
             && text.parse::<i64>().is_err()
@@ -914,6 +926,7 @@ impl Loaded {
             coverage,
             inserts,
             junctions,
+            chains,
             methylation,
             sampler,
             values,
@@ -958,6 +971,7 @@ impl Loaded {
                 offset,
                 reads,
                 junctions,
+                chains: chains.finish(),
                 methylation,
                 rows,
                 count,
@@ -1624,6 +1638,8 @@ pub enum Change {
     Mods,
     /// Show the reads of a track as a Sashimi plot, or show the reads again.
     Sashimi,
+    /// Show the isoforms of the reads of a track, or show the reads again.
+    Isoforms,
     /// The fewest reads of a splice junction that a Sashimi plot shows.
     JunctionReads(u32),
     Modification(usize),
@@ -1685,6 +1701,12 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Sashimi => {
             let plot = &mut tracks[position].plot;
             plot.sashimi = !plot.sashimi;
+            plot.isoforms &= !plot.sashimi;
+        }
+        Change::Isoforms => {
+            let plot = &mut tracks[position].plot;
+            plot.isoforms = !plot.isoforms;
+            plot.sashimi &= !plot.isoforms;
         }
         Change::JunctionReads(reads) => tracks[position].plot.junction_reads = reads.max(1),
         Change::Modification(index) => {

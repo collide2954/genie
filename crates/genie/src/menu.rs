@@ -382,7 +382,8 @@ fn compares_groups(track: &Track) -> bool {
 fn kind_height(track: &Track) -> f32 {
     let choices = modification_choices(track).len() as f32 * LINK_HEIGHT;
     if track.source.has_reads() {
-        let sashimi = if track.plot.sashimi { 3.0 } else { 1.0 };
+        // The Sashimi plot, its two rows when it shows, and Isoforms.
+        let sashimi = if track.plot.sashimi { 4.0 } else { 2.0 };
         let difference = f32::from(u8::from(compares_groups(track)));
         READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
@@ -581,6 +582,7 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
         items.push(junction_row(track));
         items.push(item("Shared scale", Change::Link, track.plot.linked));
     }
+    items.push(item("Isoforms", Change::Isoforms, track.plot.isoforms));
     items.push(separator());
     items.push(self::item(
         format!("Sort by base at {}", grouped(place.base + 1)),

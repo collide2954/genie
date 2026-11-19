@@ -300,6 +300,7 @@ fn plot(section: &Section) -> Plot {
         colors: section.value("colors") != Some("off"),
         range: section.value("range").and_then(range),
         sashimi: section.value("sashimi") == Some("on"),
+        isoforms: section.value("isoforms") == Some("on"),
         junction_reads: section
             .value("junction reads")
             .and_then(|text| text.parse().ok())
@@ -378,6 +379,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if track.plot.sashimi {
         entries.push(("sashimi", "on".to_owned()));
+    }
+    if track.plot.isoforms {
+        entries.push(("isoforms", "on".to_owned()));
     }
     if track.plot.junction_reads > 1 {
         entries.push(("junction reads", track.plot.junction_reads.to_string()));
@@ -867,6 +871,16 @@ mod tests {
         assert!(text.contains("junction reads = 5"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(sashimi));
         assert!(!saved().text(&base()).contains("sashimi"));
+    }
+
+    #[test]
+    fn read_tracks_keep_their_isoforms() {
+        let mut isoforms = saved();
+        isoforms.tracks[0].plot.isoforms = true;
+        let text = isoforms.text(&base());
+        assert!(text.contains("isoforms = on"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(isoforms));
+        assert!(!saved().text(&base()).contains("isoforms"));
     }
 
     #[test]

@@ -472,14 +472,14 @@ impl Genie {
                     features::hit(viewport, &annotation.features, &annotation.rows, mode, x, y)?;
                 Detail::Feature(annotation.features[index].clone())
             }
-            Content::Reads(pile) if track.plot.sashimi => {
-                let least = track.plot.junction_reads;
-                let index = sashimi::hit(viewport, &pile.junctions, least, x, y)?;
-                Detail::Junction(pile.junctions[index])
-            }
-            Content::Reads(pile) => {
-                read_detail(track, panel, contig, pile, viewport, mode, (x, y))?
-            }
+            Content::Reads(pile) => pile_detail(
+                session,
+                track,
+                (panel, contig),
+                pile,
+                (viewport, mode),
+                (x, y),
+            )?,
             Content::Variants(calls) => {
                 let arcs = variants::breakend_height(&calls.variants);
                 if y < arcs {
@@ -1178,6 +1178,30 @@ fn detail_fields(
         | Detail::Segment { .. }
         | Detail::Contact(_) => Vec::new(),
     }
+}
+
+/// What a read track shows under the pointer: a junction of its Sashimi plot, one of its
+/// isoforms, or a read.
+fn pile_detail(
+    session: &Session,
+    track: &Track,
+    (panel, contig): (usize, usize),
+    pile: &Pile,
+    (viewport, mode): (Viewport, Mode),
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    if track.plot.sashimi {
+        let least = track.plot.junction_reads;
+        let index = sashimi::hit(viewport, &pile.junctions, least, x, y)?;
+        return Some(Detail::Junction(pile.junctions[index]));
+    }
+    if track.plot.isoforms {
+        let shown = super::view::isoforms(session, panel, pile);
+        let expanded = features::Mode::Expanded;
+        let index = features::hit(viewport, &shown.features, &shown.rows, expanded, x, y)?;
+        return Some(Detail::Feature(shown.features[index].clone()));
+    }
+    read_detail(track, panel, contig, pile, viewport, mode, (x, y))
 }
 
 fn read_detail(

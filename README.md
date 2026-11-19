@@ -396,6 +396,17 @@ A Sashimi plot shows the coverage of an RNA-seq read track and the splice juncti
 - To save the plots as an image, push Ctrl+E (Cmd+E on macOS), click Export… and save a PNG or an SVG file. Put a feature track with the transcripts under the read tracks to show them in the image.
 - Click **Sashimi plot** again to see the reads. Sessions keep the Sashimi plot, the **Arcs ≥** setting and the shared scale of each track.
 
+## Isoforms
+
+The isoforms of a read track with long RNA reads, for example PacBio Iso-Seq or Oxford Nanopore cDNA reads, are the groups of reads with the same splice junctions.
+
+- Right-click a read track and click **Isoforms**. The palette also has **Isoforms**. The track then shows the coverage, and under it a row for each isoform with its exons, its name and its number of reads. The isoform with the most reads is at the top.
+- Two reads are in the same isoform when they have the same number of splice junctions, and each junction starts and stops in 5 bases or less of the same junction of the other read. The exons of an isoform go from the first base of its reads to the last.
+- If a transcript of a feature track in view has the same introns, in 5 bases or less, the isoform has the name of the transcript, for example "GENE-201 · 12 reads". If not, its name is "novel 1", "novel 2" and so on.
+- An isoform with only 1 read does not get a row. The line under the rows counts these isoforms and the reads without a splice junction.
+- Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.
+- Click **Isoforms** again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.
+
 ## Dot plot
 
 A dot plot compares two assemblies with the alignments of a [PAF file](#paf-alignments), for example from `minimap2 -cx asm5 genome.fa other.fa`. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.

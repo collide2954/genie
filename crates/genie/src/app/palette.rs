@@ -67,6 +67,7 @@ fn read_actions(track: &Track) -> Vec<Action> {
         GROUPS.map(|(label, grouping)| Action::new(label, name, change(Change::Group(grouping)))),
     );
     actions.push(Action::new("Sashimi plot", name, change(Change::Sashimi)));
+    actions.push(Action::new("Isoforms", name, change(Change::Isoforms)));
     if track.plot.sashimi {
         actions.extend(JUNCTION_FLOORS.map(|(label, floor)| {
             let words = format!("Show the arcs with {label} or more reads");
