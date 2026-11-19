@@ -1109,8 +1109,14 @@ fn read_lane(
     repack: bool,
 ) -> Vec<Primitive> {
     let (_, lanes) = track.methylation_lanes(pile);
-    let above = alignments::methylation_height(lanes.len());
+    let mut above = alignments::methylation_height(lanes.len());
     let mut lane = alignments::methylation(viewport, &lanes);
+    if let Some(((a, b), differences)) = track.methylation_difference(pile) {
+        let label = format!("{a} − {b}");
+        let bars = genie_render::difference::lane(viewport, &differences, &label);
+        lane.extend(bars.into_iter().map(|primitive| primitive.lowered(above)));
+        above += genie_render::difference::HEIGHT + 1.0;
+    }
     let arcs = alignments::arcs(viewport, &pile.junctions);
     lane.extend(arcs.into_iter().map(|primitive| primitive.lowered(above)));
     if mode == features::Mode::Collapsed {
@@ -1138,7 +1144,12 @@ fn read_lane(
 }
 
 pub(super) fn lanes_height(track: &Track, pile: &Pile) -> f32 {
-    alignments::methylation_height(track.methylation_lanes(pile).1.len())
+    let difference = if track.methylation_difference(pile).is_some() {
+        genie_render::difference::HEIGHT + 1.0
+    } else {
+        0.0
+    };
+    alignments::methylation_height(track.methylation_lanes(pile).1.len()) + difference
 }
 
 fn track_view<'a>(

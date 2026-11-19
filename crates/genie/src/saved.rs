@@ -295,6 +295,7 @@ fn plot(section: &Section) -> Plot {
         look: Look {
             pairs: section.value("pairs") != Some("off"),
             mods: section.value("modifications") == Some("on"),
+            difference: section.value("methylation difference") == Some("on"),
         },
         colors: section.value("colors") != Some("off"),
         range: section.value("range").and_then(range),
@@ -371,6 +372,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if track.plot.look.mods {
         entries.push(("modifications", "on".to_owned()));
+    }
+    if track.plot.look.difference {
+        entries.push(("methylation difference", "on".to_owned()));
     }
     if track.plot.sashimi {
         entries.push(("sashimi", "on".to_owned()));
@@ -711,32 +715,25 @@ mod tests {
             },
             tracks: vec![
                 SavedTrack {
-                    location: Location::File(base().join("reads.bam")),
                     name: Some("Tumor A".to_owned()),
-                    over: None,
-                    compare: None,
                     mode: Some(Mode::Squished),
                     hue: Hue::Blue,
                     height: Some(90.0),
                     options: read_options(),
                     plot: Plot {
                         look: Look {
-                            pairs: false,
                             mods: true,
+                            difference: true,
+                            ..Look::default()
                         },
                         ..Plot::default()
                     },
-                    filter: Filter::default(),
                     modification: Some("5hmC".to_owned()),
-                    normalization: None,
                     declared: Some(Declared {
                         kind: "bam".to_owned(),
                         index: Some(Location::File(base().join("index").join("reads.bai"))),
                     }),
-                    choice: Choice::default(),
-                    lift: None,
-                    hidden: false,
-                    folder: None,
+                    ..SavedTrack::plain(Location::File(base().join("reads.bam")))
                 },
                 SavedTrack {
                     hue: Hue::Vermillion,

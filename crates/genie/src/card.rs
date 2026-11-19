@@ -56,6 +56,13 @@ pub enum Detail {
         group: Option<String>,
         counts: Vec<(String, u32, u32)>,
     },
+    /// The methylation difference of two groups at a site: the modification, the names of the
+    /// groups, and the counts, the difference and the test.
+    Difference {
+        name: String,
+        groups: (String, String),
+        difference: genie_core::methylation::Difference,
+    },
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -474,6 +481,38 @@ fn sequence_facts(span: Region, strand: Strand, (wrong, exact): (usize, &str)) -
     format!("{} bp · {strands} · {fit}", grouped(span.len()))
 }
 
+/// The card of a methylation difference: the counts of each group, the difference in
+/// percentage points and the p value of Fisher's exact test.
+fn difference_content(
+    name: &str,
+    (first, second): &(String, String),
+    difference: &genie_core::methylation::Difference,
+) -> (String, Region, Vec<String>) {
+    let group = |label: &str, site: genie_core::methylation::Site| {
+        let (modified, total) = (site.modified, site.total);
+        let percent = (modified * 100 + total / 2) / total.max(1);
+        let reads = plural(total, "read");
+        format!("{label}: {modified} of {total} {reads} · {percent} %")
+    };
+    let points = format!("{:+.0}", difference.points).replace('-', "−");
+    let p = if difference.p >= 0.001 {
+        format!("{:.3}", difference.p)
+    } else {
+        format!("{:.1e}", difference.p)
+    };
+    let lines = vec![
+        group(first, difference.a),
+        group(second, difference.b),
+        format!("Difference {points} points · p = {p}"),
+    ];
+    let position = difference.position;
+    (
+        format!("{name} difference"),
+        Region::between(position, position + 1),
+        lines,
+    )
+}
+
 /// The card of a PCR product: its size, its strand, its mismatches and its primers.
 fn product_content(
     (forward, reverse): (&str, &str),
@@ -548,6 +587,11 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
                 lines,
             )
         }
+        Detail::Difference {
+            name,
+            groups,
+            difference,
+        } => difference_content(name, groups, difference),
         Detail::Match {
             pattern,
             span,

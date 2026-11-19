@@ -368,11 +368,18 @@ pub fn methyl_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     items
 }
 
+/// True when the read menu offers the methylation difference of the groups of reads: the reads
+/// show their modifications and are in groups.
+fn compares_groups(track: &Track) -> bool {
+    track.plot.look.mods && track.options.group != Grouping::None
+}
+
 fn kind_height(track: &Track) -> f32 {
     let choices = modification_choices(track).len() as f32 * LINK_HEIGHT;
     if track.source.has_reads() {
         let sashimi = if track.plot.sashimi { 3.0 } else { 1.0 };
-        READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi) * LINK_HEIGHT
+        let difference = f32::from(u8::from(compares_groups(track)));
+        READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
         VARIANTS_HEIGHT
     } else if track.source.is_bedmethyl() {
@@ -556,6 +563,14 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     ));
     items.push(item("Color by modification", Change::Mods, look.mods));
     items.extend(modification_items(track));
+    if compares_groups(track) {
+        let difference = look.difference;
+        items.push(item(
+            "Methylation difference",
+            Change::Difference,
+            difference,
+        ));
+    }
     items.push(item("Sashimi plot", Change::Sashimi, track.plot.sashimi));
     if track.plot.sashimi {
         items.push(junction_row(track));

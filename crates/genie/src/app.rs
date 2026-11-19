@@ -5362,6 +5362,70 @@ mod tests {
         genie
     }
 
+    /// With the reads grouped by phase, the methylation difference shows haplotype 1 against
+    /// haplotype 2 at each site under the methylation lanes, with the test in the card.
+    #[test]
+    fn methylation_differences_compare_the_first_two_groups() {
+        use genie_render::alignments::methylation_height;
+
+        let phased = |name: String, phase: i64, chance: u8| {
+            let mut read = methylated(&name);
+            read.tags.phase = Some(phase);
+            read.tags.mods.calls[0].chance = chance;
+            read
+        };
+        let mut reads: Vec<_> = (0..8).map(|at| phased(format!("a{at}"), 1, 250)).collect();
+        reads.extend((0..8).map(|at| phased(format!("b{at}"), 2, 10)));
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        track.options.group = Grouping::Phase;
+        let region = Region::between(0, 1_000);
+        track.slot.wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, track.options);
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let _ = genie.update(Message::TrackChanged(0, Change::Mods));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Methylation difference"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Difference));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let Some(Content::Reads(pile)) = track.data(0).map(|data| &data.content) else {
+            panic!("expected reads");
+        };
+        let (groups, differences) = track.methylation_difference(pile).unwrap();
+        assert_eq!(groups, ("Haplotype 1".to_owned(), "Haplotype 2".to_owned()));
+        let first = differences[0];
+        assert!((first.points - 100.0).abs() < 1e-4, "{first:?}");
+        assert!((first.p - 2.0 / 12_870.0).abs() < 1e-9, "{first:?}");
+        let y = methylation_height(2) + 10.0;
+        let x = first.position as f32 + 0.5;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(x, y))));
+        for line in [
+            "5mC difference",
+            "Haplotype 1: 8 of 8 reads · 100 %",
+            "Haplotype 2: 0 of 8 reads · 0 %",
+            "Difference +100 points · p = 1.6e-4",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+    }
+
+    fn read_source(name: &str) -> Arc<Source> {
+        Arc::new(Source {
+            location: PathBuf::from(format!("/data/{name}")).into(),
+            name: name.to_owned(),
+            data: None,
+            format: Format::Reads(ReadFile {
+                index: crate::track::reads::Reads::Bam(genie_formats::bai::Index::default()),
+                contigs: vec!["chr1".to_owned()],
+            }),
+        })
+    }
+
     #[test]
     fn the_read_menu_picks_the_modification_of_the_lane() {
         let mut genie = with_methylation();

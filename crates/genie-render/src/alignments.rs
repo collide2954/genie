@@ -444,6 +444,9 @@ fn clipped_end(alignment: &Alignment) -> Option<u64> {
 pub struct Look {
     pub pairs: bool,
     pub mods: bool,
+    /// Shows the methylation difference of the first two groups of reads under the
+    /// methylation lanes.
+    pub difference: bool,
 }
 
 /// The color of a read when the track colors reads by a tag.
@@ -912,6 +915,7 @@ mod tests {
     const PAIRS: Look = Look {
         pairs: true,
         mods: false,
+        difference: false,
     };
 
     fn region(start: u64, end: u64) -> Region {
@@ -1092,7 +1096,10 @@ mod tests {
                 &rows,
                 &[],
                 Mode::Expanded,
-                Look { pairs, mods: false },
+                Look {
+                    pairs,
+                    ..Look::default()
+                },
             ))
             .into_iter()
             .map(|(_, paint)| paint)
@@ -1275,6 +1282,7 @@ mod tests {
         let mods = Look {
             pairs: true,
             mods: true,
+            difference: false,
         };
         let found = rects(&reads(
             view(0, 100),

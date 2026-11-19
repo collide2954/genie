@@ -457,6 +457,7 @@ impl Default for Plot {
             look: Look {
                 pairs: true,
                 mods: false,
+                difference: false,
             },
             colors: true,
             range: None,
@@ -1316,6 +1317,23 @@ impl Track {
             .or_else(|| pile.methylation.busiest().map(str::to_owned))
     }
 
+    /// The methylation difference of the first two groups of reads in view, when the track shows
+    /// it: the names of the two groups, and the difference at each site.
+    pub fn methylation_difference(
+        &self,
+        pile: &Pile,
+    ) -> Option<((String, String), Vec<genie_core::methylation::Difference>)> {
+        if !self.plot.look.difference {
+            return None;
+        }
+        let (_, lanes) = self.methylation_lanes(pile);
+        let [(Some(first), a), (Some(second), b), ..] = lanes.as_slice() else {
+            return None;
+        };
+        let differences = genie_core::methylation::difference(a, b);
+        Some(((first.clone(), second.clone()), differences))
+    }
+
     pub fn methylation_lanes(&self, pile: &Pile) -> (Vec<GroupKey>, Vec<MethylationLane>) {
         let name = self.methylation_name(pile).filter(|_| self.plot.look.mods);
         let Some(name) = name else {
@@ -1608,6 +1626,8 @@ pub enum Change {
     Viewpoint(Option<u64>),
     /// Show the track, or hide it: a hidden track does not show and drops its data.
     Visible(bool),
+    /// Show the methylation difference of the first two groups of reads, or stop.
+    Difference,
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -1618,6 +1638,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Mode(mode) => tracks[position].mode = Some(mode),
         Change::Hue(hue) => tracks[position].hue = hue,
         Change::Visible(visible) => tracks[position].set_visible(visible),
+        Change::Difference => tracks[position].plot.look.difference ^= true,
         Change::Style(style) => tracks[position].plot.style = style,
         Change::Link => {
             let plot = &mut tracks[position].plot;

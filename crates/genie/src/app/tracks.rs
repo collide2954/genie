@@ -1158,6 +1158,7 @@ fn detail_fields(
         }
         Detail::Junction(_) => file_fields,
         Detail::Methylation { .. }
+        | Detail::Difference { .. }
         | Detail::Signal { .. }
         | Detail::Match { .. }
         | Detail::Product { .. }
@@ -1176,7 +1177,7 @@ fn read_detail(
     (x, y): (f32, f32),
 ) -> Option<Detail> {
     let (keys, lanes) = track.methylation_lanes(pile);
-    let above = alignments::methylation_height(lanes.len());
+    let mut above = alignments::methylation_height(lanes.len());
     if y < above {
         let (index, site) = alignments::methylation_hit(viewport, &lanes, x, y)?;
         return Some(Detail::Methylation {
@@ -1185,6 +1186,18 @@ fn read_detail(
             group: lanes[index].0.clone(),
             counts: pile.methylation.at(keys[index], site.position),
         });
+    }
+    if let Some((groups, differences)) = track.methylation_difference(pile) {
+        above += genie_render::difference::HEIGHT + 1.0;
+        if y < above {
+            let difference = genie_render::difference::hit(viewport, &differences, x)?;
+            let name = track.methylation_name(pile)?;
+            return Some(Detail::Difference {
+                name,
+                groups,
+                difference,
+            });
+        }
     }
     let y = y - above;
     if y < pile.arc_height() {
