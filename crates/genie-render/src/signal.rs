@@ -120,16 +120,25 @@ pub enum Operation {
     Ratio,
     /// The first value less the second value.
     Difference,
+    /// For two bedMethyl tracks: the methylation difference of their groups at each site, with
+    /// the read counts and a test. Pixels of values show the difference of the values.
+    Methylation,
 }
 
 impl Operation {
-    pub const ALL: [Self; 3] = [Self::Log2Ratio, Self::Ratio, Self::Difference];
+    pub const ALL: [Self; 4] = [
+        Self::Log2Ratio,
+        Self::Ratio,
+        Self::Difference,
+        Self::Methylation,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Log2Ratio => "log2 ratio",
             Self::Ratio => "ratio",
             Self::Difference => "difference",
+            Self::Methylation => "methylation difference",
         }
     }
 
@@ -139,6 +148,7 @@ impl Operation {
             Self::Log2Ratio => "Log2 ratio",
             Self::Ratio => "Ratio",
             Self::Difference => "Difference",
+            Self::Methylation => "Methylation difference",
         }
     }
 
@@ -146,7 +156,7 @@ impl Operation {
         match self {
             Self::Log2Ratio => ((own + 1.0) / (other + 1.0)).log2(),
             Self::Ratio => (own + 1.0) / (other + 1.0),
-            Self::Difference => own - other,
+            Self::Difference | Self::Methylation => own - other,
         }
     }
 }

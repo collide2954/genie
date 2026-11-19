@@ -481,6 +481,15 @@ fn sequence_facts(span: Region, strand: Strand, (wrong, exact): (usize, &str)) -
     format!("{} bp · {strands} · {fit}", grouped(span.len()))
 }
 
+/// A p value as a card shows it: three decimals, or in powers of ten under 0.001.
+pub(crate) fn p_value(p: f64) -> String {
+    if p >= 0.001 {
+        format!("{p:.3}")
+    } else {
+        format!("{p:.1e}")
+    }
+}
+
 /// The card of a methylation difference: the counts of each group, the difference in
 /// percentage points and the p value of Fisher's exact test.
 fn difference_content(
@@ -495,11 +504,7 @@ fn difference_content(
         format!("{label}: {modified} of {total} {reads} · {percent} %")
     };
     let points = format!("{:+.0}", difference.points).replace('-', "−");
-    let p = if difference.p >= 0.001 {
-        format!("{:.3}", difference.p)
-    } else {
-        format!("{:.1e}", difference.p)
-    };
+    let p = p_value(difference.p);
     let lines = vec![
         group(first, difference.a),
         group(second, difference.b),

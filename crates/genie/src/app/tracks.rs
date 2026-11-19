@@ -494,7 +494,19 @@ impl Genie {
                 }
             }
             Content::Signal(data) => {
-                if let Some(detail) = site_detail(track, viewport, &data.sites, x) {
+                let compared = super::view::group_difference(session, track, panel);
+                if let Some((groups, differences)) = compared {
+                    let difference = genie_render::difference::hit(viewport, &differences, x)?;
+                    let name = track.shown_modification()?;
+                    Detail::Difference {
+                        name,
+                        groups,
+                        difference,
+                    }
+                } else if let Some(detail) = (data.step == 1)
+                    .then(|| site_detail(track, viewport, &data.sites, x))
+                    .flatten()
+                {
                     detail
                 } else {
                     let columns = shown_columns(session, track, panel, &data.summaries);

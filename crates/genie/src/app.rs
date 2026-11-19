@@ -5590,6 +5590,81 @@ mod tests {
         })
     }
 
+    fn methyl_named(name: &str) -> Arc<Source> {
+        Arc::new(Source {
+            location: PathBuf::from(format!("/data/{name}")).into(),
+            name: name.to_owned(),
+            data: None,
+            format: Format::Signal(SignalFile::BedMethylTable {
+                table: genie_formats::table::Table::new(Vec::new()),
+                codes: vec!["5mC".to_owned()],
+            }),
+        })
+    }
+
+    /// Two folders of bedMethyl tracks compare as two groups: the counts of the tracks of each
+    /// folder add up at each site, also in views of more than one base for a pixel.
+    #[test]
+    fn bedmethyl_folders_compare_as_two_groups() {
+        use super::track_list::Foldering;
+        use genie_core::methylation::Site;
+        use genie_render::signal::Operation;
+
+        let mut genie = opened();
+        for name in ["t1.bedMethyl", "t2.bedMethyl", "n1.bedMethyl"] {
+            let _ = genie.update(Message::TrackOpened(Ok(methyl_named(name))));
+        }
+        let ids: Vec<u64> = genie
+            .session
+            .as_ref()
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|track| track.id)
+            .collect();
+        for (id, folder) in [(ids[0], "Tumor"), (ids[1], "Tumor"), (ids[2], "Normal")] {
+            let _ = genie.update(Message::Folder(folder.to_owned(), Foldering::Add(id)));
+        }
+        let region = Region::between(0, 1_000);
+        for (id, modified, total) in [(ids[0], 9, 10), (ids[1], 6, 10), (ids[2], 2, 20)] {
+            let tracks = &mut genie.session.as_mut().unwrap().tracks;
+            let track = tracks.iter_mut().find(|track| track.id == id).unwrap();
+            track.slot.wanted = Some((0, region));
+            let sites = vec![Site {
+                position: 20,
+                modified,
+                total,
+            }];
+            let loaded = Loaded::methylation(region, sites, 4);
+            track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        }
+        let _ = genie.update(Message::TrackChanged(ids[0], Change::Compare(Some(ids[2]))));
+        let _ = genie.update(Message::TrackMenu(ids[0], Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Methylation difference"));
+        let _ = genie.update(Message::MenuDismissed);
+        let methylation = Change::Operation(Operation::Methylation);
+        let _ = genie.update(Message::TrackChanged(ids[0], methylation));
+        let session = genie.session.as_ref().unwrap();
+        let tumor = session
+            .tracks
+            .iter()
+            .find(|track| track.id == ids[0])
+            .unwrap();
+        let (groups, differences) = super::view::group_difference(session, tumor, 0).unwrap();
+        assert_eq!(groups, ("Tumor".to_owned(), "Normal".to_owned()));
+        assert!((differences[0].points - 65.0).abs() < 1e-4);
+        let p = crate::card::p_value(differences[0].p);
+        let _ = genie.update(Message::TrackHovered(ids[0], 0, Some(over(20.5, 10.0))));
+        for line in [
+            "5mC difference".to_owned(),
+            "Tumor: 15 of 20 reads · 75 %".to_owned(),
+            "Normal: 2 of 20 reads · 10 %".to_owned(),
+            format!("Difference +65 points · p = {p}"),
+        ] {
+            assert!(shows(&genie, &line), "{line}");
+        }
+    }
+
     fn with_bedmethyl() -> Genie {
         let mut genie = opened();
         let _ = genie.update(Message::TrackOpened(Ok(methyl_source())));

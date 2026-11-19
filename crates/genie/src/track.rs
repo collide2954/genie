@@ -1033,9 +1033,10 @@ impl Loaded {
         }
     }
 
+    /// The sites of a bedMethyl file with their percents in bins of `step` bases. The sites stay
+    /// for the methylation difference of groups.
     pub fn methylation(region: Region, sites: Vec<Site>, step: u64) -> Self {
         let summaries = signal_reduce(&bedmethyl::percents(&sites), step);
-        let sites = if step == 1 { sites } else { Vec::new() };
         Self {
             region,
             options: Options::default(),

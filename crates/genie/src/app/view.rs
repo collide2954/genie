@@ -955,6 +955,9 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         return Body::Hint(words.to_owned());
     }
     match slot.data(contig).map(|data| &data.content) {
+        Some(Content::Signal(_)) if track.plot.math.is_some_and(is_methylation) => {
+            methylation_body(session, track, panel)
+        }
         Some(Content::Signal(data)) => {
             let height = track.height.unwrap_or(shape.height);
             signal_body(session, track, panel, &data.summaries, height)
@@ -1549,6 +1552,73 @@ fn member_columns(session: &Session, member: &Track, panel: usize) -> Option<Vec
     Some(shown_columns(session, member, panel, &data.summaries))
 }
 
+/// The lane of the methylation difference of the groups of a bedMethyl track and the track that
+/// it compares with.
+fn methylation_body(session: &Session, track: &Track, panel: usize) -> Body {
+    let (_, viewport) = session.view(panel);
+    let Some(((a, b), differences)) = group_difference(session, track, panel) else {
+        return Body::Space(genie_render::difference::HEIGHT);
+    };
+    let label = format!("{a} − {b}");
+    let bars = genie_render::difference::lane(viewport, &differences, &label);
+    Body::Scene(bars, genie_render::difference::HEIGHT)
+}
+
+fn is_methylation(math: crate::track::Math) -> bool {
+    math.operation == signal::Operation::Methylation
+}
+
+/// The bedMethyl tracks of the group of a track, and the name of the group: the bedMethyl tracks
+/// of its folder, or the track alone when it has no folder or shares it with the other track.
+fn methyl_group<'a>(
+    session: &'a Session,
+    track: &'a Track,
+    other: &Track,
+) -> (String, Vec<&'a Track>) {
+    match &track.folder {
+        Some(folder) if other.folder.as_ref() != Some(folder) => {
+            let members = session
+                .tracks
+                .iter()
+                .filter(|member| member.folder.as_ref() == Some(folder))
+                .filter(|member| member.source.is_bedmethyl())
+                .collect();
+            (folder.clone(), members)
+        }
+        _ => (track.name.clone(), vec![track]),
+    }
+}
+
+/// The methylation difference of the group of a bedMethyl track against the group of the track
+/// that it compares with, in a panel: the names of the groups and the difference at each site.
+/// The counts of the tracks of a group add up. None for other comparisons.
+pub(super) fn group_difference(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+) -> Option<((String, String), Vec<genie_core::methylation::Difference>)> {
+    let math = track.plot.math.filter(|math| is_methylation(*math))?;
+    let other = session.tracks.iter().find(|other| other.id == math.other)?;
+    if !track.source.is_bedmethyl() || !other.source.is_bedmethyl() {
+        return None;
+    }
+    let (contig, _) = session.view(panel);
+    let sites = |tracks: &[&Track]| {
+        let sets: Vec<Vec<genie_core::methylation::Site>> = tracks
+            .iter()
+            .filter_map(|member| match &member.slot(panel).data(contig)?.content {
+                Content::Signal(signal) => Some(signal.sites.clone()),
+                _ => None,
+            })
+            .collect();
+        genie_core::methylation::pooled(&sets)
+    };
+    let (first, mine) = methyl_group(session, track, other);
+    let (second, theirs) = methyl_group(session, other, track);
+    let differences = genie_core::methylation::difference(&sites(&mine), &sites(&theirs));
+    Some(((first, second), differences))
+}
+
 /// The columns that a signal track shows in a panel: its own values, or their comparison with
 /// the values of another track. A comparison shows nothing until both tracks have values.
 pub(super) fn shown_columns(
@@ -1573,9 +1643,6 @@ pub(super) fn shown_columns(
     signal::compare(viewport, &own, &theirs, math.operation)
 }
 
-/// The sections of the menu of a signal track that link it with other signal tracks: the
-/// operations of its comparison, the tracks that overlay it, or the tracks to overlay or to
-/// compare with.
 /// The filters of a family track: the variants with a de novo call or another Mendelian error in
 /// a trio. The filters that the track already has do not show.
 fn trio_section(track: &Track) -> Option<Section> {
@@ -1640,6 +1707,9 @@ pub(super) fn links(session: &Session, track: &Track) -> Vec<Section> {
     sections
 }
 
+/// The sections of a track menu for the kind of the track: the trio filters of a family track, or
+/// for a signal track the operations of its comparison, the tracks that overlay it, or the tracks
+/// to overlay or to compare with.
 fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
     if track.source.has_variants() {
         return trio_section(track).into_iter().collect();
@@ -1648,9 +1718,13 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
         return Vec::new();
     }
     let id = track.id;
-    if track.plot.math.is_some() {
+    if let Some(math) = track.plot.math {
+        let other = session.tracks.iter().find(|other| other.id == math.other);
+        let methyl =
+            track.source.is_bedmethyl() && other.is_some_and(|other| other.source.is_bedmethyl());
         let mut items: Vec<(String, Message)> = signal::Operation::ALL
             .into_iter()
+            .filter(|operation| methyl || *operation != signal::Operation::Methylation)
             .map(|operation| {
                 let change = Message::TrackChanged(id, Change::Operation(operation));
                 (operation.title().to_owned(), change)
