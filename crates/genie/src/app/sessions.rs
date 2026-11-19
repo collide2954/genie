@@ -236,7 +236,11 @@ impl Genie {
 
     pub(super) fn change_setting(&mut self, setting: Setting) -> Task<Message> {
         self.settings = self.settings.apply(setting);
-        self.save_settings()
+        let save = self.save_settings();
+        if matches!(setting, Setting::Gnomad(_)) {
+            return Task::batch([save, self.ask_gnomad()]);
+        }
+        save
     }
 
     pub(super) fn save_last(&self) -> Task<Message> {

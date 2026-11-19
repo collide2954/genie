@@ -49,6 +49,7 @@ mod export;
 mod figure;
 mod filters;
 mod find;
+mod gnomad;
 mod hubs;
 mod lift;
 mod navigation;
@@ -73,6 +74,7 @@ pub(crate) use assemblies::Assembling;
 pub(crate) use blat::Blatting;
 pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
+pub(crate) use gnomad::Gnomading;
 pub(crate) use lift::Lifting;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
@@ -159,6 +161,8 @@ pub struct Genie {
     blat: blat::Blat,
     /// The tracks panel at the left of the tracks, when it is open.
     track_list: Option<track_list::TrackList>,
+    /// The gnomAD answers, and the gnomAD part of the open variant card.
+    gnomad: gnomad::Lookups,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,6 +259,7 @@ impl Default for Genie {
             assemblies: assemblies::Assemblies::default(),
             blat: blat::Blat::default(),
             track_list: None,
+            gnomad: gnomad::Lookups::default(),
         }
     }
 }
@@ -781,6 +786,8 @@ pub enum Message {
     FolderMenu(String, Point),
     /// The dot plot of a PAF track, in place of the tracks.
     Plot(Plotting),
+    /// The gnomAD frequencies of the variant of the open card.
+    Gnomad(Gnomading),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1092,7 +1099,7 @@ impl Genie {
             Message::TrackChanged(id, change) => return self.change_track(id, change),
             Message::TrackHovered(id, panel, pointer) => return self.hovered(id, panel, pointer),
             Message::TrackClicked(id, panel, pointer) => return self.clicked(id, panel, pointer),
-            Message::Effects(generation, lines) => self.effects_found(generation, lines),
+            Message::Effects(..) | Message::Gnomad(_) => return self.card_message(message),
             Message::Jump(id, forward) => return self.jump(id, forward),
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
@@ -1160,6 +1167,19 @@ impl Genie {
             Message::NoticeExpired(id) => self.expire(id),
         }
         Task::none()
+    }
+
+    /// The messages that add to the open card of a variant: its changes on transcripts and its
+    /// gnomAD frequencies.
+    fn card_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Effects(generation, lines) => {
+                self.effects_found(generation, lines);
+                Task::none()
+            }
+            Message::Gnomad(gnomading) => self.gnomading(gnomading),
+            _ => Task::none(),
+        }
     }
 
     /// The messages of the variant table and of the dot plot.

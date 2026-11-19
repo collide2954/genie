@@ -194,7 +194,8 @@ impl Genie {
             layers = layers.push(menu);
         }
         if let Some(pinned) = &self.pinned {
-            layers = layers.push(card::view(pinned, true, self.window));
+            let gnomad = self.gnomad.part(pinned);
+            layers = layers.push(card::view_with(pinned, true, self.window, gnomad));
         }
         if let Some(hover) = &self.hover
             && self

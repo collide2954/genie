@@ -27,6 +27,7 @@ pub mod fields;
 pub mod genark;
 pub mod genepred;
 pub mod gff;
+pub mod gnomad;
 pub mod gtf;
 pub mod gwas;
 pub mod gzi;

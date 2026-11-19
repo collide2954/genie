@@ -64,9 +64,11 @@ pub enum Setting {
     Motion(bool),
     Port(bool),
     Tips(bool),
+    Gnomad(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
     pub scale: u16,
     pub density: Density,
@@ -74,6 +76,9 @@ pub struct Settings {
     pub appearance: Appearance,
     pub port: bool,
     pub tips: bool,
+    /// True when an open variant card asks gnomAD for the frequencies of its variant. It sends
+    /// the place and the alleles of the variant to gnomAD, so it is off at first.
+    pub gnomad: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +90,7 @@ impl Default for Settings {
             appearance: Appearance::System,
             port: true,
             tips: true,
+            gnomad: false,
         }
     }
 }
@@ -116,6 +122,7 @@ impl Settings {
             },
             port: section.value("port") != Some("off"),
             tips: section.value("tips") != Some("off"),
+            gnomad: section.value("gnomad") == Some("on"),
         }
     }
 
@@ -139,6 +146,7 @@ impl Settings {
                 ("theme", theme.to_owned()),
                 ("port", switch(self.port)),
                 ("tips", switch(self.tips)),
+                ("gnomad", switch(self.gnomad)),
             ]
             .map(|(key, value)| (key.to_owned(), value))
             .to_vec(),
@@ -166,6 +174,7 @@ impl Settings {
             Setting::Motion(motion) => Self { motion, ..self },
             Setting::Port(port) => Self { port, ..self },
             Setting::Tips(tips) => Self { tips, ..self },
+            Setting::Gnomad(gnomad) => Self { gnomad, ..self },
         }
     }
 
@@ -297,6 +306,7 @@ pub fn panel<'a>(
         line("Density", density.into()),
         line("Motion", switch(Setting::Motion, settings.motion).into()),
         line("Commands", switch(Setting::Port, settings.port).into()),
+        line("gnomAD", switch(Setting::Gnomad, settings.gnomad).into()),
         line("Cache", cache.into()),
         line("Updates", checks),
         version,
@@ -357,10 +367,15 @@ mod tests {
             appearance: Appearance::Dark,
             port: false,
             tips: false,
+            gnomad: true,
         };
         assert_eq!(Settings::parse(&text(settings)), settings);
         assert!(Settings::default().port);
         assert!(Settings::default().tips);
+        assert!(
+            !Settings::default().gnomad,
+            "gnomAD waits until it is turned on"
+        );
         let hidden = Settings::default().apply(Setting::Tips(false));
         assert!(!hidden.tips);
     }

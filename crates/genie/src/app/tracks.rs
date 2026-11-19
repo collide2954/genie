@@ -448,7 +448,8 @@ impl Genie {
             return self.go_to(Target { contig, span });
         }
         self.pinned = self.card(id, panel, pointer);
-        self.find_effects(panel, true)
+        let effects = self.find_effects(panel, true);
+        Task::batch([effects, self.ask_gnomad()])
     }
 
     pub(super) fn change_reading(&mut self, change: reading::Change) {

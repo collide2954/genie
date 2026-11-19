@@ -109,6 +109,75 @@ pub enum Detail {
     },
 }
 
+/// The gnomAD part of an open variant card.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Gnomad {
+    /// The gnomAD lookup is off. A button turns it on.
+    Off,
+    /// genie asks gnomAD.
+    Asking,
+    /// The answer: a line for each allele, and the frequency of each genetic ancestry group
+    /// when the variant has one allele.
+    Found {
+        lines: Vec<String>,
+        groups: Vec<(String, String)>,
+    },
+    /// Why genie has no answer.
+    Failed(String),
+}
+
+const ASK_GNOMAD: &str = "Ask gnomAD";
+const ASKING: &str = "gnomAD: asking…";
+
+impl Gnomad {
+    /// The lines of the part as text, for the height of the card and for its text.
+    fn words(&self) -> Vec<String> {
+        match self {
+            Self::Off => vec![ASK_GNOMAD.to_owned()],
+            Self::Asking => vec![ASKING.to_owned()],
+            Self::Found { lines, groups } => lines
+                .iter()
+                .cloned()
+                .chain(
+                    groups
+                        .iter()
+                        .map(|(group, value)| format!("{group}: {value}")),
+                )
+                .collect(),
+            Self::Failed(reason) => vec![reason.clone()],
+        }
+    }
+
+    fn view<'a>(&self) -> Vec<Element<'a, Message>> {
+        match self {
+            Self::Off => vec![
+                button(text(ASK_GNOMAD).size(11))
+                    .padding([1, 6])
+                    .style(style::ghost)
+                    .on_press(Message::Gnomad(crate::app::Gnomading::TurnOn))
+                    .into(),
+            ],
+            Self::Asking => vec![text(ASKING).size(11).style(style::muted).into()],
+            Self::Found { lines, groups } => lines
+                .iter()
+                .map(|line| text(line.clone()).size(11).wrapping(WRAP).into())
+                .chain(
+                    groups
+                        .iter()
+                        .map(|(group, value)| field_row(None, group.clone(), value.clone(), false)),
+                )
+                .collect(),
+            Self::Failed(reason) => vec![
+                text(reason.clone())
+                    .size(11)
+                    .style(style::muted)
+                    .wrapping(WRAP)
+                    .into(),
+            ],
+        }
+    }
+}
+
 /// A pair of bins of a Hi-C map.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pair {
@@ -951,6 +1020,16 @@ fn shown_fields(card: &Card, pinned: bool) -> (Vec<(String, String, bool)>, usiz
 }
 
 pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message> {
+    view_with(card, pinned, window, None)
+}
+
+/// A card, with the gnomAD part of an open variant card under its lines.
+pub fn view_with<'a>(
+    card: &Card,
+    pinned: bool,
+    window: Size,
+    gnomad: Option<&Gnomad>,
+) -> Element<'a, Message> {
     let (title, span, lines) = content(&card.detail);
     let parts = other_parts(&card.detail);
     let width = if card.fields.is_empty() && card.samples.is_empty() && parts.is_empty() {
@@ -967,6 +1046,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .all()
             .chain(notes.iter().cloned())
             .chain(others.iter().cloned())
+            .chain(gnomad.map(Gnomad::words).unwrap_or_default())
             .map(|line| wrapped(&line, width - 2.0 * PADDING, CHARACTER))
             .sum::<usize>()
         + parts.len()
@@ -1012,6 +1092,7 @@ pub fn view<'a>(card: &Card, pinned: bool, window: Size) -> Element<'a, Message>
             .map(|line| text(line).size(11).wrapping(WRAP).into()),
     )
     .extend(others.map(|line| text(line).size(11).style(style::muted).into()))
+    .extend(gnomad.map(Gnomad::view).unwrap_or_default())
     .extend(rows.into_iter().map(|(label, value, sample)| {
         field_row(pinned.then_some(card.track), label, value, sample)
     }))
