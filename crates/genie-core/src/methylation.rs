@@ -233,12 +233,14 @@ pub struct Dmr {
 }
 
 /// The DMRs of the differences at the sites of a contig, in the order of the sites: runs of at
-/// least `rule.sites` sites in a row, each with p under `rule.p` and a difference of at least
-/// `rule.points` in the same direction, with at most `rule.gap` bases between two sites. A site
-/// that does not keep to the rule ends a run.
+/// least `rule.sites` sites, each with p under `rule.p` and a difference of at least
+/// `rule.points` in the same direction, with at most `rule.gap` bases between two sites. One
+/// site that does not keep to the rule does not end a run: it is in the span of the DMR, but not
+/// in its sites or its mean. Two such sites in a row end a run.
 pub fn dmrs(differences: &[Difference], rule: DmrRule) -> Vec<Dmr> {
     let mut found = Vec::new();
     let mut run: Vec<&Difference> = Vec::new();
+    let mut missed = false;
     let close = |run: &mut Vec<&Difference>, found: &mut Vec<Dmr>| {
         if let (Some(first), Some(last)) = (run.first(), run.last())
             && run.len() >= rule.sites.max(1)
@@ -255,7 +257,12 @@ pub fn dmrs(differences: &[Difference], rule: DmrRule) -> Vec<Dmr> {
     };
     for site in differences {
         if site.p >= rule.p || site.points.abs() < rule.points {
-            close(&mut run, &mut found);
+            if missed || run.is_empty() {
+                close(&mut run, &mut found);
+                missed = false;
+            } else {
+                missed = true;
+            }
             continue;
         }
         if let Some(last) = run.last() {
@@ -264,6 +271,7 @@ pub fn dmrs(differences: &[Difference], rule: DmrRule) -> Vec<Dmr> {
                 close(&mut run, &mut found);
             }
         }
+        missed = false;
         run.push(site);
     }
     close(&mut run, &mut found);
@@ -339,8 +347,9 @@ mod tests {
         }
     }
 
-    /// Four sites up make a DMR. A site without a difference, a turn of direction and a long
-    /// gap each end a run, and runs of fewer than three sites go.
+    /// Sites up make a DMR, and one site without a difference in the run does not end it: the
+    /// site is in the span, but not in the sites or the mean. Two such sites in a row, a turn of
+    /// direction and a long gap each end a run, and runs of fewer than three sites go.
     #[test]
     fn dmrs_are_runs_of_sites_that_differ_the_same_way() {
         let sites = [
@@ -354,31 +363,31 @@ mod tests {
             changed(500, -25.0, 0.001),
             changed(550, -25.0, 0.002),
             changed(600, -25.0, 0.003),
-            changed(1_200, -25.0, 0.001),
-            changed(1_250, -25.0, 0.5),
+            changed(650, -25.0, 0.5),
+            changed(700, -2.0, 0.6),
+            changed(750, -30.0, 0.001),
+            changed(800, -30.0, 0.001),
+            changed(1_500, -30.0, 0.001),
         ];
+        let found = dmrs(&sites, DmrRule::default());
+        let shapes: Vec<(Region, usize, f64)> = found
+            .iter()
+            .map(|dmr| (dmr.span, dmr.sites, dmr.p))
+            .collect();
         assert_eq!(
-            dmrs(&sites, DmrRule::default()),
+            shapes,
             [
-                Dmr {
-                    span: Region::between(100, 251),
-                    sites: 4,
-                    points: 40.0,
-                    p: 0.001,
-                },
-                Dmr {
-                    span: Region::between(500, 601),
-                    sites: 3,
-                    points: -25.0,
-                    p: 0.001,
-                },
+                (Region::between(100, 451), 6, 0.001),
+                (Region::between(500, 601), 3, 0.001),
             ]
         );
-        let five = DmrRule {
-            sites: 5,
+        assert!((found[0].points - 220.0 / 6.0).abs() < 1e-4, "{found:?}");
+        assert!((found[1].points + 25.0).abs() < 1e-4, "{found:?}");
+        let seven = DmrRule {
+            sites: 7,
             ..DmrRule::default()
         };
-        assert_eq!(dmrs(&sites, five), [] as [Dmr; 0]);
+        assert_eq!(dmrs(&sites, seven), [] as [Dmr; 0]);
         assert_eq!(dmrs(&[], DmrRule::default()), [] as [Dmr; 0]);
     }
 
