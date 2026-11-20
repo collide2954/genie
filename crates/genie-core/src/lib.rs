@@ -2,6 +2,7 @@ pub mod alignment;
 mod assembly;
 pub mod association;
 mod band;
+pub mod binding;
 pub mod codon;
 pub mod composition;
 pub mod contact;
