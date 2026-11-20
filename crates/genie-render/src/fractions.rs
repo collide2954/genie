@@ -1,7 +1,8 @@
 //! The B-allele frequency lane of a variant track: a dot for each site of one sample, at the
 //! fraction of the reads of the site that carry an allele that is not the reference allele. The
 //! fraction goes from 0 at the bottom to 1 at the top, with a line at 0.5. Zoomed out, each
-//! pixel shows a height once.
+//! pixel shows a height once. The labels are at the bottom, where the file of one sample has no
+//! dots: such a file has no homozygous reference calls.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -17,7 +18,7 @@ pub const HEIGHT: f32 = 40.0;
 pub const ZOOM_HINT: &str = "Zoom in to see the B-allele frequency";
 const DOT: f32 = 3.0;
 /// The space above the dots of 1 and under the dots of 0.
-const INSET: f32 = 1.0;
+const INSET: f32 = 2.0;
 const LABEL_SIZE: f32 = 10.0;
 /// The farthest that the pointer can be from the edge of a dot to show its card.
 const REACH: f32 = 3.0;
@@ -80,16 +81,17 @@ pub fn lane(
             align: Align::Center,
         }),
     }
+    let bottom = HEIGHT - LABEL_SIZE / 2.0 - 1.0;
     primitives.push(Primitive::Label {
         x: 4.0,
-        y: LABEL_SIZE / 2.0 + 1.0,
+        y: bottom,
         content: Cow::Owned(label.to_owned()),
         size: LABEL_SIZE,
         align: Align::Start,
     });
     primitives.push(Primitive::Label {
         x: width - LABEL_INSET,
-        y: LABEL_SIZE / 2.0 + 1.0,
+        y: bottom,
         content: Cow::Borrowed(RANGE),
         size: LABEL_SIZE,
         align: Align::End,
@@ -167,17 +169,20 @@ mod tests {
         assert_eq!(found[0], (0.0, 20.0, 100.0, 1.0, Paint::Line));
         let dot = Paint::Hue(Hue::Green);
         assert_eq!(found[1], (23.5, 18.5, 3.0, 3.0, dot));
-        assert_eq!(found[2], (53.5, 1.0, 3.0, 3.0, dot));
-        assert_eq!(found[3], (83.5, HEIGHT - 4.0, 3.0, 3.0, dot));
+        assert_eq!(found[2], (53.5, 2.0, 3.0, 3.0, dot));
+        assert_eq!(found[3], (83.5, HEIGHT - 5.0, 3.0, 3.0, dot));
         assert_eq!(found.len(), 4);
-        let labels: Vec<String> = primitives
+        let labels: Vec<(String, f32)> = primitives
             .iter()
             .filter_map(|primitive| match primitive {
-                Primitive::Label { content, .. } => Some(content.to_string()),
+                Primitive::Label { content, y, .. } => Some((content.to_string(), *y)),
                 _ => None,
             })
             .collect();
-        assert_eq!(labels, ["B-allele frequency · NA1", "0-1"]);
+        let bottom = HEIGHT - 6.0;
+        let words: Vec<&str> = labels.iter().map(|(words, _)| words.as_str()).collect();
+        assert_eq!(words, ["B-allele frequency · NA1", "0-1"]);
+        assert!(labels.iter().all(|(_, y)| (y - bottom).abs() < 1e-4));
         assert_eq!(hit(viewport, &sites, (25.0, 20.0)), Some(0));
         assert_eq!(hit(viewport, &sites, (56.0, 4.5)), Some(1));
         assert_eq!(hit(viewport, &sites, (25.0, 4.0)), None);
