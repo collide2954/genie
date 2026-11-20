@@ -576,6 +576,7 @@ fn options(section: &Section) -> Options {
         },
         lift: 0,
         mates: on("mates"),
+        baf: None,
     }
 }
 
@@ -733,6 +734,7 @@ mod tests {
             table: Pick::Rows,
             lift: 0,
             mates: true,
+            baf: None,
         }
     }
 

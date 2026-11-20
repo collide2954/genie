@@ -2,15 +2,21 @@ use std::io::BufReader;
 
 use genie_core::Region;
 use genie_core::signal::Tally;
-use genie_core::variant::Variant;
+use genie_core::variant::{Fraction, Variant};
 use genie_formats::annotations::{self, Layout};
 use genie_formats::bgzf::Bgzf;
 use genie_formats::features::Entry;
 use genie_formats::table::Table;
 use genie_formats::{bcf, tabix, vcf};
 
-use super::{Loaded, PLAIN_LIMIT, Scope, density, is_bcf, is_compressed, plain, tabix_index};
+use super::{Loaded, Memo, PLAIN_LIMIT, Scope, density, is_bcf, is_compressed, plain, tabix_index};
 use crate::location::Location;
+
+/// The most bytes of the records of a region that genie reads for the B-allele frequencies of
+/// a sample, from a file on the computer.
+const FRACTION_BUDGET: u64 = 32 << 20;
+/// The most bytes for the B-allele frequencies of a sample from a file on the web.
+const WEB_FRACTION_BUDGET: u64 = 8 << 20;
 
 #[derive(Debug)]
 pub enum VariantFile {
@@ -25,6 +31,9 @@ pub enum VariantFile {
         table: Table<Variant>,
         samples: Vec<String>,
         infos: Vec<(String, String)>,
+        /// The B-allele frequencies of a sample in all of the file. genie reads the file again
+        /// only for another sample.
+        fractions: Memo<Result<Table<Fraction>, String>>,
     },
     /// A BCF file with its CSI index.
     Bcf {
@@ -48,6 +57,7 @@ impl VariantFile {
                 table,
                 samples: header.samples,
                 infos: header.infos,
+                fractions: Memo::default(),
             });
         }
         let index = tabix_index(location, name, index)?;
@@ -82,6 +92,7 @@ impl VariantFile {
                 table,
                 samples: header.vcf.samples,
                 infos: header.vcf.infos,
+                fractions: Memo::default(),
             });
         };
         let header = bcf::header(&mut Bgzf::new(location.open()?)).map_err(invalid)?;
@@ -151,6 +162,61 @@ impl VariantFile {
         Ok(Loaded::variants(region, variants, self.samples().len()))
     }
 
+    /// The B-allele frequencies of a sample in a region, or nothing when the records of the
+    /// region are more than `FRACTION_BUDGET` bytes, or `WEB_FRACTION_BUDGET` bytes for a file on
+    /// the web.
+    pub fn fractions(
+        &self,
+        location: &Location,
+        place: (&str, Region),
+        sample: usize,
+    ) -> Result<Option<Vec<Fraction>>, String> {
+        let budget = if location.is_remote() {
+            WEB_FRACTION_BUDGET
+        } else {
+            FRACTION_BUDGET
+        };
+        self.fractions_within(location, place, sample, budget)
+    }
+
+    /// The B-allele frequencies of a sample in a region, or nothing when the records of the
+    /// region are more than `budget` bytes. A file without an index has all its fractions.
+    pub(super) fn fractions_within(
+        &self,
+        location: &Location,
+        (contig, region): (&str, Region),
+        sample: usize,
+        budget: u64,
+    ) -> Result<Option<Vec<Fraction>>, String> {
+        let failed = |error: genie_formats::Error| error.to_string();
+        match self {
+            Self::Table { fractions, .. } => {
+                let all = fractions.get_or(sample as u64, || all_fractions(location, sample));
+                match all.as_ref() {
+                    Ok(all) => Ok(Some(all.query(contig, region))),
+                    Err(error) => Err(error.clone()),
+                }
+            }
+            Self::Indexed { index, .. } | Self::Bcf { index, .. }
+                if index.data_size(contig, region) > budget =>
+            {
+                Ok(None)
+            }
+            Self::Indexed { index, .. } => {
+                let mut reader = Bgzf::new(location.open()?);
+                vcf::fractions(index, &mut reader, (contig, region), sample)
+                    .map(Some)
+                    .map_err(failed)
+            }
+            Self::Bcf { index, header, .. } => {
+                let mut reader = Bgzf::new(location.open()?);
+                bcf::fractions(index, &mut reader, header, (contig, region), sample)
+                    .map(Some)
+                    .map_err(failed)
+            }
+        }
+    }
+
     pub fn spans(
         &self,
         location: &Location,
@@ -204,5 +270,16 @@ impl VariantFile {
             }
         }
         .map_err(|error| error.to_string())
+    }
+}
+
+/// The B-allele frequencies of a sample in all of a VCF or BCF file without an index.
+fn all_fractions(location: &Location, sample: usize) -> Result<Table<Fraction>, String> {
+    let name = location.name();
+    let invalid = |error: genie_formats::Error| format!("The file {name} is not valid. {error}");
+    if is_bcf(&name) {
+        bcf::read_fractions(Bgzf::new(location.open()?), sample).map_err(invalid)
+    } else {
+        vcf::read_fractions(BufReader::new(location.open()?), sample).map_err(invalid)
     }
 }

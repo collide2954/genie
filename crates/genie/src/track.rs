@@ -14,7 +14,7 @@ use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
 use genie_core::trio::{self, Trio};
-use genie_core::variant::Variant;
+use genie_core::variant::{Fraction, Variant};
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
@@ -417,6 +417,8 @@ pub struct Options {
     pub lift: u16,
     /// Whether the two mates of a pair share a row, with a line between them.
     pub mates: bool,
+    /// The sample of a variant track whose B-allele frequency shows in a lane under the sites.
+    pub baf: Option<usize>,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -459,6 +461,7 @@ impl Default for Options {
             table: Pick::default(),
             lift: 0,
             mates: false,
+            baf: None,
         }
     }
 }
@@ -964,6 +967,9 @@ pub struct Loaded {
     pub region: Region,
     pub options: Options,
     pub content: Content,
+    /// The B-allele frequencies of the sample of `options.baf` in the region, or nothing when
+    /// their data is too large to read.
+    pub fractions: Option<Arc<[Fraction]>>,
 }
 
 impl Loaded {
@@ -973,6 +979,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Features(Annotation {
                 features,
                 rows,
@@ -1027,6 +1034,7 @@ impl Loaded {
         Self {
             region,
             options,
+            fractions: None,
             content: Content::Reads(Box::new(Pile {
                 coverage,
                 reference,
@@ -1051,6 +1059,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Variants(Calls { variants, samples }),
         }
     }
@@ -1059,6 +1068,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Links(links),
         }
     }
@@ -1071,6 +1081,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Junctions(Splices { junctions, fields }),
         }
     }
@@ -1079,6 +1090,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Associations(associations),
         }
     }
@@ -1087,6 +1099,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Contacts(contacts),
         }
     }
@@ -1095,6 +1108,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Segments(Copies { segments, samples }),
         }
     }
@@ -1103,6 +1117,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1117,6 +1132,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1133,6 +1149,7 @@ impl Loaded {
         Self {
             region,
             options: Options::default(),
+            fractions: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1561,6 +1578,7 @@ impl Track {
             region: data.region,
             options: data.options,
             content,
+            fractions: data.fractions.clone(),
         }))
     }
 
@@ -2457,7 +2475,19 @@ pub fn load_kept(
     let location = source.data();
     let loaded = match &source.format {
         Format::Features(file) => file.load(location, contig, region, scope, DENSITY_BUDGET)?,
-        Format::Variants(file) => file.load(location, contig, region, scope)?,
+        Format::Variants(file) => {
+            let loaded = file.load(location, contig, region, scope)?;
+            match options.baf {
+                Some(sample) => {
+                    let found = file.fractions(location, (contig, region), sample)?;
+                    Loaded {
+                        fractions: found.map(Arc::from),
+                        ..loaded
+                    }
+                }
+                None => loaded,
+            }
+        }
         Format::Reads(file) => {
             file.load(location, contig, region, (options, scope.rules), reference)?
         }
@@ -3290,6 +3320,57 @@ mod tests {
         };
         assert_eq!(names(None), ["GENEA", "GENEB", "GENEC"]);
         assert_eq!(names(Some("geneName")), ["ENSG01", "ENSG02", "ENSG03"]);
+    }
+
+    /// A plain VCF file, then the same file with bgzip and a tabix index: the B-allele
+    /// frequencies of a sample load with the variants or with their density.
+    #[test]
+    fn variant_tracks_load_the_b_allele_frequency_of_a_sample() {
+        let scratch = Scratch::new("fractions");
+        let text = "##fileformat=VCFv4.2\n\
+                    #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1\tNA2\n\
+                    chr1\t100\t.\tA\tG\t.\tPASS\t.\tGT:AD\t0/1:12,10\t0/0:30,0\n\
+                    chr1\t200\t.\tC\tT\t.\tPASS\t.\tGT:AD\t1/1:0,25\t0/1:4,4\n";
+        let picked = |sample| Options {
+            baf: Some(sample),
+            ..Options::default()
+        };
+        let places = |loaded: &Loaded| -> Vec<(u64, f32)> {
+            let found = loaded.fractions.as_deref().unwrap().iter();
+            found.map(|site| (site.position, site.value)).collect()
+        };
+        let plain = open(scratch.file("calls.vcf", text)).unwrap();
+        let near = region(0, 1_000);
+        let loaded = load(&plain, "chr1", near, picked(1), 1, true, no_reference).unwrap();
+        assert_eq!(places(&loaded), [(99, 0.0)]);
+        assert_eq!(loaded.options.baf, Some(1));
+        let mut writer = genie_formats::bgzf::Writer::new(Vec::new());
+        std::io::Write::write_all(&mut writer, text.as_bytes()).unwrap();
+        let data = writer.finish().unwrap();
+        let index = tabix::build(std::io::Cursor::new(&data), tabix::Layout::VCF, false).unwrap();
+        let path = scratch.file("calls.vcf.gz", &data);
+        scratch.file("calls.vcf.gz.tbi", &index);
+        let indexed = open(path).unwrap();
+        let wide = load(&indexed, "chr1", near, picked(0), 1, false, no_reference).unwrap();
+        assert!(matches!(wide.content, Content::Signal(_)));
+        let found = places(&wide);
+        assert_eq!((found[0].0, found[1]), (99, (199, 1.0)));
+        assert!((found[0].1 - 10.0 / 22.0).abs() < 1e-6);
+        let Format::Variants(file) = &indexed.format else {
+            panic!("expected variants");
+        };
+        let over = file.fractions_within(indexed.data(), ("chr1", near), 0, 0);
+        assert_eq!(over, Ok(None));
+        let off = load(
+            &indexed,
+            "chr1",
+            near,
+            Options::default(),
+            1,
+            true,
+            no_reference,
+        );
+        assert_eq!(off.unwrap().fractions, None);
     }
 
     #[test]

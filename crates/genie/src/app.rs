@@ -6191,6 +6191,7 @@ ORIGIN
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples: vec!["NA1".to_owned(), "NA2".to_owned()],
                 infos: vec![("DP".to_owned(), "Read depth".to_owned())],
+                fractions: crate::track::Memo::default(),
             }),
         })
     }
@@ -6730,6 +6731,7 @@ ORIGIN
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples,
                 infos: Vec::new(),
+                fractions: crate::track::Memo::default(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
@@ -7054,6 +7056,7 @@ ORIGIN
                 table: genie_formats::features::Table::new(Vec::new()),
                 samples: names(&["kid", "dad", "mum"]),
                 infos: Vec::new(),
+                fractions: crate::track::Memo::default(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));

@@ -6,7 +6,7 @@ use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
 use genie_core::signal::Summary;
-use genie_core::variant::Variant;
+use genie_core::variant::{Fraction, Variant};
 use genie_core::{Assembly, Contig, Feature, Region, Strand};
 use genie_formats::chain::Chains;
 use genie_formats::junctions::Splice;
@@ -86,15 +86,47 @@ pub fn load_lifted(
         );
     }
     let mut lifted = Lifted::default();
+    let mut fractions = options.baf.map(|_| Vec::new());
     for (target, part) in lift.chains.back(contig, region) {
         let Some(file) = lift.files.get(target) else {
             continue;
         };
         let loaded = load_kept(source, file, part, options, scope, |_| Err(String::new()))?;
+        fractions = fractions
+            .zip(loaded.fractions.as_deref())
+            .map(|(mut kept, found)| {
+                let moved = found
+                    .iter()
+                    .filter_map(|site| lifted_fraction(site, (target, contig), &lift.chains));
+                kept.extend(moved);
+                kept
+            });
         lifted.add(loaded.content, (target, contig), &lift.chains);
     }
     let loaded = lifted.into_loaded(region, scope.step);
-    Ok(Loaded { options, ..loaded })
+    let fractions = fractions.map(|mut found| {
+        found.sort_by_key(|site| site.position);
+        Arc::from(found)
+    });
+    Ok(Loaded {
+        options,
+        fractions,
+        ..loaded
+    })
+}
+
+/// The B-allele frequency of a site of a target contig at its place on a contig in view.
+fn lifted_fraction(
+    site: &Fraction,
+    (target, contig): (&str, &str),
+    chains: &Chains,
+) -> Option<Fraction> {
+    let at = site.position;
+    let (name, span, _) = chains.lift(target, Region::between(at, at + 1))?;
+    (name == contig).then_some(Fraction {
+        position: span.start(),
+        ..*site
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,11 +369,11 @@ mod tests {
     use std::io::Cursor;
     use std::sync::Arc;
 
-    use genie_core::variant::{Annotations, Variant};
+    use genie_core::variant::{Annotations, Call, Fraction, Variant};
     use genie_core::{Assembly, Contig, Feature, Region, Strand};
     use genie_formats::chain::Chains;
 
-    use super::{Lift, complement, lifted_feature, lifted_variant};
+    use super::{Lift, complement, lifted_feature, lifted_fraction, lifted_variant};
     use crate::location::Location;
     use crate::track::{Content, Loaded, Options, Scope, load_track, names, open};
 
@@ -473,5 +505,19 @@ mod tests {
         assert_eq!(reversed.reference, "GT");
         assert_eq!(reversed.alternates, ["T", "<DEL>"]);
         assert_eq!(complement("acgN"), "Ncgt");
+    }
+
+    #[test]
+    fn fractions_move_with_their_sites() {
+        let chains = chains();
+        let site = Fraction {
+            position: 1_500,
+            value: 0.5,
+            depth: Some(20),
+            call: Call::Het,
+        };
+        let moved = lifted_fraction(&site, ("chr1", "chr1"), &chains).unwrap();
+        assert_eq!((moved.position, moved.value), (1_600, 0.5));
+        assert_eq!(lifted_fraction(&site, ("chr1", "chrB"), &chains), None);
     }
 }
