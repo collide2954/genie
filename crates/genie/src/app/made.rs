@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use genie_core::enzyme::{self, Enzyme};
+use genie_render::features::Mode;
 use iced::widget::{
     Column, Row, button, center, column, container, opaque, operation, row, space, text, text_input,
 };
@@ -17,7 +18,8 @@ use super::tracks::NO_REFERENCE;
 use super::{Genie, Message, Popup, Status};
 
 const FIELD: &str = "enzyme-site";
-const WIDTH: f32 = 640.0;
+/// The most width of the dialog: six enzymes in a row, each with its site beside its name.
+const WIDTH: f32 = 860.0;
 const COLUMNS: usize = 6;
 const ABOUT: &str =
     "Pick enzymes, or type a site with ^ at the cut. The track shows where they cut the reference.";
@@ -101,14 +103,29 @@ impl Genie {
         Task::none()
     }
 
+    /// Adds a track made from the reference. A new track of repeats is squished: its runs never
+    /// overlap, and a label for each one says nothing new.
     pub(super) fn add_made(&mut self, made: Made) -> Task<Message> {
         self.close_menus();
         let Some(session) = &self.session else {
             self.status = Status::Failed(NO_REFERENCE.to_owned());
             return Task::none();
         };
+        let squished = made == Made::Repeats && self.restoring.is_none();
         let source = Arc::new(track::make(made, Arc::clone(&session.reference)));
-        self.add_track(&source)
+        let task = self.add_track(&source);
+        if squished {
+            self.on_session(|session| {
+                if let Some(track) = session
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.source == source)
+                {
+                    track.mode = Some(Mode::Squished);
+                }
+            });
+        }
+        task
     }
 
     /// Opens a track made from the reference that a session names.
@@ -151,17 +168,18 @@ impl Genie {
         self.fetch_features()
     }
 
+    /// Opens the dialog of the enzymes for the track of sites with this ID, with its enzymes, or
+    /// for a new track.
     fn open_enzymes(&mut self, track: Option<u64>) -> Task<Message> {
-        let chosen = track
-            .and_then(|id| {
-                let session = self.session.as_ref()?;
-                let track = session.tracks.iter().find(|track| track.id == id)?;
-                match track.source.made()? {
-                    Made::Sites(enzymes) => Some(enzymes.clone()),
-                    _ => None,
-                }
-            })
-            .unwrap_or_default();
+        let found = track.and_then(|id| {
+            let session = self.session.as_ref()?;
+            let track = session.tracks.iter().find(|track| track.id == id)?;
+            match track.source.made()? {
+                Made::Sites(enzymes) => Some((id, enzymes.clone())),
+                _ => None,
+            }
+        });
+        let (track, chosen) = found.map_or((None, Vec::new()), |(id, chosen)| (Some(id), chosen));
         self.close_menus();
         self.enzymes = Enzymes {
             track,
@@ -261,7 +279,8 @@ impl Genie {
         .spacing(10);
         let card = container(body)
             .id("enzyme-dialog")
-            .width(WIDTH)
+            .width(Length::Fill)
+            .max_width(WIDTH)
             .padding(16)
             .style(style::menu);
         Some(center(opaque(card)).width(Length::Fill).into())
@@ -274,13 +293,19 @@ fn grid(common: &[Enzyme], chosen: &[Enzyme]) -> Column<'static, Message> {
     for (line, enzymes) in common.chunks(COLUMNS).enumerate() {
         let mut cells = Row::new().spacing(1);
         for (offset, enzyme) in enzymes.iter().enumerate() {
-            let content = column![
-                text(enzyme.name.clone()).size(12),
+            let content = row![
+                text(enzyme.name.clone())
+                    .size(12)
+                    .wrapping(text::Wrapping::None),
+                space::horizontal(),
                 text(enzyme.written())
                     .size(10)
                     .font(font::MONO)
                     .style(style::muted)
-            ];
+                    .wrapping(text::Wrapping::None)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
             let style = if chosen.contains(enzyme) {
                 style::chosen
             } else {
@@ -289,7 +314,8 @@ fn grid(common: &[Enzyme], chosen: &[Enzyme]) -> Column<'static, Message> {
             cells = cells.push(
                 button(content)
                     .width(Length::Fill)
-                    .padding([2, 6])
+                    .padding([3, 6])
+                    .clip(true)
                     .style(style)
                     .on_press(Message::Made(Making::Tick(line * COLUMNS + offset))),
             );
@@ -358,7 +384,7 @@ mod tests {
     use iced::Point;
     use iced_test::simulator;
 
-    use super::Making;
+    use super::{Making, Mode};
     use crate::app::{Genie, Message};
     use crate::saved::Saved;
     use crate::scratch::Scratch;
@@ -428,6 +454,15 @@ mod tests {
             let _ = genie.update(Message::Made(Making::Add(made)));
         }
         assert_eq!(names(&genie), ["CpG islands", "GC % (100 bp)", "Repeats"]);
+        let modes: Vec<Option<Mode>> = genie
+            .session
+            .as_ref()
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|track| track.mode)
+            .collect();
+        assert_eq!(modes, [None, None, Some(Mode::Squished)]);
         genie.load_now();
         assert_eq!(spans(&genie, 0), [Region::between(300, 598)]);
         assert_eq!(spans(&genie, 2), [Region::between(806, 814)]);
