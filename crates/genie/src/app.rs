@@ -59,6 +59,7 @@ mod navigation;
 mod offline;
 mod orders;
 mod palette;
+mod primers;
 mod regions;
 mod samples;
 mod sessions;
@@ -83,6 +84,7 @@ pub(crate) use lift::Lifting;
 pub(crate) use made::{Making, additions};
 pub(crate) use motifs::Motifing;
 use orders::Answer;
+pub(crate) use primers::Priming;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 pub(crate) use table::Tabling;
 pub(crate) use track_list::Listing;
@@ -175,6 +177,8 @@ pub struct Genie {
     enzymes: made::Enzymes,
     /// The dialog of the motifs of a motif file, when it is open.
     motif_dialog: Option<motifs::MotifDialog>,
+    /// The dialog of primer design and its work.
+    primers: Option<primers::PrimerDialog>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +201,8 @@ enum Popup {
     Enzymes,
     /// The dialog of the motifs of a motif file.
     Motifs,
+    /// The dialog of primer design.
+    Primers,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -281,6 +287,7 @@ impl Default for Genie {
             gnomad: gnomad::Lookups::default(),
             enzymes: made::Enzymes::default(),
             motif_dialog: None,
+            primers: None,
         }
     }
 }
@@ -815,6 +822,8 @@ pub enum Message {
     Made(Making),
     /// Picks the motifs of a motif track, or changes its threshold.
     Motifs(Motifing),
+    /// Designs primers around a target.
+    Primers(Priming),
     /// The sequence and the track of a GenBank or EMBL file.
     RecordsOpened(
         Location,
@@ -1174,6 +1183,7 @@ impl Genie {
             Message::Blat(blatting) => return self.blatting(blatting),
             Message::Made(making) => return self.making(making),
             Message::Motifs(motifing) => return self.motifing(motifing),
+            Message::Primers(priming) => return self.priming(priming),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
             }

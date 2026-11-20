@@ -10,9 +10,10 @@ use crate::chrome;
 use crate::menu;
 use crate::reference::Reference;
 
-use super::{Copying, Genie, Message};
+use super::{Copying, Genie, Message, Priming};
 
-pub(super) const MENU_HEIGHT: f32 = 53.0;
+/// The two copy items, a separator and the item of primer design.
+pub(super) const MENU_HEIGHT: f32 = 83.0;
 const SEQUENCE_LIMIT: u64 = 1_000_000;
 const TOO_LONG: &str = "genie copies up to 1 Mb of sequence. Zoom in, or choose a smaller region.";
 
@@ -57,12 +58,20 @@ impl Genie {
                 false,
                 true
             ),
+            menu::separator(),
+            menu::item(
+                "Design primers…",
+                Message::Primers(Priming::Region(region)),
+                false,
+                true
+            ),
         ]
         .spacing(1);
         Some(menu::card(content, at, self.window, MENU_HEIGHT))
     }
 
-    fn target(&self, region: Option<u64>) -> Option<(usize, Region)> {
+    /// The contig and the span of a region of the region list, or of the view.
+    pub(super) fn target(&self, region: Option<u64>) -> Option<(usize, Region)> {
         let session = self.session.as_ref()?;
         match region {
             None => Some((session.contig, session.viewport.visible())),

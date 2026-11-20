@@ -340,6 +340,9 @@ impl Genie {
         self.sequence_menu = None;
         self.copy_menu = None;
         self.folder_menu = None;
+        if self.popup == Some(Popup::Primers) {
+            self.stop_primers();
+        }
         self.popup = None;
         self.address = None;
         self.range_draft = None;

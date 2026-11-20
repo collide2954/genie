@@ -932,20 +932,27 @@ fn field_row<'a>(
     .into()
 }
 
-/// The buttons of a pinned card: BLAT for a read, and View mate for a read with a mapped mate.
-fn buttons(detail: &Detail) -> (bool, bool) {
+/// The buttons of a pinned card: BLAT for a read, View mate for a read with a mapped mate, and
+/// Primers for a variant.
+fn buttons(detail: &Detail) -> (bool, bool, bool) {
     match detail {
         Detail::Read { read, mate, .. } => {
             let mapped = read.has(PAIRED) && !read.has(MATE_UNMAPPED) && read.mate.is_some();
-            (true, mapped && mate.is_some())
+            (true, mapped && mate.is_some(), false)
         }
-        _ => (false, false),
+        Detail::Variant { .. } => (false, false, true),
+        _ => (false, false, false),
     }
 }
 
-/// The title of a card. A pinned card has a close button, and a pinned read card a BLAT button
-/// and, when its mate is mapped, a button that shows the read and its mate side by side.
-fn heading<'a>(title: String, pinned: bool, (read, mate): (bool, bool)) -> Element<'a, Message> {
+/// The title of a card. A pinned card has a close button, a pinned read card a BLAT button
+/// and, when its mate is mapped, a button that shows the read and its mate side by side, and a
+/// pinned variant card a button that designs primers around the variant.
+fn heading<'a>(
+    title: String,
+    pinned: bool,
+    (read, mate, variant): (bool, bool, bool),
+) -> Element<'a, Message> {
     let mut heading = row![
         text(title)
             .font(font::UI_STRONG)
@@ -969,6 +976,14 @@ fn heading<'a>(title: String, pinned: bool, (read, mate): (bool, bool)) -> Eleme
                 .padding([1, 6])
                 .style(style::ghost)
                 .on_press(Message::Blat(crate::app::Blatting::Read)),
+        );
+    }
+    if pinned && variant {
+        heading = heading.push(
+            button(text("Primers").size(11))
+                .padding([1, 6])
+                .style(style::ghost)
+                .on_press(Message::Primers(crate::app::Priming::Card)),
         );
     }
     if pinned {

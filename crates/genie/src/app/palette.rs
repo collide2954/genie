@@ -154,6 +154,24 @@ fn view_actions(track: &Track) -> Vec<Action> {
         .collect()
 }
 
+/// The actions of the bases of the reference: find a sequence, BLAT a sequence and design
+/// primers.
+fn sequence_actions() -> [Action; 3] {
+    [
+        Action::new(
+            "Find a sequence…",
+            chrome::shift_keys('F'),
+            Message::Command(Command::Find),
+        ),
+        Action::new("BLAT a sequence…", "", Message::Blat(Blatting::Open(None))),
+        Action::new(
+            "Design primers for the view…",
+            "",
+            Message::Primers(super::Priming::Region(None)),
+        ),
+    ]
+}
+
 /// The actions that add the tracks that genie makes from the reference.
 fn made_additions() -> [Action; 4] {
     let add = |made| Message::Made(Making::Add(made));
@@ -381,13 +399,8 @@ impl Genie {
                 Action::new("Copy the locus", keys('C'), command(Command::Copy)),
                 Action::new("Undo", keys('Z'), command(Command::Undo)),
                 Action::new("Redo", keys('Y'), command(Command::Redo)),
-                Action::new(
-                    "Find a sequence…",
-                    chrome::shift_keys('F'),
-                    command(Command::Find),
-                ),
-                Action::new("BLAT a sequence…", "", Message::Blat(Blatting::Open(None))),
             ]);
+            actions.extend(sequence_actions());
             actions.extend(made_additions());
             if !session.marks.is_empty() {
                 actions.push(Action::new(
