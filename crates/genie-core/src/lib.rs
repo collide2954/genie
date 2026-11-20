@@ -24,6 +24,7 @@ mod number;
 mod order;
 pub mod pcr;
 pub mod pileup;
+pub mod primer;
 mod region;
 pub mod samples;
 pub mod search;
