@@ -1423,7 +1423,7 @@ fn manhattan_body(
     (height, faint): (f32, bool),
 ) -> Body {
     let height = track.height.unwrap_or(height);
-    let primitives = manhattan::scene(viewport, found, height, (track.hue, faint));
+    let primitives = manhattan::scene(viewport, found, height, (track.hue, faint), None);
     Body::Scene(primitives, height)
 }
 
