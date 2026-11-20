@@ -55,6 +55,7 @@ pub enum Reason {
     BadHdf5,
     Hdf5Feature,
     NotCooler,
+    NotGenBank,
 }
 
 impl fmt::Display for Error {
@@ -140,6 +141,7 @@ impl fmt::Display for Reason {
             Self::BadHdf5 => "a part of the HDF5 file is not valid",
             Self::Hdf5Feature => "the HDF5 file uses a storage that genie cannot read",
             Self::NotCooler => "the file is not a cooler file of Hi-C contacts",
+            Self::NotGenBank => "the file is not a GenBank or EMBL file",
         })
     }
 }

@@ -25,6 +25,7 @@ pub mod fasta;
 pub mod features;
 pub mod fields;
 pub mod genark;
+pub mod genbank;
 pub mod genepred;
 pub mod gff;
 pub mod gnomad;
