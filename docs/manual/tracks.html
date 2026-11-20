@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -51,6 +51,7 @@
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
+          <li><a href="#motif-sites">Motif sites</a></li>
           <li><a href="#dot-plot">Dot plot</a></li>
           <li><a href="#liftover">Liftover</a></li>
           <li><a href="#sample-groups">Sample groups</a></li>
@@ -181,6 +182,16 @@
 <li><b>Repeats</b> shows the soft-masked bases of the reference: the runs of lower-case bases. Most genomes from UCSC and the <code>dna_sm</code> files of Ensembl mark their repeats in this way, for example the repeats that RepeatMasker and Tandem Repeats Finder find. A reference with only upper-case bases has no repeats. The track is squished at first. A repeat that goes on past the 20 kb that genie reads on each side of the view has a note in its card.</li>
 <li><b>Restriction sites…</b> opens a list of 60 common enzymes. Click enzymes to pick them, or type a site with ^ at the cut, for example <code>G^AATTC</code>, and click <b>Add</b>. A site can have IUPAC codes, such as N. Then click <b>Add the track</b>. When the track has more than one enzyme, each enzyme has its own color. Click <b>Enzymes…</b> in the track menu to change the enzymes.</li>
 <li>The card of a site shows the site, the base after which the enzyme cuts, and the lengths of the fragments to the nearest cuts before and after it. A fragment that goes past the 20 kb that genie reads on each side of the view shows its least length, for example &quot;more than 21000&quot;. Filters work on these fields, for example to keep the cuts with a fragment of 500 bases or more after them.</li>
+</ul>
+<h2 id="motif-sites">Motif sites</h2>
+<p>A motif file has the weight matrices of DNA motifs, for example the binding sites of transcription factors from JASPAR, MEME or HOMER. genie finds the sites of the motifs in the reference, on the two strands, as FIMO of the MEME suite does.</p>
+<ul>
+<li>Open the motif file as a track. A dialog lists its motifs, each with its name, its ID, its length and its consensus. Type a name or an ID, for example CTCF or MA0139, to find a motif. Click motifs to pick them, then click <b>Add the track</b>.</li>
+<li>The track shows the sites of the picked motifs when the view is 1 Mb or less. If you pick no motif, the track shows the sites of all motifs of the file when the view is 5 kb or less, because many motifs take more time. When the track has more than one motif, each motif has its own color.</li>
+<li>A site is a window of the reference whose score has a p-value under 0.0001. genie finds the exact p-value of each score from the weight matrix, for the chances of the bases in the background: the background of a MEME file, or 25 % for each base. As FIMO does, genie adds a pseudocount of 0.1 to the matrix. A window with a base that is not A, C, G or T is not a site.</li>
+<li>Click <b>1e-3</b>, <b>1e-4</b> or <b>1e-5</b> next to <b>p &lt;</b> in the track menu to show more or fewer sites. Click <b>Motifs…</b> to change the motifs.</li>
+<li>The card of a site shows the motif ID, the score in bits, the p-value and the bases of the site on the strand of the motif. Filters work on these fields, for example to keep the sites with p at most 0.00001.</li>
+<li>Sessions keep the picked motifs and the threshold of each motif track.</li>
 </ul>
 <h2 id="dot-plot">Dot plot</h2>
 <p>A dot plot compares two assemblies with the alignments of a <a href="files.html#paf-alignments">PAF file</a>, for example from <code>minimap2 -cx asm5 genome.fa other.fa</code>. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.</p>

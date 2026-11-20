@@ -118,6 +118,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | GWAS track | Summary statistics of the GWAS Catalog, PLINK 2 (`.glm.linear`, `.glm.logistic`), REGENIE (`.regenie`), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index |
 | Copy number track | SEG (`.seg`, as from TCGA, DNAcopy or GISTIC); CNVkit (`.cns`, `.cnr`); GATK ModelSegments (`.seg`). Plain or gzip, up to 50 MB |
 | GenBank and EMBL | GenBank (`.gb`, `.gbk`, `.gbff`, `.genbank`) and EMBL (`.embl`, `.emb`) files, plain or gzip, up to 512 MB: the sequence and a feature track (see [GenBank and EMBL files](#genbank-and-embl-files)) |
+| Motifs | MEME (`.meme`), JASPAR (`.jaspar`, `.pfm`, and the `.txt` files of JASPAR) and HOMER (`.motif`) files of DNA motifs, plain or gzip, up to 64 MB (see [Motif sites](#motif-sites)) |
 | Sample table | Tab or comma separated text with a header line (`.tsv`, `.csv`, `.txt`, `.panel` from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK `.fam` and `.ped`. Plain or gzip, up to 64 MB |
 | Session | genie session (`.genie`) |
 
@@ -433,6 +434,17 @@ genie can make tracks from the bases of the open reference, without a file: the 
 - **Repeats** shows the soft-masked bases of the reference: the runs of lower-case bases. Most genomes from UCSC and the `dna_sm` files of Ensembl mark their repeats in this way, for example the repeats that RepeatMasker and Tandem Repeats Finder find. A reference with only upper-case bases has no repeats. The track is squished at first. A repeat that goes on past the 20 kb that genie reads on each side of the view has a note in its card.
 - **Restriction sites…** opens a list of 60 common enzymes. Click enzymes to pick them, or type a site with ^ at the cut, for example `G^AATTC`, and click **Add**. A site can have IUPAC codes, such as N. Then click **Add the track**. When the track has more than one enzyme, each enzyme has its own color. Click **Enzymes…** in the track menu to change the enzymes.
 - The card of a site shows the site, the base after which the enzyme cuts, and the lengths of the fragments to the nearest cuts before and after it. A fragment that goes past the 20 kb that genie reads on each side of the view shows its least length, for example "more than 21000". Filters work on these fields, for example to keep the cuts with a fragment of 500 bases or more after them.
+
+## Motif sites
+
+A motif file has the weight matrices of DNA motifs, for example the binding sites of transcription factors from JASPAR, MEME or HOMER. genie finds the sites of the motifs in the reference, on the two strands, as FIMO of the MEME suite does.
+
+- Open the motif file as a track. A dialog lists its motifs, each with its name, its ID, its length and its consensus. Type a name or an ID, for example CTCF or MA0139, to find a motif. Click motifs to pick them, then click **Add the track**.
+- The track shows the sites of the picked motifs when the view is 1 Mb or less. If you pick no motif, the track shows the sites of all motifs of the file when the view is 5 kb or less, because many motifs take more time. When the track has more than one motif, each motif has its own color.
+- A site is a window of the reference whose score has a p-value under 0.0001. genie finds the exact p-value of each score from the weight matrix, for the chances of the bases in the background: the background of a MEME file, or 25 % for each base. As FIMO does, genie adds a pseudocount of 0.1 to the matrix. A window with a base that is not A, C, G or T is not a site.
+- Click **1e-3**, **1e-4** or **1e-5** next to **p <** in the track menu to show more or fewer sites. Click **Motifs…** to change the motifs.
+- The card of a site shows the motif ID, the score in bits, the p-value and the bases of the site on the strand of the motif. Filters work on these fields, for example to keep the sites with p at most 0.00001.
+- Sessions keep the picked motifs and the threshold of each motif track.
 
 ## Dot plot
 

@@ -53,6 +53,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Sashimi plots",
             "Isoforms",
             "Reference tracks",
+            "Motif sites",
             "Dot plot",
             "Liftover",
             "Sample groups",
