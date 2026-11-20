@@ -10,6 +10,7 @@ use genie_core::interaction::Interaction;
 use genie_core::isoform::{Chain, Chains, Isoform};
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
+use genie_core::review::{Review, Reviews};
 use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
@@ -1260,6 +1261,8 @@ pub struct Track {
     pub lift: Option<Arc<Lift>>,
     /// The chain file of a session that genie reads for the track.
     pub lifting: Option<Location>,
+    /// The review marks of the variants of the file.
+    pub reviews: Arc<Reviews>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -1316,9 +1319,19 @@ impl Track {
             trios: Arc::new([]),
             lift: None,
             lifting: None,
+            reviews: Arc::default(),
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// The review mark of a variant of a contig in view.
+    pub fn review_of(&self, contig: usize, variant: &Variant) -> Option<&Review> {
+        if self.reviews.is_empty() {
+            return None;
+        }
+        let name = self.contigs.get(contig)?.as_deref()?;
+        self.reviews.of(name, variant)
     }
 
     /// Moves the data of the track to the assembly in view with a lift, or shows the data as it
@@ -1540,7 +1553,9 @@ impl Track {
                     .variants
                     .iter()
                     .filter(|variant| {
-                        fields::passes(rules, &variant_fields(&self.source, variant, trios))
+                        let review = self.review_of(contig, variant);
+                        let fields = variant_fields(&self.source, variant, trios, review);
+                        fields::passes(rules, &fields)
                     })
                     .cloned()
                     .collect();
@@ -2394,15 +2409,36 @@ pub fn link_fields(source: &Source, link: &Interaction) -> Vec<Field> {
 
 /// The name of the field of a variant that tells what the calls of the trios of a family say.
 pub const INHERITANCE: &str = "Inheritance";
+/// The name of the field of the review mark of a variant.
+pub const REVIEW: &str = "Review";
+/// The name of the field of the review note of a variant.
+pub const REVIEW_NOTE: &str = "Review note";
 
 /// The fields of a variant for its card, its filters and the variant table. With the trios of
 /// the track, the Inheritance field lists what their calls say: Mendelian error, De novo and
-/// Consistent.
-pub fn variant_fields(source: &Source, variant: &Variant, trios: &[Trio]) -> Vec<Field> {
+/// Consistent. The review mark of the variant gives the first fields.
+pub fn variant_fields(
+    source: &Source,
+    variant: &Variant,
+    trios: &[Trio],
+    review: Option<&Review>,
+) -> Vec<Field> {
     let Format::Variants(file) = &source.format else {
         return Vec::new();
     };
     let mut found = Vec::new();
+    if let Some(review) = review {
+        found.push(Field {
+            label: REVIEW.to_owned(),
+            value: review.verdict.label().to_owned(),
+        });
+        if !review.note.is_empty() {
+            found.push(Field {
+                label: REVIEW_NOTE.to_owned(),
+                value: review.note.clone(),
+            });
+        }
+    }
     if let Some(quality) = variant.quality {
         found.push(Field {
             label: "Quality".to_owned(),
@@ -2550,9 +2586,9 @@ pub fn association_fields(source: &Source, association: &Association) -> Vec<Fie
     }
 }
 
-/// The rules of the filter of a track, and the trios that give its variants their Inheritance
-/// field.
-pub type Keep<'a> = (&'a [Rule], &'a [Trio]);
+/// The rules of the filter of a track, the trios that give its variants their Inheritance
+/// field, and the review marks that give their Review fields.
+pub type Keep<'a> = (&'a [Rule], &'a [Trio], &'a Reviews);
 
 pub fn neighbor(
     source: &Source,
@@ -2645,7 +2681,7 @@ fn kept(
     source: &Source,
     contig: &str,
     region: Region,
-    (rules, trios): Keep<'_>,
+    (rules, trios, reviews): Keep<'_>,
 ) -> Result<Vec<Region>, String> {
     if rules.is_empty() {
         return spans(source, contig, region);
@@ -2662,7 +2698,10 @@ fn kept(
         Format::Variants(file) => file
             .variants(source.data(), contig, region)?
             .iter()
-            .filter(|variant| fields::passes(rules, &variant_fields(source, variant, trios)))
+            .filter(|variant| {
+                let review = reviews.of(contig, variant);
+                fields::passes(rules, &variant_fields(source, variant, trios, review))
+            })
             .map(|variant| variant.span)
             .collect(),
         Format::Reads(_)
@@ -2679,7 +2718,7 @@ fn kept(
 /// True when the track has a feature or a variant with this name at this place and the filter
 /// hides all of them.
 pub fn hides(source: &Source, contig: &str, span: Region, name: &str, keep: Keep<'_>) -> bool {
-    let (rules, trios) = keep;
+    let (rules, trios, reviews) = keep;
     if rules.is_empty() {
         return false;
     }
@@ -2702,7 +2741,10 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, keep: Keep
                 variants
                     .iter()
                     .filter(|variant| same(&variant.id) && variant.span == span)
-                    .map(|variant| fields::passes(rules, &variant_fields(source, variant, trios)))
+                    .map(|variant| {
+                        let review = reviews.of(contig, variant);
+                        fields::passes(rules, &variant_fields(source, variant, trios, review))
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -3826,7 +3868,7 @@ mod tests {
         let Content::Variants(calls) = &loaded.content else {
             panic!("expected variants");
         };
-        let shown: Vec<(String, String)> = variant_fields(&source, &calls.variants[0], &[])
+        let shown: Vec<(String, String)> = variant_fields(&source, &calls.variants[0], &[], None)
             .into_iter()
             .map(|field| (field.label, field.value))
             .collect();
@@ -3855,11 +3897,84 @@ mod tests {
             .map(|variant| {
                 genie_formats::fields::passes(
                     std::slice::from_ref(&high),
-                    &variant_fields(&source, variant, &[]),
+                    &variant_fields(&source, variant, &[], None),
                 )
             })
             .collect();
         assert_eq!(kept, [true, false]);
+    }
+
+    /// A review mark gives the fields Review and Review note first. A filter on them hides
+    /// variants, and Next variant skips the variants that it hides.
+    #[test]
+    fn review_marks_give_fields_for_filters_and_jumps() {
+        use genie_core::review::{Key, Review, Reviews, Verdict};
+        let scratch = Scratch::new("reviewed-vcf");
+        let text = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n\
+                    chr1\t20\trs20\tC\tT\t.\tPASS\tDP=5\n\
+                    chr1\t30\t.\tC\tT\t.\tPASS\tDP=6\n\
+                    chr1\t40\t.\tG\tA\t.\tPASS\tDP=7\n";
+        let source = open(scratch.file("calls.vcf", text)).unwrap();
+        let options = Options::default();
+        let loaded = load(
+            &source,
+            "chr1",
+            region(0, 100),
+            options,
+            1,
+            true,
+            no_reference,
+        );
+        let loaded = loaded.unwrap();
+        let Content::Variants(calls) = &loaded.content else {
+            panic!("expected variants");
+        };
+        let mut reviews = Reviews::default();
+        let review = Review {
+            verdict: Verdict::False,
+            id: String::new(),
+            note: "strand bias".to_owned(),
+        };
+        reviews.set(Key::of("chr1", &calls.variants[1]), Some(review));
+        let marked = reviews.of("chr1", &calls.variants[1]);
+        let fields: Vec<(String, String)> =
+            variant_fields(&source, &calls.variants[1], &[], marked)
+                .into_iter()
+                .map(|field| (field.label, field.value))
+                .collect();
+        let review = |label: &str, value: &str| (label.to_owned(), value.to_owned());
+        assert_eq!(
+            fields[..2],
+            [
+                review("Review", "false"),
+                review("Review note", "strand bias")
+            ]
+        );
+        let plain = variant_fields(&source, &calls.variants[0], &[], None);
+        assert!(plain.iter().all(|field| field.label != "Review"));
+        let hide = Rule {
+            label: "Review".to_owned(),
+            test: Test::Hide("false".to_owned()),
+        };
+        let names = [Some("chr1".to_owned())];
+        let assembly = Assembly::new(vec![genie_core::Contig {
+            name: "chr1".to_owned(),
+            length: 1_000,
+        }]);
+        let next = |rules: &[Rule]| {
+            neighbor(
+                &source,
+                &names,
+                &assembly,
+                0,
+                19,
+                true,
+                (rules, &[], &reviews),
+            )
+            .unwrap()
+        };
+        assert_eq!(next(std::slice::from_ref(&hide)), Some((0, region(39, 40))));
+        assert_eq!(next(&[]), Some((0, region(29, 30))));
     }
 
     fn signal(loaded: &Loaded) -> &[genie_core::signal::Summary] {
@@ -4099,7 +4214,7 @@ ORIGIN
                             contig,
                             position,
                             forward,
-                            (&[], &[]),
+                            (&[], &[], &genie_core::review::Reviews::default()),
                         )
                         .unwrap();
                         let expected = scanned(&source, &names, contig, position, forward);
@@ -4142,7 +4257,7 @@ ORIGIN
                 contig,
                 position,
                 forward,
-                (rules, &[]),
+                (rules, &[], &genie_core::review::Reviews::default()),
             )
             .unwrap()
         };
@@ -4221,28 +4336,28 @@ ORIGIN
             "chr1",
             region(100, 200),
             "tp53",
-            (&keep, &[])
+            (&keep, &[], &genie_core::review::Reviews::default())
         ));
         assert!(!hides(
             &source,
             "chr1",
             region(300, 400),
             "BRCA1",
-            (&keep, &[])
+            (&keep, &[], &genie_core::review::Reviews::default())
         ));
         assert!(!hides(
             &source,
             "chr1",
             region(100, 200),
             "TP53",
-            (&[], &[])
+            (&[], &[], &genie_core::review::Reviews::default())
         ));
         assert!(!hides(
             &source,
             "chr1",
             region(500, 600),
             "EGFR",
-            (&keep, &[])
+            (&keep, &[], &genie_core::review::Reviews::default())
         ));
     }
 
@@ -4252,7 +4367,15 @@ ORIGIN
         let genes = open(fixture("genes.bed.gz")).unwrap();
         let names = contig_names(genes.contigs(), &assembly);
         let next = |position, forward| {
-            neighbor(&genes, &names, &assembly, 0, position, forward, (&[], &[]))
+            neighbor(
+                &genes,
+                &names,
+                &assembly,
+                0,
+                position,
+                forward,
+                (&[], &[], &genie_core::review::Reviews::default()),
+            )
         };
         assert_eq!(next(0, true).unwrap(), Some((0, region(1_050, 3_208))));
         let after = next(1_050, true).unwrap().unwrap();
@@ -4260,20 +4383,55 @@ ORIGIN
         assert_eq!(next(1_050, false).unwrap(), None);
         let calls = open(fixture("variants.vcf.gz")).unwrap();
         let names = contig_names(calls.contigs(), &assembly);
-        let first = neighbor(&calls, &names, &assembly, 0, 0, true, (&[], &[])).unwrap();
+        let first = neighbor(
+            &calls,
+            &names,
+            &assembly,
+            0,
+            0,
+            true,
+            (&[], &[], &genie_core::review::Reviews::default()),
+        )
+        .unwrap();
         assert_eq!(first, Some((0, region(1_000, 1_001))));
         assert_eq!(
-            neighbor(&calls, &names, &assembly, 2, 0, true, (&[], &[])).unwrap(),
+            neighbor(
+                &calls,
+                &names,
+                &assembly,
+                2,
+                0,
+                true,
+                (&[], &[], &genie_core::review::Reviews::default())
+            )
+            .unwrap(),
             None
         );
-        let last = neighbor(&calls, &names, &assembly, 2, 0, false, (&[], &[]))
-            .unwrap()
-            .unwrap();
+        let last = neighbor(
+            &calls,
+            &names,
+            &assembly,
+            2,
+            0,
+            false,
+            (&[], &[], &genie_core::review::Reviews::default()),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(last.0, 1);
         let reads = open(fixture("reads.bam")).unwrap();
         let names = contig_names(reads.contigs(), &assembly);
         assert_eq!(
-            neighbor(&reads, &names, &assembly, 0, 0, true, (&[], &[])).unwrap(),
+            neighbor(
+                &reads,
+                &names,
+                &assembly,
+                0,
+                0,
+                true,
+                (&[], &[], &genie_core::review::Reviews::default())
+            )
+            .unwrap(),
             None
         );
     }

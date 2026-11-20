@@ -4512,6 +4512,7 @@ ORIGIN
             folder: None,
             motifs: None,
             baf: None,
+            reviews: genie_core::review::Reviews::default(),
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4610,6 +4611,7 @@ ORIGIN
                 folder: None,
                 motifs: None,
                 baf: None,
+                reviews: genie_core::review::Reviews::default(),
             }],
             regions: Vec::new(),
             hubs: Vec::new(),

@@ -1245,7 +1245,8 @@ fn detail_fields(
     match detail {
         Detail::Feature(feature) => track::feature_fields(&track.source, feature),
         Detail::Variant { variant, .. } => {
-            track::variant_fields(&track.source, variant, &track.trios_on(contig))
+            let review = track.review_of(contig, variant);
+            track::variant_fields(&track.source, variant, &track.trios_on(contig), review)
         }
         Detail::Link(link) => track::link_fields(&track.source, link),
         Detail::Read {
@@ -1452,6 +1453,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.plot = found.plot;
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());
+    track.reviews = Arc::new(found.reviews.clone());
     track.set_normalization(found.normalization.as_deref());
     track.declared.clone_from(&found.declared);
     track.choice.clone_from(&found.choice);

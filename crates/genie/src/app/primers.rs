@@ -8,6 +8,7 @@ use std::thread;
 use genie_core::binding::{self, Bind, Binder};
 use genie_core::pcr::LONGEST;
 use genie_core::primer::{self, PCR, Pair, QPCR, SANGER, Settings};
+use genie_core::review::Reviews;
 use genie_core::{Locus, Region, Span, Target, grouped};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
@@ -91,12 +92,13 @@ pub(super) struct PrimerDialog {
 }
 
 /// A variant track whose variants primers stay off: its file, its lift, the name of the contig
-/// in the file, and the rules of its filter.
+/// in the file, the rules of its filter, and its review marks for the filter.
 type Masker = (
     Arc<Source>,
     Option<Arc<Lift>>,
     String,
     Vec<genie_formats::fields::Rule>,
+    Arc<Reviews>,
 );
 
 /// What the work needs: the reference, the target, the variant tracks that mask places, and
@@ -230,7 +232,8 @@ impl Genie {
             .filter_map(|track| {
                 let name = track.contigs.get(contig)?.clone()?;
                 let source = Arc::clone(&track.source);
-                Some((source, track.lift.clone(), name, track.filter.rules.clone()))
+                let (rules, reviews) = (track.filter.rules.clone(), Arc::clone(&track.reviews));
+                Some((source, track.lift.clone(), name, rules, reviews))
             })
             .collect();
         let job = Job {
@@ -487,7 +490,7 @@ fn pair_rows(dialog: &PrimerDialog) -> Column<'static, Message> {
 fn masked(job: &Job, region: Region) -> Vec<u64> {
     let length = job.reference.assembly.contigs()[job.contig].length;
     let mut places = Vec::new();
-    for (source, lift, name, rules) in &job.variants {
+    for (source, lift, name, rules, reviews) in &job.variants {
         let scope = Scope {
             step: 1,
             detail: true,
@@ -509,7 +512,7 @@ fn masked(job: &Job, region: Region) -> Vec<u64> {
             continue;
         };
         for variant in &calls.variants {
-            let fields = track::variant_fields(source, variant, &[]);
+            let fields = track::variant_fields(source, variant, &[], reviews.of(name, variant));
             if !genie_formats::fields::passes(rules, &fields) {
                 continue;
             }
@@ -725,7 +728,7 @@ mod tests {
             ),
         );
         let source = Arc::new(crate::track::open(Location::File(vcf)).unwrap());
-        job.variants = vec![(source, None, "chr1".to_owned(), Vec::new())];
+        job.variants = vec![(source, None, "chr1".to_owned(), Vec::new(), Arc::default())];
         let pairs = work(&job, &mut |_| {}, &AtomicBool::new(false)).unwrap();
         assert!(
             pairs

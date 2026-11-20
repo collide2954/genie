@@ -164,6 +164,7 @@ impl Genie {
                         .options
                         .baf
                         .and_then(|index| track.source.samples().get(index).cloned()),
+                    reviews: (*track.reviews).clone(),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

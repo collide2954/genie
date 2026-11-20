@@ -501,10 +501,16 @@ impl Genie {
     }
 
     pub(super) fn jump(&mut self, id: u64, forward: bool) -> Task<Message> {
-        self.close_menus();
         let Some(position) = self.jump_from() else {
             return Task::none();
         };
+        self.jump_at(id, forward, position)
+    }
+
+    /// Goes to the next or the previous feature or variant of a track from a place of the
+    /// contig in view.
+    pub(super) fn jump_at(&mut self, id: u64, forward: bool, position: u64) -> Task<Message> {
+        self.close_menus();
         let Some(session) = &self.session else {
             return Task::none();
         };
@@ -520,7 +526,7 @@ impl Genie {
         }
         let source = Arc::clone(&track.source);
         let (names, rules) = (track.contigs.clone(), track.filter.rules.clone());
-        let trios = Arc::clone(&track.trios);
+        let (trios, reviews) = (Arc::clone(&track.trios), Arc::clone(&track.reviews));
         let (reference, contig) = (Arc::clone(&session.reference), session.contig);
         Task::perform(
             async move {
@@ -531,7 +537,7 @@ impl Genie {
                     contig,
                     position,
                     forward,
-                    (&rules, &trios),
+                    (&rules, &trios, &reviews),
                 )
             },
             move |result| Message::Jumped(id, forward, result),
@@ -639,11 +645,12 @@ impl Genie {
             let track = session.tracks.iter().find(|track| track.id == id)?;
             let contig = track.contigs.get(named.contig)?.clone()?;
             let (source, rules) = (Arc::clone(&track.source), track.filter.rules.clone());
-            let trios = Arc::clone(&track.trios);
+            let (trios, reviews) = (Arc::clone(&track.trios), Arc::clone(&track.reviews));
             let (name, span) = (named.name.clone(), named.span);
             Some(Task::perform(
                 async move {
-                    let hidden = track::hides(&source, &contig, span, &name, (&rules, &trios));
+                    let keep = (&rules[..], &trios[..], &*reviews);
+                    let hidden = track::hides(&source, &contig, span, &name, keep);
                     (name, hidden)
                 },
                 move |(name, hidden)| Message::Filter(id, Filtering::Checked(name, hidden)),

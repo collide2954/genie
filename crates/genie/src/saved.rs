@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use genie_core::review::Reviews;
 use genie_core::samples::Choice;
 use genie_formats::fields::{self, Rule, Test};
 use genie_formats::http::Url;
@@ -88,6 +89,8 @@ pub struct SavedTrack {
     pub motifs: Option<(Vec<String>, f64)>,
     /// The sample of the lane of B-allele frequencies of a variant track.
     pub baf: Option<String>,
+    /// The review marks of the variants of a variant track.
+    pub reviews: Reviews,
 }
 
 impl SavedTrack {
@@ -112,6 +115,7 @@ impl SavedTrack {
             folder: None,
             motifs: None,
             baf: None,
+            reviews: Reviews::default(),
         }
     }
 }
@@ -119,6 +123,9 @@ impl SavedTrack {
 /// The keys of the parts of exported images that somebody can turn off.
 const SCALE_BAR: &str = "scale bar";
 const REGION_BANDS: &str = "region bands";
+
+/// The key of a review mark of a variant of a track.
+const REVIEW: &str = "review";
 
 /// The keys of the fields that group, sort and color the samples of a track.
 const GROUP_SAMPLES: &str = "group samples";
@@ -187,6 +194,7 @@ impl Saved {
                     folder: section.value("folder").map(str::to_owned),
                     motifs: motif_picks(section),
                     baf: section.value("baf").map(str::to_owned),
+                    reviews: Reviews::from_lines(section.values(REVIEW)),
                 })
             })
             .collect();
@@ -466,6 +474,7 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     if let Some(label) = &track.filter.label {
         entries.push(("label", label.clone()));
     }
+    entries.extend(track.reviews.lines().into_iter().map(|line| (REVIEW, line)));
     if let Some(declared) = &track.declared {
         entries.push(("type", declared.kind.clone()));
         if let Some(index) = &declared.index {
@@ -953,6 +962,29 @@ mod tests {
         assert!(text.contains("motifs = all"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(motifs));
         assert!(!saved().text(&base()).contains("motifs ="));
+    }
+
+    #[test]
+    fn variant_tracks_keep_their_review_marks() {
+        use genie_core::review::{Key, Review, Verdict};
+        let mut reviewed = saved();
+        let key = Key {
+            contig: "chr1".to_owned(),
+            position: 20,
+            reference: "A".to_owned(),
+            alternates: "G".to_owned(),
+        };
+        let review = Review {
+            verdict: Verdict::Unsure,
+            id: "rs21".to_owned(),
+            note: "low MAPQ; look at = signs".to_owned(),
+        };
+        reviewed.tracks[1].reviews.set(key, Some(review));
+        let text = reviewed.text(&base());
+        let line = "review = unsure chr1 21 A G rs21 low MAPQ; look at = signs";
+        assert!(text.contains(line), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(reviewed));
+        assert!(!saved().text(&base()).contains("review ="));
     }
 
     #[test]

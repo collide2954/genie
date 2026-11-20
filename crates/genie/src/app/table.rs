@@ -75,6 +75,8 @@ struct Built {
     contig: usize,
     /// The trios of the track, which give the Inheritance column.
     trios: usize,
+    /// The review marks of the track, which give the Review columns.
+    reviews: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -262,13 +264,15 @@ impl Genie {
             count: calls.variants.len(),
             contig,
             trios: Arc::as_ptr(&track.trios).cast::<()>() as usize,
+            reviews: Arc::as_ptr(&track.reviews) as usize,
         };
         if table.built.as_ref().is_none_or(|(known, _)| *known != key) {
             let name = &session.reference.assembly.contigs()[contig].name;
             let samples = !track.source.samples().is_empty();
             let (source, trios) = (&track.source, &track.trios_on(contig));
             let built = Table::new(name, &calls.variants, samples, |variant| {
-                track::variant_fields(source, variant, trios)
+                let review = track.review_of(contig, variant);
+                track::variant_fields(source, variant, trios, review)
             });
             table.built = Some((key, Arc::new(built)));
             table.shown = None;

@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use genie_core::Marks;
+use genie_core::review::Reviews;
 use genie_render::scene::Hue;
 use iced::Task;
 
@@ -40,6 +41,7 @@ struct Kept {
     choice: Choice,
     lift: Option<Arc<Lift>>,
     lifting: Option<Location>,
+    reviews: Arc<Reviews>,
 }
 
 impl PartialEq for Kept {
@@ -50,6 +52,7 @@ impl PartialEq for Kept {
         };
         lifts
             && Arc::ptr_eq(&self.source, &other.source)
+            && (Arc::ptr_eq(&self.reviews, &other.reviews) || self.reviews == other.reviews)
             && (
                 self.id,
                 &self.name,
@@ -103,6 +106,7 @@ impl Kept {
             choice: track.choice.clone(),
             lift: track.lift.clone(),
             lifting: track.lifting.clone(),
+            reviews: Arc::clone(&track.reviews),
         }
     }
 
@@ -135,6 +139,7 @@ impl Kept {
             track.set_lift(self.lift, &session.reference.assembly);
         }
         track.lifting = self.lifting;
+        track.reviews = self.reviews;
         track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
         track.forget_kept();
         track.forget();
