@@ -27,6 +27,7 @@ pub mod pcr;
 pub mod pileup;
 pub mod primer;
 mod region;
+pub mod review;
 pub mod samples;
 pub mod search;
 pub mod segment;
