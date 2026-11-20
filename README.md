@@ -422,6 +422,18 @@ The B-allele frequency of a sample at a site is the fraction of its reads that c
 - Put the pointer on a dot to see the sample, the fraction, the reads and the call.
 - The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.
 
+## Variant review
+
+Look at the variants of a file one after the other, for example the calls of a variant caller with the reads under them, and mark each one true, false or not sure, with a note.
+
+- Right-click a variant track and click **Review variants…**. The palette also has **Review the variants**. A bar under the tracks shows the first variant from the left edge of the view, in the middle of the view. When the view is wider than 1 Mb, genie shows 200 bp around each variant.
+- Push T to mark the variant true, F to mark it false and U to mark it not sure, or click **True**, **False** or **Not sure** in the bar. **Clear** removes the mark.
+- Type a note in the note field of the bar. The note goes with the mark. Push Enter in the field to use the keys of the review again.
+- Push N or P, or click the arrows, to go to the next or the previous variant of the file, as **Next variant** and **Previous variant** do. They skip the variants that the filter of the track hides. For example, hide the Review values true, false and not sure to go only to the variants without a mark.
+- A strip over the sites shows the mark of each variant: green for true, vermillion for false and grey for not sure. The card and the variant table show the fields **Review** and **Review note**, and filters can use them.
+- **Export…** saves the marks as a TSV file with the chromosome, the position, the ID, the alleles, the mark and the note. For a VCF file on the computer, it can also save a copy of the file with the INFO fields REVIEW and REVIEW_NOTE on the marked variants. A name that ends in .gz gives a copy with bgzip. genie does not write over the open file.
+- Sessions and undo keep the marks. genie cannot review the variants of a lifted track.
+
 ## Sashimi plots
 
 A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.

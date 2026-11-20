@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -49,6 +49,7 @@
           <li><a href="#tracks">Tracks</a></li>
           <li><a href="#variant-table">Variant table</a></li>
           <li><a href="#b-allele-frequency">B-allele frequency</a></li>
+          <li><a href="#variant-review">Variant review</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
@@ -161,6 +162,17 @@
 <li>When you zoom out, the sites in one pixel at the same height show as one dot.</li>
 <li>Put the pointer on a dot to see the sample, the fraction, the reads and the call.</li>
 <li>The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.</li>
+</ul>
+<h2 id="variant-review">Variant review</h2>
+<p>Look at the variants of a file one after the other, for example the calls of a variant caller with the reads under them, and mark each one true, false or not sure, with a note.</p>
+<ul>
+<li>Right-click a variant track and click <b>Review variants…</b>. The palette also has <b>Review the variants</b>. A bar under the tracks shows the first variant from the left edge of the view, in the middle of the view. When the view is wider than 1 Mb, genie shows 200 bp around each variant.</li>
+<li>Push T to mark the variant true, F to mark it false and U to mark it not sure, or click <b>True</b>, <b>False</b> or <b>Not sure</b> in the bar. <b>Clear</b> removes the mark.</li>
+<li>Type a note in the note field of the bar. The note goes with the mark. Push Enter in the field to use the keys of the review again.</li>
+<li>Push N or P, or click the arrows, to go to the next or the previous variant of the file, as <b>Next variant</b> and <b>Previous variant</b> do. They skip the variants that the filter of the track hides. For example, hide the Review values true, false and not sure to go only to the variants without a mark.</li>
+<li>A strip over the sites shows the mark of each variant: green for true, vermillion for false and grey for not sure. The card and the variant table show the fields <b>Review</b> and <b>Review note</b>, and filters can use them.</li>
+<li><b>Export…</b> saves the marks as a TSV file with the chromosome, the position, the ID, the alleles, the mark and the note. For a VCF file on the computer, it can also save a copy of the file with the INFO fields REVIEW and REVIEW_NOTE on the marked variants. A name that ends in .gz gives a copy with bgzip. genie does not write over the open file.</li>
+<li>Sessions and undo keep the marks. genie cannot review the variants of a lifted track.</li>
 </ul>
 <h2 id="sashimi-plots">Sashimi plots</h2>
 <p>A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.</p>
