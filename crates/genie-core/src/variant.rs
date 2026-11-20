@@ -29,6 +29,75 @@ impl Call {
     }
 }
 
+/// The fewest reads of a site that give a B-allele frequency.
+pub const LEAST_DEPTH: u32 = 10;
+
+/// What the FORMAT fields of a sample tell about the reads of a site: AD, DP, and a field of
+/// fractions such as VAF.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Reads {
+    /// The reads of each allele (AD), the reference allele first.
+    pub alleles: Vec<Option<u32>>,
+    /// The depth of the site (DP).
+    pub depth: Option<u32>,
+    /// The fractions of the reads of the other alleles (VAF, AF or BAF).
+    pub fractions: Vec<Option<f32>>,
+}
+
+/// The B-allele frequency of a sample at a site: the fraction of its reads that carry an allele
+/// that is not the reference allele.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fraction {
+    /// The start of the site, from 0.
+    pub position: u64,
+    /// From 0 to 1.
+    pub value: f32,
+    /// The reads of the site: all the reads of AD, else DP. Nothing when the file does not give
+    /// them.
+    pub depth: Option<u32>,
+    pub call: Call,
+}
+
+impl Fraction {
+    /// The fraction of a called site: from the reads of each allele, else from a field of
+    /// fractions. Nothing for a site without a call or values, or with fewer than `LEAST_DEPTH`
+    /// reads.
+    pub fn new(position: u64, call: Call, reads: &Reads) -> Option<Self> {
+        if call == Call::Missing {
+            return None;
+        }
+        let (value, depth) = if let [Some(reference), ..] = reads.alleles[..] {
+            let total = reads
+                .alleles
+                .iter()
+                .flatten()
+                .fold(0_u32, |sum, count| sum.saturating_add(*count));
+            if total == 0 {
+                return None;
+            }
+            ((total - reference) as f32 / total as f32, Some(total))
+        } else {
+            let mut known = reads
+                .fractions
+                .iter()
+                .flatten()
+                .filter(|value| value.is_finite())
+                .peekable();
+            known.peek()?;
+            (known.sum::<f32>().clamp(0.0, 1.0), reads.depth)
+        };
+        if depth.is_some_and(|depth| depth < LEAST_DEPTH) {
+            return None;
+        }
+        Some(Self {
+            position,
+            value,
+            depth,
+            call,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Snv(u8),
@@ -159,8 +228,63 @@ impl Variant {
 
 #[cfg(test)]
 mod tests {
-    use super::{Annotations, Call, Kind, Variant};
+    use super::{Annotations, Call, Fraction, Kind, Reads, Variant};
     use crate::Region;
+
+    fn reads(alleles: &[Option<u32>], depth: Option<u32>, fractions: &[Option<f32>]) -> Reads {
+        Reads {
+            alleles: alleles.to_vec(),
+            depth,
+            fractions: fractions.to_vec(),
+        }
+    }
+
+    #[test]
+    fn fractions_come_from_the_reads_of_each_allele() {
+        let het = Fraction::new(99, Call::Het, &reads(&[Some(12), Some(10)], Some(30), &[]));
+        let het = het.unwrap();
+        assert_eq!(
+            (het.position, het.depth, het.call),
+            (99, Some(22), Call::Het)
+        );
+        assert!((het.value - 10.0 / 22.0).abs() < 1e-6);
+        let both = reads(&[Some(2), Some(9), None, Some(9)], None, &[Some(0.1)]);
+        let both = Fraction::new(5, Call::Het, &both).unwrap();
+        assert!((both.value - 0.9).abs() < 1e-6);
+        assert_eq!(both.depth, Some(20));
+        let reference = Fraction::new(5, Call::Reference, &reads(&[Some(31)], None, &[]));
+        assert_eq!(reference.map(|found| found.value), Some(0.0));
+        let few = reads(&[Some(4), Some(5)], Some(40), &[]);
+        assert_eq!(Fraction::new(5, Call::Het, &few), None);
+        let deep = reads(&[Some(20), Some(20)], None, &[]);
+        assert_eq!(Fraction::new(5, Call::Missing, &deep), None);
+        let none = reads(&[Some(0), Some(0)], None, &[]);
+        assert_eq!(Fraction::new(5, Call::Het, &none), None);
+    }
+
+    #[test]
+    fn fractions_without_allele_reads_come_from_a_fraction_field() {
+        let vaf = Fraction::new(7, Call::Het, &reads(&[], Some(25), &[Some(0.48)])).unwrap();
+        assert_eq!((vaf.value, vaf.depth), (0.48, Some(25)));
+        let array = reads(&[], None, &[Some(0.97)]);
+        let array = Fraction::new(7, Call::Alternate, &array).unwrap();
+        assert_eq!((array.value, array.depth), (0.97, None));
+        let two = reads(&[], Some(30), &[Some(0.6), Some(0.5)]);
+        assert_eq!(
+            Fraction::new(7, Call::Het, &two).map(|found| found.value),
+            Some(1.0)
+        );
+        let unknown = reads(&[None, Some(3)], Some(30), &[Some(0.25), Some(f32::NAN)]);
+        let unknown = Fraction::new(7, Call::Het, &unknown).unwrap();
+        assert_eq!((unknown.value, unknown.depth), (0.25, Some(30)));
+        let shallow = reads(&[], Some(9), &[Some(0.5)]);
+        assert_eq!(Fraction::new(7, Call::Het, &shallow), None);
+        assert_eq!(
+            Fraction::new(7, Call::Het, &reads(&[], Some(30), &[None])),
+            None
+        );
+        assert_eq!(Fraction::new(7, Call::Het, &Reads::default()), None);
+    }
 
     fn variant(reference: &str, alternates: &[&str]) -> Variant {
         Variant {
