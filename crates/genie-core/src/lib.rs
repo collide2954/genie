@@ -15,6 +15,7 @@ mod history;
 pub mod interaction;
 pub mod isoform;
 pub mod layout;
+pub mod ld;
 mod locus;
 mod marks;
 pub mod methylation;
