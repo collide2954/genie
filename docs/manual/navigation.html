@@ -90,6 +90,16 @@
 <li>Push Enter and Shift+Enter to go to the next and the previous product. Put the pointer on a product to see its locus, its length, its strand, its mismatches and its primers.</li>
 <li>Click <b>Bases</b> to find one sequence again.</li>
 </ul>
+<h3 id="primer-design">Primer design</h3>
+<p>genie designs PCR primers around a target, as Primer3 does with its default settings, and checks that each pair makes only its own product.</p>
+<ul>
+<li>Click <b>Primers</b> in the open card of a variant, or right-click the ruler or a region of the region list and click <b>Design primers…</b>. The target is the variant, the view or the region. The palette also has <b>Design primers for the view…</b>.</li>
+<li>A dialog shows the 5 best pairs. Click <b>PCR 150–500</b>, <b>Sanger 400–800</b> or <b>qPCR 70–150</b>, or type the shortest and the longest product, then click <b>Design</b>.</li>
+<li>Each primer has 18 to 25 bases, a melting temperature (Tm) of 57 to 63 °C, 20 to 80 % GC, no run of more than 4 of one base, and 1 to 3 G or C in the 5 bases at its 3′ end. genie finds the Tm by the nearest-neighbor values of SantaLucia (1998), for 50 mM of monovalent ions, 1.5 mM of Mg²⁺, 0.6 mM of dNTPs and 50 nM of each primer, as Primer3. The two primers of a pair differ by 5 °C at most, and they do not pair much with themselves or with each other. The best pairs have a Tm near 60 °C and 20 bases.</li>
+<li>Primers stay off the variants of the variant tracks that show. A track with a filter keeps primers off only the variants that the filter keeps, for example the variants with a frequency of 1 % or more.</li>
+<li>genie then checks where each primer binds: where the 8 bases at its 3′ end match and its other bases have 2 mismatches at most, on the two strands. A pair that also makes other products of 4 kb or less drops out. For a reference on this computer, genie checks all chromosomes, which takes some seconds to a minute for a human genome. For a reference on the web, it checks 1 Mb around the target. If each pair makes other products, the dialog shows the best ones with a note.</li>
+<li>Each pair shows its product, its products in the genome, and each primer from its 5′ end with its length, its Tm and its GC content. Click <b>Show</b> to go to the product: the find bar shows it as the PCR product of the two primers. Click <b>Copy</b> to copy the two primers, each with the locus of the product.</li>
+</ul>
 <h3 id="blat">BLAT</h3>
 <p>The BLAT server of UCSC finds where a sequence aligns in the whole genome, also with gaps and introns. genie can send a sequence to it when the open genome is a genome of UCSC, such as hg38 or mm39.</p>
 <ul>
