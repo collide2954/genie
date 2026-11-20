@@ -167,8 +167,35 @@ pub fn reduce(summaries: &[Summary], step: u64) -> Vec<Summary> {
     if step <= 1 {
         return summaries.to_vec();
     }
-    let mut found: Vec<Summary> = Vec::new();
+    let mut reducer = Reducer::new(step);
     for summary in summaries {
+        reducer.push(*summary);
+    }
+    reducer.finish()
+}
+
+/// Merges summaries in order into steps of `step` bases, one summary at a time, so that a long
+/// list of small summaries does not need to be in memory at one time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reducer {
+    step: u64,
+    found: Vec<Summary>,
+}
+
+impl Reducer {
+    pub fn new(step: u64) -> Self {
+        Self {
+            step: step.max(1),
+            found: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, summary: Summary) {
+        let step = self.step;
+        if step == 1 {
+            self.found.push(summary);
+            return;
+        }
         let mut start = summary.span.start();
         while start < summary.span.end() {
             let slot = start / step;
@@ -176,7 +203,7 @@ pub fn reduce(summaries: &[Summary], step: u64) -> Vec<Summary> {
             let share = part.len() as f64 / summary.span.len() as f64;
             let count = (f64::from(summary.count) * share).round() as u32;
             let sum = summary.sum * share;
-            match found.last_mut() {
+            match self.found.last_mut() {
                 Some(last) if last.span.start() / step == slot => {
                     last.span = last.span.hull(part);
                     last.count += count;
@@ -184,7 +211,7 @@ pub fn reduce(summaries: &[Summary], step: u64) -> Vec<Summary> {
                     last.max = last.max.max(summary.max);
                     last.sum += sum;
                 }
-                _ => found.push(Summary {
+                _ => self.found.push(Summary {
                     span: part,
                     count,
                     min: summary.min,
@@ -195,7 +222,10 @@ pub fn reduce(summaries: &[Summary], step: u64) -> Vec<Summary> {
             start = part.end();
         }
     }
-    found
+
+    pub fn finish(self) -> Vec<Summary> {
+        self.found
+    }
 }
 
 #[cfg(test)]

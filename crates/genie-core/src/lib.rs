@@ -3,6 +3,7 @@ mod assembly;
 pub mod association;
 mod band;
 pub mod codon;
+pub mod composition;
 pub mod contact;
 pub mod dotplot;
 pub mod effect;
