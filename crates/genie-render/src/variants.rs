@@ -177,6 +177,8 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
 
 /// The height of the strip of review marks above the sites.
 pub const REVIEW_HEIGHT: f32 = 4.0;
+/// The narrowest review mark, wider than a narrow site so that its color shows.
+const REVIEW_WIDTH: f32 = 7.0;
 
 /// The color of the review mark of a verdict: green for true, vermillion for false and grey for
 /// not sure.
@@ -189,7 +191,8 @@ pub fn verdict_paint(verdict: Verdict) -> Paint {
 }
 
 /// The marks of the reviewed variants in a strip above the sites, as wide as the marks of their
-/// sites, with the verdict of each variant in the same order as the variants.
+/// sites and at least `REVIEW_WIDTH`, with the verdict of each variant in the same order as the
+/// variants.
 pub fn review_marks(
     viewport: Viewport,
     variants: &[Variant],
@@ -206,10 +209,11 @@ pub fn review_marks(
                 return None;
             }
             let (x, width) = cell(viewport, span);
+            let wide = width.max(REVIEW_WIDTH);
             Some(Primitive::Rect {
-                x,
+                x: x + (width - wide) / 2.0,
                 y: 0.0,
-                width,
+                width: wide,
                 height: REVIEW_HEIGHT - 1.0,
                 paint: verdict_paint(verdict),
             })
@@ -667,10 +671,13 @@ mod tests {
         assert_eq!(
             found,
             [
-                ([9.0, 0.0, 3.0, height], Paint::Hue(Hue::Green)),
-                ([29.0, 0.0, 3.0, height], Paint::Muted),
+                ([7.0, 0.0, 7.0, height], Paint::Hue(Hue::Green)),
+                ([27.0, 0.0, 7.0, height], Paint::Muted),
             ]
         );
+        let wide = [variant(0, &"A".repeat(20), "T", &[])];
+        let found = rects(&review_marks(view(0, 100), &wide, &[Some(Verdict::False)]));
+        assert_eq!(found[0].0, [0.0, 0.0, 19.0, height]);
         assert_eq!(verdict_paint(Verdict::False), Paint::Hue(Hue::Vermillion));
     }
 
