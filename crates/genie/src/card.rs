@@ -6,7 +6,7 @@ use genie_core::interaction::Interaction;
 use genie_core::pileup::Junction;
 use genie_core::segment::Segment;
 use genie_core::signal::Bin;
-use genie_core::variant::{Annotation, Call, Structure, Sv, Variant};
+use genie_core::variant::{Annotation, Call, Fraction, Structure, Sv, Variant};
 use genie_core::{Feature, Locus, Region, Span, Strand, grouped};
 use genie_formats::fields::{self, Field};
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -62,6 +62,11 @@ pub enum Detail {
         name: String,
         groups: (String, String),
         difference: genie_core::methylation::Difference,
+    },
+    /// The B-allele frequency of a sample at a site.
+    Fraction {
+        sample: String,
+        fraction: Fraction,
     },
     Variant {
         variant: Variant,
@@ -587,6 +592,22 @@ fn difference_content(
     )
 }
 
+/// The card of a site of a lane of B-allele frequencies: the fraction and the reads, and the
+/// sample with its call.
+fn fraction_content(sample: &str, fraction: &Fraction) -> (String, Region, Vec<String>) {
+    let value = format!("Fraction {:.2}", fraction.value);
+    let first = match fraction.depth {
+        Some(depth) => {
+            let reads = plural(depth, "read");
+            format!("{value} · {} {reads}", grouped(u64::from(depth)))
+        }
+        None => value,
+    };
+    let span = Region::between(fraction.position, fraction.position + 1);
+    let lines = vec![first, genotype(sample, fraction.call)];
+    ("B-allele frequency".to_owned(), span, lines)
+}
+
 /// The card of a PCR product: its size, its strand, its mismatches and its primers.
 fn product_content(
     (forward, reverse): (&str, &str),
@@ -666,6 +687,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             groups,
             difference,
         } => difference_content(name, groups, difference),
+        Detail::Fraction { sample, fraction } => fraction_content(sample, fraction),
         Detail::Match {
             pattern,
             span,

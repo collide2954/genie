@@ -13,7 +13,8 @@ use genie_formats::fields::Field;
 use genie_render::features::Mode;
 use genie_render::samples::Rows;
 use genie_render::{
-    alignments, contacts, features, links, manhattan, sashimi, segments, signal, variants,
+    alignments, contacts, features, fractions, links, manhattan, sashimi, segments, signal,
+    variants,
 };
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, StreamExt};
@@ -32,7 +33,7 @@ use crate::reference::{self, Reference};
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Change, Content, Loaded, Pile, Scope, Source, Track};
+use crate::track::{self, Calls, Change, Content, Loaded, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
 use super::view::{
@@ -484,18 +485,11 @@ impl Genie {
                 (x, y),
             )?,
             Content::Variants(calls) => {
-                let arcs = variants::breakend_height(&calls.variants);
-                if y < arcs {
-                    let name = &session.reference.assembly.contigs()[contig].name;
-                    let breakends = variants::Breakends::new(&calls.variants, name);
-                    let index = breakends.hit(viewport, x, y)?;
-                    variant_detail(track, contig, calls.variants[index].clone(), None)
-                } else {
-                    let rows = &track.rows;
-                    let (index, line) =
-                        variants::hit(viewport, &calls.variants, mode, rows, x, y - arcs)?;
-                    variant_detail(track, contig, calls.variants[index].clone(), line)
-                }
+                let place = (contig, data, calls);
+                variants_detail(session, track, place, (viewport, mode), (x, y))?
+            }
+            Content::Signal(_) if under_density(track, data, y).is_some() => {
+                fraction_detail(track, data, viewport, (x, under_density(track, data, y)?))?
             }
             Content::Signal(data) => {
                 let compared = super::view::group_difference(session, track, panel);
@@ -1274,6 +1268,7 @@ fn detail_fields(
         Detail::Junction(_) => file_fields,
         Detail::Methylation { .. }
         | Detail::Difference { .. }
+        | Detail::Fraction { .. }
         | Detail::Signal { .. }
         | Detail::Match { .. }
         | Detail::Product { .. }
@@ -1362,6 +1357,67 @@ fn read_detail(
     })
 }
 
+/// The card of a variant track under a point: a breakend arc, a dot of the lane of B-allele
+/// frequencies, a site, or the call of a sample.
+fn variants_detail(
+    session: &Session,
+    track: &Track,
+    (contig, data, calls): (usize, &Loaded, &Calls),
+    (viewport, mode): (Viewport, Mode),
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    let arcs = variants::breakend_height(&calls.variants);
+    let room = super::view::fraction_height(data);
+    let under = y - arcs - variants::SITE_HEIGHT;
+    if y < arcs {
+        let name = &session.reference.assembly.contigs()[contig].name;
+        let breakends = variants::Breakends::new(&calls.variants, name);
+        let index = breakends.hit(viewport, x, y)?;
+        return Some(variant_detail(
+            track,
+            contig,
+            calls.variants[index].clone(),
+            None,
+        ));
+    }
+    if (0.0..room).contains(&under) {
+        return fraction_detail(track, data, viewport, (x, under));
+    }
+    let y = if under >= room { y - room } else { y };
+    let rows = &track.rows;
+    let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, y - arcs)?;
+    Some(variant_detail(
+        track,
+        contig,
+        calls.variants[index].clone(),
+        line,
+    ))
+}
+
+/// The height of a point in the lane of B-allele frequencies under the density of a variant
+/// track, or nothing when the point is not in the lane.
+fn under_density(track: &Track, data: &Loaded, y: f32) -> Option<f32> {
+    let room = super::view::fraction_height(data);
+    let (density, _) = super::view::density_heights(track, room);
+    (room > 0.0 && y >= density).then_some(y - density)
+}
+
+/// The card of the dot of a lane of B-allele frequencies under a point of the lane.
+fn fraction_detail(
+    track: &Track,
+    data: &Loaded,
+    viewport: Viewport,
+    at: (f32, f32),
+) -> Option<Detail> {
+    let found = data.fractions.as_deref()?;
+    let index = fractions::hit(viewport, found, at)?;
+    let sample = track.source.samples().get(data.options.baf?)?.clone();
+    Some(Detail::Fraction {
+        sample,
+        fraction: found[index],
+    })
+}
+
 fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Option<Detail> {
     let site = alignments::site_at(viewport, sites, x)?;
     let name = track.shown_modification()?;
@@ -1383,8 +1439,14 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.height = found.height;
     track.hidden = found.hidden;
     track.folder.clone_from(&found.folder);
+    let samples = track.source.samples();
+    let baf = found
+        .baf
+        .as_ref()
+        .and_then(|name| samples.iter().position(|sample| sample == name));
     track.options = track::Options {
         lift: track.options.lift,
+        baf,
         ..found.options
     };
     track.plot = found.plot;

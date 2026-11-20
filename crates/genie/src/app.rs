@@ -4511,6 +4511,7 @@ ORIGIN
             hidden: false,
             folder: None,
             motifs: None,
+            baf: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4608,6 +4609,7 @@ ORIGIN
                 hidden: false,
                 folder: None,
                 motifs: None,
+                baf: None,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),
@@ -6146,6 +6148,7 @@ ORIGIN
             with_contacts(),
             with_table(),
             with_family(),
+            with_fractions(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
@@ -6206,6 +6209,79 @@ ORIGIN
         let loaded = Loaded::variants(region, variants, 2);
         track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
         genie
+    }
+
+    /// A variant track with the B-allele frequency lane of NA2: a dot at rs20, at 0.5 of 30
+    /// reads.
+    fn with_fractions() -> Genie {
+        use genie_core::variant::Fraction;
+        let mut genie = with_variants();
+        let _ = genie.update(Message::TrackChanged(0, Change::Baf(Some(1))));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let dot = Fraction {
+            position: 20,
+            value: 0.5,
+            depth: Some(30),
+            call: Call::Het,
+        };
+        let variants = vec![site(20, vec![Call::Het, Call::Alternate])];
+        let loaded = Loaded {
+            options: track.options,
+            fractions: Some(Arc::from([dot])),
+            ..Loaded::variants(region, variants, 2)
+        };
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    /// The lane of the B-allele frequency of a sample goes between the sites and the rows of
+    /// the samples, and sessions keep its sample.
+    #[test]
+    fn variant_tracks_show_the_b_allele_frequency_of_a_sample() {
+        let height = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            super::view::body_height(session, &session.tracks[0])
+        };
+        let mut genie = with_variants();
+        let plain = height(&genie);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("B-allele frequency").unwrap();
+        let on = Message::TrackChanged(0, Change::Baf(Some(0)));
+        assert!(ui.into_messages().any(|message| message == on));
+        let _ = genie.update(on);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "NA2"));
+        assert!(palette_shows(
+            &mut genie,
+            "allele NA2",
+            "Show the B-allele frequency of NA2"
+        ));
+        let mut genie = with_fractions();
+        assert!((height(&genie) - plain - genie_render::fractions::HEIGHT).abs() < 0.01);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 32.0))));
+        for line in [
+            "B-allele frequency",
+            "Fraction 0.50 · 30 reads",
+            "NA2 · heterozygous",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 68.0))));
+        assert!(shows(&genie, "NA2 · homozygous alternate"));
+        let text = genie.saved().unwrap().text(std::path::Path::new("/data"));
+        assert!(text.contains("baf = NA2"), "{text}");
+        let base = std::path::Path::new("/data");
+        let mut restored = opened();
+        restored.restoring = Some(crate::saved::Saved::parse(&text, base).unwrap());
+        restored.waiting = 1;
+        let _ = restored.update(Message::TrackOpened(Ok(variant_source())));
+        let track = &restored.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.options.baf, Some(1));
+        let _ = genie.update(Message::TrackChanged(0, Change::Baf(None)));
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].options.baf, None);
     }
 
     /// A variant track with rs20 (depth 12) and rs700 (depth 40) loaded on chr1.

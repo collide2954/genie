@@ -7,8 +7,8 @@ use genie_core::{Feature, Region, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, contacts, features, links, manhattan, matches, overview, ruler, samples, sashimi,
-    segments, sequence, signal, translation, variants,
+    alignments, contacts, features, fractions, links, manhattan, matches, overview, ruler, samples,
+    sashimi, segments, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -32,7 +32,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{self, Change, Content, Loaded, Pile, Track, junctions};
+use crate::track::{self, Calls, Change, Content, Loaded, Pile, Track, junctions};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -968,32 +968,21 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         };
         return Body::Hint(words.to_owned());
     }
+    let baf = slot.data(contig).filter(|data| data.options.baf.is_some());
     match slot.data(contig).map(|data| &data.content) {
         Some(Content::Signal(_)) if track.plot.math.is_some_and(is_methylation) => {
             methylation_body(session, track, panel)
         }
         Some(Content::Signal(data)) => {
+            if let Some(loaded) = baf {
+                return density_body(session, track, panel, (&data.summaries, loaded));
+            }
             let height = track.height.unwrap_or(shape.height);
             signal_body(session, track, panel, &data.summaries, height)
         }
         Some(Content::Variants(calls)) => {
-            let arcs = variants::breakend_height(&calls.variants);
-            let mut primitives = if arcs > 0.0 {
-                let name = &session.reference.assembly.contigs()[contig].name;
-                variants::Breakends::new(&calls.variants, name).scene(viewport, track.hue)
-            } else {
-                Vec::new()
-            };
-            let (found, rows) = (&calls.variants, &track.rows);
-            let trios = track.trios_on(contig);
-            let marks = variants::trio_marks(viewport, found, mode, rows, &trios);
-            primitives.extend(
-                marks
-                    .into_iter()
-                    .chain(variants::scene(viewport, found, mode, rows))
-                    .map(|primitive| primitive.lowered(arcs)),
-            );
-            Body::Scene(primitives, shape.height)
+            let height = shape.height;
+            variants_body(session, track, panel, (calls, baf), height)
         }
         Some(Content::Links(found)) => {
             let height = track.height.unwrap_or(shape.height);
@@ -1047,6 +1036,99 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
         None => Body::Space(EMPTY_HEIGHT),
     }
+}
+
+/// The sites of a variant track, its breakend arcs, the calls of its samples and, with its data
+/// of B-allele frequencies, the lane of the frequencies between the sites and the calls.
+fn variants_body(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    (calls, baf): (&Calls, Option<&Loaded>),
+    height: f32,
+) -> Body {
+    let (contig, viewport) = session.view(panel);
+    let mode = track.mode_at(panel, contig);
+    let arcs = variants::breakend_height(&calls.variants);
+    let mut primitives = if arcs > 0.0 {
+        let name = &session.reference.assembly.contigs()[contig].name;
+        variants::Breakends::new(&calls.variants, name).scene(viewport, track.hue)
+    } else {
+        Vec::new()
+    };
+    let (found, rows) = (&calls.variants, &track.rows);
+    let trios = track.trios_on(contig);
+    let mut marks = variants::trio_marks(viewport, found, mode, rows, &trios);
+    marks.extend(variants::scene(viewport, found, mode, rows));
+    let lane = baf.map_or(0.0, fraction_height);
+    primitives.extend(
+        variants::rows_lowered(marks, lane)
+            .into_iter()
+            .map(|primitive| primitive.lowered(arcs)),
+    );
+    if let Some(data) = baf {
+        let top = arcs + variants::SITE_HEIGHT;
+        let shown = fraction_lane(session, track, panel, data);
+        primitives.extend(shown.into_iter().map(|primitive| primitive.lowered(top)));
+    }
+    Body::Scene(primitives, height)
+}
+
+/// The density of a variant track in a wide view, with the lane of its B-allele frequencies
+/// under it.
+fn density_body(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    (summaries, data): (&[genie_core::signal::Summary], &Loaded),
+) -> Body {
+    let (density, total) = density_heights(track, fraction_height(data));
+    let mut primitives = match signal_body(session, track, panel, summaries, density) {
+        Body::Scene(primitives, _) => primitives,
+        Body::Hint(_) | Body::Space(_) | Body::Reads { .. } => Vec::new(),
+    };
+    let shown = fraction_lane(session, track, panel, data);
+    primitives.extend(
+        shown
+            .into_iter()
+            .map(|primitive| primitive.lowered(density)),
+    );
+    Body::Scene(primitives, total)
+}
+
+/// The height of the lane of the B-allele frequencies of a variant track, or 0 without the
+/// lane.
+pub(super) fn fraction_height(data: &Loaded) -> f32 {
+    if data.options.baf.is_some() {
+        fractions::HEIGHT
+    } else {
+        0.0
+    }
+}
+
+/// The lowest density of a variant track over the lane of its B-allele frequencies.
+const LOWEST_DENSITY: f32 = 12.0;
+
+/// The heights of the density of a variant track and of its whole body, with the lane of its
+/// B-allele frequencies under the density. A track height that somebody sets is the height of
+/// the whole body.
+pub(super) fn density_heights(track: &Track, lane: f32) -> (f32, f32) {
+    let total = track.height.unwrap_or(signal::HEIGHT + lane);
+    (
+        (total - lane).max(LOWEST_DENSITY),
+        total.max(LOWEST_DENSITY + lane),
+    )
+}
+
+/// The lane of the B-allele frequencies of a variant track, with the name of its sample.
+fn fraction_lane(session: &Session, track: &Track, panel: usize, data: &Loaded) -> Vec<Primitive> {
+    let (_, viewport) = session.view(panel);
+    let sample = data
+        .options
+        .baf
+        .and_then(|index| track.source.samples().get(index));
+    let label = sample.map_or_else(String::new, |name| format!("B-allele frequency · {name}"));
+    fractions::lane(viewport, data.fractions.as_deref(), track.hue, &label)
 }
 
 /// The coverage and the reads of a read track, or its Sashimi plot.
@@ -1574,6 +1656,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         return Shape::plain(EMPTY_HEIGHT);
     }
     let mode = track.mode_at(panel, contig);
+    let lane = slot.data(contig).map_or(0.0, fraction_height);
     match slot.data(contig).map(|data| &data.content) {
         Some(Content::Features(annotation)) => {
             let rows = if mode == features::Mode::Collapsed {
@@ -1592,14 +1675,13 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Variants(calls)) => {
-            let arcs = variants::breakend_height(&calls.variants);
+            let above = variants::breakend_height(&calls.variants) + variants::SITE_HEIGHT + lane;
             if mode == features::Mode::Collapsed || calls.samples == 0 {
-                return Shape::plain(arcs + variants::SITE_HEIGHT);
+                return Shape::plain(above);
             }
             let row_height = variants::row_height(mode);
             let rows = &track.rows;
-            let fixed =
-                arcs + variants::SITE_HEIGHT + 1.0 + rows.groups.len() as f32 * samples::GROUP_GAP;
+            let fixed = above + 1.0 + rows.groups.len() as f32 * samples::GROUP_GAP;
             Shape {
                 height: fixed + rows.len() as f32 * row_height,
                 rows: rows.len(),
@@ -1652,6 +1734,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 row_height,
             }
         }
+        Some(Content::Signal(_)) if lane > 0.0 => Shape::plain(density_heights(track, lane).1),
         Some(Content::Signal(_)) => Shape::plain(signal::HEIGHT),
         Some(Content::Links(_)) => Shape::plain(links::HEIGHT),
         Some(Content::Junctions(_)) => Shape::plain(junctions::HEIGHT),

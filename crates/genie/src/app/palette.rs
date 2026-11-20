@@ -154,6 +154,35 @@ fn view_actions(track: &Track) -> Vec<Action> {
         .collect()
 }
 
+/// The most samples of a variant track whose B-allele frequency the palette offers.
+const FRACTION_ACTIONS: usize = 500;
+
+/// The actions that show the B-allele frequency of a sample of a variant track, and that
+/// remove the lane.
+fn fraction_actions(track: &Track) -> Vec<Action> {
+    if !track.source.has_variants() {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    let change = move |sample| Message::TrackChanged(id, Change::Baf(sample));
+    let mut actions: Vec<Action> = track
+        .source
+        .samples()
+        .iter()
+        .take(FRACTION_ACTIONS)
+        .enumerate()
+        .map(|(index, sample)| {
+            let words = format!("Show the B-allele frequency of {sample}");
+            Action::new(words, name, change(Some(index)))
+        })
+        .collect();
+    if track.options.baf.is_some() {
+        let words = "Remove the B-allele frequency lane";
+        actions.push(Action::new(words, name, change(None)));
+    }
+    actions
+}
+
 /// The actions of the bases of the reference: find a sequence, BLAT a sequence and design
 /// primers.
 fn sequence_actions() -> [Action; 3] {
@@ -229,6 +258,7 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     )];
     actions.extend(sample_actions(track, fields));
     actions.extend(view_actions(track));
+    actions.extend(fraction_actions(track));
     let source = &track.source;
     if !source.has_signal() && !source.has_links() && !source.has_junctions() {
         actions.extend(

@@ -136,6 +136,7 @@ impl Genie {
                     height: track.height,
                     options: Options {
                         lift: 0,
+                        baf: None,
                         ..track.options
                     },
                     plot: Plot {
@@ -159,6 +160,10 @@ impl Genie {
                         let ids = ids.filter_map(|&at| Some(file.set.motifs.get(at)?.id.clone()));
                         (ids.collect(), file.p)
                     }),
+                    baf: track
+                        .options
+                        .baf
+                        .and_then(|index| track.source.samples().get(index).cloned()),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

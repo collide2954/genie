@@ -394,7 +394,13 @@ fn kind_height(track: &Track) -> f32 {
         let difference = f32::from(u8::from(compares_groups(track)));
         READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
-        VARIANTS_HEIGHT
+        let rows = fraction_rows(track);
+        let lane = if rows == 0 {
+            0.0
+        } else {
+            rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
+        };
+        VARIANTS_HEIGHT + lane
     } else if track.source.is_bedmethyl() {
         SIGNAL_HEIGHT + choices + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if matches!(track.source.made(), Some(Made::Gc(_))) {
@@ -650,37 +656,91 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     items
 }
 
+/// The most samples that the menu of a variant track lists for the lane of B-allele
+/// frequencies.
+const FRACTION_SAMPLES: usize = 8;
+
+/// The samples that the menu lists for the lane of B-allele frequencies: up to
+/// `FRACTION_SAMPLES` around the sample that shows.
+fn fraction_choices(count: usize, shown: usize) -> std::ops::Range<usize> {
+    let start = shown
+        .saturating_sub(FRACTION_SAMPLES / 2)
+        .min(count.saturating_sub(FRACTION_SAMPLES));
+    start..(start + FRACTION_SAMPLES).min(count)
+}
+
+/// The number of the items of the lane of B-allele frequencies in the menu of a variant track:
+/// the item that adds or removes the lane, and the samples while it shows.
+fn fraction_rows(track: &Track) -> usize {
+    let count = track.source.samples().len();
+    match track.options.baf {
+        _ if count == 0 => 0,
+        Some(shown) if count > 1 => 1 + fraction_choices(count, shown).len(),
+        _ => 1,
+    }
+}
+
+/// The item that adds or removes the lane of B-allele frequencies of a variant track and,
+/// while the lane shows, the samples that it can show.
+fn fraction_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    let samples = track.source.samples();
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    let (id, shown) = (track.id, track.options.baf);
+    let change = Change::Baf(if shown.is_some() { None } else { Some(0) });
+    let message = Message::TrackChanged(id, change);
+    let mut items = vec![item("B-allele frequency", message, shown.is_some(), true)];
+    if let Some(shown) = shown
+        && samples.len() > 1
+    {
+        items.extend(fraction_choices(samples.len(), shown).map(|index| {
+            let message = Message::TrackChanged(id, Change::Baf(Some(index)));
+            choice(samples[index].clone(), message, index == shown)
+        }));
+    }
+    items.push(separator());
+    items
+}
+
+/// An indented item on one line, cut at the edge of the menu, in the style of a chosen item
+/// when it is chosen.
+fn choice<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Message> {
+    button(text(label).size(12).wrapping(text::Wrapping::None))
+        .width(Length::Fill)
+        .padding(iced::Padding {
+            top: 3.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: 16.0,
+        })
+        .clip(true)
+        .style(if chosen { style::chosen } else { style::ghost })
+        .on_press(message)
+        .into()
+}
+
 /// The number of menu items for a tag that groups or colors the reads of a track.
 fn tag_items(track: &Track) -> usize {
     usize::from(matches!(track.options.group, Grouping::Tag(_)))
         + usize::from(track.options.color.is_some())
 }
 
-pub fn view<'a>(
+/// The items of the kind of a track: its modes, the style of a signal, the normalizations of a
+/// Hi-C map, the columns of a table, the range of a copy number track, or the lane of B-allele
+/// frequencies of a variant track.
+fn kind_items<'a>(
     track: &Track,
     mode: Mode,
     place: &Place,
     range: Option<&(String, String)>,
-    sections: Vec<Section>,
-) -> Element<'a, Message> {
+) -> Column<'a, Message> {
     let id = track.id;
-    let size = height(track, &sections);
-    let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
-        item(label, Message::TrackChanged(id, change), chosen, enabled)
-    };
-    let modes =
-        MODES.map(|(label, choice)| item(label, Change::Mode(choice), choice == mode, true));
-    let current = track.hue;
-    let swatches = Hue::ALL.map(|hue| {
-        button(space())
-            .width(18)
-            .height(18)
-            .padding(0)
-            .style(move |theme, status| style::swatch(theme, status, hue, hue == current))
-            .on_press(Message::TrackChanged(id, Change::Hue(hue)))
-            .into()
+    let modes = MODES.map(|(label, choice)| {
+        let message = Message::TrackChanged(id, Change::Mode(choice));
+        item(label, message, choice == mode, true)
     });
-    let kind = if track.source.is_bedmethyl() {
+    if track.source.is_bedmethyl() {
         signal_items(track, range).extend(methyl_items(track))
     } else if let Some(Made::Gc(window)) = track.source.made() {
         signal_items(track, range).extend(window_items(id, *window))
@@ -703,9 +763,38 @@ pub fn view<'a>(
             separator()
         ]
         .spacing(1)
+    } else if track.source.has_variants() {
+        column![column(modes).spacing(1), separator()]
+            .spacing(1)
+            .extend(fraction_items(track))
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
+    }
+}
+
+pub fn view<'a>(
+    track: &Track,
+    mode: Mode,
+    place: &Place,
+    range: Option<&(String, String)>,
+    sections: Vec<Section>,
+) -> Element<'a, Message> {
+    let id = track.id;
+    let size = height(track, &sections);
+    let item = |label: &'a str, change: Change, chosen: bool, enabled: bool| {
+        item(label, Message::TrackChanged(id, change), chosen, enabled)
     };
+    let current = track.hue;
+    let swatches = Hue::ALL.map(|hue| {
+        button(space())
+            .width(18)
+            .height(18)
+            .padding(0)
+            .style(move |theme, status| style::swatch(theme, status, hue, hue == current))
+            .on_press(Message::TrackChanged(id, Change::Hue(hue)))
+            .into()
+    });
+    let kind = kind_items(track, mode, place, range);
     let mut content = top_items(track).push(kind).extend(sample_items(track));
     if track.source.has_reads() {
         content = content.extend(read_items(track, place));

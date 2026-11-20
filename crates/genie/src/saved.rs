@@ -86,6 +86,8 @@ pub struct SavedTrack {
     /// The IDs of the picked motifs of a motif track (none for all motifs) and its threshold
     /// of p.
     pub motifs: Option<(Vec<String>, f64)>,
+    /// The sample of the lane of B-allele frequencies of a variant track.
+    pub baf: Option<String>,
 }
 
 impl SavedTrack {
@@ -109,6 +111,7 @@ impl SavedTrack {
             hidden: false,
             folder: None,
             motifs: None,
+            baf: None,
         }
     }
 }
@@ -183,6 +186,7 @@ impl Saved {
                     hidden: section.value("hidden") == Some("on"),
                     folder: section.value("folder").map(str::to_owned),
                     motifs: motif_picks(section),
+                    baf: section.value("baf").map(str::to_owned),
                 })
             })
             .collect();
@@ -368,6 +372,44 @@ fn comparison(section: &Section) -> Option<(usize, Operation)> {
     Some((other, operation))
 }
 
+/// The entries of how a track shows its data that differ from the defaults, except the colors
+/// of the file.
+fn plot_entries(plot: &Plot) -> Vec<(&'static str, String)> {
+    let on = || "on".to_owned();
+    let mut entries = Vec::new();
+    if plot.style == Style::Line {
+        entries.push(("style", "line".to_owned()));
+    }
+    if plot.linked {
+        entries.push(("scale", "shared".to_owned()));
+    }
+    if let Some(range) = plot.range {
+        entries.push(("range", format!("{} {}", range.min, range.max)));
+    }
+    if !plot.look.pairs {
+        entries.push(("pairs", "off".to_owned()));
+    }
+    if plot.look.mods {
+        entries.push(("modifications", on()));
+    }
+    if plot.look.difference {
+        entries.push(("methylation difference", on()));
+    }
+    if plot.sashimi {
+        entries.push(("sashimi", on()));
+    }
+    if plot.isoforms {
+        entries.push(("isoforms", on()));
+    }
+    if plot.junction_reads > 1 {
+        entries.push(("junction reads", plot.junction_reads.to_string()));
+    }
+    if let Some(viewpoint) = plot.viewpoint {
+        entries.push(("viewpoint", (viewpoint + 1).to_string()));
+    }
+    entries
+}
+
 /// The entries of the section of a track.
 fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)> {
     let mut entries = match &track.location {
@@ -399,38 +441,12 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     entries.extend(motif_entries(track.motifs.as_ref()));
     entries.extend(option_entries(track.options));
-    if track.plot.style == Style::Line {
-        entries.push(("style", "line".to_owned()));
-    }
-    if track.plot.linked {
-        entries.push(("scale", "shared".to_owned()));
-    }
-    if let Some(range) = track.plot.range {
-        entries.push(("range", format!("{} {}", range.min, range.max)));
-    }
-    if !track.plot.look.pairs {
-        entries.push(("pairs", "off".to_owned()));
-    }
-    if track.plot.look.mods {
-        entries.push(("modifications", "on".to_owned()));
-    }
-    if track.plot.look.difference {
-        entries.push(("methylation difference", "on".to_owned()));
-    }
-    if track.plot.sashimi {
-        entries.push(("sashimi", "on".to_owned()));
-    }
-    if track.plot.isoforms {
-        entries.push(("isoforms", "on".to_owned()));
-    }
-    if track.plot.junction_reads > 1 {
-        entries.push(("junction reads", track.plot.junction_reads.to_string()));
-    }
-    if let Some(viewpoint) = track.plot.viewpoint {
-        entries.push(("viewpoint", (viewpoint + 1).to_string()));
-    }
+    entries.extend(plot_entries(&track.plot));
     if let Some(name) = &track.modification {
         entries.push(("methylation", name.clone()));
+    }
+    if let Some(name) = &track.baf {
+        entries.push(("baf", name.clone()));
     }
     if let Some(name) = &track.normalization {
         entries.push(("normalization", name.clone()));

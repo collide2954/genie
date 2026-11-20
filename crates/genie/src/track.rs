@@ -557,6 +557,7 @@ impl Options {
             Change::Ratio => options.contacts.ratio = !options.contacts.ratio,
             Change::Column(pick) => options.table = pick,
             Change::Mapq(floor) => options.mapq = floor,
+            Change::Baf(sample) => options.baf = sample,
             Change::Color(name) => {
                 options.color = if options.color == Some(name) {
                     None
@@ -1729,6 +1730,8 @@ pub enum Change {
     Group(Grouping),
     /// The lowest MAPQ of the reads that show.
     Mapq(u8),
+    /// Show the B-allele frequency of a sample of a variant track in a lane, or remove the lane.
+    Baf(Option<usize>),
     /// Color the reads by the values of a tag, or stop when the tag already colors them.
     Color([u8; 2]),
     /// Normalize a Hi-C map with the normalization at this place in the list of the file.
@@ -1828,6 +1831,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             track.forget();
         }
         Change::Mapq(_)
+        | Change::Baf(_)
         | Change::Color(_)
         | Change::Normalization(_)
         | Change::Ratio
