@@ -5,6 +5,7 @@ mod band;
 pub mod codon;
 pub mod composition;
 pub mod contact;
+pub mod cpg;
 pub mod dotplot;
 pub mod effect;
 mod feature;
