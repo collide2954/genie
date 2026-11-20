@@ -1,8 +1,8 @@
 use std::io::{BufRead, Read, Seek};
-use std::str::Split;
+use std::str::{FromStr, Split};
 
 use genie_core::Region;
-use genie_core::variant::{Call, Variant};
+use genie_core::variant::{Call, Fraction, Reads, Variant};
 
 use crate::annotations::{self, Layout};
 use crate::bgzf::Bgzf;
@@ -195,6 +195,65 @@ pub fn query<R: Read + Seek>(
     Ok(variants)
 }
 
+/// The contig of a record and the B-allele frequency of one of its samples, from the GT of the
+/// sample and its AD, DP, VAF, AF or BAF values. Nothing for a header line, for a record
+/// without the sample, or for a site that gives no fraction.
+pub fn fraction(line: &str, sample: usize) -> Option<(&str, Fraction)> {
+    let mut fields = line.split('\t');
+    let contig = fields
+        .next()
+        .filter(|contig| !contig.is_empty() && !contig.starts_with('#'))?;
+    let position: u64 = fields.next()?.parse().ok()?;
+    let format = fields.nth(6)?;
+    let values = fields.nth(sample)?;
+    let mut call = Call::Missing;
+    let mut reads = Reads::default();
+    for (key, value) in format.split(':').zip(values.split(':')) {
+        match key {
+            "GT" => call = Call::parse(value),
+            "AD" => reads.alleles = numbers(value),
+            "DP" => reads.depth = value.parse().ok(),
+            "VAF" | "AF" | "BAF" if reads.fractions.is_empty() => reads.fractions = numbers(value),
+            _ => {}
+        }
+    }
+    let fraction = Fraction::new(position.saturating_sub(1), call, &reads)?;
+    Some((contig, fraction))
+}
+
+/// The numbers of a list of values, with nothing for a missing value.
+fn numbers<T: FromStr>(value: &str) -> Vec<Option<T>> {
+    value.split(',').map(|item| item.parse().ok()).collect()
+}
+
+/// The B-allele frequencies of a sample in a region, through the index of the file.
+pub fn fractions<R: Read + Seek>(
+    index: &Index,
+    reader: &mut Bgzf<R>,
+    (contig, region): (&str, Region),
+    sample: usize,
+) -> Result<Vec<Fraction>, Error> {
+    let mut found = Vec::new();
+    index.query(reader, contig, region, |line| {
+        found.extend(fraction(line, sample).map(|(_, fraction)| fraction));
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+/// The B-allele frequencies of a sample in all of a file without an index.
+pub fn read_fractions(reader: impl BufRead, sample: usize) -> Result<Table<Fraction>, Error> {
+    let mut rows = Vec::new();
+    lines(reader, |_, line| {
+        if let Some((contig, fraction)) = fraction(line, sample) {
+            let span = Region::between(fraction.position, fraction.position + 1);
+            rows.push((contig.to_owned(), span, fraction));
+        }
+        Ok(())
+    })?;
+    Ok(Table::new(rows))
+}
+
 pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Error> {
     let mut samples = Vec::new();
     let mut infos = Vec::new();
@@ -292,7 +351,10 @@ mod tests {
     use genie_core::Region;
     use genie_core::variant::{Call, Sv};
 
-    use super::{extent, fields, header, names, parse, query, read_table};
+    use super::{
+        extent, fields, fraction, fractions, header, names, parse, query, read_fractions,
+        read_table,
+    };
     use crate::bgzf::Bgzf;
     use crate::bgzf::tests::{block, file};
     use crate::fields::Field;
@@ -541,6 +603,68 @@ mod tests {
         let found = query(&index, &mut reader, "chr1", Region::between(12, 20), &[]).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].span, Region::between(9, 13));
+    }
+
+    #[test]
+    fn records_give_the_b_allele_frequency_of_a_sample() {
+        let gatk = "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT:AD:DP:GQ:PL\t\
+                    0/1:12,10:25:99:0,30,300\t1/1:0,31:31:90:300,90,0";
+        let (contig, first) = fraction(gatk, 0).unwrap();
+        let facts = (contig, first.position, first.depth, first.call);
+        assert_eq!(facts, ("chr1", 99, Some(22), Call::Het));
+        assert!((first.value - 10.0 / 22.0).abs() < 1e-6);
+        let (_, second) = fraction(gatk, 1).unwrap();
+        assert_eq!((second.value, second.call), (1.0, Call::Alternate));
+        assert_eq!(fraction(gatk, 2), None);
+        let deepvariant = "chr1\t7\t.\tC\tT\t40\tPASS\t.\tGT:GQ:DP:AD:VAF:PL\t\
+                           0/1:40:30:16,14:0.466667:40,0,50";
+        let (_, found) = fraction(deepvariant, 0).unwrap();
+        assert_eq!(found.depth, Some(30));
+        assert!((found.value - 14.0 / 30.0).abs() < 1e-6);
+        let array = "chr2\t5\trs9\tG\tA\t.\t.\t.\tGT:BAF:LRR\t1/1:0.97:0.12";
+        let (_, found) = fraction(array, 0).unwrap();
+        assert_eq!((found.value, found.depth), (0.97, None));
+        for line in [
+            "chr1\t9\t.\tA\tG\t.\t.\t.\tGT:AD\t./.:0,20",
+            "chr1\t9\t.\tA\tG\t.\t.\t.\tGT:AD\t0/1:3,4",
+            "chr1\t9\t.\tA\tG\t.\t.\t.\tGT:AD:DP\t0/1",
+            "chr1\t9\t.\tA\tG\t.\t.\t.",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1",
+        ] {
+            assert_eq!(fraction(line, 0), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn fractions_come_through_an_index_or_from_all_of_a_file() {
+        let text = "##fileformat=VCFv4.2\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1\n\
+            chr1\t10\t.\tA\tG\t.\tPASS\t.\tGT:AD\t0/1:10,10\n\
+            chr1\t50\t.\tC\tT\t.\tPASS\t.\tGT:AD\t0/1:1,1\n\
+            chr1\t90\t.\tG\tA\t.\tPASS\t.\tGT:AD\t1/1:0,12\n\
+            chr2\t5\t.\tT\tC\t.\tPASS\t.\tGT:AD\t0/0:15,0\n";
+        let all = read_fractions(text.as_bytes(), 0).unwrap();
+        let found: Vec<(u64, f32)> = all
+            .query("chr1", Region::between(0, 100))
+            .iter()
+            .map(|site| (site.position, site.value))
+            .collect();
+        assert_eq!(found, [(9, 0.5), (89, 1.0)]);
+        assert_eq!(all.query("chr2", Region::between(0, 10)).len(), 1);
+        let data: String = text
+            .lines()
+            .skip(2)
+            .filter(|line| line.starts_with("chr1"))
+            .flat_map(|line| [line, "\n"])
+            .collect();
+        let end = (block(data.as_bytes()).len() as u64) << 16;
+        let bins: Bins = &[(4681, &[(0, end)])];
+        let index = index(VCF, &["chr1"], &[(bins, &[0])]);
+        let mut reader = Bgzf::new(Cursor::new(file(&[data.as_bytes()])));
+        let region = ("chr1", Region::between(40, 100));
+        let found = fractions(&index, &mut reader, region, 0).unwrap();
+        let places: Vec<u64> = found.iter().map(|site| site.position).collect();
+        assert_eq!(places, [89]);
     }
 
     #[test]

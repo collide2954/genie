@@ -5,7 +5,7 @@
 use std::io::{ErrorKind, Read, Seek};
 
 use genie_core::Region;
-use genie_core::variant::{Call, Variant};
+use genie_core::variant::{Call, Fraction, Reads, Variant};
 
 use crate::annotations::{self, Layout};
 use crate::bgzf::Bgzf;
@@ -248,21 +248,78 @@ fn genotypes(
         if key == Some("GT") {
             let mut calls = Vec::with_capacity(samples);
             for _ in 0..samples {
-                let alleles: Vec<String> = values
-                    .ints(kind, count)?
-                    .into_iter()
-                    .map(|allele| match allele {
-                        Some(value) if value >> 1 > 0 => ((value >> 1) - 1).to_string(),
-                        _ => ".".to_owned(),
-                    })
-                    .collect();
-                calls.push(Call::parse(&alleles.join("/")));
+                calls.push(call_of(&values.ints(kind, count)?));
             }
             return Ok(calls);
         }
         values.take(width(kind)? * count * samples)?;
     }
     Ok(vec![Call::Missing; samples])
+}
+
+/// The call of the GT values of a sample: each allele as (allele + 1) << 1 with the phase in the
+/// low bit, and 0 for a missing allele.
+fn call_of(alleles: &[Option<i32>]) -> Call {
+    let alleles: Vec<String> = alleles
+        .iter()
+        .map(|allele| match allele {
+            Some(value) if value >> 1 > 0 => ((value >> 1) - 1).to_string(),
+            _ => ".".to_owned(),
+        })
+        .collect();
+    Call::parse(&alleles.join("/"))
+}
+
+/// The B-allele frequency of a sample of a record, from its GT and its AD, DP, VAF, AF or BAF
+/// values. Nothing for a record without the sample, or for a site that gives no fraction.
+fn fraction(
+    bytes: &[u8],
+    shared: usize,
+    header: &Header,
+    sample: usize,
+) -> Result<Option<Fraction>, Error> {
+    let (_, start, _) = place(bytes)?;
+    let layout = Values {
+        data: &bytes[..shared],
+        at: 20,
+    }
+    .u32()?;
+    let (formats, samples) = (layout >> 24, (layout & 0x00FF_FFFF) as usize);
+    if sample >= samples {
+        return Ok(None);
+    }
+    let mut values = Values {
+        data: &bytes[shared..],
+        at: 0,
+    };
+    let mut call = Call::Missing;
+    let mut reads = Reads::default();
+    let count = |value: Option<i32>| value.and_then(|value| u32::try_from(value).ok());
+    for _ in 0..formats {
+        let key = values.int()?.and_then(|place| header.string(place));
+        let (kind, length) = values.kind()?;
+        let size = width(kind)? * length;
+        values.take(size * sample)?;
+        let integers = matches!(kind, INT8 | INT16 | INT32);
+        match key {
+            Some("GT") if integers => call = call_of(&values.ints(kind, length)?),
+            Some("AD") if integers => {
+                let alleles = values.ints(kind, length)?;
+                reads.alleles = alleles.into_iter().map(count).collect();
+            }
+            Some("DP") if integers => {
+                reads.depth = values.ints(kind, length)?.first().copied().and_then(count);
+            }
+            Some("VAF" | "AF" | "BAF") if kind == FLOAT && reads.fractions.is_empty() => {
+                reads.fractions = values.floats(length)?;
+            }
+            _ => {
+                values.take(size)?;
+            }
+        }
+        values.take(size * (samples - sample - 1))?;
+    }
+    Ok(Fraction::new(start, call, &reads))
 }
 
 impl Header {
@@ -275,18 +332,18 @@ impl Header {
     }
 }
 
-/// The variants of a region, with the CSI index of the file.
-pub fn query<R: Read + Seek>(
+/// Gives each record of a region, with the CSI index of the file, to `each`: its bytes and the
+/// length of its shared part.
+fn records<R: Read + Seek>(
     index: &Index,
     reader: &mut Bgzf<R>,
     header: &Header,
     (contig, region): (&str, Region),
-    layouts: &[Layout],
-) -> Result<Vec<Variant>, Error> {
+    mut each: impl FnMut(&[u8], usize) -> Result<(), Error>,
+) -> Result<(), Error> {
     let Some(wanted) = header.contigs.iter().position(|name| name == contig) else {
-        return Ok(Vec::new());
+        return Ok(());
     };
-    let mut found = Vec::new();
     let mut bytes = Vec::new();
     for chunk in index.chunks(contig, region) {
         if reader.virtual_offset() != chunk.start {
@@ -298,14 +355,62 @@ pub fn query<R: Read + Seek>(
             };
             let (place, start, end) = place(&bytes)?;
             if place != wanted || start >= region.end() {
-                return Ok(found);
+                return Ok(());
             }
             if end > region.start() {
-                found.push(record(&bytes, shared, header, layouts)?.1);
+                each(&bytes, shared)?;
             }
         }
     }
+    Ok(())
+}
+
+/// The variants of a region, with the CSI index of the file.
+pub fn query<R: Read + Seek>(
+    index: &Index,
+    reader: &mut Bgzf<R>,
+    header: &Header,
+    place: (&str, Region),
+    layouts: &[Layout],
+) -> Result<Vec<Variant>, Error> {
+    let mut found = Vec::new();
+    records(index, reader, header, place, |bytes, shared| {
+        found.push(record(bytes, shared, header, layouts)?.1);
+        Ok(())
+    })?;
     Ok(found)
+}
+
+/// The B-allele frequencies of a sample in a region, with the CSI index of the file.
+pub fn fractions<R: Read + Seek>(
+    index: &Index,
+    reader: &mut Bgzf<R>,
+    header: &Header,
+    place: (&str, Region),
+    sample: usize,
+) -> Result<Vec<Fraction>, Error> {
+    let mut found = Vec::new();
+    records(index, reader, header, place, |bytes, shared| {
+        found.extend(fraction(bytes, shared, header, sample)?);
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+/// The B-allele frequencies of a sample in all of a file without an index.
+pub fn read_fractions(mut reader: impl Read, sample: usize) -> Result<Table<Fraction>, Error> {
+    let header = header(&mut reader)?;
+    let mut rows = Vec::new();
+    let mut bytes = Vec::new();
+    while let Some(shared) = next(&mut reader, &mut bytes)? {
+        let (contig, ..) = place(&bytes)?;
+        if let Some(fraction) = fraction(&bytes, shared, &header, sample)? {
+            let name = header.contigs.get(contig).ok_or_else(bad)?.clone();
+            let span = Region::between(fraction.position, fraction.position + 1);
+            rows.push((name, span, fraction));
+        }
+    }
+    Ok(Table::new(rows))
 }
 
 /// All variants of a file, for a file without an index.
@@ -500,7 +605,7 @@ pub(crate) mod tests {
     use genie_core::Region;
     use genie_core::variant::{Call, Sv};
 
-    use super::{header, names, query, read_table};
+    use super::{fraction, fractions, header, names, query, read_fractions, read_table};
     use crate::annotations;
     use crate::bgzf::{self, Bgzf};
     use crate::binning::{Builder, Scheme, put};
@@ -861,6 +966,116 @@ pub(crate) mod tests {
         }
         assert_eq!(std::fs::read(folder.join("calls.bcf")).unwrap(), data);
         assert_eq!(std::fs::read(folder.join("calls.bcf.csi")).unwrap(), index);
+    }
+
+    const FORMATS: &str = "##fileformat=VCFv4.2\n\
+        ##FILTER=<ID=PASS,Description=\"All filters passed\",IDX=0>\n\
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\",IDX=1>\n\
+        ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"Allelic depths\",IDX=2>\n\
+        ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read depth\",IDX=3>\n\
+        ##FORMAT=<ID=VAF,Number=A,Type=Float,Description=\"Allele fraction\",IDX=4>\n\
+        ##contig=<ID=chr1,length=10000,IDX=0>\n\
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\n";
+
+    /// The magic, the length and the text of a header.
+    fn header_bytes(text: &str) -> Vec<u8> {
+        let text = format!("{text}\0");
+        let mut bytes = b"BCF\x02\x02".to_vec();
+        bytes.extend(u32::try_from(text.len()).unwrap().to_le_bytes());
+        bytes.extend(text.as_bytes());
+        bytes
+    }
+
+    /// A record of two samples with FORMAT fields of a key, a type, a count and the values of
+    /// both samples, and the length of its shared part.
+    fn sampled(position: i32, fields: &[(i32, u8, usize, Vec<u8>)]) -> (Vec<u8>, usize) {
+        let record = Record {
+            contig: 0,
+            position,
+            length: 1,
+            quality: None,
+            id: ".",
+            alleles: &["A", "G"],
+            filters: &[0],
+            infos: Vec::new(),
+            calls: [[0, 0], [0, 0]],
+        };
+        let mut bytes = shared(&record);
+        let layout = (u32::try_from(fields.len()).unwrap() << 24) | 2;
+        bytes[20..24].copy_from_slice(&layout.to_le_bytes());
+        let size = bytes.len();
+        for (key, kind, count, values) in fields {
+            int(&mut bytes, *key);
+            descriptor(&mut bytes, *kind, *count);
+            bytes.extend(values);
+        }
+        (bytes, size)
+    }
+
+    fn floats(values: [u32; 2]) -> Vec<u8> {
+        values.iter().flat_map(|bits| bits.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn records_give_the_b_allele_frequency_of_a_sample() {
+        let header = header(&mut Cursor::new(header_bytes(FORMATS))).unwrap();
+        let counted = sampled(
+            99,
+            &[
+                (1, 1, 2, vec![2, 4, 2, 2]),
+                (2, 1, 2, vec![12, 10, 30, 0]),
+                (3, 1, 1, vec![25, 30]),
+                (4, 5, 1, floats([0.45_f32.to_bits(), 0x7F80_0001])),
+            ],
+        );
+        let (bytes, size) = (&counted.0, counted.1);
+        let first = fraction(bytes, size, &header, 0).unwrap().unwrap();
+        let facts = (first.position, first.depth, first.call);
+        assert_eq!(facts, (99, Some(22), Call::Het));
+        assert!((first.value - 10.0 / 22.0).abs() < 1e-6);
+        let second = fraction(bytes, size, &header, 1).unwrap().unwrap();
+        let facts = (second.value, second.depth, second.call);
+        assert_eq!(facts, (0.0, Some(30), Call::Reference));
+        assert_eq!(fraction(bytes, size, &header, 2).unwrap(), None);
+        let parts = sampled(
+            5,
+            &[
+                (1, 1, 2, vec![2, 4, 4, 4]),
+                (3, 1, 1, vec![25, 9]),
+                (4, 5, 1, floats([0.45_f32.to_bits(), 0.9_f32.to_bits()])),
+            ],
+        );
+        let found = fraction(&parts.0, parts.1, &header, 0).unwrap().unwrap();
+        assert_eq!((found.value, found.depth), (0.45, Some(25)));
+        assert_eq!(fraction(&parts.0, parts.1, &header, 1).unwrap(), None);
+        let mut stream = header_bytes(FORMATS);
+        for (bytes, size) in [&counted, &parts] {
+            stream.extend(u32::try_from(*size).unwrap().to_le_bytes());
+            stream.extend(u32::try_from(bytes.len() - size).unwrap().to_le_bytes());
+            stream.extend(bytes);
+        }
+        let all = read_fractions(Cursor::new(stream), 0).unwrap();
+        let places: Vec<u64> = all
+            .query("chr1", Region::between(0, 1_000))
+            .iter()
+            .map(|site| site.position)
+            .collect();
+        assert_eq!(places, [5, 99]);
+    }
+
+    /// The test file has no AD, DP or fraction values, so no site has a fraction.
+    #[test]
+    fn regions_without_read_counts_give_no_fractions() {
+        let (data, index) = file();
+        let mut reader = Bgzf::new(Cursor::new(data));
+        let found = header(&mut reader).unwrap();
+        let index = Index::read(Cursor::new(index))
+            .unwrap()
+            .named(&found.contigs)
+            .unwrap();
+        let region = ("chr1", Region::between(0, 10_000));
+        let fractions = fractions(&index, &mut reader, &found, region, 0).unwrap();
+        assert_eq!(fractions, []);
     }
 
     #[test]

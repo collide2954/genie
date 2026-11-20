@@ -22,6 +22,8 @@ const SHIFT: u32 = 14;
 const CSI_DEPTH: u32 = 6;
 const UNKNOWN_LENGTH: u64 = 100 << 30;
 const LENGTH_MARGIN: u64 = 256;
+/// The most bytes of a BGZF block.
+const BLOCK: u64 = 1 << 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
@@ -417,6 +419,15 @@ impl Index {
             .map_or_else(Vec::new, |id| self.references[id].chunks(region))
     }
 
+    /// About how many bytes of the file hold the records of a region: the bytes from the first
+    /// block to the last block of each of its chunks, and a whole block more for the last.
+    pub fn data_size(&self, name: &str, region: Region) -> u64 {
+        self.chunks(name, region)
+            .iter()
+            .map(|chunk| (chunk.end >> 16).saturating_sub(chunk.start >> 16) + BLOCK)
+            .sum()
+    }
+
     /// Whether the index counts the records of its contigs, as indexes from htslib do. Only
     /// then can it give densities.
     pub fn has_counts(&self) -> bool {
@@ -655,6 +666,14 @@ pub mod tests {
         let bare = super::tests::index(BED, &["chr1"], &[(bins, &[0])]);
         assert!(!bare.has_counts());
         assert!(bare.density("chr1", region(0, 100), 10, 100).is_none());
+    }
+
+    #[test]
+    fn data_sizes_count_the_blocks_of_the_chunks_of_a_region() {
+        let bins: Bins = &[(4681, &[(0, 3 << 16), (5 << 16, (9 << 16) + 20)])];
+        let index = super::tests::index(VCF, &["chr1"], &[(bins, &[0])]);
+        assert_eq!(index.data_size("chr1", region(0, 100)), 3 + 4 + 2 * 65_536);
+        assert_eq!(index.data_size("chrX", region(0, 100)), 0);
     }
 
     #[test]
