@@ -56,6 +56,8 @@ pub enum Reason {
     Hdf5Feature,
     NotCooler,
     NotGenBank,
+    NotMotifs,
+    BadMotif,
 }
 
 impl fmt::Display for Error {
@@ -142,6 +144,8 @@ impl fmt::Display for Reason {
             Self::Hdf5Feature => "the HDF5 file uses a storage that genie cannot read",
             Self::NotCooler => "the file is not a cooler file of Hi-C contacts",
             Self::NotGenBank => "the file is not a GenBank or EMBL file",
+            Self::NotMotifs => "the file is not a MEME, JASPAR or HOMER file of DNA motifs",
+            Self::BadMotif => "a motif matrix is not valid",
         })
     }
 }

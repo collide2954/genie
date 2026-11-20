@@ -42,6 +42,7 @@ pub mod ini;
 pub mod json;
 pub mod junctions;
 pub mod md5;
+pub mod motifs;
 pub mod paf;
 pub mod png;
 pub mod psl;
