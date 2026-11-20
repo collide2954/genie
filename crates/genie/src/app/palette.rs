@@ -258,6 +258,10 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     )];
     actions.extend(sample_actions(track, fields));
     actions.extend(view_actions(track));
+    if crate::menu::can_review(track) {
+        let review = Message::Review(super::Reviewing::Open(id));
+        actions.push(Action::new("Review the variants", name, review));
+    }
     actions.extend(fraction_actions(track));
     let source = &track.source;
     if !source.has_signal() && !source.has_links() && !source.has_junctions() {

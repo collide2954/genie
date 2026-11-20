@@ -61,6 +61,7 @@ mod orders;
 mod palette;
 mod primers;
 mod regions;
+mod review;
 mod samples;
 mod sessions;
 pub mod snapshot;
@@ -85,6 +86,7 @@ pub(crate) use made::{Making, additions};
 pub(crate) use motifs::Motifing;
 use orders::Answer;
 pub(crate) use primers::Priming;
+pub(crate) use review::Reviewing;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 pub(crate) use table::Tabling;
 pub(crate) use track_list::Listing;
@@ -179,6 +181,8 @@ pub struct Genie {
     motif_dialog: Option<motifs::MotifDialog>,
     /// The dialog of primer design and its work.
     primers: Option<primers::PrimerDialog>,
+    /// The review of the variants of a track.
+    review: Option<review::Reviewer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +292,7 @@ impl Default for Genie {
             enzymes: made::Enzymes::default(),
             motif_dialog: None,
             primers: None,
+            review: None,
         }
     }
 }
@@ -824,6 +829,8 @@ pub enum Message {
     Motifs(Motifing),
     /// Designs primers around a target.
     Primers(Priming),
+    /// Reviews the variants of a track.
+    Review(Reviewing),
     /// The sequence and the track of a GenBank or EMBL file.
     RecordsOpened(
         Location,
@@ -1184,6 +1191,7 @@ impl Genie {
             Message::Made(making) => return self.making(making),
             Message::Motifs(motifing) => return self.motifing(motifing),
             Message::Primers(priming) => return self.priming(priming),
+            Message::Review(reviewing) => return self.reviewing(reviewing),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
             }
@@ -1490,7 +1498,7 @@ mod tests {
     use super::{
         Address, Arranging, Caching, Copying, Drafting, Figuring, Filtering, Genie, Lane, Lifting,
         Message, Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming,
-        Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
+        Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -6284,6 +6292,55 @@ ORIGIN
         assert_eq!(track.options.baf, Some(1));
         let _ = genie.update(Message::TrackChanged(0, Change::Baf(None)));
         assert_eq!(genie.session.as_ref().unwrap().tracks[0].options.baf, None);
+    }
+
+    /// The review bar goes to a variant and marks it with keys and a note. The mark shows over
+    /// the site, in the card, in the session and in a TSV file, and undo takes it back.
+    #[test]
+    fn the_review_bar_marks_variants_with_keys_and_notes() {
+        use genie_core::review::Verdict;
+        let height = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            super::view::body_height(session, &session.tracks[0])
+        };
+        let reviews = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].reviews.len();
+        let mut genie = with_variants();
+        genie.session.as_mut().unwrap().tracks[0].contigs[0] = Some("chr1".to_owned());
+        let plain = height(&genie);
+        assert!(palette_shows(&mut genie, "review", "Review the variants"));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Review variants…").unwrap();
+        let open = Message::Review(Reviewing::Open(0));
+        assert!(ui.into_messages().any(|message| message == open));
+        let _ = genie.update(open);
+        assert!(shows(&genie, "Finding a variant…"));
+        let found = Ok(Some((0, Region::between(20, 21))));
+        let _ = genie.update(Message::Jumped(0, true, found));
+        assert!(shows(&genie, "chr1:21 A > G rs20"));
+        let _ = genie.update(Message::Command(Command::Mark(Verdict::False)));
+        assert_eq!(reviews(&genie), 1);
+        let strip = genie_render::variants::REVIEW_HEIGHT;
+        assert!((height(&genie) - plain - strip).abs() < 0.01);
+        let _ = genie.update(Message::Review(Reviewing::Note("strand bias".to_owned())));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.5, 9.0))));
+        assert!(shows(&genie, "Review note"));
+        let text = genie.saved().unwrap().text(std::path::Path::new("/data"));
+        let line = "review = false chr1 21 A G rs20 strand bias";
+        assert!(text.contains(line), "{text}");
+        let scratch = crate::scratch::Scratch::new("review-export");
+        let path = scratch.file("calls review.tsv", "");
+        let picked = Reviewing::ExportPicked(Some(path.clone()));
+        let _ = genie.update(Message::Review(picked));
+        let exported = std::fs::read_to_string(&path).unwrap();
+        let row = "chr1\t21\trs20\tA\tG\tfalse\tstrand bias";
+        assert!(exported.contains(row), "{exported}");
+        let _ = genie.update(Message::Command(Command::Undo));
+        let _ = genie.update(Message::Command(Command::Undo));
+        assert_eq!(reviews(&genie), 0);
+        let _ = genie.update(Message::Review(Reviewing::Close));
+        let _ = genie.update(Message::Command(Command::Mark(Verdict::True)));
+        assert_eq!(reviews(&genie), 0);
     }
 
     /// A variant track with rs20 (depth 12) and rs700 (depth 40) loaded on chr1.

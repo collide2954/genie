@@ -228,7 +228,7 @@ pub fn match_bases(bases: &[u8], hit: &Hit) -> String {
     String::from_utf8_lossy(&letters).into_owned()
 }
 
-fn small<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
+pub(super) fn small<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
     button(icon::view(icon, 12.0))
         .width(BUTTON)
         .height(BUTTON)

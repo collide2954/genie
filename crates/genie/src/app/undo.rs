@@ -176,6 +176,7 @@ fn gesture(message: &Message) -> Option<Gesture> {
         Message::TrackDraft(super::Drafting::Name(_)) => Some((0, 0)),
         Message::TrackDraft(super::Drafting::Height(_)) => Some((0, 1)),
         Message::Lane(id, super::Lane::Resized(_)) => Some((*id, 2)),
+        Message::Review(super::Reviewing::Note(_)) => Some((0, 3)),
         _ => None,
     }
 }
@@ -213,7 +214,8 @@ fn records(message: &Message) -> bool {
         | Message::TrackList(..)
         | Message::Folder(..)
         | Message::Made(..)
-        | Message::Motifs(..) => true,
+        | Message::Motifs(..)
+        | Message::Review(..) => true,
         _ => false,
     }
 }

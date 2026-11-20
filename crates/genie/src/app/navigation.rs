@@ -100,6 +100,13 @@ impl Genie {
             Command::Undo => self.undo(false),
             Command::Redo => self.undo(true),
             Command::TrackList => self.listing(super::track_list::Listing::Toggle),
+            Command::Mark(verdict) => {
+                if self.review.is_some() {
+                    self.mark_review(Some(verdict));
+                }
+                Task::none()
+            }
+            Command::Step(forward) => self.step_review(forward),
             Command::Diagnostics => {
                 if cfg!(debug_assertions) {
                     self.diagnostics = !self.diagnostics;
@@ -556,11 +563,14 @@ impl Genie {
         match result {
             Ok(Some((contig, span))) => {
                 let span_bp = span.len() as f64;
-                let target = if span_bp <= session.destination().span() {
+                let target = if let Some(around) = self.review_span(id, span) {
+                    around
+                } else if span_bp <= session.destination().span() {
                     Span::Position(span.start() + span.len() / 2)
                 } else {
                     Span::Region(span)
                 };
+                self.reviewed_at(id, contig, span);
                 let task = self.go_to(Target {
                     contig,
                     span: target,

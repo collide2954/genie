@@ -96,6 +96,8 @@ pub fn groups() -> [Group; 6] {
                     format!("{}, {}", keys('F'), keys('B')),
                     "Next or previous feature",
                 ),
+                ("T, F, U".to_owned(), "Mark a variant in review"),
+                ("N, P".to_owned(), "Next or previous variant in review"),
                 ("Click the card".to_owned(), "Keep a card open"),
                 ("Right-click the sequence".to_owned(), "Strand and frames"),
             ],

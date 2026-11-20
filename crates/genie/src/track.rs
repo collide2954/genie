@@ -10,7 +10,7 @@ use genie_core::interaction::Interaction;
 use genie_core::isoform::{Chain, Chains, Isoform};
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
-use genie_core::review::{Review, Reviews};
+use genie_core::review::{Key, Review, Reviews};
 use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
@@ -1323,6 +1323,13 @@ impl Track {
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// The key of a variant of a contig in view in the review marks: the name of the contig in
+    /// the file, the start and the alleles.
+    pub fn review_key(&self, contig: usize, variant: &Variant) -> Option<Key> {
+        let name = self.contigs.get(contig)?.as_deref()?;
+        Some(Key::of(name, variant))
     }
 
     /// The review mark of a variant of a contig in view.

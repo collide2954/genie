@@ -571,6 +571,13 @@ impl Genie {
         if self.pinned.as_ref().is_some_and(|card| card.track == id) {
             self.pinned = None;
         }
+        if self
+            .review
+            .as_ref()
+            .is_some_and(|review| review.track == id)
+        {
+            self.review = None;
+        }
     }
 
     pub(super) fn fetch(&mut self) -> Task<Message> {
@@ -1368,8 +1375,9 @@ fn variants_detail(
     (x, y): (f32, f32),
 ) -> Option<Detail> {
     let arcs = variants::breakend_height(&calls.variants);
+    let top = arcs + super::view::review_strip(track);
     let room = super::view::fraction_height(data);
-    let under = y - arcs - variants::SITE_HEIGHT;
+    let under = y - top - variants::SITE_HEIGHT;
     if y < arcs {
         let name = &session.reference.assembly.contigs()[contig].name;
         let breakends = variants::Breakends::new(&calls.variants, name);
@@ -1386,7 +1394,8 @@ fn variants_detail(
     }
     let y = if under >= room { y - room } else { y };
     let rows = &track.rows;
-    let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, y - arcs)?;
+    let below = (y - top).max(0.0);
+    let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, below)?;
     Some(variant_detail(
         track,
         contig,

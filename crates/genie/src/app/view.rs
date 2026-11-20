@@ -402,10 +402,15 @@ impl Genie {
     fn session_body<'a>(&'a self, session: &'a Session) -> Element<'a, Message> {
         let main = if let Some(plot) = session.shown_plot() {
             super::dotplot::plot_view(session, plot)
-        } else if let Some(table) = self.table_view(session).or_else(|| self.dmr_view(session)) {
-            column![self.browser(session), table].into()
         } else {
-            self.browser(session)
+            let mut main = column![self.browser(session)];
+            if let Some(bar) = self.review_bar(session) {
+                main = main.push(hairline()).push(bar);
+            }
+            if let Some(table) = self.table_view(session).or_else(|| self.dmr_view(session)) {
+                main = main.push(table);
+            }
+            main.into()
         };
         let line = || {
             container(space())
@@ -1057,6 +1062,20 @@ fn variants_body(
         Vec::new()
     };
     let (found, rows) = (&calls.variants, &track.rows);
+    let strip = review_strip(track);
+    if strip > 0.0 {
+        let verdicts: Vec<_> = found
+            .iter()
+            .map(|variant| {
+                track
+                    .review_of(contig, variant)
+                    .map(|review| review.verdict)
+            })
+            .collect();
+        let marks = variants::review_marks(viewport, found, &verdicts);
+        primitives.extend(marks.into_iter().map(|primitive| primitive.lowered(arcs)));
+    }
+    let top = arcs + strip;
     let trios = track.trios_on(contig);
     let mut marks = variants::trio_marks(viewport, found, mode, rows, &trios);
     marks.extend(variants::scene(viewport, found, mode, rows));
@@ -1064,14 +1083,24 @@ fn variants_body(
     primitives.extend(
         variants::rows_lowered(marks, lane)
             .into_iter()
-            .map(|primitive| primitive.lowered(arcs)),
+            .map(|primitive| primitive.lowered(top)),
     );
     if let Some(data) = baf {
-        let top = arcs + variants::SITE_HEIGHT;
         let shown = fraction_lane(session, track, panel, data);
-        primitives.extend(shown.into_iter().map(|primitive| primitive.lowered(top)));
+        let under = top + variants::SITE_HEIGHT;
+        primitives.extend(shown.into_iter().map(|primitive| primitive.lowered(under)));
     }
     Body::Scene(primitives, height)
+}
+
+/// The height of the strip of review marks over the sites of a variant track: none until the
+/// track has a mark.
+pub(super) fn review_strip(track: &Track) -> f32 {
+    if track.reviews.is_empty() {
+        0.0
+    } else {
+        variants::REVIEW_HEIGHT
+    }
 }
 
 /// The density of a variant track in a wide view, with the lane of its B-allele frequencies
@@ -1675,7 +1704,8 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             }
         }
         Some(Content::Variants(calls)) => {
-            let above = variants::breakend_height(&calls.variants) + variants::SITE_HEIGHT + lane;
+            let arcs = variants::breakend_height(&calls.variants) + review_strip(track);
+            let above = arcs + variants::SITE_HEIGHT + lane;
             if mode == features::Mode::Collapsed || calls.samples == 0 {
                 return Shape::plain(above);
             }

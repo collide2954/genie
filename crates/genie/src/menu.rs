@@ -7,8 +7,8 @@ use iced::widget::{Column, button, column, container, opaque, pin, row, space, t
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Dmring, Filtering, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming, Sampling,
-    Tabling, active, arranging_words,
+    Dmring, Filtering, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming, Reviewing,
+    Sampling, Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
@@ -148,11 +148,13 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         LINK_HEIGHT
     } else {
         0.0
-    } + if track.shows_difference() {
-        LINK_HEIGHT
-    } else {
-        0.0
-    } + if has_enzymes(track) { LINK_HEIGHT } else { 0.0 }
+    } + if can_review(track) { LINK_HEIGHT } else { 0.0 }
+        + if track.shows_difference() {
+            LINK_HEIGHT
+        } else {
+            0.0
+        }
+        + if has_enzymes(track) { LINK_HEIGHT } else { 0.0 }
         + if track.source.motifs().is_some() {
             2.0 * LINK_HEIGHT
         } else {
@@ -863,6 +865,10 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
         let open = Message::Table(Tabling::Open(id));
         items = items.push(item("Variant table", open, false, true));
     }
+    if can_review(track) {
+        let review = Message::Review(Reviewing::Open(id));
+        items = items.push(item("Review variants…", review, false, true));
+    }
     if track.source.is_paf() {
         let open = Message::Plot(Plotting::Open(id));
         items = items.push(item("Dot plot", open, false, true));
@@ -911,6 +917,11 @@ fn threshold_row<'a>(id: u64, p: f64) -> Element<'a, Message> {
         })
         .align_y(Alignment::Center)
         .into()
+}
+
+/// Whether genie can review the variants of a track: a variant track without a lift.
+pub fn can_review(track: &Track) -> bool {
+    track.source.has_variants() && track.lift.is_none()
 }
 
 /// True for a track of the cuts of restriction enzymes, which can change its enzymes.

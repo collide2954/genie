@@ -1,3 +1,4 @@
+use genie_core::review::Verdict;
 use iced::keyboard::key::Named;
 use iced::keyboard::{Key, Modifiers};
 
@@ -36,6 +37,10 @@ pub enum Command {
     Redo,
     /// Shows the tracks panel, or hides it.
     TrackList,
+    /// Marks the variant in review: T for true, F for false and U for not sure.
+    Mark(Verdict),
+    /// Goes to the next (N) or the previous (P) variant in review.
+    Step(bool),
 }
 
 pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
@@ -75,12 +80,19 @@ pub fn command(key: &Key, modifiers: Modifiers) -> Option<Command> {
         }
         Key::Character("z" | "Z") if modifiers.command() => Some(Command::Undo),
         Key::Character("y" | "Y") if modifiers.command() => Some(Command::Redo),
+        _ if modifiers.command() || modifiers.alt() => None,
+        Key::Character("t" | "T") => Some(Command::Mark(Verdict::True)),
+        Key::Character("f" | "F") => Some(Command::Mark(Verdict::False)),
+        Key::Character("u" | "U") => Some(Command::Mark(Verdict::Unsure)),
+        Key::Character("n" | "N") => Some(Command::Step(true)),
+        Key::Character("p" | "P") => Some(Command::Step(false)),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use genie_core::review::Verdict;
     use iced::keyboard::key::Named;
     use iced::keyboard::{Key, Modifiers};
 
@@ -126,7 +138,22 @@ mod tests {
             (next, previous),
             (Some(Command::NextFeature), Some(Command::PreviousFeature))
         );
-        assert_eq!(command(&character("f"), Modifiers::empty()), None);
+        assert_eq!(command(&character("b"), Modifiers::empty()), None);
+    }
+
+    #[test]
+    fn plain_letters_mark_and_step_in_a_review() {
+        let plain = |text| command(&character(text), Modifiers::empty());
+        assert_eq!(plain("t"), Some(Command::Mark(Verdict::True)));
+        assert_eq!(plain("f"), Some(Command::Mark(Verdict::False)));
+        assert_eq!(plain("u"), Some(Command::Mark(Verdict::Unsure)));
+        assert_eq!(plain("n"), Some(Command::Step(true)));
+        assert_eq!(plain("p"), Some(Command::Step(false)));
+        let shifted = command(&character("T"), Modifiers::SHIFT);
+        assert_eq!(shifted, Some(Command::Mark(Verdict::True)));
+        assert_eq!(command(&character("n"), Modifiers::ALT), None);
+        let url = command(&character("u"), Modifiers::COMMAND);
+        assert_eq!(url, Some(Command::OpenUrl));
     }
 
     #[test]
