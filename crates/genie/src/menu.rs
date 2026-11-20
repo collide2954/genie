@@ -799,7 +799,7 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
 fn threshold_row<'a>(id: u64, p: f64) -> Element<'a, Message> {
     let choices = THRESHOLDS.map(|choice| {
         button(
-            text(choice.to_string())
+            text(format!("{choice:e}"))
                 .size(12)
                 .wrapping(text::Wrapping::None),
         )

@@ -517,7 +517,7 @@ letter-probability matrix: alength= 4 w= 8 nsites= 100
         let _ = genie.update(Message::TrackMenu(id, iced::Point::new(100.0, 100.0)));
         let mut ui = simulator(genie.view());
         ui.click("Motifs…").unwrap();
-        ui.click("0.001").unwrap();
+        ui.click("1e-3").unwrap();
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(messages.contains(&Message::Motifs(Motifing::Pick(id))));
         assert!(messages.contains(&Message::Motifs(Motifing::Threshold(id, 0.001))));
