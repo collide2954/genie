@@ -11,8 +11,8 @@ use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
 use super::{
-    FEATURE_SPAN, Kept, Loaded, MadeFile, PLAIN_LIMIT, Scope, density, is_compressed, plain,
-    tabix_index,
+    FEATURE_SPAN, Kept, Loaded, MadeFile, MotifFile, PLAIN_LIMIT, Scope, density, is_compressed,
+    plain, tabix_index,
 };
 use crate::location::{Location, Reader};
 
@@ -37,6 +37,8 @@ pub enum FeatureFile {
         table: Table<Feature>,
         names: Vec<Entry>,
     },
+    /// The sites of the motifs of a motif file in the reference.
+    Motifs(MotifFile),
 }
 
 impl FeatureFile {
@@ -88,6 +90,7 @@ impl FeatureFile {
             Self::Table { table, .. } | Self::Records { table, .. } => table.contigs(),
             Self::BigBed { index } => index.names(),
             Self::Made(file) => file.contigs(),
+            Self::Motifs(file) => file.contigs(),
         }
     }
 
@@ -96,6 +99,7 @@ impl FeatureFile {
         match self {
             Self::Indexed { index, .. } if !index.has_counts() => FEATURE_SPAN,
             Self::Made(_) => FEATURE_SPAN,
+            Self::Motifs(file) => file.span(),
             _ => u64::MAX,
         }
     }
@@ -103,6 +107,7 @@ impl FeatureFile {
     pub fn has_colors(&self) -> bool {
         match self {
             Self::Made(file) => file.has_colors(),
+            Self::Motifs(file) => file.has_colors(),
             Self::Records { .. } => true,
             _ => matches!(
                 self,
@@ -206,6 +211,7 @@ impl FeatureFile {
                 Ok((region, features))
             }
             Self::Made(file) => file.features(contig, region),
+            Self::Motifs(file) => file.features(contig, region),
         }
     }
 
@@ -213,7 +219,7 @@ impl FeatureFile {
         match self {
             Self::Indexed { kind, .. } => features::names(*kind, Bgzf::new(location.open()?)),
             Self::Table { names, .. } | Self::Records { names, .. } => Ok(names.clone()),
-            Self::Made(_) => Ok(Vec::new()),
+            Self::Made(_) | Self::Motifs(_) => Ok(Vec::new()),
             Self::BigBed { index } => {
                 let size = location.size().unwrap_or(u64::MAX);
                 if index.has_lookup() || size > PLAIN_LIMIT {

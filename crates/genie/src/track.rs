@@ -36,6 +36,7 @@ pub mod junctions;
 mod lift;
 mod links;
 pub mod made;
+pub mod motifs;
 pub(crate) mod reads;
 mod segments;
 mod signal;
@@ -49,6 +50,7 @@ pub use junctions::JunctionFile;
 pub use lift::{Lift, load_lifted};
 pub use links::LinkFile;
 pub use made::{Made, MadeFile};
+pub use motifs::MotifFile;
 pub use reads::ReadFile;
 pub use segments::SegmentFile;
 pub use signal::SignalFile;
@@ -139,6 +141,14 @@ impl Source {
 
     pub fn is_bigbed(&self) -> bool {
         matches!(self.format, Format::Features(FeatureFile::BigBed { .. }))
+    }
+
+    /// The motifs of a track of motif sites.
+    pub fn motifs(&self) -> Option<&MotifFile> {
+        match &self.format {
+            Format::Features(FeatureFile::Motifs(file)) => Some(file),
+            _ => None,
+        }
     }
 
     /// What a track made from the reference shows, or nothing for the track of a file.
@@ -2143,6 +2153,31 @@ pub fn open(location: impl Into<Location>) -> Result<Source, String> {
     open_with(location, None)
 }
 
+/// A track of the sites of the picked motifs of a motif file in the reference, at a threshold of
+/// p. No picks stand for all motifs of the file.
+pub fn motif_sites(
+    location: Location,
+    set: Arc<genie_formats::motifs::MotifSet>,
+    (picks, p): (Vec<usize>, f64),
+    reference: Arc<crate::reference::Reference>,
+) -> Source {
+    let file = MotifFile::new(set, picks, p, reference);
+    Source {
+        name: file.name(&location.name()),
+        location,
+        data: None,
+        format: Format::Features(FeatureFile::Motifs(file)),
+    }
+}
+
+/// True for the files of DNA motifs: by their names, or by their first lines for the text files
+/// of JASPAR.
+pub fn is_motifs(location: &Location) -> bool {
+    let name = location.name();
+    genie_formats::motifs::is_name(&name)
+        || (inner_extension(&name, &["txt"]) && genie_formats::motifs::sniff(&head(location, 4)))
+}
+
 /// A track that genie makes from the bases of the reference, with no file.
 pub fn make(made: Made, reference: Arc<crate::reference::Reference>) -> Source {
     let (location, name) = (Location::Made(made.key()), made.name());
@@ -2297,6 +2332,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
         }
         Format::Columns(file) => file.fields(feature.extra()),
         Format::Features(FeatureFile::Made(file)) => file.fields(feature.extra()),
+        Format::Features(FeatureFile::Motifs(_)) => MotifFile::fields(feature.extra()),
         Format::Features(FeatureFile::Records { .. }) => {
             genie_formats::genbank::fields(feature.extra())
         }

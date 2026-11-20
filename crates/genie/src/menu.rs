@@ -7,14 +7,15 @@ use iced::widget::{Column, button, column, container, opaque, pin, row, space, t
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Dmring, Filtering, Lifting, Making, Message, Plotting, Ranging, Renaming, Sampling, Tabling,
-    active, arranging_words,
+    Dmring, Filtering, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming, Sampling,
+    Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
 use crate::track::made::WINDOWS;
+use crate::track::motifs::THRESHOLDS;
 use crate::track::{Change, Format, Grouping, Made, Pick, Toggle, Track, tag_name};
 
 pub const WIDTH: f32 = 168.0;
@@ -151,7 +152,12 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         LINK_HEIGHT
     } else {
         0.0
-    } + if has_enzymes(track) { LINK_HEIGHT } else { 0.0 };
+    } + if has_enzymes(track) { LINK_HEIGHT } else { 0.0 }
+        + if track.source.motifs().is_some() {
+            2.0 * LINK_HEIGHT
+        } else {
+            0.0
+        };
     2.0 * LINK_HEIGHT
         + table
         + SEPARATOR_HEIGHT
@@ -780,7 +786,42 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
         let open = Message::Made(Making::Enzymes(Some(id)));
         items = items.push(item("Enzymes…", open, false, true));
     }
+    if let Some(file) = track.source.motifs() {
+        let open = Message::Motifs(Motifing::Pick(id));
+        items = items
+            .push(item("Motifs…", open, false, true))
+            .push(threshold_row(id, file.p));
+    }
     items.push(separator())
+}
+
+/// A row that sets the threshold of p of the sites of a motif track.
+fn threshold_row<'a>(id: u64, p: f64) -> Element<'a, Message> {
+    let choices = THRESHOLDS.map(|choice| {
+        button(
+            text(choice.to_string())
+                .size(12)
+                .wrapping(text::Wrapping::None),
+        )
+        .padding([3, 4])
+        .style(if (choice - p).abs() < choice / 100.0 {
+            style::chosen
+        } else {
+            style::ghost
+        })
+        .on_press(Message::Motifs(Motifing::Threshold(id, choice)))
+        .into()
+    });
+    row![text("p <").size(12).wrapping(text::Wrapping::None)]
+        .push(space::horizontal())
+        .extend(choices)
+        .spacing(1)
+        .padding(iced::Padding {
+            left: 8.0,
+            ..iced::Padding::ZERO
+        })
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// True for a track of the cuts of restriction enzymes, which can change its enzymes.
@@ -791,7 +832,11 @@ fn has_enzymes(track: &Track) -> bool {
 /// Whether genie can move the data of a track from another assembly to the assembly in view.
 /// A track made from the reference is always on the assembly in view.
 fn can_lift(track: &Track) -> bool {
-    !track.source.has_reads() && !track.source.has_contacts() && track.source.made().is_none()
+    let source = &track.source;
+    !source.has_reads()
+        && !source.has_contacts()
+        && source.made().is_none()
+        && source.motifs().is_none()
 }
 
 fn lift_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {

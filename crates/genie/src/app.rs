@@ -54,6 +54,7 @@ mod gnomad;
 mod hubs;
 mod lift;
 mod made;
+mod motifs;
 mod navigation;
 mod offline;
 mod orders;
@@ -80,6 +81,7 @@ pub(crate) use export::Figuring;
 pub(crate) use gnomad::Gnomading;
 pub(crate) use lift::Lifting;
 pub(crate) use made::{Making, additions};
+pub(crate) use motifs::Motifing;
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 pub(crate) use table::Tabling;
@@ -171,6 +173,8 @@ pub struct Genie {
     gnomad: gnomad::Lookups,
     /// The dialog of the restriction enzymes of a track made from the reference.
     enzymes: made::Enzymes,
+    /// The dialog of the motifs of a motif file, when it is open.
+    motif_dialog: Option<motifs::MotifDialog>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +195,8 @@ enum Popup {
     Blat,
     /// The dialog of the restriction enzymes.
     Enzymes,
+    /// The dialog of the motifs of a motif file.
+    Motifs,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -274,6 +280,7 @@ impl Default for Genie {
             track_list: None,
             gnomad: gnomad::Lookups::default(),
             enzymes: made::Enzymes::default(),
+            motif_dialog: None,
         }
     }
 }
@@ -806,6 +813,8 @@ pub enum Message {
     Dmrs(Dmring),
     /// Adds or changes a track that genie makes from the reference.
     Made(Making),
+    /// Picks the motifs of a motif track, or changes its threshold.
+    Motifs(Motifing),
     /// The sequence and the track of a GenBank or EMBL file.
     RecordsOpened(
         Location,
@@ -1164,6 +1173,7 @@ impl Genie {
             Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Blat(blatting) => return self.blatting(blatting),
             Message::Made(making) => return self.making(making),
+            Message::Motifs(motifing) => return self.motifing(motifing),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
             }
@@ -4490,6 +4500,7 @@ ORIGIN
             lift: None,
             hidden: false,
             folder: None,
+            motifs: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4586,6 +4597,7 @@ ORIGIN
                 lift: None,
                 hidden: false,
                 folder: None,
+                motifs: None,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),

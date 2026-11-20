@@ -270,6 +270,7 @@ impl Genie {
             .or_else(|| self.assembly_dialog())
             .or_else(|| self.blat_dialog())
             .or_else(|| self.enzyme_dialog())
+            .or_else(|| self.motif_dialog_view())
             .or_else(|| self.hub_dialog())
     }
 

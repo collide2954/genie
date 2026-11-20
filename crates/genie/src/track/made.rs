@@ -22,8 +22,8 @@ const SITE_FIELDS: [&str; 4] = ["Site", "Cut after", "Fragment before", "Fragmen
 /// The mark of a repeat that goes on past the bases that genie read.
 const EDGE: &str = "edge";
 const NOTE: &str = "The repeat goes on past the bases that genie read.";
-/// The colors of the enzymes of a track with more than one enzyme.
-const COLORS: [[u8; 3]; 6] = [
+/// The colors of the enzymes or the motifs of a track with more than one of them.
+pub(crate) const COLORS: [[u8; 3]; 6] = [
     [0, 114, 178],
     [213, 94, 0],
     [0, 158, 115],

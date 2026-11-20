@@ -154,6 +154,11 @@ impl Genie {
                         .or_else(|| track.lifting.clone()),
                     hidden: track.hidden,
                     folder: track.folder.clone(),
+                    motifs: track.source.motifs().map(|file| {
+                        let ids = file.picks.iter();
+                        let ids = ids.filter_map(|&at| Some(file.set.motifs.get(at)?.id.clone()));
+                        (ids.collect(), file.p)
+                    }),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

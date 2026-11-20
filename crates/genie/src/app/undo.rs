@@ -207,7 +207,8 @@ fn records(message: &Message) -> bool {
         | Message::Table(..)
         | Message::TrackList(..)
         | Message::Folder(..)
-        | Message::Made(..) => true,
+        | Message::Made(..)
+        | Message::Motifs(..) => true,
         _ => false,
     }
 }

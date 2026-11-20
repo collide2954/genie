@@ -83,6 +83,9 @@ pub struct SavedTrack {
     pub hidden: bool,
     /// The folder of the track in the tracks panel.
     pub folder: Option<String>,
+    /// The IDs of the picked motifs of a motif track (none for all motifs) and its threshold
+    /// of p.
+    pub motifs: Option<(Vec<String>, f64)>,
 }
 
 impl SavedTrack {
@@ -105,6 +108,7 @@ impl SavedTrack {
             lift: None,
             hidden: false,
             folder: None,
+            motifs: None,
         }
     }
 }
@@ -178,6 +182,7 @@ impl Saved {
                     lift: section.value("lift").map(|text| read(text, base)),
                     hidden: section.value("hidden") == Some("on"),
                     folder: section.value("folder").map(str::to_owned),
+                    motifs: motif_picks(section),
                 })
             })
             .collect();
@@ -316,6 +321,34 @@ fn plot(section: &Section) -> Plot {
     }
 }
 
+/// The entries of the picked motifs of a motif track and of its threshold of p.
+fn motif_entries(motifs: Option<&(Vec<String>, f64)>) -> Vec<(&'static str, String)> {
+    let Some((ids, p)) = motifs else {
+        return Vec::new();
+    };
+    let picked = if ids.is_empty() {
+        "all".to_owned()
+    } else {
+        ids.join(" ")
+    };
+    vec![("motifs", picked), ("p", p.to_string())]
+}
+
+/// The picked motifs of a motif track and its threshold of p: `motifs = all` for all motifs.
+fn motif_picks(section: &Section) -> Option<(Vec<String>, f64)> {
+    let ids = section
+        .value("motifs")?
+        .split_whitespace()
+        .filter(|id| *id != "all")
+        .map(str::to_owned)
+        .collect();
+    let p = section
+        .value("p")
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(crate::track::motifs::P);
+    Some((ids, p))
+}
+
 /// The comparison of a signal track: the place of the other track, counted from 1 in the file,
 /// and the operation, by default the log2 ratio.
 fn comparison(section: &Section) -> Option<(usize, Operation)> {
@@ -364,6 +397,7 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     if let Some(folder) = &track.folder {
         entries.push(("folder", folder.clone()));
     }
+    entries.extend(motif_entries(track.motifs.as_ref()));
     entries.extend(option_entries(track.options));
     if track.plot.style == Style::Line {
         entries.push(("style", "line".to_owned()));
@@ -888,6 +922,19 @@ mod tests {
         assert!(text.contains("isoforms = on"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(isoforms));
         assert!(!saved().text(&base()).contains("isoforms"));
+    }
+
+    #[test]
+    fn motif_tracks_keep_their_motifs_and_their_p() {
+        let mut motifs = saved();
+        motifs.tracks[0].motifs = Some((vec!["MA0139.1".to_owned(), "MA0102.4".to_owned()], 0.001));
+        motifs.tracks[1].motifs = Some((Vec::new(), 0.0001));
+        let text = motifs.text(&base());
+        assert!(text.contains("motifs = MA0139.1 MA0102.4"), "{text}");
+        assert!(text.contains("p = 0.001\n"), "{text}");
+        assert!(text.contains("motifs = all"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(motifs));
+        assert!(!saved().text(&base()).contains("motifs ="));
     }
 
     #[test]

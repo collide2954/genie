@@ -26,7 +26,7 @@ use crate::tiles::TILING;
 use crate::track;
 
 use super::sessions::local;
-use super::{Genie, Message, Sampling};
+use super::{Genie, Message, Motifing, Sampling};
 
 pub(super) const USAGE: &str = "Usage: genie snapshot SESSION REGIONS FOLDER [--width POINTS] [--theme light|dark] [--format png|svg]";
 const WIDTH: f32 = 1280.0;
@@ -220,6 +220,17 @@ impl Genie {
         let _ = self.update(Message::Opened(Ok(Arc::new(reference))));
         for location in tracks {
             if matches!(location, Location::Made(_)) {
+                continue;
+            }
+            if track::is_motifs(&location) {
+                let set = super::motifs::read(&location).map(Arc::new);
+                if let Err(error) = &set {
+                    report(super::cannot_open(
+                        &format!("the motifs {}", location.name()),
+                        error,
+                    ));
+                }
+                let _ = self.update(Message::Motifs(Motifing::Read(location, set)));
                 continue;
             }
             let name = location.name();
@@ -535,6 +546,50 @@ mod tests {
         let svg = fs::read_to_string(folder.join("site.svg")).unwrap();
         assert!(svg.contains(">EcoRI sites<"), "{svg}");
         assert!(svg.contains(">EcoRI<"), "{svg}");
+    }
+
+    #[test]
+    fn snapshots_show_the_sites_of_motif_tracks() {
+        let scratch = Scratch::new("snapshot-motifs");
+        let bases = format!("{}GATTACA{}", "T".repeat(500), "T".repeat(493));
+        scratch.file("ref.fa", format!(">chr1\n{bases}\n"));
+        scratch.file("ref.fa.fai", FAI);
+        let rows = [
+            "0.01 0.01 0.97 0.01",
+            "0.97 0.01 0.01 0.01",
+            "0.01 0.01 0.01 0.97",
+            "0.01 0.01 0.01 0.97",
+            "0.97 0.01 0.01 0.01",
+            "0.01 0.97 0.01 0.01",
+            "0.97 0.01 0.01 0.01",
+        ];
+        scratch.file(
+            "gata.meme",
+            format!(
+                "MEME version 4\n\nMOTIF M1 GATA\nletter-probability matrix: w= 7\n{}\n",
+                rows.join("\n")
+            ),
+        );
+        let session = scratch.file(
+            "work.genie",
+            "[session]\nreference = ref.fa\n[track]\nfile = gata.meme\nmotifs = M1\np = 0.0001\n",
+        );
+        let regions = scratch.file("regions.bed", "chr1\t480\t540\tsite\n");
+        let folder = session.with_file_name("pictures");
+        let request = Request {
+            session,
+            regions,
+            folder: folder.clone(),
+            width: 400.0,
+            dark: false,
+            svg: true,
+        };
+        let mut lines = Vec::new();
+        assert_eq!(run(&request, &mut |line| lines.push(line)), Ok(0));
+        assert_eq!(lines, ["Saved site.svg (1 of 1)."]);
+        let svg = fs::read_to_string(folder.join("site.svg")).unwrap();
+        assert!(svg.contains(">GATA motifs<"), "{svg}");
+        assert!(svg.contains(">GATA<"), "{svg}");
     }
 
     #[test]

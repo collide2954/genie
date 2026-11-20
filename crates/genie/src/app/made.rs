@@ -143,29 +143,11 @@ impl Genie {
     /// Shows a track made from the reference with other settings. A name that somebody gave
     /// the track stays.
     fn remake(&mut self, id: u64, made: Made) -> Task<Message> {
-        self.close_menus();
-        let Some(session) = &mut self.session else {
+        let Some(session) = &self.session else {
             return Task::none();
         };
         let source = Arc::new(track::make(made, Arc::clone(&session.reference)));
-        let open = session
-            .tracks
-            .iter()
-            .any(|track| track.id != id && track.source == source);
-        if open {
-            let name = source.name.clone();
-            return self.inform(format!("The track {name} is already open."));
-        }
-        let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) else {
-            return Task::none();
-        };
-        if track.name == track.source.name {
-            track.name.clone_from(&source.name);
-        }
-        track.source = source;
-        track.drop_data();
-        self.forget(id);
-        self.fetch_features()
+        self.swap_source(id, source)
     }
 
     /// Opens the dialog of the enzymes for the track of sites with this ID, with its enzymes, or

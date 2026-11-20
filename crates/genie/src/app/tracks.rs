@@ -780,6 +780,9 @@ impl Genie {
         if genie_formats::genbank::is_name(&location.name()) {
             return self.open_records(location);
         }
+        if track::is_motifs(&location) {
+            return self.open_motifs(location);
+        }
         if let Some(declared) = self.restored_type(&location) {
             return self.open_restored(location, declared);
         }
@@ -790,6 +793,33 @@ impl Genie {
             return self.open_track(location);
         }
         self.open_reference(location, None)
+    }
+
+    /// Gives a track a new source with other settings, as a track made from the reference with
+    /// a new window, and loads its data again. A name that somebody gave the track stays.
+    pub(super) fn swap_source(&mut self, id: u64, source: Arc<Source>) -> Task<Message> {
+        self.close_menus();
+        let Some(session) = &mut self.session else {
+            return Task::none();
+        };
+        let open = session
+            .tracks
+            .iter()
+            .any(|track| track.id != id && track.source == source);
+        if open {
+            let name = source.name.clone();
+            return self.inform(format!("The track {name} is already open."));
+        }
+        let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) else {
+            return Task::none();
+        };
+        if track.name == track.source.name {
+            track.name.clone_from(&source.name);
+        }
+        track.source = source;
+        track.drop_data();
+        self.forget(id);
+        self.fetch_features()
     }
 
     /// Reads a GenBank or EMBL file in the background: its sequence and its features.

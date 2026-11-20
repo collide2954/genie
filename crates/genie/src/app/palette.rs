@@ -8,13 +8,14 @@ use crate::palette::{self, Action, State};
 use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::track::made::{self, WINDOWS};
+use crate::track::motifs::THRESHOLDS;
 use crate::track::{Change, Made, Toggle, Track};
 use genie_core::grouped;
 
 use super::hubs::Hubbing;
 use super::{
-    Arranging, Assembling, Blatting, Genie, Lifting, Making, Message, Paletting, Popup, Ranging,
-    Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
+    Arranging, Assembling, Blatting, Genie, Lifting, Making, Message, Motifing, Paletting, Popup,
+    Ranging, Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
 };
 
 /// The actions that need no open genome: open files, hubs and assemblies, keys, settings and
@@ -168,9 +169,22 @@ fn made_additions() -> [Action; 4] {
     ]
 }
 
-/// The actions of a track made from the reference: the windows of GC, or its enzymes.
+/// The actions of a track made from the reference: the windows of GC, or its enzymes. The
+/// actions of a motif track: its motifs and its threshold.
 fn made_actions(track: &Track) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
+    if track.source.motifs().is_some() {
+        let mut actions = vec![Action::new(
+            "Change the motifs…",
+            name,
+            Message::Motifs(Motifing::Pick(id)),
+        )];
+        actions.extend(THRESHOLDS.map(|p| {
+            let words = format!("Motif sites with p < {p}");
+            Action::new(words, name, Message::Motifs(Motifing::Threshold(id, p)))
+        }));
+        return actions;
+    }
     match track.source.made() {
         Some(Made::Gc(_)) => WINDOWS
             .map(|size| {
@@ -244,7 +258,8 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
         actions.push(Action::new("Use file colors", name, change(Change::Colors)));
     }
     actions.extend(made_actions(track));
-    if !source.has_reads() && !source.has_contacts() && source.made().is_none() {
+    let own = source.made().is_none() && source.motifs().is_none();
+    if !source.has_reads() && !source.has_contacts() && own {
         let (words, lifting) = if track.lift.is_some() {
             ("Remove lift", Lifting::Stop(id))
         } else {
