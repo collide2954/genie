@@ -73,6 +73,7 @@
 <tr><td>Table track</td><td>Tab-separated tables compressed with bgzip and indexed with <code>tabix -s -b -e</code>, for example the CADD scores (<code>.tsv.gz</code>, <code>.txt.gz</code> and others, with <code>.tbi</code> or <code>.csi</code>)</td></tr>
 <tr><td>GWAS track</td><td>Summary statistics of the GWAS Catalog, PLINK 2 (<code>.glm.linear</code>, <code>.glm.logistic</code>), REGENIE (<code>.regenie</code>), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index</td></tr>
 <tr><td>Copy number track</td><td>SEG (<code>.seg</code>, as from TCGA, DNAcopy or GISTIC); CNVkit (<code>.cns</code>, <code>.cnr</code>); GATK ModelSegments (<code>.seg</code>). Plain or gzip, up to 50 MB</td></tr>
+<tr><td>GenBank and EMBL</td><td>GenBank (<code>.gb</code>, <code>.gbk</code>, <code>.gbff</code>, <code>.genbank</code>) and EMBL (<code>.embl</code>, <code>.emb</code>) files, plain or gzip, up to 512 MB: the sequence and a feature track (see <a href="#genbank-and-embl-files">GenBank and EMBL files</a>)</td></tr>
 <tr><td>Sample table</td><td>Tab or comma separated text with a header line (<code>.tsv</code>, <code>.csv</code>, <code>.txt</code>, <code>.panel</code> from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK <code>.fam</code> and <code>.ped</code>. Plain or gzip, up to 64 MB</td></tr>
 <tr><td>Session</td><td>genie session (<code>.genie</code>)</td></tr>
 </tbody></table></div>
@@ -107,6 +108,17 @@
 <p>A bedMethyl file from <code>modkit pileup</code> is a BED file. To prepare a large bedMethyl track:</p>
 <pre><code>sort -k1,1 -k2,2n calls.bed | bgzip &gt; calls.bedMethyl.gz &amp;&amp; tabix -p bed calls.bedMethyl.gz</code></pre>
 <p>genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.</p>
+<h3 id="genbank-and-embl-files">GenBank and EMBL files</h3>
+<p>A GenBank or EMBL file has the sequence and the features of one or more records, for example a plasmid from SnapGene or Addgene, or a virus or a bacterium from NCBI.</p>
+<ul>
+<li>When you open the file, its sequence becomes the reference and its features a track. Each record is a contig. If the open reference already has the same records, with the same names and lengths, only the track opens. So you can open the GenBank features of a genome that you opened as a FASTA file.</li>
+<li>A record has the name of its accession and version, for example <code>NC_045512.2</code>, as NCBI names the sequence in its FASTA files. A record without an accession, as many plasmid files are, has its LOCUS name, for example <code>pUC19</code>.</li>
+<li>A gene shows as its transcripts: each mRNA, ncRNA or other RNA with its exons, and with the coding part of the CDS that has the same introns. A CDS without a transcript, as in bacteria and viruses, shows on its own. The gene itself does not show again. Other features, such as promoters, origins and repeats, show on their own. The source feature does not show.</li>
+<li>A feature has the name of its gene, its locus tag, its label or its product. A transcript or a CDS also keeps its ID (transcript_id or protein_id), and you can type a name or an ID in the locus box. The card shows the type of the feature and its qualifiers, without the protein sequence.</li>
+<li>Features use the colors that SnapGene, ApE, Benchling and Artemis write in the file. Right-click the track and turn off <b>Use file colors</b> to use the track color.</li>
+<li>A feature that crosses the origin of a circular record shows as two parts, one at each end.</li>
+<li>genie keeps the bases of the file in memory, so the limit is 512 MB.</li>
+</ul>
 <h3 id="paf-alignments">PAF alignments</h3>
 <p>A PAF file from minimap2, wfmash or another aligner shows each alignment on its target sequence, as a feature with the name of the query. So make the PAF file with the reference in view as the target, for example <code>minimap2 -cx asm5 genome.fa other.fa &gt; other.paf</code>.</p>
 <ul>

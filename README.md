@@ -117,6 +117,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | Table track | Tab-separated tables compressed with bgzip and indexed with `tabix -s -b -e`, for example the CADD scores (`.tsv.gz`, `.txt.gz` and others, with `.tbi` or `.csi`) |
 | GWAS track | Summary statistics of the GWAS Catalog, PLINK 2 (`.glm.linear`, `.glm.logistic`), REGENIE (`.regenie`), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index |
 | Copy number track | SEG (`.seg`, as from TCGA, DNAcopy or GISTIC); CNVkit (`.cns`, `.cnr`); GATK ModelSegments (`.seg`). Plain or gzip, up to 50 MB |
+| GenBank and EMBL | GenBank (`.gb`, `.gbk`, `.gbff`, `.genbank`) and EMBL (`.embl`, `.emb`) files, plain or gzip, up to 512 MB: the sequence and a feature track (see [GenBank and EMBL files](#genbank-and-embl-files)) |
 | Sample table | Tab or comma separated text with a header line (`.tsv`, `.csv`, `.txt`, `.panel` from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK `.fam` and `.ped`. Plain or gzip, up to 64 MB |
 | Session | genie session (`.genie`) |
 
@@ -188,6 +189,18 @@ sort -k1,1 -k2,2n calls.bed | bgzip > calls.bedMethyl.gz && tabix -p bed calls.b
 ```
 
 genie shows a bedMethyl track that has a tabix index when the view is 10 Mb or less.
+
+### GenBank and EMBL files
+
+A GenBank or EMBL file has the sequence and the features of one or more records, for example a plasmid from SnapGene or Addgene, or a virus or a bacterium from NCBI.
+
+- When you open the file, its sequence becomes the reference and its features a track. Each record is a contig. If the open reference already has the same records, with the same names and lengths, only the track opens. So you can open the GenBank features of a genome that you opened as a FASTA file.
+- A record has the name of its accession and version, for example `NC_045512.2`, as NCBI names the sequence in its FASTA files. A record without an accession, as many plasmid files are, has its LOCUS name, for example `pUC19`.
+- A gene shows as its transcripts: each mRNA, ncRNA or other RNA with its exons, and with the coding part of the CDS that has the same introns. A CDS without a transcript, as in bacteria and viruses, shows on its own. The gene itself does not show again. Other features, such as promoters, origins and repeats, show on their own. The source feature does not show.
+- A feature has the name of its gene, its locus tag, its label or its product. A transcript or a CDS also keeps its ID (transcript_id or protein_id), and you can type a name or an ID in the locus box. The card shows the type of the feature and its qualifiers, without the protein sequence.
+- Features use the colors that SnapGene, ApE, Benchling and Artemis write in the file. Right-click the track and turn off **Use file colors** to use the track color.
+- A feature that crosses the origin of a circular record shows as two parts, one at each end.
+- genie keeps the bases of the file in memory, so the limit is 512 MB.
 
 ### PAF alignments
 
