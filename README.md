@@ -410,6 +410,18 @@ Push Ctrl+Shift+T (Cmd+Shift+T on macOS) or click the list button in the title b
 - **Export TSV** saves the rows in their order, with all columns, as a tab-separated file.
 - If the view is too wide to show the variants, the table asks you to zoom in.
 
+## B-allele frequency
+
+The B-allele frequency of a sample at a site is the fraction of its reads that carry an allele that is not the reference allele. A heterozygous site is near 0.5, and a homozygous site is near 0 or 1. A change of copy number or a loss of heterozygosity moves the heterozygous sites away from 0.5.
+
+- Right-click a variant track and click **B-allele frequency**. A lane between the sites and the rows of the samples shows a dot for each site of the first sample of the file, from 0 at the bottom to 1 at the top, with a line at 0.5. The lane shows the sites where the sample has a call and 10 reads or more.
+- To show a different sample, click its name under **B-allele frequency** in the track menu. The menu lists up to 8 samples around the sample that shows. The palette has **Show the B-allele frequency of** each sample, for example **Show the B-allele frequency of NA12878**. To remove the lane, click **B-allele frequency** again, or use **Remove the B-allele frequency lane** in the palette.
+- genie gets the fraction from the AD field of the sample: the reads of the other alleles, divided by all its reads. If the sample has no AD values, genie uses its VAF, AF or BAF field, as DeepVariant, Mutect2 or a genotyping array writes it, and its DP field for the reads. A site without reads in the file shows too.
+- In a wide view, the lane is under the density of the track, up to a whole chromosome, if the data of the view is 32 MB or less (8 MB for a file on the web). With more data, the lane tells you to zoom in. genie reads all of a file without an index one time for each sample.
+- When you zoom out, the sites in one pixel at the same height show as one dot.
+- Put the pointer on a dot to see the sample, the fraction, the reads and the call.
+- The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.
+
 ## Sashimi plots
 
 A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.

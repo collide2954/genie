@@ -50,6 +50,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
         &[
             "Tracks",
             "Variant table",
+            "B-allele frequency",
             "Sashimi plots",
             "Isoforms",
             "Reference tracks",

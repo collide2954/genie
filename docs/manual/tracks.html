@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -48,6 +48,7 @@
         <ul>
           <li><a href="#tracks">Tracks</a></li>
           <li><a href="#variant-table">Variant table</a></li>
+          <li><a href="#b-allele-frequency">B-allele frequency</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
@@ -149,6 +150,17 @@
 <li>Click a row to go to its variant.</li>
 <li><b>Export TSV</b> saves the rows in their order, with all columns, as a tab-separated file.</li>
 <li>If the view is too wide to show the variants, the table asks you to zoom in.</li>
+</ul>
+<h2 id="b-allele-frequency">B-allele frequency</h2>
+<p>The B-allele frequency of a sample at a site is the fraction of its reads that carry an allele that is not the reference allele. A heterozygous site is near 0.5, and a homozygous site is near 0 or 1. A change of copy number or a loss of heterozygosity moves the heterozygous sites away from 0.5.</p>
+<ul>
+<li>Right-click a variant track and click <b>B-allele frequency</b>. A lane between the sites and the rows of the samples shows a dot for each site of the first sample of the file, from 0 at the bottom to 1 at the top, with a line at 0.5. The lane shows the sites where the sample has a call and 10 reads or more.</li>
+<li>To show a different sample, click its name under <b>B-allele frequency</b> in the track menu. The menu lists up to 8 samples around the sample that shows. The palette has <b>Show the B-allele frequency of</b> each sample, for example <b>Show the B-allele frequency of NA12878</b>. To remove the lane, click <b>B-allele frequency</b> again, or use <b>Remove the B-allele frequency lane</b> in the palette.</li>
+<li>genie gets the fraction from the AD field of the sample: the reads of the other alleles, divided by all its reads. If the sample has no AD values, genie uses its VAF, AF or BAF field, as DeepVariant, Mutect2 or a genotyping array writes it, and its DP field for the reads. A site without reads in the file shows too.</li>
+<li>In a wide view, the lane is under the density of the track, up to a whole chromosome, if the data of the view is 32 MB or less (8 MB for a file on the web). With more data, the lane tells you to zoom in. genie reads all of a file without an index one time for each sample.</li>
+<li>When you zoom out, the sites in one pixel at the same height show as one dot.</li>
+<li>Put the pointer on a dot to see the sample, the fraction, the reads and the call.</li>
+<li>The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.</li>
 </ul>
 <h2 id="sashimi-plots">Sashimi plots</h2>
 <p>A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.</p>
