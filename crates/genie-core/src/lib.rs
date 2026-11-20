@@ -18,6 +18,7 @@ mod locus;
 mod marks;
 pub mod methylation;
 pub mod modification;
+pub mod motif;
 mod names;
 mod number;
 mod order;
