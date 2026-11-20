@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use genie_core::interaction::Interaction;
+use genie_core::review::Verdict;
 use genie_core::trio::{self, Inheritance, Trio};
 use genie_core::variant::{Call, Kind, Structure, Sv, Variant};
 use genie_core::{Region, Viewport};
@@ -172,6 +173,48 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
         );
     }
     primitives
+}
+
+/// The height of the strip of review marks above the sites.
+pub const REVIEW_HEIGHT: f32 = 4.0;
+
+/// The color of the review mark of a verdict: green for true, vermillion for false and grey for
+/// not sure.
+pub fn verdict_paint(verdict: Verdict) -> Paint {
+    match verdict {
+        Verdict::True => Paint::Hue(Hue::Green),
+        Verdict::False => Paint::Hue(Hue::Vermillion),
+        Verdict::Unsure => Paint::Muted,
+    }
+}
+
+/// The marks of the reviewed variants in a strip above the sites, as wide as the marks of their
+/// sites, with the verdict of each variant in the same order as the variants.
+pub fn review_marks(
+    viewport: Viewport,
+    variants: &[Variant],
+    verdicts: &[Option<Verdict>],
+) -> Vec<Primitive> {
+    let visible = viewport.visible();
+    variants
+        .iter()
+        .zip(verdicts)
+        .filter_map(|(variant, verdict)| {
+            let verdict = (*verdict)?;
+            let span = variant.span;
+            if span.start() > visible.end() || span.end() < visible.start() {
+                return None;
+            }
+            let (x, width) = cell(viewport, span);
+            Some(Primitive::Rect {
+                x,
+                y: 0.0,
+                width,
+                height: REVIEW_HEIGHT - 1.0,
+                paint: verdict_paint(verdict),
+            })
+        })
+        .collect()
 }
 
 /// Moves the marks of the rows of samples down by `by` pixels, for a lane between the sites and
@@ -407,9 +450,11 @@ mod tests {
     use genie_core::variant::{Annotations, Call, Structure, Sv, Variant};
     use genie_core::{Region, Viewport};
 
+    use genie_core::review::Verdict;
+
     use super::{
-        BREAKEND_HEIGHT, Breakends, SITE_HEIGHT, breakend_height, group, hit, row_height,
-        rows_lowered, scene, trio_marks,
+        BREAKEND_HEIGHT, Breakends, REVIEW_HEIGHT, SITE_HEIGHT, breakend_height, group, hit,
+        review_marks, row_height, rows_lowered, scene, trio_marks, verdict_paint,
     };
     use crate::features::Mode;
     use crate::samples::{GROUP_GAP, Rows, STRIP};
@@ -601,6 +646,32 @@ mod tests {
         );
         assert!((row_height(Mode::Expanded) - 10.0).abs() < f32::EPSILON);
         assert!((row_height(Mode::Squished) - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn reviewed_sites_have_a_mark_in_the_color_of_their_verdict() {
+        let sites = [
+            variant(10, "A", "T", &[]),
+            variant(20, "C", "G", &[]),
+            variant(30, "G", "A", &[]),
+            variant(500, "G", "A", &[]),
+        ];
+        let verdicts = [
+            Some(Verdict::True),
+            None,
+            Some(Verdict::Unsure),
+            Some(Verdict::False),
+        ];
+        let found = rects(&review_marks(view(0, 100), &sites, &verdicts));
+        let height = REVIEW_HEIGHT - 1.0;
+        assert_eq!(
+            found,
+            [
+                ([9.0, 0.0, 3.0, height], Paint::Hue(Hue::Green)),
+                ([29.0, 0.0, 3.0, height], Paint::Muted),
+            ]
+        );
+        assert_eq!(verdict_paint(Verdict::False), Paint::Hue(Hue::Vermillion));
     }
 
     /// A lane between the sites and the rows moves the rows down and keeps the sites.
