@@ -1,7 +1,8 @@
-use std::io::{BufRead, Read, Seek};
+use std::io::{BufRead, Read, Seek, Write};
 use std::str::{FromStr, Split};
 
 use genie_core::Region;
+use genie_core::review::{Key, Reviews};
 use genie_core::variant::{Call, Fraction, Reads, Variant};
 
 use crate::annotations::{self, Layout};
@@ -254,6 +255,101 @@ pub fn read_fractions(reader: impl BufRead, sample: usize) -> Result<Table<Fract
     Ok(Table::new(rows))
 }
 
+/// The INFO field of the verdict of a variant in a reviewed copy.
+pub const REVIEW: &str = "REVIEW";
+/// The INFO field of the note of a variant in a reviewed copy.
+pub const REVIEW_NOTE: &str = "REVIEW_NOTE";
+const REVIEW_LINES: [&str; 2] = [
+    "##INFO=<ID=REVIEW,Number=1,Type=String,Description=\"Review mark from genie: true, false or \
+     unsure\">",
+    "##INFO=<ID=REVIEW_NOTE,Number=1,Type=String,Description=\"Review note from genie\">",
+];
+
+/// Writes a copy of a VCF file with the review of its variants. The header gets INFO lines for
+/// `REVIEW` and `REVIEW_NOTE` before the line of the columns, and each marked record gets its
+/// verdict and its note in its INFO, in place of the ones that it had. Gives the number of the
+/// marked records.
+pub fn reviewed(
+    reader: impl BufRead,
+    mut writer: impl Write,
+    reviews: &Reviews,
+) -> Result<usize, Error> {
+    let mut marked = 0;
+    lines(reader, |_, line| {
+        let old = [REVIEW, REVIEW_NOTE]
+            .iter()
+            .any(|id| line.starts_with(&format!("##INFO=<ID={id},")));
+        if old {
+            return Ok(());
+        }
+        if line.starts_with("#CHROM") {
+            for header in REVIEW_LINES {
+                writeln!(writer, "{header}")?;
+            }
+        }
+        let mut fields: Vec<&str> = line.split('\t').collect();
+        let review = fields.get(..8).and_then(|columns| {
+            let position = columns[1].parse::<u64>().ok().filter(|at| *at > 0)?;
+            reviews.get(&Key {
+                contig: columns[0].to_owned(),
+                position: position - 1,
+                reference: columns[3].to_owned(),
+                alternates: columns[4].to_owned(),
+            })
+        });
+        if line.starts_with('#') || fields.len() < 8 {
+            writeln!(writer, "{line}")?;
+            return Ok(());
+        }
+        let mut entries: Vec<String> = fields[7]
+            .split(';')
+            .filter(|entry| {
+                let key = entry.split('=').next().unwrap_or_default();
+                !matches!(key, "" | "." | REVIEW | REVIEW_NOTE)
+            })
+            .map(str::to_owned)
+            .collect();
+        if let Some(review) = review {
+            marked += 1;
+            entries.push(format!("{REVIEW}={}", review.verdict.word()));
+            let note = review.note.trim();
+            if !note.is_empty() {
+                entries.push(format!("{REVIEW_NOTE}={}", encoded(note)));
+            }
+        }
+        let info = if entries.is_empty() {
+            ".".to_owned()
+        } else {
+            entries.join(";")
+        };
+        fields[7] = &info;
+        writeln!(writer, "{}", fields.join("\t"))?;
+        Ok(())
+    })?;
+    writer.flush()?;
+    Ok(marked)
+}
+
+/// A text with the percent encoding of VCF for the characters that an INFO value cannot hold.
+fn encoded(text: &str) -> String {
+    let mut found = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '%' => found.push_str("%25"),
+            ';' => found.push_str("%3B"),
+            '=' => found.push_str("%3D"),
+            ',' => found.push_str("%2C"),
+            ':' => found.push_str("%3A"),
+            ' ' => found.push_str("%20"),
+            '\t' => found.push_str("%09"),
+            '\n' => found.push_str("%0A"),
+            '\r' => found.push_str("%0D"),
+            other => found.push(other),
+        }
+    }
+    found
+}
+
 pub fn read_table(reader: impl BufRead) -> Result<(Header, Table<Variant>), Error> {
     let mut samples = Vec::new();
     let mut infos = Vec::new();
@@ -353,7 +449,7 @@ mod tests {
 
     use super::{
         extent, fields, fraction, fractions, header, names, parse, query, read_fractions,
-        read_table,
+        read_table, reviewed,
     };
     use crate::bgzf::Bgzf;
     use crate::bgzf::tests::{block, file};
@@ -665,6 +761,56 @@ mod tests {
         let found = fractions(&index, &mut reader, region, 0).unwrap();
         let places: Vec<u64> = found.iter().map(|site| site.position).collect();
         assert_eq!(places, [89]);
+    }
+
+    /// The copy has INFO lines for the review, and each marked record has its mark and note in
+    /// place of the old ones. An unmarked record loses an old mark.
+    #[test]
+    fn reviewed_copies_carry_the_marks_in_their_info() {
+        use genie_core::review::{Key, Review, Reviews, Verdict};
+        let text = "##fileformat=VCFv4.2\n\
+            ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n\
+            ##INFO=<ID=REVIEW,Number=1,Type=String,Description=\"Old\">\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1\n\
+            chr1\t10\trs1\tA\tG\t.\tPASS\tDP=4;REVIEW=false\tGT\t0/1\n\
+            chr1\t20\t.\tC\tT,CA\t.\tPASS\t.\tGT\t1/2\n\
+            chr1\t30\t.\tG\tA\t.\tPASS\tDP=9;REVIEW=true;REVIEW_NOTE=old\tGT\t0/1\n";
+        let key = |position: u64, reference: &str, alternates: &str| Key {
+            contig: "chr1".to_owned(),
+            position,
+            reference: reference.to_owned(),
+            alternates: alternates.to_owned(),
+        };
+        let review = |verdict, note: &str| {
+            Some(Review {
+                verdict,
+                id: String::new(),
+                note: note.to_owned(),
+            })
+        };
+        let mut reviews = Reviews::default();
+        reviews.set(key(9, "A", "G"), review(Verdict::True, "30 reads; clean"));
+        reviews.set(key(19, "C", "T,CA"), review(Verdict::Unsure, ""));
+        let mut copy = Vec::new();
+        assert_eq!(reviewed(text.as_bytes(), &mut copy, &reviews).unwrap(), 2);
+        let copy = String::from_utf8(copy).unwrap();
+        let lines: Vec<&str> = copy.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "##fileformat=VCFv4.2",
+                "##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">",
+                "##INFO=<ID=REVIEW,Number=1,Type=String,Description=\"Review mark from genie: \
+                 true, false or unsure\">",
+                "##INFO=<ID=REVIEW_NOTE,Number=1,Type=String,Description=\"Review note from \
+                 genie\">",
+                "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1",
+                "chr1\t10\trs1\tA\tG\t.\tPASS\tDP=4;REVIEW=true;REVIEW_NOTE=30%20reads%3B%20clean\t\
+                 GT\t0/1",
+                "chr1\t20\t.\tC\tT,CA\t.\tPASS\tREVIEW=unsure\tGT\t1/2",
+                "chr1\t30\t.\tG\tA\t.\tPASS\tDP=9\tGT\t0/1",
+            ]
+        );
     }
 
     #[test]
