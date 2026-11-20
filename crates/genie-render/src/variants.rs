@@ -174,6 +174,21 @@ pub fn scene(viewport: Viewport, variants: &[Variant], mode: Mode, rows: &Rows) 
     primitives
 }
 
+/// Moves the marks of the rows of samples down by `by` pixels, for a lane between the sites and
+/// the rows. The marks of the sites stay.
+pub fn rows_lowered(primitives: Vec<Primitive>, by: f32) -> Vec<Primitive> {
+    primitives
+        .into_iter()
+        .map(|primitive| {
+            if primitive.anchor() >= SITE_HEIGHT {
+                primitive.lowered(by)
+            } else {
+                primitive
+            }
+        })
+        .collect()
+}
+
 /// Frames around the calls of children that their parents cannot give them, as in a de novo
 /// variant. They have the color of text, so that they show around every allele color.
 pub fn trio_marks(
@@ -393,8 +408,8 @@ mod tests {
     use genie_core::{Region, Viewport};
 
     use super::{
-        BREAKEND_HEIGHT, Breakends, SITE_HEIGHT, breakend_height, group, hit, row_height, scene,
-        trio_marks,
+        BREAKEND_HEIGHT, Breakends, SITE_HEIGHT, breakend_height, group, hit, row_height,
+        rows_lowered, scene, trio_marks,
     };
     use crate::features::Mode;
     use crate::samples::{GROUP_GAP, Rows, STRIP};
@@ -586,6 +601,24 @@ mod tests {
         );
         assert!((row_height(Mode::Expanded) - 10.0).abs() < f32::EPSILON);
         assert!((row_height(Mode::Squished) - 3.0).abs() < f32::EPSILON);
+    }
+
+    /// A lane between the sites and the rows moves the rows down and keeps the sites.
+    #[test]
+    fn rows_move_under_a_lane_and_sites_stay() {
+        let sites = [variant(10, "A", "T", &[Call::Het, Call::Alternate])];
+        let primitives = scene(view(0, 100), &sites, Mode::Expanded, &plain(2));
+        let before: Vec<f32> = primitives.iter().map(Primitive::anchor).collect();
+        let after: Vec<f32> = rows_lowered(primitives, 40.0)
+            .iter()
+            .map(Primitive::anchor)
+            .collect();
+        assert!(before.iter().any(|top| *top < SITE_HEIGHT));
+        assert!(before.iter().any(|top| *top >= SITE_HEIGHT));
+        for (old, new) in before.iter().zip(&after) {
+            let moved = if *old >= SITE_HEIGHT { 40.0 } else { 0.0 };
+            assert!((new - old - moved).abs() < 1e-4, "{old} {new}");
+        }
     }
 
     #[test]

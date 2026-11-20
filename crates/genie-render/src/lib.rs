@@ -4,6 +4,7 @@ pub mod contacts;
 pub mod difference;
 pub mod dotplot;
 pub mod features;
+pub mod fractions;
 pub mod links;
 pub mod manhattan;
 pub mod matches;

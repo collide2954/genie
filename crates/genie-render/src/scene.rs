@@ -174,6 +174,23 @@ impl Primitive {
             .collect()
     }
 
+    /// The height of the place of a primitive, which `lowered` moves: the top of a box, the
+    /// middle of a text, the base of an arc, and the highest end of a line or of a band.
+    pub fn anchor(&self) -> f32 {
+        match self {
+            Self::Rect { y, .. }
+            | Self::Text { y, .. }
+            | Self::Chevron { y, .. }
+            | Self::Label { y, .. } => *y,
+            Self::Arc { base, .. } => *base,
+            Self::Line { from, to, .. } => from.1.min(to.1),
+            Self::Ribbon { corners, .. } => corners
+                .iter()
+                .map(|corner| corner.1)
+                .fold(f32::INFINITY, f32::min),
+        }
+    }
+
     #[must_use]
     pub fn lowered(mut self, by: f32) -> Self {
         match &mut self {
@@ -257,21 +274,11 @@ mod tests {
                 paint: Paint::Muted,
             },
         ];
-        let tops: Vec<f32> = primitives
-            .into_iter()
-            .map(|primitive| match primitive.lowered(10.0) {
-                Primitive::Rect { y, .. }
-                | Primitive::Text { y, .. }
-                | Primitive::Chevron { y, .. }
-                | Primitive::Label { y, .. } => y,
-                Primitive::Arc { base, .. } => base,
-                Primitive::Line { from, to, .. } => from.1.min(to.1),
-                Primitive::Ribbon { corners, .. } => corners
-                    .iter()
-                    .map(|corner| corner.1)
-                    .fold(f32::INFINITY, f32::min),
-            })
-            .collect();
+        assert_eq!(
+            primitives.clone().map(|primitive| primitive.anchor()),
+            [2.0; 7]
+        );
+        let tops = primitives.map(|primitive| primitive.lowered(10.0).anchor());
         assert_eq!(tops, [12.0; 7]);
     }
 }
