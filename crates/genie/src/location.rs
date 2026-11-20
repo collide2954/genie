@@ -12,6 +12,9 @@ use crate::paths::file_name;
 pub enum Location {
     File(PathBuf),
     Url(Url),
+    /// A track that genie makes from the reference, with the words that name it, for example
+    /// "gc 100". It has no file.
+    Made(String),
 }
 
 impl Location {
@@ -30,6 +33,7 @@ impl Location {
         match self {
             Self::File(path) => file_name(path),
             Self::Url(url) => url.name(),
+            Self::Made(key) => key.clone(),
         }
     }
 
@@ -40,6 +44,7 @@ impl Location {
                 .map(|folder| folder.display().to_string())
                 .unwrap_or_default(),
             Self::Url(url) => url.place(),
+            Self::Made(_) => String::new(),
         }
     }
 
@@ -50,7 +55,7 @@ impl Location {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
-            Self::Url(_) => None,
+            Self::Url(_) | Self::Made(_) => None,
         }
     }
 
@@ -63,6 +68,7 @@ impl Location {
                 Self::File(PathBuf::from(text))
             }
             Self::Url(url) => Self::Url(url.with_suffix(suffix)),
+            Self::Made(_) => self.clone(),
         }
     }
 
@@ -81,6 +87,7 @@ impl Location {
                 let folder = path.parent().unwrap_or(Path::new(""));
                 Ok(Self::File(tidy(&folder.join(relative))))
             }
+            Self::Made(_) => Err(MADE.to_owned()),
         }
     }
 
@@ -89,6 +96,7 @@ impl Location {
         match self {
             Self::File(path) => Self::File(path.with_extension(extension)),
             Self::Url(url) => Self::Url(url.with_extension(extension)),
+            Self::Made(_) => self.clone(),
         }
     }
 
@@ -100,6 +108,7 @@ impl Location {
             Self::Url(url) => Remote::open(url)
                 .map(|remote| Reader::Remote(Box::new(remote)))
                 .map_err(|error| error.to_string()),
+            Self::Made(_) => Err(MADE.to_owned()),
         }
     }
 
@@ -111,9 +120,13 @@ impl Location {
             Self::Url(url) => Remote::open(url)
                 .map(|remote| remote.size())
                 .map_err(|error| error.to_string()),
+            Self::Made(_) => Err(MADE.to_owned()),
         }
     }
 }
+
+/// What a track made from the reference says when something asks for its file.
+const MADE: &str = "The track is made from the reference. It has no file.";
 
 /// A path without its "." parts, and with each ".." part taking away the folder before it.
 fn tidy(path: &Path) -> PathBuf {
@@ -145,6 +158,7 @@ impl fmt::Display for Location {
         match self {
             Self::File(path) => path.display().fmt(f),
             Self::Url(url) => url.fmt(f),
+            Self::Made(key) => key.fmt(f),
         }
     }
 }

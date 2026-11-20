@@ -243,11 +243,7 @@ impl Genie {
             .or_else(|| self.field_menu())
             .or_else(|| (self.popup == Some(Popup::Help)).then(crate::help::view))
             .or_else(|| self.app_menu())
-            .or_else(|| self.track_dialog())
-            .or_else(|| self.export_dialog())
-            .or_else(|| self.assembly_dialog())
-            .or_else(|| self.blat_dialog())
-            .or_else(|| self.hub_dialog())
+            .or_else(|| self.dialog())
             .or_else(|| self.palette_view())
         {
             let dismiss = mouse_area(space().width(Length::Fill).height(Length::Fill))
@@ -265,6 +261,16 @@ impl Genie {
             layers = layers.push(chrome::resize_handles());
         }
         layers.into()
+    }
+
+    /// The open dialog, if one is open.
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        self.track_dialog()
+            .or_else(|| self.export_dialog())
+            .or_else(|| self.assembly_dialog())
+            .or_else(|| self.blat_dialog())
+            .or_else(|| self.enzyme_dialog())
+            .or_else(|| self.hub_dialog())
     }
 
     fn genome_menu(&self) -> Option<Element<'_, Message>> {

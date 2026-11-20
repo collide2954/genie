@@ -34,7 +34,7 @@ impl Genie {
                     .flat_map(|session| &session.tracks)
                     .filter_map(|track| match track.source.data() {
                         Location::File(path) => Some(path.clone()),
-                        Location::Url(_) => None,
+                        Location::Url(_) | Location::Made(_) => None,
                     })
                     .collect();
                 self.cache_size = None;

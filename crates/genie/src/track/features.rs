@@ -11,7 +11,8 @@ use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
 use super::{
-    FEATURE_SPAN, Kept, Loaded, PLAIN_LIMIT, Scope, density, is_compressed, plain, tabix_index,
+    FEATURE_SPAN, Kept, Loaded, MadeFile, PLAIN_LIMIT, Scope, density, is_compressed, plain,
+    tabix_index,
 };
 use crate::location::{Location, Reader};
 
@@ -29,6 +30,8 @@ pub enum FeatureFile {
     BigBed {
         index: bbi::Index,
     },
+    /// CpG islands, repeats or the cuts of enzymes, made from the bases of the reference.
+    Made(MadeFile),
 }
 
 impl FeatureFile {
@@ -53,6 +56,7 @@ impl FeatureFile {
             Self::Indexed { index, .. } => index.names(),
             Self::Table { table, .. } => table.contigs(),
             Self::BigBed { index } => index.names(),
+            Self::Made(file) => file.contigs(),
         }
     }
 
@@ -60,21 +64,25 @@ impl FeatureFile {
     pub fn span(&self) -> u64 {
         match self {
             Self::Indexed { index, .. } if !index.has_counts() => FEATURE_SPAN,
+            Self::Made(_) => FEATURE_SPAN,
             _ => u64::MAX,
         }
     }
 
     pub fn has_colors(&self) -> bool {
-        matches!(
-            self,
-            Self::Indexed {
-                kind: Kind::Bed,
-                ..
-            } | Self::Table {
-                kind: Kind::Bed,
-                ..
-            } | Self::BigBed { .. }
-        )
+        match self {
+            Self::Made(file) => file.has_colors(),
+            _ => matches!(
+                self,
+                Self::Indexed {
+                    kind: Kind::Bed,
+                    ..
+                } | Self::Table {
+                    kind: Kind::Bed,
+                    ..
+                } | Self::BigBed { .. }
+            ),
+        }
     }
 
     pub fn load(
@@ -163,6 +171,7 @@ impl FeatureFile {
                     .map_err(|error| error.to_string())?;
                 Ok((region, features))
             }
+            Self::Made(file) => file.features(contig, region),
         }
     }
 
@@ -170,6 +179,7 @@ impl FeatureFile {
         match self {
             Self::Indexed { kind, .. } => features::names(*kind, Bgzf::new(location.open()?)),
             Self::Table { names, .. } => Ok(names.clone()),
+            Self::Made(_) => Ok(Vec::new()),
             Self::BigBed { index } => {
                 let size = location.size().unwrap_or(u64::MAX);
                 if index.has_lookup() || size > PLAIN_LIMIT {

@@ -219,6 +219,9 @@ impl Genie {
         self.restoring = Some(saved);
         let _ = self.update(Message::Opened(Ok(Arc::new(reference))));
         for location in tracks {
+            if matches!(location, Location::Made(_)) {
+                continue;
+            }
             let name = location.name();
             let result = self.open_track_now(location, report).map(Arc::new);
             if let Err(error) = &result {
@@ -290,7 +293,7 @@ impl Genie {
         export::save(path, &image).map(|_| ())
     }
 
-    fn load_now(&mut self) {
+    pub(super) fn load_now(&mut self) {
         let Some(session) = &self.session else {
             return;
         };
@@ -504,6 +507,34 @@ mod tests {
         assert!(!named.contains("Study A"), "{named}");
         let plain = fs::read_to_string(folder.join("chr1_1-50.svg")).unwrap();
         assert!(plain.contains(">Study A</tspan>"), "{plain}");
+    }
+
+    #[test]
+    fn snapshots_make_the_tracks_of_the_reference() {
+        let scratch = Scratch::new("snapshot-made");
+        let bases = format!("{}GAATTC{}", "A".repeat(500), "A".repeat(494));
+        scratch.file("ref.fa", format!(">chr1\n{bases}\n"));
+        scratch.file("ref.fa.fai", FAI);
+        let session = scratch.file(
+            "work.genie",
+            "[session]\nreference = ref.fa\n[track]\nmade = sites EcoRI\n",
+        );
+        let regions = scratch.file("regions.bed", "chr1\t450\t560\tsite\n");
+        let folder = session.with_file_name("pictures");
+        let request = Request {
+            session,
+            regions,
+            folder: folder.clone(),
+            width: 400.0,
+            dark: false,
+            svg: true,
+        };
+        let mut lines = Vec::new();
+        assert_eq!(run(&request, &mut |line| lines.push(line)), Ok(0));
+        assert_eq!(lines, ["Saved site.svg (1 of 1)."]);
+        let svg = fs::read_to_string(folder.join("site.svg")).unwrap();
+        assert!(svg.contains(">EcoRI sites<"), "{svg}");
+        assert!(svg.contains(">EcoRI<"), "{svg}");
     }
 
     #[test]

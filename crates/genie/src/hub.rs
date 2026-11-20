@@ -213,6 +213,7 @@ fn read_within(location: &Location, limit: usize) -> Result<String, String> {
             result.map_err(|error| error.to_string())?;
             bytes
         }
+        Location::Made(_) => return location.open().map(|_| String::new()),
     };
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

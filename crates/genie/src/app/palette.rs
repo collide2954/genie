@@ -7,12 +7,14 @@ use crate::menu::{GROUPS, JUNCTION_FLOORS, MAPQ_FLOORS, MODES, STYLES, TOGGLES};
 use crate::palette::{self, Action, State};
 use crate::recent::Entry;
 use crate::shortcuts::Command;
-use crate::track::{Change, Toggle, Track};
+use crate::track::made::{self, WINDOWS};
+use crate::track::{Change, Made, Toggle, Track};
+use genie_core::grouped;
 
 use super::hubs::Hubbing;
 use super::{
-    Arranging, Assembling, Blatting, Genie, Lifting, Message, Paletting, Popup, Ranging, Regions,
-    Renaming, Sampling, Session, Tabling, Updating, arranging_words,
+    Arranging, Assembling, Blatting, Genie, Lifting, Making, Message, Paletting, Popup, Ranging,
+    Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
 };
 
 /// The actions that need no open genome: open files, hubs and assemblies, keys, settings and
@@ -151,6 +153,40 @@ fn view_actions(track: &Track) -> Vec<Action> {
         .collect()
 }
 
+/// The actions that add the tracks that genie makes from the reference.
+fn made_additions() -> [Action; 4] {
+    let add = |made| Message::Made(Making::Add(made));
+    [
+        Action::new("Add a GC % track", "", add(Made::Gc(made::WINDOW))),
+        Action::new("Add a CpG islands track", "", add(Made::Islands)),
+        Action::new("Add a repeats track", "", add(Made::Repeats)),
+        Action::new(
+            "Add restriction sites…",
+            "",
+            Message::Made(Making::Enzymes(None)),
+        ),
+    ]
+}
+
+/// The actions of a track made from the reference: the windows of GC, or its enzymes.
+fn made_actions(track: &Track) -> Vec<Action> {
+    let (id, name) = (track.id, track.name.as_str());
+    match track.source.made() {
+        Some(Made::Gc(_)) => WINDOWS
+            .map(|size| {
+                let words = format!("GC in windows of {} bp", grouped(size));
+                Action::new(words, name, Message::Made(Making::Window(id, size)))
+            })
+            .into(),
+        Some(Made::Sites(_)) => vec![Action::new(
+            "Change the enzymes…",
+            name,
+            Message::Made(Making::Enzymes(Some(id))),
+        )],
+        _ => Vec::new(),
+    }
+}
+
 fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
     let change = move |change| Message::TrackChanged(id, change);
@@ -207,7 +243,8 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     if source.has_colors() {
         actions.push(Action::new("Use file colors", name, change(Change::Colors)));
     }
-    if !source.has_reads() && !source.has_contacts() {
+    actions.extend(made_actions(track));
+    if !source.has_reads() && !source.has_contacts() && source.made().is_none() {
         let (words, lifting) = if track.lift.is_some() {
             ("Remove lift", Lifting::Stop(id))
         } else {
@@ -336,6 +373,7 @@ impl Genie {
                 ),
                 Action::new("BLAT a sequence…", "", Message::Blat(Blatting::Open(None))),
             ]);
+            actions.extend(made_additions());
             if !session.marks.is_empty() {
                 actions.push(Action::new(
                     "Lift the regions…",

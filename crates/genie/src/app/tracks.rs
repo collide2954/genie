@@ -66,7 +66,7 @@ impl Genie {
         task
     }
 
-    fn track_settled(&mut self) {
+    pub(super) fn track_settled(&mut self) {
         if self.restoring.is_some() {
             self.waiting = self.waiting.saturating_sub(1);
             if self.waiting == 0 {
@@ -755,6 +755,9 @@ impl Genie {
     }
 
     pub(super) fn open(&mut self, location: Location) -> Task<Message> {
+        if let Location::Made(key) = &location {
+            return self.open_made(&key.clone());
+        }
         if let Some(path) = location.path()
             && saved::is_session(path)
         {

@@ -35,6 +35,7 @@ mod gwas;
 pub mod junctions;
 mod lift;
 mod links;
+pub mod made;
 pub(crate) mod reads;
 mod segments;
 mod signal;
@@ -47,6 +48,7 @@ pub use gwas::GwasFile;
 pub use junctions::JunctionFile;
 pub use lift::{Lift, load_lifted};
 pub use links::LinkFile;
+pub use made::{Made, MadeFile};
 pub use reads::ReadFile;
 pub use segments::SegmentFile;
 pub use signal::SignalFile;
@@ -137,6 +139,16 @@ impl Source {
 
     pub fn is_bigbed(&self) -> bool {
         matches!(self.format, Format::Features(FeatureFile::BigBed { .. }))
+    }
+
+    /// What a track made from the reference shows, or nothing for the track of a file.
+    pub fn made(&self) -> Option<&Made> {
+        match &self.format {
+            Format::Features(FeatureFile::Made(file)) | Format::Signal(SignalFile::Gc(file)) => {
+                Some(&file.made)
+            }
+            _ => None,
+        }
     }
 
     pub fn has_lookup(&self) -> bool {
@@ -2130,6 +2142,24 @@ pub fn open(location: impl Into<Location>) -> Result<Source, String> {
     open_with(location, None)
 }
 
+/// A track that genie makes from the bases of the reference, with no file.
+pub fn make(made: Made, reference: Arc<crate::reference::Reference>) -> Source {
+    let (location, name) = (Location::Made(made.key()), made.name());
+    let gc = matches!(made, Made::Gc(_));
+    let file = MadeFile::new(made, reference);
+    let format = if gc {
+        Format::Signal(SignalFile::Gc(file))
+    } else {
+        Format::Features(FeatureFile::Made(file))
+    };
+    Source {
+        location,
+        data: None,
+        name,
+        format,
+    }
+}
+
 pub fn open_with(
     location: impl Into<Location>,
     prepared: Option<Prepared>,
@@ -2263,6 +2293,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
             }
         }
         Format::Columns(file) => file.fields(feature.extra()),
+        Format::Features(FeatureFile::Made(file)) => file.fields(feature.extra()),
         _ => Vec::new(),
     }
 }

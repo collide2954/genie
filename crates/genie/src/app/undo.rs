@@ -108,6 +108,10 @@ impl Kept {
 
     /// Gives a track these settings, and makes it load its data again.
     fn apply(self, track: &mut Track, session: &Session) {
+        if !Arc::ptr_eq(&track.source, &self.source) {
+            track.source = Arc::clone(&self.source);
+            track.drop_data();
+        }
         let counter = track.options.lift;
         let lifted = match (&track.lift, &self.lift) {
             (Some(one), Some(two)) => !Arc::ptr_eq(one, two),
@@ -202,7 +206,8 @@ fn records(message: &Message) -> bool {
         | Message::Find(..)
         | Message::Table(..)
         | Message::TrackList(..)
-        | Message::Folder(..) => true,
+        | Message::Folder(..)
+        | Message::Made(..) => true,
         _ => false,
     }
 }

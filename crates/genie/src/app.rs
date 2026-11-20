@@ -53,6 +53,7 @@ mod find;
 mod gnomad;
 mod hubs;
 mod lift;
+mod made;
 mod navigation;
 mod offline;
 mod orders;
@@ -78,6 +79,7 @@ pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
 pub(crate) use gnomad::Gnomading;
 pub(crate) use lift::Lifting;
+pub(crate) use made::{Making, additions};
 use orders::Answer;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
 pub(crate) use table::Tabling;
@@ -167,6 +169,8 @@ pub struct Genie {
     track_list: Option<track_list::TrackList>,
     /// The gnomAD answers, and the gnomAD part of the open variant card.
     gnomad: gnomad::Lookups,
+    /// The dialog of the restriction enzymes of a track made from the reference.
+    enzymes: made::Enzymes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,12 +181,16 @@ enum Popup {
     Help,
     App,
     AppRecent,
+    /// The genie menu with its list of the tracks that genie makes from the reference.
+    AppMade,
     Track(u64),
     Palette,
     Hub,
     Export,
     Assemblies,
     Blat,
+    /// The dialog of the restriction enzymes.
+    Enzymes,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -265,6 +273,7 @@ impl Default for Genie {
             blat: blat::Blat::default(),
             track_list: None,
             gnomad: gnomad::Lookups::default(),
+            enzymes: made::Enzymes::default(),
         }
     }
 }
@@ -795,6 +804,11 @@ pub enum Message {
     Gnomad(Gnomading),
     /// The table of the DMRs of a methylation difference.
     Dmrs(Dmring),
+    /// Adds or changes a track that genie makes from the reference.
+    Made(Making),
+    /// Shows the list of the tracks that genie makes from the reference beside the genie menu,
+    /// or hides it.
+    MadeMenu(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1134,6 +1148,8 @@ impl Genie {
             Message::Hub(hubbing) => return self.hubbing(hubbing),
             Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Blat(blatting) => return self.blatting(blatting),
+            Message::Made(making) => return self.making(making),
+            Message::MadeMenu(open) => self.show_made(open),
             Message::TrackList(_) | Message::Folder(..) | Message::FolderMenu(..) => {
                 return self.panel_message(message);
             }

@@ -2,10 +2,12 @@ use genie_render::translation::Frame;
 use iced::widget::column;
 use iced::{Element, Point, Size};
 
-use crate::app::Message;
+use crate::app::{Message, additions};
 use crate::menu;
 
-pub const MENU_HEIGHT: f32 = 128.0;
+/// The strands, the frames and the tracks made from the reference, with a separator and a
+/// heading before the tracks.
+pub const MENU_HEIGHT: f32 = 247.5;
 const FRAMES: [(&str, Frames); 3] = [
     ("No translation", Frames::Off),
     ("3 frames", Frames::Three),
@@ -61,6 +63,13 @@ pub fn menu<'a>(reading: Reading, at: Point, window: Size) -> Element<'a, Messag
     .extend(
         FRAMES
             .map(|(label, frames)| entry(label, Change::Frames(frames), reading.frames == frames)),
+    )
+    .push(menu::separator())
+    .push(menu::heading("Add a track"))
+    .extend(
+        additions()
+            .into_iter()
+            .map(|(label, message)| menu::item(label, message, false, true)),
     )
     .spacing(1);
     menu::card(content, at, window, MENU_HEIGHT)

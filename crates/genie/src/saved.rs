@@ -138,7 +138,10 @@ impl Saved {
             .sections("track")
             .filter_map(|section| {
                 Some(SavedTrack {
-                    location: read(section.value("file")?, base),
+                    location: match section.value("made") {
+                        Some(key) => Location::Made(key.to_owned()),
+                        None => read(section.value("file")?, base),
+                    },
                     name: section.value("name").map(str::to_owned),
                     over: section
                         .value("overlay")
@@ -334,7 +337,10 @@ fn comparison(section: &Section) -> Option<(usize, Operation)> {
 
 /// The entries of the section of a track.
 fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)> {
-    let mut entries = vec![("file", written(&track.location, base))];
+    let mut entries = match &track.location {
+        Location::Made(key) => vec![("made", key.clone())],
+        location => vec![("file", written(location, base))],
+    };
     if let Some(name) = &track.name {
         entries.push(("name", name.clone()));
     }
@@ -455,6 +461,7 @@ fn written(location: &Location, base: &Path) -> String {
     match location {
         Location::File(path) => relative(path, base),
         Location::Url(url) => url.to_string(),
+        Location::Made(key) => key.clone(),
     }
 }
 
@@ -881,6 +888,18 @@ mod tests {
         assert!(text.contains("isoforms = on"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(isoforms));
         assert!(!saved().text(&base()).contains("isoforms"));
+    }
+
+    #[test]
+    fn tracks_made_from_the_reference_keep_what_they_show() {
+        let mut made = saved();
+        made.tracks[0].location = Location::Made("sites EcoRI G^AATTC".to_owned());
+        made.tracks[1].location = Location::Made("gc 100".to_owned());
+        let text = made.text(&base());
+        assert!(text.contains("made = sites EcoRI G^AATTC"), "{text}");
+        assert!(text.contains("made = gc 100"), "{text}");
+        assert!(!text.contains("file = gc 100"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(made));
     }
 
     #[test]

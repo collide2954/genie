@@ -271,6 +271,7 @@ fn make(
             fs::rename(&part, &target)?;
             (target, true)
         }
+        Location::Made(_) => return Err(Error::Io(io::ErrorKind::NotFound.into())),
     };
     let job = Job {
         source: &source,

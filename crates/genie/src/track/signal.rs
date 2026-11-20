@@ -8,7 +8,7 @@ use genie_formats::bgzf::Bgzf;
 use genie_formats::table::Table;
 use genie_formats::{bbi, bedgraph, tabix};
 
-use super::{FEATURE_SPAN, Loaded, Methyl, is_compressed, plain, tabix_index};
+use super::{FEATURE_SPAN, Loaded, MadeFile, Methyl, is_compressed, plain, tabix_index};
 use crate::location::Location;
 
 const CODE_LINES: usize = 2_000;
@@ -32,6 +32,8 @@ pub enum SignalFile {
         table: Table<Record>,
         codes: Vec<String>,
     },
+    /// The GC content of windows of the reference.
+    Gc(MadeFile),
 }
 
 impl SignalFile {
@@ -91,6 +93,7 @@ impl SignalFile {
             Self::BedGraph { index } | Self::BedMethyl { index, .. } => index.names(),
             Self::BedGraphTable { table } => table.contigs(),
             Self::BedMethylTable { table, .. } => table.contigs(),
+            Self::Gc(file) => file.contigs(),
         }
     }
 
@@ -99,7 +102,7 @@ impl SignalFile {
             Self::BigWig { .. } | Self::BedGraphTable { .. } | Self::BedMethylTable { .. } => {
                 u64::MAX
             }
-            Self::BedGraph { .. } | Self::BedMethyl { .. } => FEATURE_SPAN,
+            Self::BedGraph { .. } | Self::BedMethyl { .. } | Self::Gc(_) => FEATURE_SPAN,
         }
     }
 
@@ -134,6 +137,10 @@ impl SignalFile {
                     .map_err(|error| error.to_string())?;
                 let sites = sites(&records, codes, methyl);
                 return Ok(Loaded::methylation(region, sites, step));
+            }
+            Self::Gc(file) => {
+                let summaries = file.summaries(contig, region, step)?;
+                return Ok(Loaded::signal(region, summaries, step));
             }
         };
         Ok(Loaded::signal(

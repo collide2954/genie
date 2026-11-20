@@ -7,14 +7,15 @@ use iced::widget::{Column, button, column, container, opaque, pin, row, space, t
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Dmring, Filtering, Lifting, Message, Plotting, Ranging, Renaming, Sampling, Tabling, active,
-    arranging_words,
+    Dmring, Filtering, Lifting, Making, Message, Plotting, Ranging, Renaming, Sampling, Tabling,
+    active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
 use crate::style;
 use crate::theme::tokens;
-use crate::track::{Change, Format, Grouping, Pick, Toggle, Track, tag_name};
+use crate::track::made::WINDOWS;
+use crate::track::{Change, Format, Grouping, Made, Pick, Toggle, Track, tag_name};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
@@ -150,7 +151,7 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         LINK_HEIGHT
     } else {
         0.0
-    };
+    } + if has_enzymes(track) { LINK_HEIGHT } else { 0.0 };
     2.0 * LINK_HEIGHT
         + table
         + SEPARATOR_HEIGHT
@@ -194,7 +195,7 @@ pub fn describe(rule: &Rule) -> String {
     }
 }
 
-fn heading(words: &str) -> Element<'_, Message> {
+pub fn heading(words: &str) -> Element<'_, Message> {
     container(text(words).size(11).style(style::muted))
         .padding([3, 8])
         .height(HEADING_HEIGHT - 1.0)
@@ -390,6 +391,8 @@ fn kind_height(track: &Track) -> f32 {
         VARIANTS_HEIGHT
     } else if track.source.is_bedmethyl() {
         SIGNAL_HEIGHT + choices + LINK_HEIGHT + SEPARATOR_HEIGHT
+    } else if matches!(track.source.made(), Some(Made::Gc(_))) {
+        SIGNAL_HEIGHT + HEADING_HEIGHT + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_signal() {
         SIGNAL_HEIGHT
     } else if track.source.has_links() {
@@ -535,6 +538,32 @@ fn signal_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'
         .push(separator())
 }
 
+/// The sizes of the windows of a GC track, with the size that it shows.
+fn window_items<'a>(id: u64, window: u64) -> Vec<Element<'a, Message>> {
+    let choices = WINDOWS.map(|size| {
+        button(text(grouped(size)).size(12).wrapping(text::Wrapping::None))
+            .padding([3, 4])
+            .style(if size == window {
+                style::chosen
+            } else {
+                style::ghost
+            })
+            .on_press(Message::Made(Making::Window(id, size)))
+            .into()
+    });
+    vec![
+        heading("Window (bp)"),
+        row(choices)
+            .spacing(1)
+            .padding(iced::Padding {
+                left: 4.0,
+                ..iced::Padding::ZERO
+            })
+            .into(),
+        separator(),
+    ]
+}
+
 /// The range of a segment track: the log2 values that get the full blue and red.
 pub fn segment_items<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
     let id = track.id;
@@ -647,6 +676,8 @@ pub fn view<'a>(
     });
     let kind = if track.source.is_bedmethyl() {
         signal_items(track, range).extend(methyl_items(track))
+    } else if let Some(Made::Gc(window)) = track.source.made() {
+        signal_items(track, range).extend(window_items(id, *window))
     } else if track.source.has_signal() {
         signal_items(track, range)
     } else if track.source.has_links() || track.source.has_junctions() {
@@ -745,12 +776,22 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
         let open = Message::Dmrs(Dmring::Open(id));
         items = items.push(item("DMR table", open, false, true));
     }
+    if has_enzymes(track) {
+        let open = Message::Made(Making::Enzymes(Some(id)));
+        items = items.push(item("Enzymes…", open, false, true));
+    }
     items.push(separator())
 }
 
+/// True for a track of the cuts of restriction enzymes, which can change its enzymes.
+fn has_enzymes(track: &Track) -> bool {
+    matches!(track.source.made(), Some(Made::Sites(_)))
+}
+
 /// Whether genie can move the data of a track from another assembly to the assembly in view.
+/// A track made from the reference is always on the assembly in view.
 fn can_lift(track: &Track) -> bool {
-    !track.source.has_reads() && !track.source.has_contacts()
+    !track.source.has_reads() && !track.source.has_contacts() && track.source.made().is_none()
 }
 
 fn lift_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
