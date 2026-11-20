@@ -8,6 +8,7 @@ pub mod contact;
 pub mod cpg;
 pub mod dotplot;
 pub mod effect;
+pub mod enzyme;
 mod feature;
 mod history;
 pub mod interaction;
