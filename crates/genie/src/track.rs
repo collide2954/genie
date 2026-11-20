@@ -1946,6 +1946,7 @@ pub fn is_track(location: &Location) -> bool {
         || is_hic(&name)
         || is_gwas_name(&name)
         || genie_formats::junctions::Layout::of(&name).is_some()
+        || genie_formats::genbank::is_name(&name)
         || Kind::of(&name).is_some()
 }
 
@@ -2174,6 +2175,8 @@ pub fn open_with(
     let index = index.as_ref();
     let format = if is_bam(&name) || is_cram(&name) {
         Format::Reads(ReadFile::open(reading, &name, index)?)
+    } else if genie_formats::genbank::is_name(&name) {
+        Format::Features(FeatureFile::records(reading)?)
     } else if is_vcf(&name) || is_bcf(&name) {
         Format::Variants(VariantFile::open(reading, &name, index)?)
     } else if is_bigbed(&name) || is_bigwig(&name) {
@@ -2294,6 +2297,9 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
         }
         Format::Columns(file) => file.fields(feature.extra()),
         Format::Features(FeatureFile::Made(file)) => file.fields(feature.extra()),
+        Format::Features(FeatureFile::Records { .. }) => {
+            genie_formats::genbank::fields(feature.extra())
+        }
         _ => Vec::new(),
     }
 }
@@ -3740,6 +3746,80 @@ mod tests {
             panic!("expected signal");
         };
         &signal.summaries
+    }
+
+    #[test]
+    fn genbank_files_open_as_tracks_of_their_features() {
+        let scratch = Scratch::new("genbank-track");
+        let text = "\
+LOCUS       NC_1          40 bp    DNA     linear   VRL 01-JAN-2020
+VERSION     NC_1.1
+FEATURES             Location/Qualifiers
+     gene            3..20
+                     /gene=\"abc\"
+     CDS             3..20
+                     /gene=\"abc\"
+                     /product=\"abc protein\"
+     promoter        25..30
+                     /label=P1
+                     /ApEinfo_fwdcolor=#ff0000
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//
+";
+        let path = scratch.file("virus.gbk", text);
+        assert!(is_track(&Location::File(path.clone())));
+        let source = open(path).unwrap();
+        assert_eq!(source.contigs(), ["NC_1.1"]);
+        assert!(source.has_colors());
+        let no_reference = |_: Region| Err(String::new());
+        let options = Options::default();
+        let loaded = load(
+            &source,
+            "NC_1.1",
+            region(0, 40),
+            options,
+            1,
+            true,
+            no_reference,
+        )
+        .unwrap();
+        let Content::Features(annotation) = &loaded.content else {
+            panic!("features");
+        };
+        let shown: Vec<&str> = annotation.features.iter().map(Feature::name).collect();
+        assert_eq!(shown, ["abc", "P1"]);
+        let fields: Vec<(String, String)> = feature_fields(&source, &annotation.features[0])
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("type".to_owned(), "CDS".to_owned()),
+                ("gene".to_owned(), "abc".to_owned()),
+                ("product".to_owned(), "abc protein".to_owned()),
+            ]
+        );
+        let assembly = Assembly::new(vec![Contig {
+            name: "NC_1.1".to_owned(),
+            length: 40,
+        }]);
+        let found = names(&source, &assembly, None).unwrap();
+        assert_eq!(
+            found.find("P1").map(|named| named.span),
+            Some(region(24, 30))
+        );
+        let density = load(
+            &source,
+            "NC_1.1",
+            region(0, 40),
+            options,
+            10,
+            false,
+            no_reference,
+        );
+        assert!(matches!(density.unwrap().content, Content::Signal(_)));
     }
 
     #[test]

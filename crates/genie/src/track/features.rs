@@ -32,9 +32,40 @@ pub enum FeatureFile {
     },
     /// CpG islands, repeats or the cuts of enzymes, made from the bases of the reference.
     Made(MadeFile),
+    /// The features of the records of a GenBank or EMBL file, with their names and IDs.
+    Records {
+        table: Table<Feature>,
+        names: Vec<Entry>,
+    },
 }
 
 impl FeatureFile {
+    /// The features of the records of a GenBank or EMBL file.
+    pub fn records(location: &Location) -> Result<Self, String> {
+        let mut rows = Vec::new();
+        let mut names = Vec::new();
+        for record in crate::reference::records(location)? {
+            for feature in record.features {
+                let mut words = vec![feature.name().to_owned()];
+                if let Some(id) = feature.id().filter(|id| *id != feature.name()) {
+                    words.push(id.to_owned());
+                }
+                for name in words.into_iter().filter(|name| !name.is_empty()) {
+                    names.push(Entry {
+                        name,
+                        contig: record.name.clone(),
+                        span: feature.span(),
+                    });
+                }
+                rows.push((record.name.clone(), feature.span(), feature));
+            }
+        }
+        Ok(Self::Records {
+            table: Table::new(rows),
+            names,
+        })
+    }
+
     pub fn open(location: &Location, name: &str, index: Option<&Location>) -> Result<Self, String> {
         let kind = Kind::of(name).ok_or_else(|| {
             format!(
@@ -54,7 +85,7 @@ impl FeatureFile {
     pub fn contigs(&self) -> &[String] {
         match self {
             Self::Indexed { index, .. } => index.names(),
-            Self::Table { table, .. } => table.contigs(),
+            Self::Table { table, .. } | Self::Records { table, .. } => table.contigs(),
             Self::BigBed { index } => index.names(),
             Self::Made(file) => file.contigs(),
         }
@@ -72,6 +103,7 @@ impl FeatureFile {
     pub fn has_colors(&self) -> bool {
         match self {
             Self::Made(file) => file.has_colors(),
+            Self::Records { .. } => true,
             _ => matches!(
                 self,
                 Self::Indexed {
@@ -100,7 +132,7 @@ impl FeatureFile {
             length,
         } = scope;
         match self {
-            Self::Table { table, .. } if !detail => {
+            Self::Table { table, .. } | Self::Records { table, .. } if !detail => {
                 return Ok(density(region, step, table.starts(contig, region)));
             }
             Self::Indexed { index, .. } if !detail => {
@@ -159,7 +191,9 @@ impl FeatureFile {
         region: Region,
     ) -> Result<(Region, Vec<Feature>), String> {
         match self {
-            Self::Table { table, .. } => Ok((region, table.query(contig, region))),
+            Self::Table { table, .. } | Self::Records { table, .. } => {
+                Ok((region, table.query(contig, region)))
+            }
             Self::Indexed { kind, index } => {
                 let mut reader = Bgzf::new(location.open()?);
                 features::query(*kind, index, &mut reader, contig, region)
@@ -178,7 +212,7 @@ impl FeatureFile {
     pub fn names(&self, location: &Location) -> Result<Vec<Entry>, String> {
         match self {
             Self::Indexed { kind, .. } => features::names(*kind, Bgzf::new(location.open()?)),
-            Self::Table { names, .. } => Ok(names.clone()),
+            Self::Table { names, .. } | Self::Records { names, .. } => Ok(names.clone()),
             Self::Made(_) => Ok(Vec::new()),
             Self::BigBed { index } => {
                 let size = location.size().unwrap_or(u64::MAX);

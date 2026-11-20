@@ -806,6 +806,12 @@ pub enum Message {
     Dmrs(Dmring),
     /// Adds or changes a track that genie makes from the reference.
     Made(Making),
+    /// The sequence and the track of a GenBank or EMBL file.
+    RecordsOpened(
+        Location,
+        Result<Arc<Reference>, String>,
+        Result<Arc<Source>, String>,
+    ),
     /// Shows the list of the tracks that genie makes from the reference beside the genie menu,
     /// or hides it.
     MadeMenu(bool),
@@ -1015,10 +1021,19 @@ impl Genie {
         )
     }
 
+    /// Opens the files of the command line: the first reference, then the tracks. Without a
+    /// reference, a GenBank or EMBL file gives the reference.
     fn launch(&mut self, files: Vec<Location>) -> Task<Message> {
-        let (tracks, references): (Vec<Location>, Vec<Location>) =
+        let (mut tracks, references): (Vec<Location>, Vec<Location>) =
             files.into_iter().partition(track::is_track);
-        if let Some(reference) = references.into_iter().next() {
+        let records = tracks
+            .iter()
+            .position(|location| genie_formats::genbank::is_name(&location.name()));
+        if let Some(reference) = references
+            .into_iter()
+            .next()
+            .or_else(|| records.map(|at| tracks.remove(at)))
+        {
             self.pending = tracks;
             return self.open(reference);
         }
@@ -1149,6 +1164,9 @@ impl Genie {
             Message::Assemblies(assembling) => return self.assembling(assembling),
             Message::Blat(blatting) => return self.blatting(blatting),
             Message::Made(making) => return self.making(making),
+            Message::RecordsOpened(location, reference, source) => {
+                return self.records_opened(&location, reference, source);
+            }
             Message::MadeMenu(open) => self.show_made(open),
             Message::TrackList(_) | Message::Folder(..) | Message::FolderMenu(..) => {
                 return self.panel_message(message);
@@ -1646,6 +1664,89 @@ mod tests {
         assert_eq!(genie.pending, [track]);
         let _ = genie.update(Message::Opened(Ok(reference())));
         assert_eq!(genie.pending, [] as [Location; 0]);
+    }
+
+    const VIRUS: &str = "\
+LOCUS       NC_1          40 bp    DNA     linear   VRL 01-JAN-2020
+VERSION     NC_1.1
+FEATURES             Location/Qualifiers
+     CDS             3..20
+                     /gene=\"abc\"
+ORIGIN
+        1 acgtacgtac gtacgtacgt acgtacgtac gtacgtacgt
+//
+";
+
+    /// What the work of opening a GenBank file gives: its sequence and its track.
+    fn records_opened(location: &Location) -> Message {
+        let reference = crate::reference::open(location.clone(), None, &mut |_| {});
+        let source = crate::track::open(location.clone());
+        Message::RecordsOpened(
+            location.clone(),
+            reference.map(Arc::new),
+            source.map(Arc::new),
+        )
+    }
+
+    fn reference_name(genie: &Genie) -> String {
+        genie.session.as_ref().unwrap().reference.name.clone()
+    }
+
+    #[test]
+    fn genbank_files_open_their_sequence_and_their_track() {
+        let scratch = Scratch::new("genbank-open");
+        let gbk = Location::File(scratch.file("virus.gbk", VIRUS));
+        let mut genie = Genie::default();
+        let _ = genie.update(Message::Reopen(gbk.clone()));
+        assert!(shows(&genie, "Opening virus.gbk…"));
+        let _ = genie.update(records_opened(&gbk));
+        assert_eq!(reference_name(&genie), "virus.gbk");
+        assert_eq!(track_name(&genie), "virus.gbk");
+        let _ = genie.update(records_opened(&gbk));
+        assert!(shows(&genie, "The track virus.gbk is already open."));
+        let fasta = scratch.file("virus.fa", format!(">NC_1.1\n{}\n", "ACGT".repeat(10)));
+        let mut same = Genie::default();
+        let reference = crate::reference::open(fasta, None, &mut |_| {}).unwrap();
+        let _ = same.update(Message::Opened(Ok(Arc::new(reference))));
+        let _ = same.update(records_opened(&gbk));
+        assert_eq!(reference_name(&same), "virus.fa");
+        assert_eq!(track_name(&same), "virus.gbk");
+        let mut other = opened();
+        let _ = other.update(records_opened(&gbk));
+        assert_eq!(reference_name(&other), "virus.gbk");
+        assert_eq!(track_name(&other), "virus.gbk");
+        assert_eq!(other.busy, 0);
+    }
+
+    #[test]
+    fn sessions_of_genbank_files_open_the_track_once() {
+        let scratch = Scratch::new("genbank-session");
+        let gbk = Location::File(scratch.file("virus.gbk", VIRUS));
+        let mut genie = Genie::default();
+        let _ = genie.update(records_opened(&gbk));
+        let _ = genie.update(Message::TrackChanged(0, Change::Hue(Hue::Orange)));
+        let folder = scratch.file("view.genie", "");
+        let folder = folder.parent().unwrap();
+        let text = genie.saved().unwrap().text(folder);
+        let mut again = Genie::default();
+        let _ = again.restore(crate::saved::Saved::parse(&text, folder).unwrap());
+        let _ = again.update(records_opened(&gbk));
+        assert_eq!(again.session.as_ref().unwrap().tracks.len(), 0);
+        let _ = again.update(records_opened(&gbk));
+        let tracks = &again.session.as_ref().unwrap().tracks;
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].hue, Hue::Orange);
+        assert!(again.restoring.is_none());
+    }
+
+    #[test]
+    fn command_line_genbank_files_open_as_the_reference() {
+        let mut genie = Genie::default();
+        let reads = Location::File(PathBuf::from("/data/reads.bam"));
+        let gbk = Location::File(PathBuf::from("/data/virus.gbk"));
+        let _ = genie.launch(vec![reads.clone(), gbk]);
+        assert!(shows(&genie, "Opening virus.gbk…"));
+        assert_eq!(genie.pending, [reads]);
     }
 
     #[test]

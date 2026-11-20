@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
@@ -6,17 +7,65 @@ use genie_core::{Assembly, Band, Contig, Region, contig_order};
 use genie_formats::bgzf::{self, Bgzf};
 use genie_formats::fai::{self, FaiRecord};
 use genie_formats::twobit::{self, TwoBit};
-use genie_formats::{contigs, fasta, gzi};
+use genie_formats::{contigs, fasta, genbank, gzi, gzip};
 
 use crate::location::{Location, Reader};
 
 const FAI_SHARE: f32 = 0.95;
+/// The largest GenBank or EMBL file that genie reads. It keeps all of its bases in memory.
+const RECORDS_LIMIT: u64 = 512 << 20;
 
 #[derive(Debug)]
 enum Source {
     Fasta(Vec<FaiRecord>),
     Bgzf(Vec<FaiRecord>, gzi::Index),
     TwoBit(TwoBit),
+    /// The bases of the records of a GenBank or EMBL file.
+    Memory(Bases),
+}
+
+/// The bases of each record of a file, in memory.
+struct Bases(Vec<Vec<u8>>);
+
+impl fmt::Debug for Bases {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Bases of {} records", self.0.len())
+    }
+}
+
+/// The records of a GenBank or EMBL file, plain or compressed with gzip.
+pub fn records(location: &Location) -> Result<Vec<genbank::Record>, String> {
+    let name = location.name();
+    if location.size()? > RECORDS_LIMIT {
+        return Err(format!("The file {name} is larger than 512 MB."));
+    }
+    let file = BufReader::new(location.open()?);
+    let read = if crate::track::is_compressed(&name) {
+        genbank::read(BufReader::new(gzip::Reader::new(file)))
+    } else {
+        genbank::read(file)
+    };
+    read.map_err(|error| format!("The file {name} is not valid. {error}"))
+}
+
+/// A reference of the sequences of the records of a GenBank or EMBL file.
+fn from_records(location: Location) -> Result<Reference, String> {
+    let records = records(&location)?;
+    if let Some(bare) = records.iter().find(|record| record.bases.is_empty()) {
+        return Err(format!(
+            "The record {} has no sequence. Open the sequence as a FASTA file, then open this file.",
+            bare.name
+        ));
+    }
+    let contigs = records
+        .iter()
+        .map(|record| Contig {
+            name: record.name.clone(),
+            length: record.length,
+        })
+        .collect();
+    let bases = records.into_iter().map(|record| record.bases).collect();
+    Reference::new(location, contigs, Source::Memory(Bases(bases)))
 }
 
 #[derive(Debug)]
@@ -105,9 +154,12 @@ fn sized(
     let mut file = location.open()?;
     let mut head = Vec::new();
     (&mut file)
-        .take(4)
+        .take(5)
         .read_to_end(&mut head)
         .map_err(|error| error.to_string())?;
+    if genbank::is_name(&location.name()) || genbank::sniff(&head) {
+        return from_records(location);
+    }
     if twobit::sniff(&head) {
         let reader = match &mut file {
             Reader::Remote(remote) => {
@@ -241,14 +293,20 @@ impl Reference {
     }
 
     pub fn fetch(&self, contig: usize, region: Region) -> Result<Vec<u8>, String> {
-        let mut file = self.location.open()?;
         let entry = self.order[contig];
+        if let Source::Memory(bases) = &self.source {
+            let record = &bases.0[entry];
+            let region = region.clamp_to(record.len() as u64);
+            return Ok(record[region.start() as usize..region.end() as usize].to_vec());
+        }
+        let mut file = self.location.open()?;
         match &self.source {
             Source::Fasta(records) => fasta::fetch(&mut file, &records[entry], region),
             Source::Bgzf(records, index) => {
                 fasta::fetch_bgzf(&mut Bgzf::new(file), index, &records[entry], region)
             }
             Source::TwoBit(reader) => reader.fetch(&mut file, entry, region),
+            Source::Memory(_) => Ok(Vec::new()),
         }
         .map_err(|error| error.to_string())
     }
@@ -401,6 +459,55 @@ mod tests {
         plain[3] = 0;
         let error = open(scratch.file("ref.fa.gz", plain), None, &mut |_| {}).unwrap_err();
         assert_eq!(error, "The file is not compressed with bgzip.");
+    }
+
+    const GENBANK: &str = "\
+LOCUS       pB          12 bp    DNA     circular SYN 01-JAN-1980
+ACCESSION   .
+VERSION     .
+FEATURES             Location/Qualifiers
+     CDS             2..10
+                     /label=b
+ORIGIN
+        1 ttttcccaaa gg
+//
+LOCUS       NC_2         8 bp    DNA     linear   VRL 01-JAN-2020
+ACCESSION   NC_2
+VERSION     NC_2.1
+ORIGIN
+        1 acgtacgt
+//
+";
+
+    #[test]
+    fn genbank_files_open_their_sequences() {
+        let scratch = Scratch::new("genbank");
+        for (name, content) in [
+            ("plasmid.gb", GENBANK.as_bytes().to_vec()),
+            ("plasmid.gbk.gz", bgzip(&[GENBANK.as_bytes()])),
+        ] {
+            let reference = open(scratch.file(name, content), None, &mut |_| {}).unwrap();
+            let contigs: Vec<(&str, u64)> = reference
+                .assembly
+                .contigs()
+                .iter()
+                .map(|contig| (contig.name.as_str(), contig.length))
+                .collect();
+            assert_eq!(contigs, [("pB", 12), ("NC_2.1", 8)], "{name}");
+            assert_eq!(
+                reference.fetch(0, Region::between(3, 9)).unwrap(),
+                b"TCCCAA"
+            );
+            assert_eq!(reference.fetch(1, Region::between(6, 20)).unwrap(), b"GT");
+            let shown = format!("{reference:?}");
+            assert!(shown.len() < 2_000, "{}", shown.len());
+        }
+        let bare = GENBANK.replace("ORIGIN\n        1 acgtacgt\n", "");
+        let error = open(scratch.file("bare.gb", bare), None, &mut |_| {}).unwrap_err();
+        assert_eq!(
+            error,
+            "The record NC_2.1 has no sequence. Open the sequence as a FASTA file, then open this file."
+        );
     }
 
     #[test]

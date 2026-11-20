@@ -28,7 +28,7 @@ use crate::paths;
 use crate::port::Reply;
 use crate::prepare::{self, Check, Step, Work};
 use crate::reading;
-use crate::reference;
+use crate::reference::{self, Reference};
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
@@ -777,6 +777,9 @@ impl Genie {
             self.fail(REMOTE_SESSION.to_owned());
             return Task::none();
         }
+        if genie_formats::genbank::is_name(&location.name()) {
+            return self.open_records(location);
+        }
         if let Some(declared) = self.restored_type(&location) {
             return self.open_restored(location, declared);
         }
@@ -787,6 +790,69 @@ impl Genie {
             return self.open_track(location);
         }
         self.open_reference(location, None)
+    }
+
+    /// Reads a GenBank or EMBL file in the background: its sequence and its features.
+    fn open_records(&mut self, location: Location) -> Task<Message> {
+        if self.session.is_none() {
+            self.status = Status::Opening(location.name());
+        }
+        self.busy += 1;
+        Task::perform(
+            async move {
+                let cache = paths::cache_dir();
+                let opened = reference::open(location.clone(), cache.as_deref(), &mut |_| {});
+                let source = track::open(location.clone());
+                (location, opened.map(Arc::new), source.map(Arc::new))
+            },
+            |(location, reference, source)| Message::RecordsOpened(location, reference, source),
+        )
+    }
+
+    /// Shows a GenBank or EMBL file: only its track when the reference in view has its records
+    /// with the same lengths, or else its sequence as the reference, with its track.
+    pub(super) fn records_opened(
+        &mut self,
+        location: &Location,
+        reference: Result<Arc<Reference>, String>,
+        source: Result<Arc<Source>, String>,
+    ) -> Task<Message> {
+        let same = |open: &Reference, source: &Source| match &reference {
+            Ok(reference) => reference.assembly.contigs().iter().all(|contig| {
+                open.assembly
+                    .find(&contig.name)
+                    .is_some_and(|at| open.assembly.contigs()[at].length == contig.length)
+            }),
+            Err(_) => source
+                .contigs()
+                .iter()
+                .all(|name| open.assembly.find(name).is_some()),
+        };
+        let fits = match (&self.session, &source) {
+            (Some(session), Ok(source)) => same(&session.reference, source),
+            _ => false,
+        };
+        let (reference, source) = match (fits, reference, source) {
+            (true, _, Ok(source)) => {
+                self.busy = self.busy.saturating_sub(1);
+                let task = self.add_track(&source);
+                self.track_settled();
+                return task;
+            }
+            (false, Ok(reference), Ok(source)) => (reference, source),
+            (_, Err(error), _) | (_, _, Err(error)) => {
+                self.busy = self.busy.saturating_sub(1);
+                self.fail(error);
+                self.track_settled();
+                return Task::none();
+            }
+        };
+        let restoring = self.restoring.is_some() || self.pending.contains(location);
+        let opened = self.opened(Ok(reference));
+        if restoring {
+            return opened;
+        }
+        Task::batch([opened, self.add_track(&source)])
     }
 
     /// Opens a reference sequence, with the file of its contig sizes when there is one.
@@ -1313,7 +1379,10 @@ pub(super) fn opening(location: Location, cache: Option<&Path>) -> Message {
 }
 
 pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
-    let references = ["fa", "fasta", "fna", "fas", "gz", "bgz", "2bit"];
+    let references = [
+        "fa", "fasta", "fna", "fas", "gz", "bgz", "2bit", "gb", "gbk", "gbff", "genbank", "embl",
+        "emb",
+    ];
     let dialog = if tracks {
         rfd::AsyncFileDialog::new()
             .set_title("Open a track, a track hub, a reference sequence or a session")
@@ -1347,6 +1416,12 @@ pub(super) async fn pick(tracks: bool) -> Option<PathBuf> {
                     "tab",
                     "paf",
                     "psl",
+                    "gb",
+                    "gbk",
+                    "gbff",
+                    "genbank",
+                    "embl",
+                    "emb",
                 ],
             )
             .add_filter(
