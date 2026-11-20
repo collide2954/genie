@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, sashimi plots, isoforms, reference tracks, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -50,6 +50,7 @@
           <li><a href="#variant-table">Variant table</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
+          <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#dot-plot">Dot plot</a></li>
           <li><a href="#liftover">Liftover</a></li>
           <li><a href="#sample-groups">Sample groups</a></li>
@@ -169,6 +170,17 @@
 <li>An isoform gets a row when it has 2 reads or more and 1 % or more of the spliced reads in view. The line under the rows counts the other isoforms and their reads, and the reads without a splice junction.</li>
 <li>Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.</li>
 <li>Click <b>Isoforms</b> again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.</li>
+</ul>
+<h2 id="reference-tracks">Reference tracks</h2>
+<p>genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.</p>
+<ul>
+<li>Right-click the sequence and click a track under <b>Add a track</b>. The genie menu has the same tracks under <b>Reference tracks</b>, and the palette has <b>Add a GC % track</b>, <b>Add a CpG islands track</b>, <b>Add a repeats track</b> and <b>Add restriction sites…</b>.</li>
+<li>The tracks show when the view is 10 Mb or less. They work as other tracks: you can move, rename, hide and filter them, and sessions, images and undo keep them.</li>
+<li><b>GC %</b> is a signal track. Each bar shows the share of G and C bases in windows of 100 bases. Click 5, 20, 500 or 1,000 under <b>Window (bp)</b> in the track menu to use other windows. When you zoom out, a bar shows the mean of its windows, and a light color goes up to the highest window. A window with more N bases than known bases has no value.</li>
+<li><b>CpG islands</b> finds islands as the CpG Islands track of UCSC finds them. Each CG scores +17 and each other pair of bases scores -1, and the segments with the highest scores are the candidates. An island is a candidate of more than 200 bases, with 50 % GC or more and a ratio of observed to expected CpG of more than 0.6. genie uses all bases, also the soft-masked bases, as the unmasked CpG islands of UCSC do. The name of an island is &quot;CpG:&quot; and its number of CpGs. Its card shows the CpGs, the C and G bases, the percent of CpG and of GC, and the observed/expected ratio.</li>
+<li><b>Repeats</b> shows the soft-masked bases of the reference: the runs of lower-case bases. Most genomes from UCSC and the <code>dna_sm</code> files of Ensembl mark their repeats in this way, for example the repeats that RepeatMasker and Tandem Repeats Finder find. A reference with only upper-case bases has no repeats. The track is squished at first. A repeat that goes on past the 20 kb that genie reads on each side of the view has a note in its card.</li>
+<li><b>Restriction sites…</b> opens a list of 60 common enzymes. Click enzymes to pick them, or type a site with ^ at the cut, for example <code>G^AATTC</code>, and click <b>Add</b>. A site can have IUPAC codes, such as N. Then click <b>Add the track</b>. When the track has more than one enzyme, each enzyme has its own color. Click <b>Enzymes…</b> in the track menu to change the enzymes.</li>
+<li>The card of a site shows the site, the base after which the enzyme cuts, and the lengths of the fragments to the nearest cuts before and after it. A fragment that goes past the 20 kb that genie reads on each side of the view shows its least length, for example &quot;more than 21000&quot;. Filters work on these fields, for example to keep the cuts with a fragment of 500 bases or more after them.</li>
 </ul>
 <h2 id="dot-plot">Dot plot</h2>
 <p>A dot plot compares two assemblies with the alignments of a <a href="files.html#paf-alignments">PAF file</a>, for example from <code>minimap2 -cx asm5 genome.fa other.fa</code>. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.</p>

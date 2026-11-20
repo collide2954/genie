@@ -409,6 +409,18 @@ The isoforms of a read track with long RNA reads, for example PacBio Iso-Seq or 
 - Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.
 - Click **Isoforms** again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.
 
+## Reference tracks
+
+genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.
+
+- Right-click the sequence and click a track under **Add a track**. The genie menu has the same tracks under **Reference tracks**, and the palette has **Add a GC % track**, **Add a CpG islands track**, **Add a repeats track** and **Add restriction sites…**.
+- The tracks show when the view is 10 Mb or less. They work as other tracks: you can move, rename, hide and filter them, and sessions, images and undo keep them.
+- **GC %** is a signal track. Each bar shows the share of G and C bases in windows of 100 bases. Click 5, 20, 500 or 1,000 under **Window (bp)** in the track menu to use other windows. When you zoom out, a bar shows the mean of its windows, and a light color goes up to the highest window. A window with more N bases than known bases has no value.
+- **CpG islands** finds islands as the CpG Islands track of UCSC finds them. Each CG scores +17 and each other pair of bases scores -1, and the segments with the highest scores are the candidates. An island is a candidate of more than 200 bases, with 50 % GC or more and a ratio of observed to expected CpG of more than 0.6. genie uses all bases, also the soft-masked bases, as the unmasked CpG islands of UCSC do. The name of an island is "CpG:" and its number of CpGs. Its card shows the CpGs, the C and G bases, the percent of CpG and of GC, and the observed/expected ratio.
+- **Repeats** shows the soft-masked bases of the reference: the runs of lower-case bases. Most genomes from UCSC and the `dna_sm` files of Ensembl mark their repeats in this way, for example the repeats that RepeatMasker and Tandem Repeats Finder find. A reference with only upper-case bases has no repeats. The track is squished at first. A repeat that goes on past the 20 kb that genie reads on each side of the view has a note in its card.
+- **Restriction sites…** opens a list of 60 common enzymes. Click enzymes to pick them, or type a site with ^ at the cut, for example `G^AATTC`, and click **Add**. A site can have IUPAC codes, such as N. Then click **Add the track**. When the track has more than one enzyme, each enzyme has its own color. Click **Enzymes…** in the track menu to change the enzymes.
+- The card of a site shows the site, the base after which the enzyme cuts, and the lengths of the fragments to the nearest cuts before and after it. A fragment that goes past the 20 kb that genie reads on each side of the view shows its least length, for example "more than 21000". Filters work on these fields, for example to keep the cuts with a fragment of 500 bases or more after them.
+
 ## Dot plot
 
 A dot plot compares two assemblies with the alignments of a [PAF file](#paf-alignments), for example from `minimap2 -cx asm5 genome.fa other.fa`. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.
