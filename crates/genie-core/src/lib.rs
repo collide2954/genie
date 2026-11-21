@@ -11,6 +11,7 @@ pub mod dotplot;
 pub mod effect;
 pub mod enzyme;
 mod feature;
+pub mod haplotag;
 mod history;
 pub mod interaction;
 pub mod isoform;
