@@ -12,6 +12,7 @@ pub mod depth;
 pub mod dotplot;
 pub mod effect;
 pub mod enzyme;
+pub mod epiallele;
 mod feature;
 pub mod haplotag;
 mod history;
