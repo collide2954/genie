@@ -143,6 +143,7 @@
 <ul>
 <li>genie reads only the parts of a file that the view needs. The server must send parts of files (HTTP range requests). If the server sends only full files, genie opens only files of 4 MB or less.</li>
 <li>genie looks for the index on the same server. The address of an index is the address of the file with the index extension, for example <code>reads.bam.bai</code>.</li>
+<li>A 2bit file on the web opens with the contig sizes of the <code>.chrom.sizes</code> file beside it, when there is one, as at UCSC (<code>hg38.chrom.sizes</code> beside <code>hg38.2bit</code>). Else genie reads the length of each contig from the 2bit file, and a genome with many contigs takes many requests. Sessions keep the sizes file.</li>
 <li>If a track file on the web has no index, genie downloads the file into its cache folder and prepares it there, as for files on your computer. The limit is 1 GB. If you stop a download, it continues from where it stopped the next time that you open the file. genie does not make indexes for FASTA files from the web.</li>
 <li>genie reads plain BED, GFF3, GTF, VCF, bedGraph and bedMethyl files up to 50 MB completely.</li>
 <li>For files that genie reads from the web in parts, the locus box finds names only in bigBed files that have a name index.</li>
