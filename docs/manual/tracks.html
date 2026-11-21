@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -53,6 +53,7 @@
           <li><a href="#ld">LD</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
+          <li><a href="#phase-reads">Phase reads</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
           <li><a href="#dot-plot">Dot plot</a></li>
@@ -206,6 +207,16 @@
 <li>An isoform gets a row when it has 2 reads or more and 1 % or more of the spliced reads in view. The line under the rows counts the other isoforms and their reads, and the reads without a splice junction.</li>
 <li>Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.</li>
 <li>Click <b>Isoforms</b> again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.</li>
+</ul>
+<h2 id="phase-reads">Phase reads</h2>
+<p>The reads of a sample can have an HP tag with their haplotype, for example from whatshap haplotag. genie can give a haplotype to the reads without an HP tag from the phased SNVs of an open VCF file.</p>
+<ul>
+<li>Open the read file and a VCF or BCF file with phased genotypes, for example <code>0|1</code> from whatshap phase, HiPhase or LongPhase. Right-click the read track. <b>Phase by</b> lists the variant tracks with samples. Click one. genie uses the sample with the name of a sample of the reads (SM in the @RG lines of the header), else the first sample. Up to 8 samples show under the variant track: click a sample to use it.</li>
+<li>At each phased heterozygous SNV of the sample, a base of the read with a quality of 20 or more votes for the haplotype with that base. The votes of each phase set (PS) count apart, and the phase set with the most votes decides. A read gets haplotype 1 or 2 when it has 2 votes or more for it, and twice the votes for the other haplotype. Other reads have no haplotype. Each read counts alone: the two mates of a pair do not add their votes.</li>
+<li>Reads with an HP tag keep their haplotype. The card of a read with a haplotype from the VCF shows &quot;HP 1 from the VCF&quot; or &quot;HP 2 from the VCF&quot;.</li>
+<li>Then <b>Group by phase</b> shows the reads of haplotype 1, of haplotype 2 and the reads without a haplotype, and <b>Methylation difference</b> and the <b>DMR table</b> compare the two haplotypes.</li>
+<li>genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.</li>
+<li>Click the variant track again to stop. The palette has <b>Phase the reads by</b> each variant track and <b>Stop phasing the reads</b>. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.</li>
 </ul>
 <h2 id="reference-tracks">Reference tracks</h2>
 <p>genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.</p>

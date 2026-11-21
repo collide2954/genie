@@ -17,6 +17,7 @@
 - **B-allele frequency** in the menu of a variant track shows a lane with the fraction of the reads of one sample that carry an allele that is not the reference allele, from AD or else VAF, AF or BAF, at the sites with a call and 10 reads or more. The lane also shows under the density of a wide view, up to a whole chromosome, so that a gain or a loss of heterozygosity is easy to see.
 - **Review variants…** in the menu of a variant track opens a bar that goes from variant to variant with N and P, and marks each one true, false or not sure with T, F and U, with a note. The marks show in a strip over the sites, in the cards and in the variant table, and filters and **Next variant** can use them. Sessions and undo keep them, and **Export…** saves a TSV file or a copy of the VCF file with REVIEW and REVIEW_NOTE.
 - **LD** in the menu of a variant track shows the r² of the pairs of variants in view in a triangle under the sites, as Haploview does, from the genotypes of all samples or of a group of the samples, such as EUR. While a track shows its LD, the dots of GWAS tracks take the LocusZoom colors of their r² with the top dot, or with a dot that **Lead** in its card picks.
+- **Phase by** in the menu of a read track gives the reads without an HP tag haplotype 1 or 2 from the phased SNVs of a sample of a variant track: the bases of a read with a quality of 20 or more vote in each phase set, and a read needs 2 votes or more and twice the votes of the other haplotype. genie uses the sample with the name of the reads (SM), else the first. Then **Group by phase**, **Methylation difference** and the **DMR table** work for reads without HP tags. Sessions keep the variant track and the sample.
 - genie opens motif files of MEME, JASPAR and HOMER. A dialog finds motifs by name or ID, and the track shows the sites of the picked motifs on the two strands with an exact p-value under 0.0001, as FIMO finds them. The track menu changes the motifs and the threshold.
 - **Reference tracks** in the sequence menu, the genie menu and the palette make tracks from the bases of the reference, without a file: **GC %** in windows of 5 to 1,000 bases, **CpG islands** as UCSC finds them, **Repeats** from the soft-masked bases, and **Restriction sites…** of 60 common enzymes or typed sites, with the fragment lengths between the cuts in the cards.
 - genie opens cooler files (`.cool` and `.mcool`) as Hi-C tracks, with their balancing weights as normalizations. It has its own reader of the HDF5 files that cooler writes.
@@ -63,6 +64,7 @@
 
 ### Fixes
 
+- A menu that is taller than the window scrolls. Before, the items at its bottom, such as **Remove**, could be out of the window.
 - **View mate** of a spliced read, as in RNA-seq, shows the start of the read and the start of its mate. Before, genie used the length of the read with its introns, so the panels could show an intron and miss the mate.
 - A tall read track stops at the top of the variant table or the DMR table. Before, its reads could show over the table.
 - In a narrow window, a locus box with several loci keeps the window buttons in the window. Before, the buttons could go out of view.

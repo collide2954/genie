@@ -469,6 +469,17 @@ The isoforms of a read track with long RNA reads, for example PacBio Iso-Seq or 
 - Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.
 - Click **Isoforms** again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.
 
+## Phase reads
+
+The reads of a sample can have an HP tag with their haplotype, for example from whatshap haplotag. genie can give a haplotype to the reads without an HP tag from the phased SNVs of an open VCF file.
+
+- Open the read file and a VCF or BCF file with phased genotypes, for example `0|1` from whatshap phase, HiPhase or LongPhase. Right-click the read track. **Phase by** lists the variant tracks with samples. Click one. genie uses the sample with the name of a sample of the reads (SM in the @RG lines of the header), else the first sample. Up to 8 samples show under the variant track: click a sample to use it.
+- At each phased heterozygous SNV of the sample, a base of the read with a quality of 20 or more votes for the haplotype with that base. The votes of each phase set (PS) count apart, and the phase set with the most votes decides. A read gets haplotype 1 or 2 when it has 2 votes or more for it, and twice the votes for the other haplotype. Other reads have no haplotype. Each read counts alone: the two mates of a pair do not add their votes.
+- Reads with an HP tag keep their haplotype. The card of a read with a haplotype from the VCF shows "HP 1 from the VCF" or "HP 2 from the VCF".
+- Then **Group by phase** shows the reads of haplotype 1, of haplotype 2 and the reads without a haplotype, and **Methylation difference** and the **DMR table** compare the two haplotypes.
+- genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.
+- Click the variant track again to stop. The palette has **Phase the reads by** each variant track and **Stop phasing the reads**. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.
+
 ## Reference tracks
 
 genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.
