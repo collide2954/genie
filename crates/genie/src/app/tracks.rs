@@ -544,7 +544,9 @@ impl Genie {
                 file_fields.clone_from(&found.fields[index]);
                 Detail::Junction(found.junctions[index])
             }
-            Content::Cells(lanes) => cell_detail(viewport, lanes, (x, y))?,
+            Content::Cells(lanes) => {
+                cell_detail(viewport, lanes, (x, y - genie_render::cells::HEADER))?
+            }
         };
         let fields = detail_fields(track, contig, &detail, file_fields);
         Some(Card {

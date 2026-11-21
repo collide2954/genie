@@ -5958,6 +5958,12 @@ ORIGIN
             "the fragment of a barcode that is not a cell does not count"
         );
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(160.5, 5.0))));
+        assert!(
+            !shows(&genie, "Coverage 1.0"),
+            "the name of the track has a row of its own over the lanes"
+        );
+        let first = genie_render::cells::HEADER + 5.0;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(160.5, first))));
         for line in ["CD4 T", "Coverage 1.0", "2 cells · 0.50 per cell"] {
             assert!(shows(&genie, line), "{line}");
         }

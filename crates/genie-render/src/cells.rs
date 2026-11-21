@@ -10,6 +10,8 @@ use crate::scene::{Align, Font, Paint, Primitive};
 
 /// The height of a lane.
 pub const LANE_HEIGHT: f32 = 28.0;
+/// The row over the lanes of a track that shows only lanes, for the name of the track.
+pub const HEADER: f32 = 14.0;
 /// The space at the top of a lane for its name.
 const NAME_SPACE: f32 = 11.0;
 const NAME_SIZE: f32 = 10.0;

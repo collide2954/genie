@@ -1048,7 +1048,10 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         }
         Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
         Some(Content::Cells(lanes)) => {
-            let primitives = genie_render::cells::scene(viewport, &lanes.depths, &lanes.lanes);
+            let primitives = genie_render::cells::scene(viewport, &lanes.depths, &lanes.lanes)
+                .into_iter()
+                .map(|primitive| primitive.lowered(genie_render::cells::HEADER))
+                .collect();
             Body::Scene(primitives, shape.height)
         }
         None => Body::Space(EMPTY_HEIGHT),
@@ -2050,7 +2053,10 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Junctions(_)) => Shape::plain(junctions::HEIGHT),
         Some(Content::Contacts(_)) => Shape::plain(contact_heights(track).1),
         Some(Content::Associations(_)) => Shape::plain(manhattan::HEIGHT),
-        Some(Content::Cells(lanes)) => Shape::plain(genie_render::cells::height(lanes.lanes.len())),
+        Some(Content::Cells(lanes)) => {
+            let lanes = genie_render::cells::height(lanes.lanes.len());
+            Shape::plain(genie_render::cells::HEADER + lanes)
+        }
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None if track.source.has_junctions() => Shape::plain(junctions::HEIGHT),
