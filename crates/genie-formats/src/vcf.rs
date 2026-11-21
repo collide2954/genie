@@ -25,25 +25,43 @@ pub struct Header {
     pub infos: Vec<(String, String)>,
 }
 
-pub fn fields(info: &str, infos: &[(String, String)]) -> Vec<Field> {
-    let labels: Vec<String> = infos
+/// The short label of the description of each INFO key of a header.
+fn labels(infos: &[(String, String)]) -> Vec<String> {
+    infos
         .iter()
         .map(|(id, about)| fields::label(about, id))
-        .collect();
+        .collect()
+}
+
+/// The label of the field of the INFO key at a place of the header: the short label of its
+/// description, or the key when another key has the same label.
+fn label_at(at: usize, key: &str, labels: &[String]) -> String {
+    let label = &labels[at];
+    let shared = labels
+        .iter()
+        .enumerate()
+        .any(|(other, text)| other != at && text == label);
+    if shared {
+        key.to_owned()
+    } else {
+        label.clone()
+    }
+}
+
+/// The label of the field of an INFO key, as `fields` gives it, or nothing for a key that the
+/// header does not have.
+pub fn info_label(key: &str, infos: &[(String, String)]) -> Option<String> {
+    let at = infos.iter().position(|(id, _)| id == key)?;
+    Some(label_at(at, key, &labels(infos)))
+}
+
+pub fn fields(info: &str, infos: &[(String, String)]) -> Vec<Field> {
+    let labels = labels(infos);
     let label_of = |key: &str| {
-        let Some(at) = infos.iter().position(|(id, _)| id == key) else {
-            return key.to_owned();
-        };
-        let label = &labels[at];
-        let shared = labels
+        infos
             .iter()
-            .enumerate()
-            .any(|(other, text)| other != at && text == label);
-        if shared {
-            key.to_owned()
-        } else {
-            label.clone()
-        }
+            .position(|(id, _)| id == key)
+            .map_or_else(|| key.to_owned(), |at| label_at(at, key, &labels))
     };
     let mut found = Vec::new();
     for entry in info.split(';') {
@@ -521,8 +539,8 @@ mod tests {
     use genie_core::variant::{Call, Sv};
 
     use super::{
-        extent, fields, fraction, fractions, header, names, parse, phased, phased_sites, query,
-        read_fractions, read_phased, read_table, reviewed,
+        extent, fields, fraction, fractions, header, info_label, names, parse, phased,
+        phased_sites, query, read_fractions, read_phased, read_table, reviewed,
     };
     use crate::bgzf::Bgzf;
     use crate::bgzf::tests::{block, file};
@@ -719,6 +737,16 @@ mod tests {
             .map(|(label, value)| ((*label).to_owned(), (*value).to_owned()))
             .collect();
         assert_eq!(shown, wanted);
+        for key in ["AF_EUR", "AN_EAS", "DP"] {
+            let shown = fields(&format!("{key}=1"), &infos);
+            assert_eq!(
+                info_label(key, &infos),
+                Some(shown[0].label.clone()),
+                "{key}"
+            );
+        }
+        assert_eq!(info_label("DP", &infos).as_deref(), Some("Read depth"));
+        assert_eq!(info_label("XX", &infos), None);
     }
 
     const TEXT: &str = "##fileformat=VCFv4.2\n\

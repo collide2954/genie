@@ -1582,7 +1582,10 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.set_ld(found.ld.is_some(), group);
     track.lead = found.lead;
     track.plot = found.plot;
-    track.filter = found.filter.clone();
+    track.filter = track::Filter {
+        rules: track::labeled_rules(&track.source, &found.filter.rules),
+        label: found.filter.label.clone(),
+    };
     track.set_modification(found.modification.clone());
     track.reviews = Arc::new(found.reviews.clone());
     track.set_normalization(found.normalization.as_deref());

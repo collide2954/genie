@@ -2708,6 +2708,25 @@ pub const REVIEW: &str = "Review";
 /// The name of the field of the review note of a variant.
 pub const REVIEW_NOTE: &str = "Review note";
 
+/// The rules of a filter with the labels of the fields of a track: a rule that names an INFO key
+/// of a variant file, as `EUR_AF`, takes the label of the field of that key.
+pub fn labeled_rules(source: &Source, rules: &[fields::Rule]) -> Vec<fields::Rule> {
+    let infos = match &source.format {
+        Format::Variants(file) => file.infos(),
+        _ => &[],
+    };
+    rules
+        .iter()
+        .map(|rule| match vcf::info_label(&rule.label, infos) {
+            Some(label) => fields::Rule {
+                label,
+                test: rule.test.clone(),
+            },
+            None => rule.clone(),
+        })
+        .collect()
+}
+
 /// The fields of a variant for its card, its filters and the variant table. With the trios of
 /// the track, the Inheritance field lists what their calls say: Mendelian error, De novo and
 /// Consistent. The review mark of the variant gives the first fields.

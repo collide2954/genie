@@ -8386,6 +8386,30 @@ ORIGIN
         assert_eq!(track.filter, filter);
     }
 
+    /// A session can name an INFO key, as `least = DP: 10`: the rule takes the label of the
+    /// field of that key.
+    #[test]
+    fn session_filters_can_name_info_keys() {
+        let genie = with_variants();
+        let mut saved = genie.saved().unwrap();
+        saved.tracks[0].filter.rules = vec![field_rule("DP", Test::AtLeast(10.0))];
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        let _ = restored.update(Message::TrackOpened(Ok(variant_source())));
+        let track = &mut restored.session.as_mut().unwrap().tracks[0];
+        assert_eq!(
+            track.filter.rules,
+            [field_rule("Read depth", Test::AtLeast(10.0))]
+        );
+        let region = Region::between(0, 1_000);
+        track.slot.wanted = Some((0, region));
+        let variants = vec![site(20, vec![Call::Het, Call::Alternate])];
+        let loaded = Loaded::variants(region, variants, 2);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        assert_eq!(variant_count(&restored), 1);
+    }
+
     #[test]
     fn new_data_follows_the_filter() {
         let mut genie = with_track();
