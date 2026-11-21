@@ -2882,6 +2882,7 @@ ORIGIN
                     mate: Some("chr2".to_owned()),
                     same: false,
                     insertion: None,
+                    epiallele: None,
                 },
                 at: Point::ORIGIN,
                 fields: Vec::new(),
@@ -2938,6 +2939,7 @@ ORIGIN
                 mate: Some("chr1".to_owned()),
                 same: true,
                 insertion: None,
+                epiallele: None,
             },
             at: Point::ORIGIN,
             fields: Vec::new(),
@@ -6272,6 +6274,115 @@ ORIGIN
         }
     }
 
+    /// A reference with a CpG at 1, 5, 9 and so on.
+    fn cpg_reference() -> Vec<u8> {
+        b"ACGT".repeat(250)
+    }
+
+    /// A read of 40 bases from 0 on `cpg_reference` with 5mC calls at the CpGs 1, 5, 9 and 13,
+    /// all methylated or all not, and a haplotype when it has one.
+    fn cpg_read(
+        name: &str,
+        methylated: bool,
+        phase: Option<i64>,
+    ) -> genie_core::alignment::Alignment {
+        use genie_core::alignment::{Op, Tags};
+        use genie_core::modification::{Call, Code, Modifications};
+        let chance = if methylated { 250 } else { 10 };
+        genie_core::alignment::Alignment {
+            cigar: vec![(Op::Match, 40)],
+            bases: cpg_reference()[..40].to_vec(),
+            tags: Tags {
+                phase,
+                mods: Modifications {
+                    codes: vec![Code {
+                        base: b'C',
+                        code: "m".to_owned(),
+                    }],
+                    calls: [1, 5, 9, 13]
+                        .map(|at| Call {
+                            at,
+                            code: 0,
+                            chance,
+                        })
+                        .to_vec(),
+                },
+                ..Tags::default()
+            },
+            ..read(name, 0)
+        }
+    }
+
+    /// Group by epiallele puts the reads in rows by their CpG pattern, the most methylated
+    /// first, with the reads of each haplotype and Fisher's exact test in the names of the rows.
+    /// The methylation lanes compare the epialleles, a read card gives the epiallele of the read,
+    /// and the menu and the palette set the number of epialleles.
+    #[test]
+    fn reads_group_by_epiallele_with_their_haplotypes() {
+        use genie_core::alignment::Op;
+        use genie_core::methylation::fisher;
+        use genie_render::alignments::{GROUP_GAP, methylation_height};
+
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let _ = genie.update(Message::TrackChanged(0, Change::Mods));
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        track.options.group = Grouping::Epiallele(2);
+        let region = Region::between(0, 1_000);
+        track.slot.wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, track.options);
+        let methylated = (0..6).map(|at| cpg_read(&format!("m{at}"), true, Some(1)));
+        let mut reads: Vec<_> = methylated.collect();
+        reads.push(cpg_read("m6", true, Some(2)));
+        reads.extend((0..6).map(|at| cpg_read(&format!("u{at}"), false, Some(2))));
+        let mut short = cpg_read("short", true, None);
+        (short.cigar, short.bases) = (vec![(Op::Match, 4)], cpg_reference()[..4].to_vec());
+        reads.push(short);
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, cpg_reference(), 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        let Some(Content::Reads(pile)) = track.data(0).map(|data| &data.content) else {
+            panic!("expected reads");
+        };
+        let p = crate::card::p_value(fisher([[6, 1], [0, 6]]));
+        let names: Vec<String> = pile.groups.iter().map(|(_, name)| name.clone()).collect();
+        assert_eq!(
+            names,
+            [
+                format!("Epiallele 1 · 100 % methylated · 7 reads · HP1 6, HP2 1 · p = {p}"),
+                format!("Epiallele 2 · 0 % methylated · 6 reads · HP1 0, HP2 6 · p = {p}"),
+                "No epiallele".to_owned(),
+            ]
+        );
+        let (_, lanes) = track.methylation_lanes(pile);
+        let labels: Vec<Option<&str>> = lanes.iter().map(|(label, _)| label.as_deref()).collect();
+        let names = ["Epiallele 1", "Epiallele 2", "No epiallele"];
+        assert_eq!(labels, names.map(Some));
+        let y = methylation_height(3) + GROUP_GAP + 2.0;
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(20.0, y))));
+        assert!(shows(&genie, "Epiallele 1"));
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Group by epiallele"));
+        assert!(shows(&genie, "Epialleles"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Epialleles(3)));
+        let group = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].options.group;
+        assert_eq!(group(&genie), Grouping::Epiallele(3));
+        assert!(palette_shows(
+            &mut genie,
+            "4 epialleles",
+            "Show 4 epialleles"
+        ));
+        let _ = genie.update(Message::TrackChanged(
+            0,
+            Change::Group(Grouping::Epiallele(3)),
+        ));
+        assert_eq!(group(&genie), Grouping::None);
+    }
+
     /// A read of a skipped exon from 10 to 100: with the junctions 20-50 and 60-90, or with the
     /// junction 20-90 when it skips the exon, and with a haplotype when it has one.
     fn exon_read(name: &str, skip: bool, phase: Option<i64>) -> genie_core::alignment::Alignment {
@@ -6957,6 +7068,7 @@ ORIGIN
             with_phased_reads(),
             with_ratio(),
             with_spliced_groups(),
+            with_epialleles(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));
@@ -7105,6 +7217,13 @@ ORIGIN
     }
 
     /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
+    /// A read track grouped by 3 epialleles.
+    fn with_epialleles() -> Genie {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackChanged(0, Change::Epialleles(3)));
+        genie
+    }
+
     /// A read track grouped by phase that shows the splicing difference of its groups.
     fn with_spliced_groups() -> Genie {
         let mut genie = with_reads();

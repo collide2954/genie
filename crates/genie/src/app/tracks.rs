@@ -1467,6 +1467,7 @@ fn read_detail(
         mate,
         same,
         insertion,
+        epiallele: pile.epiallele_name(index),
     })
 }
 

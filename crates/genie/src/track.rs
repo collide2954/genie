@@ -388,7 +388,13 @@ pub enum Grouping {
     Tag([u8; 2]),
     /// The cell type of the barcode of a read, from the cell table of the track.
     Cell,
+    /// The epiallele of a read: its pattern of methylation at CpGs, with this number of
+    /// epialleles.
+    Epiallele(u8),
 }
+
+/// The numbers of epialleles that a read track can find.
+pub const EPIALLELES: [u8; 3] = [2, 3, 4];
 
 /// The most groups of a tag before genie puts the smallest ones together.
 const TAG_GROUPS: usize = 30;
@@ -409,6 +415,10 @@ pub fn tag(text: &str) -> Option<[u8; 2]> {
 pub struct Values {
     names: Vec<String>,
     numbers: HashMap<String, i64>,
+    /// The epiallele of each read of a pile grouped by epiallele, by the place of the read.
+    epialleles: Vec<Option<u8>>,
+    /// The names of the rows of the epialleles: their methylation, reads and haplotypes.
+    headings: Vec<String>,
 }
 
 impl Values {
@@ -755,8 +765,30 @@ pub type GroupKey = (u8, i64);
 /// The group of the reads of the smallest values when a tag has too many values.
 const OTHER: GroupKey = (3, 0);
 
-fn group_key(read: &Read, grouping: Grouping, values: &Values) -> GroupKey {
-    alignment_group(&read.alignment, grouping, values)
+/// The group of the read at a place in the reads of a pile.
+fn group_key(reads: &[Read], index: usize, grouping: Grouping, values: &Values) -> GroupKey {
+    if let Grouping::Epiallele(_) = grouping {
+        return epiallele_key(values.epialleles.get(index).copied().flatten());
+    }
+    alignment_group(&reads[index].alignment, grouping, values)
+}
+
+/// The group of an epiallele, from 0 for the most methylated, or of the reads without one.
+fn epiallele_key(epiallele: Option<u8>) -> GroupKey {
+    epiallele.map_or((1, 0), |at| (0, i64::from(at)))
+}
+
+/// The name of the row of a group: for an epiallele with its methylation, reads and
+/// haplotypes, else the name of the group.
+fn group_heading(grouping: Grouping, key: GroupKey, values: &Values) -> String {
+    if let (Grouping::Epiallele(_), (0, at)) = (grouping, key)
+        && let Some(heading) = usize::try_from(at)
+            .ok()
+            .and_then(|at| values.headings.get(at))
+    {
+        return heading.clone();
+    }
+    group_label(grouping, key, values)
 }
 
 /// The group of a read: numbers of a tag in their order, then text values, then reads without
@@ -775,6 +807,8 @@ fn alignment_group(alignment: &Alignment, grouping: Grouping, values: &Values) -
         Grouping::Cell => barcode(alignment)
             .and_then(|barcode| values.numbers.get(barcode))
             .map_or((2, 0), |&number| (1, number)),
+        // A read gets its epiallele when the pile has all its reads.
+        Grouping::Epiallele(_) => epiallele_key(None),
     }
 }
 
@@ -793,6 +827,8 @@ fn group_label(grouping: Grouping, key: (u8, i64), values: &Values) -> String {
         (Grouping::Cell, (1, number)) => values.name(number).to_owned(),
         (Grouping::Cell, (3, _)) => "Other cell types".to_owned(),
         (Grouping::Cell, _) => "No cell type".to_owned(),
+        (Grouping::Epiallele(_), (0, at)) => format!("Epiallele {}", at + 1),
+        (Grouping::Epiallele(_), _) => "No epiallele".to_owned(),
         (Grouping::None, _) => String::new(),
     }
 }
@@ -864,7 +900,7 @@ fn pack(
     }
     let mut keys: Vec<(u8, i64)> = members
         .iter()
-        .map(|&index| group_key(&reads[index], grouping, values))
+        .map(|&index| group_key(reads, index, grouping, values))
         .collect();
     let tagged = matches!(grouping, Grouping::Tag(_));
     if tagged {
@@ -893,7 +929,7 @@ fn pack(
         for (&place, &row) in places.iter().zip(&stacked) {
             rows[place] = next + row;
         }
-        groups.push((next, group_label(grouping, key, values)));
+        groups.push((next, group_heading(grouping, key, values)));
         next += count(&stacked);
     }
     (rows, groups)
@@ -942,6 +978,111 @@ impl Annotation {
     }
 }
 
+/// Gives the reads of a pile their epialleles from their calls at CpGs of the modification with
+/// the most calls, and the names of the rows of the epialleles. The methylation of the reads is
+/// counted again by epiallele, from the reads of the pile.
+fn group_epialleles(
+    reads: &[Read],
+    values: &mut Values,
+    (methylation, base): (Methylation<GroupKey>, &dyn Fn(u64) -> Option<u8>),
+    (count, cells): (u8, Option<&CellMap>),
+) -> Methylation<GroupKey> {
+    let Some(name) = methylation.busiest().map(str::to_owned) else {
+        values.epialleles = vec![None; reads.len()];
+        return methylation;
+    };
+    let patterns: Vec<Vec<(u64, bool)>> = reads
+        .iter()
+        .map(|read| genie_core::epiallele::cpg_calls(&read.alignment, &name, base))
+        .collect();
+    let found = genie_core::epiallele::epialleles(&patterns, usize::from(count));
+    values.epialleles = found
+        .of
+        .iter()
+        .map(|of| of.and_then(|at| u8::try_from(at).ok()))
+        .collect();
+    values.headings = epiallele_headings(reads, &values.epialleles, &found, cells);
+    let mut tally = genie_core::methylation::Tally::default();
+    for (read, &of) in reads.iter().zip(&values.epialleles) {
+        tally.add(&read.alignment, epiallele_key(of));
+    }
+    tally.finish(base)
+}
+
+/// The names of the rows of epialleles: the methylation and the reads of each, its reads of
+/// each haplotype when the reads have haplotypes, with the p of Fisher's exact test for two
+/// epialleles, and its three cell types with the most reads.
+fn epiallele_headings(
+    reads: &[Read],
+    of: &[Option<u8>],
+    found: &genie_core::epiallele::Epialleles,
+    cells: Option<&CellMap>,
+) -> Vec<String> {
+    use std::fmt::Write as _;
+    let members = |at: usize| {
+        reads
+            .iter()
+            .zip(of)
+            .filter(move |(_, owner)| owner.map(usize::from) == Some(at))
+            .map(|(read, _)| &read.alignment)
+    };
+    let haplotypes: Vec<[u32; 2]> = (0..found.reads.len())
+        .map(|at| {
+            let mut counts = [0, 0];
+            for alignment in members(at) {
+                match alignment.tags.phase {
+                    Some(1) => counts[0] += 1,
+                    Some(2) => counts[1] += 1,
+                    _ => {}
+                }
+            }
+            counts
+        })
+        .collect();
+    let phased = reads.iter().any(|read| read.alignment.tags.phase.is_some());
+    let both = (0..2).all(|side| haplotypes.iter().any(|counts| counts[side] > 0));
+    let p = (phased && both && haplotypes.len() == 2)
+        .then(|| genie_core::methylation::fisher([haplotypes[0], haplotypes[1]]));
+    (0..found.reads.len())
+        .map(|at| {
+            let count = found.reads[at];
+            let mut words = format!(
+                "Epiallele {} · {:.0} % methylated · {} {}",
+                at + 1,
+                found.methylated[at] * 100.0,
+                genie_core::grouped(count as u64),
+                if count == 1 { "read" } else { "reads" }
+            );
+            if phased {
+                let [one, two] = haplotypes[at];
+                let _ = write!(words, " · HP1 {one}, HP2 {two}");
+            }
+            if let Some(p) = p {
+                let _ = write!(words, " · p = {}", crate::card::p_value(p));
+            }
+            if let Some(map) = cells {
+                let mut kinds: HashMap<usize, u32> = HashMap::new();
+                for alignment in members(at) {
+                    if let Some(kind) = barcode(alignment).and_then(|code| map.type_of(code)) {
+                        *kinds.entry(kind).or_default() += 1;
+                    }
+                }
+                let mut kinds: Vec<(usize, u32)> = kinds.into_iter().collect();
+                kinds.sort_by(|a, b| b.1.cmp(&a.1).then(map.types[a.0].cmp(&map.types[b.0])));
+                let named: Vec<String> = kinds
+                    .iter()
+                    .take(3)
+                    .map(|&(kind, reads)| format!("{} {reads}", map.types[kind]))
+                    .collect();
+                if !named.is_empty() {
+                    let _ = write!(words, " · {}", named.join(", "));
+                }
+            }
+            words
+        })
+        .collect()
+}
+
 /// The junctions of all reads of a pile with their reads.
 fn junction_reads(pile: &Pile) -> Vec<(Region, u32)> {
     pile.junctions
@@ -981,10 +1122,20 @@ impl Pile {
     pub fn group_has_value(&self, key: GroupKey) -> bool {
         match self.grouping {
             Grouping::None => false,
-            Grouping::Phase => key.0 == 0,
+            Grouping::Phase | Grouping::Epiallele(_) => key.0 == 0,
             Grouping::Strand => true,
             Grouping::Tag(_) | Grouping::Cell => key.0 != 2,
         }
+    }
+
+    /// The name of the epiallele of the read at a place, when the pile groups its reads by
+    /// epiallele.
+    pub fn epiallele_name(&self, index: usize) -> Option<String> {
+        if !matches!(self.grouping, Grouping::Epiallele(_)) {
+            return None;
+        }
+        let key = epiallele_key(self.values.epialleles.get(index).copied().flatten());
+        Some(self.group_name(key))
     }
 
     pub fn packed(&self, visible: Region) -> (Vec<usize>, usize, Vec<(usize, String)>) {
@@ -1187,14 +1338,15 @@ impl Loaded {
             chains,
             methylation,
             sampler,
-            values,
-            cells: _,
+            mut values,
+            cells,
             lanes,
         } = gather;
-        let methylation = methylation.finish(|position| {
+        let base = |position: u64| {
             let index = usize::try_from(position.checked_sub(offset)?).ok()?;
             reference.get(index).copied()
-        });
+        };
+        let methylation = methylation.finish(base);
         let region = coverage.region();
         let range = inserts.expected();
         let reads: Vec<Read> = sampler
@@ -1206,6 +1358,13 @@ impl Loaded {
                 read
             })
             .collect();
+        let methylation = match options.group {
+            Grouping::Epiallele(count) => {
+                let place = (count, cells.as_deref());
+                group_epialleles(&reads, &mut values, (methylation, &base), place)
+            }
+            _ => methylation,
+        };
         let members: Vec<usize> = (0..reads.len()).collect();
         let (rows, groups) = pack(&reads, &members, (options.group, &values, options.mates));
         let count = count(&rows);
@@ -2122,6 +2281,8 @@ pub enum Change {
     /// Show the splicing difference of the first two groups of reads, or with another read
     /// track, or stop when the track shows it.
     Splicing(Splice),
+    /// Group the reads by epiallele, with this number of epialleles.
+    Epialleles(u8),
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -2160,6 +2321,12 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
             } else {
                 grouping
             };
+            track.forget();
+        }
+        Change::Epialleles(count) => {
+            let track = &mut tracks[position];
+            let count = count.clamp(EPIALLELES[0], EPIALLELES[EPIALLELES.len() - 1]);
+            track.options.group = Grouping::Epiallele(count);
             track.forget();
         }
         Change::Sort(panel, at) => {

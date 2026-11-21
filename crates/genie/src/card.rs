@@ -48,6 +48,8 @@ pub enum Detail {
         same: bool,
         /// The insertion under the pointer: its place on the reference and its length.
         insertion: Option<(u64, u32)>,
+        /// The name of the epiallele of the read, when its track groups the reads by epiallele.
+        epiallele: Option<String>,
     },
     Junction(Junction),
     /// A junction of a read track that shows a splicing difference: the names of the two groups
@@ -531,11 +533,13 @@ fn read_content(detail: &Detail) -> (String, Region, Vec<String>) {
         mate,
         same,
         insertion,
+        epiallele,
     } = detail
     else {
         return (String::new(), Region::between(0, 0), Vec::new());
     };
     let mut lines = vec![read_facts(read), cigar(read)];
+    lines.extend(epiallele.clone());
     lines.extend(insertion.map(|(position, length)| {
         format!(
             "Insertion of {} bp after base {}",

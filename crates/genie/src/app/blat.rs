@@ -720,6 +720,7 @@ mod tests {
                 mate: None,
                 same: false,
                 insertion: None,
+                epiallele: None,
             },
             at: iced::Point::ORIGIN,
             fields: Vec::new(),

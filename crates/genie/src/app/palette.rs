@@ -9,7 +9,7 @@ use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::track::made::{self, WINDOWS};
 use crate::track::motifs::THRESHOLDS;
-use crate::track::{Change, Grouping, Made, Splice, Toggle, Track};
+use crate::track::{Change, EPIALLELES, Grouping, Made, Splice, Toggle, Track};
 use genie_core::grouped;
 
 use super::hubs::Hubbing;
@@ -82,6 +82,17 @@ fn read_actions(track: &Track) -> Vec<Action> {
     if track.options.group != Grouping::None {
         let splice = change(Change::Splicing(Splice::Groups));
         actions.push(Action::new("Splicing difference", name, splice));
+    }
+    if let Grouping::Epiallele(count) = track.options.group {
+        let group = change(Change::Group(Grouping::Epiallele(count)));
+        actions.push(Action::new("Group by epiallele", name, group));
+        actions.extend(EPIALLELES.map(|count| {
+            let words = format!("Show {count} epialleles");
+            Action::new(words, name, change(Change::Epialleles(count)))
+        }));
+    } else {
+        let group = change(Change::Group(Grouping::Epiallele(EPIALLELES[0])));
+        actions.push(Action::new("Group by epiallele", name, group));
     }
     if track.plot.splicing.is_some() {
         let open = Message::Splicing(Splicing::Open(id));

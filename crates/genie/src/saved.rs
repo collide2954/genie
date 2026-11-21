@@ -17,7 +17,8 @@ use crate::export::Figure;
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
 use crate::track::{
-    Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing, Splice, tag, tag_name,
+    Declared, EPIALLELES, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing, Splice,
+    tag, tag_name,
 };
 
 pub const EXTENSION: &str = "genie";
@@ -663,6 +664,12 @@ fn options(section: &Section) -> Options {
             .and_then(|name| {
                 find(&GROUPS, name)
                     .or_else(|| Some(Grouping::Tag(tag(name.strip_prefix("tag ")?)?)))
+                    .or_else(|| {
+                        let count = name.strip_prefix("epiallele ")?.trim().parse().ok()?;
+                        EPIALLELES
+                            .contains(&count)
+                            .then_some(Grouping::Epiallele(count))
+                    })
             })
             .unwrap_or_default(),
         methyl: Methyl {
@@ -721,6 +728,7 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
     match options.group {
         Grouping::None => {}
         Grouping::Tag(tag) => entries.push(("group", format!("tag {}", tag_name(tag)))),
+        Grouping::Epiallele(count) => entries.push(("group", format!("epiallele {count}"))),
         group => entries.push(("group", name(&GROUPS, group).to_owned())),
     }
     if let Some(tag) = options.color {
@@ -1114,6 +1122,22 @@ mod tests {
                 format!("[session]\nreference = ref.fa\n[track]\nmade = depth ratio 1\n{broken}\n");
             let parsed = Saved::parse(&text, &base()).unwrap();
             assert_eq!(parsed.tracks[0].depths, None, "{broken}");
+        }
+    }
+
+    /// A read track grouped by epiallele keeps the number of its epialleles, from 2 to 4.
+    #[test]
+    fn read_tracks_keep_their_epialleles() {
+        let mut epialleles = saved();
+        epialleles.tracks[0].options.group = Grouping::Epiallele(3);
+        let text = epialleles.text(&base());
+        assert!(text.contains("group = epiallele 3"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(epialleles));
+        for broken in ["epiallele 1", "epiallele 9", "epiallele"] {
+            let text =
+                format!("[session]\nreference = ref.fa\n[track]\nfile = a.bam\ngroup = {broken}\n");
+            let parsed = Saved::parse(&text, &base()).unwrap();
+            assert_eq!(parsed.tracks[0].options.group, Grouping::None, "{broken}");
         }
     }
 

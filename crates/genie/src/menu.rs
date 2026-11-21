@@ -19,7 +19,9 @@ use crate::style;
 use crate::theme::tokens;
 use crate::track::made::WINDOWS;
 use crate::track::motifs::THRESHOLDS;
-use crate::track::{Change, Format, Grouping, Made, Pick, Splice, Toggle, Track, tag_name};
+use crate::track::{
+    Change, EPIALLELES, Format, Grouping, Made, Pick, Splice, Toggle, Track, tag_name,
+};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
@@ -111,6 +113,35 @@ fn junction_row<'a>(track: &Track) -> Element<'a, Message> {
             .into()
     });
     row![text("Arcs ≥").size(12).wrapping(text::Wrapping::None)]
+        .push(space::horizontal())
+        .extend(choices)
+        .spacing(1)
+        .padding(iced::Padding {
+            left: 8.0,
+            ..iced::Padding::ZERO
+        })
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// A row that sets the number of epialleles of a read track grouped by epiallele.
+fn epiallele_row<'a>(id: u64, count: u8) -> Element<'a, Message> {
+    let choices = EPIALLELES.map(|value| {
+        button(
+            text(value.to_string())
+                .size(12)
+                .wrapping(text::Wrapping::None),
+        )
+        .padding([3, 6])
+        .style(if value == count {
+            style::chosen
+        } else {
+            style::ghost
+        })
+        .on_press(Message::TrackChanged(id, Change::Epialleles(value)))
+        .into()
+    });
+    row![text("Epialleles").size(12).wrapping(text::Wrapping::None)]
         .push(space::horizontal())
         .extend(choices)
         .spacing(1)
@@ -486,8 +517,15 @@ fn kind_height(track: &Track) -> f32 {
         // The Sashimi plot, its two rows when it shows, Isoforms, and the lanes of cell types.
         let sashimi =
             if track.plot.sashimi { 4.0 } else { 2.0 } + f32::from(u8::from(track.cells.is_some()));
+        // Group by epiallele, with the row of the number of epialleles when it is chosen.
+        let epialleles = 1.0
+            + f32::from(u8::from(matches!(
+                track.options.group,
+                Grouping::Epiallele(_)
+            )));
         let difference = f32::from(u8::from(compares_groups(track)))
-            + f32::from(u8::from(track.options.group != Grouping::None));
+            + f32::from(u8::from(track.options.group != Grouping::None))
+            + epialleles;
         READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
         let lanes: f32 = [fraction_rows(track), ld_rows(track)]
@@ -787,6 +825,14 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
             Change::Group(Grouping::Cell),
             chosen,
         ));
+    }
+    if let Grouping::Epiallele(count) = options.group {
+        let change = Change::Group(Grouping::Epiallele(count));
+        items.push(item("Group by epiallele", change, true));
+        items.push(epiallele_row(id, count));
+    } else {
+        let change = Change::Group(Grouping::Epiallele(EPIALLELES[0]));
+        items.push(item("Group by epiallele", change, false));
     }
     if let Grouping::Tag(name) = options.group {
         let change = Change::Group(Grouping::Tag(name));
