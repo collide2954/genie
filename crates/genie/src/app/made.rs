@@ -48,7 +48,7 @@ pub enum Making {
 }
 
 /// The tracks that genie makes from the reference, each with the message that adds it.
-pub(crate) fn additions() -> [(&'static str, Message); 4] {
+pub(crate) fn additions() -> [(&'static str, Message); 5] {
     [
         (
             "GC %",
@@ -56,6 +56,7 @@ pub(crate) fn additions() -> [(&'static str, Message); 4] {
         ),
         ("CpG islands", Message::Made(Making::Add(Made::Islands))),
         ("Repeats", Message::Made(Making::Add(Made::Repeats))),
+        ("Tandem repeats", Message::Made(Making::Add(Made::Tandem))),
         ("Restriction sites…", Message::Made(Making::Enzymes(None))),
     ]
 }

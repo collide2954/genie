@@ -7,7 +7,7 @@ use crate::menu;
 
 /// The strands, the frames and the tracks made from the reference, with a separator and a
 /// heading before the tracks.
-pub const MENU_HEIGHT: f32 = 247.5;
+pub const MENU_HEIGHT: f32 = 270.1;
 const FRAMES: [(&str, Frames); 3] = [
     ("No translation", Frames::Off),
     ("3 frames", Frames::Three),

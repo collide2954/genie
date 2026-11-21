@@ -1,5 +1,6 @@
 //! Tracks that genie makes from the bases of the reference, with no file: the GC content of
-//! windows, CpG islands, soft-masked repeats and the cuts of restriction enzymes.
+//! windows, CpG islands, soft-masked repeats, tandem repeats and the cuts of restriction
+//! enzymes.
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ pub const WINDOW: u64 = 100;
 const MARGIN: u64 = 20_000;
 const ISLAND_FIELDS: [&str; 5] = ["CpGs", "C and G", "CpG (%)", "GC (%)", "Observed/expected"];
 const SITE_FIELDS: [&str; 4] = ["Site", "Cut after", "Fragment before", "Fragment after"];
+const TANDEM_FIELDS: [&str; 3] = ["Motif", "Copies", "Length"];
 /// The mark of a repeat that goes on past the bases that genie read.
 const EDGE: &str = "edge";
 const NOTE: &str = "The repeat goes on past the bases that genie read.";
@@ -40,6 +42,8 @@ pub enum Made {
     Islands,
     /// The soft-masked bases, as most genomes mark their repeats.
     Repeats,
+    /// The perfect tandem repeats of motifs of 1 to 6 bases.
+    Tandem,
     /// The cuts of restriction enzymes.
     Sites(Vec<Enzyme>),
 }
@@ -52,6 +56,7 @@ impl Made {
             Self::Gc(window) => format!("gc {window}"),
             Self::Islands => "cpg islands".to_owned(),
             Self::Repeats => "repeats".to_owned(),
+            Self::Tandem => "tandem repeats".to_owned(),
             Self::Sites(enzymes) => format!("sites {}", names(enzymes).join(" ")),
         }
     }
@@ -65,6 +70,7 @@ impl Made {
         match key {
             "cpg islands" => Some(Self::Islands),
             "repeats" => Some(Self::Repeats),
+            "tandem repeats" => Some(Self::Tandem),
             _ => {
                 let enzymes = key
                     .strip_prefix("sites ")?
@@ -83,6 +89,7 @@ impl Made {
             Self::Gc(window) => format!("GC % ({} bp)", grouped(*window)),
             Self::Islands => "CpG islands".to_owned(),
             Self::Repeats => "Repeats".to_owned(),
+            Self::Tandem => "Tandem repeats".to_owned(),
             Self::Sites(enzymes) if enzymes.len() <= 3 => {
                 format!("{} sites", names(enzymes).join(", "))
             }
@@ -175,6 +182,10 @@ impl MadeFile {
                 .into_iter()
                 .map(|run| repeat(run, (read, length)))
                 .collect(),
+            Made::Tandem => genie_core::repeat::tandem(&bases, read.start())
+                .iter()
+                .map(tandem)
+                .collect(),
             Made::Sites(enzymes) => sites(enzymes, &bases, (read, length)),
         };
         let touches = |span: Region| span.start() < region.end() && region.start() < span.end();
@@ -190,6 +201,7 @@ impl MadeFile {
         let labels: &[&str] = match &self.made {
             Made::Islands => &ISLAND_FIELDS,
             Made::Sites(_) => &SITE_FIELDS,
+            Made::Tandem => &TANDEM_FIELDS,
             Made::Repeats if extra == EDGE => {
                 return vec![Field {
                     label: "Note".to_owned(),
@@ -233,6 +245,26 @@ fn repeat(run: Region, (read, length): (Region, u64)) -> Feature {
     let cut = (run.start() == read.start() && read.start() > 0)
         || (run.end() == read.end() && read.end() < length);
     Feature::new("Repeat", run, Strand::Unknown).with_extra(if cut { EDGE } else { "" })
+}
+
+/// The copies of the motif of a tandem repeat, with one decimal when they are not whole.
+fn copies_text(copies: f64) -> String {
+    let text = format!("{copies:.1}");
+    text.strip_suffix(".0").map_or(text.clone(), str::to_owned)
+}
+
+/// A tandem repeat named by its motif and its copies, as (CAG)21, with the motif, the copies
+/// and the length as its fields.
+fn tandem(repeat: &genie_core::repeat::Repeat) -> Feature {
+    let copies = copies_text(repeat.copies());
+    let length = grouped(repeat.span.len());
+    let extra = format!("{}\t{copies}\t{length} bp", repeat.motif);
+    Feature::new(
+        format!("({}){copies}", repeat.motif),
+        repeat.span,
+        Strand::Unknown,
+    )
+    .with_extra(extra)
 }
 
 /// The cuts of the enzymes, each with its site, its cut and its fragments. A fragment that
@@ -302,6 +334,7 @@ mod tests {
             (Made::Gc(1_000), "gc 1000", "GC % (1,000 bp)"),
             (Made::Islands, "cpg islands", "CpG islands"),
             (Made::Repeats, "repeats", "Repeats"),
+            (Made::Tandem, "tandem repeats", "Tandem repeats"),
             (sites(&["EcoRI"]), "sites EcoRI", "EcoRI sites"),
             (
                 sites(&["HindIII", "g^aattc"]),
@@ -379,6 +412,39 @@ mod tests {
         assert_eq!(spans, [Region::between(4, 16)]);
         assert_eq!(features[0].name(), "Repeat");
         assert_eq!(made.fields(features[0].extra()).len(), 0);
+    }
+
+    /// A tandem repeat has its motif and its copies in its name, and its length in its fields.
+    #[test]
+    fn tandem_repeats_have_their_motif_and_copies() {
+        let bases = format!("ACGT{}TTAACCC{}GT", "CAG".repeat(7), "GA".repeat(7));
+        let (_scratch, made) = file("made-tandem", Made::Tandem, &bases);
+        let (_, features) = made.features("chr1", Region::between(0, 60)).unwrap();
+        let shown: Vec<(&str, Region)> = features
+            .iter()
+            .map(|feature| (feature.name(), feature.span()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("(CAG)7", Region::between(4, 25)),
+                ("(GA)7.5", Region::between(32, 47))
+            ]
+        );
+        let fields: Vec<(String, String)> = made
+            .fields(features[0].extra())
+            .into_iter()
+            .map(|field| (field.label, field.value))
+            .collect();
+        let pair = |label: &str, value: &str| (label.to_owned(), value.to_owned());
+        assert_eq!(
+            fields,
+            [
+                pair("Motif", "CAG"),
+                pair("Copies", "7"),
+                pair("Length", "21 bp")
+            ]
+        );
     }
 
     #[test]

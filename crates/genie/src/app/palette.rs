@@ -353,12 +353,13 @@ fn sequence_actions() -> [Action; 3] {
 }
 
 /// The actions that add the tracks that genie makes from the reference.
-fn made_additions() -> [Action; 4] {
+fn made_additions() -> [Action; 5] {
     let add = |made| Message::Made(Making::Add(made));
     [
         Action::new("Add a GC % track", "", add(Made::Gc(made::WINDOW))),
         Action::new("Add a CpG islands track", "", add(Made::Islands)),
         Action::new("Add a repeats track", "", add(Made::Repeats)),
+        Action::new("Add a tandem repeats track", "", add(Made::Tandem)),
         Action::new(
             "Add restriction sites…",
             "",
