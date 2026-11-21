@@ -101,10 +101,32 @@ pub fn open_with(
     cache: Option<&Path>,
     progress: &mut dyn FnMut(f32),
 ) -> Result<Reference, String> {
-    let reference = sized(location.into(), &extras.sizes, cache, progress)?;
+    let location = location.into();
+    let beside = sizes_beside(&location, &extras.sizes);
+    let sizes = beside.as_ref().map_or(&extras.sizes, |(_, sizes)| sizes);
+    let mut reference = sized(location, sizes, cache, progress)?;
+    if let Some((found, _)) = beside {
+        reference.sizes = Some(found);
+    }
     Ok(reference
         .with_aliases(&extras.aliases)
         .with_bands(&extras.bands))
+}
+
+/// The sizes file beside a remote 2bit file without known sizes, as hg38.chrom.sizes beside
+/// hg38.2bit at UCSC, and its sizes. With them, genie does not read the length of each contig
+/// from the 2bit file, which takes many requests for a genome with many contigs.
+fn sizes_beside(
+    location: &Location,
+    sizes: &HashMap<String, u64>,
+) -> Option<(Location, HashMap<String, u64>)> {
+    let two_bit = location.name().to_ascii_lowercase().ends_with(".2bit");
+    if !sizes.is_empty() || !location.is_remote() || !two_bit {
+        return None;
+    }
+    let beside = location.with_extension("chrom.sizes");
+    let found = read_sizes(&beside).ok().filter(|found| !found.is_empty())?;
+    Some((beside, found))
 }
 
 pub fn open(
@@ -672,6 +694,32 @@ ORIGIN
         assert_eq!(sized.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
         let fallback = open_sized(at("/far.2bit"), &at("/none.sizes"), None, &mut |_| {}).unwrap();
         assert_eq!(lengths(&fallback), [8, 4, 12]);
+    }
+
+    /// UCSC keeps the sizes of the contigs of a 2bit file beside it, as hg38.chrom.sizes beside
+    /// hg38.2bit. genie reads them first, so that it does not read the length of each contig
+    /// from the 2bit file.
+    #[test]
+    fn remote_2bit_files_take_the_sizes_file_beside_them() {
+        let server = crate::server::serve(vec![
+            ("/far.2bit".to_owned(), far_2bit()),
+            (
+                "/far.chrom.sizes".to_owned(),
+                b"chr1\t8\nchr2\t4\nchr3\t12\n".to_vec(),
+            ),
+        ]);
+        let at = |path: &str| Location::parse(&server.url(path)).unwrap();
+        let reference = open(at("/far.2bit"), None, &mut |_| {}).unwrap();
+        let lengths: Vec<u64> = reference
+            .assembly
+            .contigs()
+            .iter()
+            .map(|contig| contig.length)
+            .collect();
+        assert_eq!(lengths, [8, 4, 12]);
+        assert_eq!(server.requests(), 2);
+        assert_eq!(reference.sizes, Some(at("/far.chrom.sizes")));
+        assert_eq!(reference.fetch(1, Region::between(0, 4)).unwrap(), b"TTTT");
     }
 
     #[test]
