@@ -33,7 +33,9 @@ use crate::reference::{self, Reference};
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Calls, Change, Content, Loaded, Phasing, Pile, Scope, Source, Track};
+use crate::track::{
+    self, Calls, Change, Content, Grouping, Loaded, Phasing, Pile, Scope, Source, Track,
+};
 
 use super::orders::Answer;
 use super::view::{
@@ -570,7 +572,8 @@ impl Genie {
             }
             Content::Ratio(found) => ratio_detail(track, found, viewport, (x, y))?,
         };
-        let fields = detail_fields(track, contig, &detail, file_fields);
+        let mut fields = detail_fields(track, contig, &detail, file_fields);
+        add_repeat_fields(session, panel, &detail, &mut fields);
         Some(Card {
             track: id,
             contig: session.reference.assembly.contigs()[contig].name.clone(),
@@ -589,6 +592,31 @@ impl Genie {
             self.forget(id);
         }
         self.on_session(|session| track::change(&mut session.tracks, id, change));
+        self.fetch_features()
+    }
+
+    /// Groups the reads of the read tracks by the alleles of the tandem repeat of the pinned
+    /// card, or stops when they all group by it.
+    pub(super) fn group_by_repeat(&mut self) -> Task<Message> {
+        let Some(card) = &self.pinned else {
+            return Task::none();
+        };
+        let Some((span, motif)) = crate::card::repeat_of(&card.detail, &card.fields) else {
+            return Task::none();
+        };
+        let Some(key) = track::RepeatKey::new(span, &motif) else {
+            return Task::none();
+        };
+        let grouping = Grouping::Repeat(key);
+        self.on_session(|session| {
+            let reader = |track: &Track| track.source.has_reads() && track.lift.is_none();
+            let mut readers = session.tracks.iter().filter(|track| reader(track));
+            let all = readers.all(|track| track.options.group == grouping);
+            for track in session.tracks.iter_mut().filter(|track| reader(track)) {
+                track.options.group = if all { Grouping::None } else { grouping };
+                track.forget();
+            }
+        });
         self.fetch_features()
     }
 
@@ -1237,6 +1265,67 @@ fn contact_detail(
         ratio: map.ratio,
         normalization: found.normalization.clone(),
     }))
+}
+
+/// Adds the fields of a tandem repeat to the fields of its card: the alleles of the reads, and
+/// its copies on the reference when the fields do not give them.
+fn add_repeat_fields(session: &Session, panel: usize, detail: &Detail, fields: &mut Vec<Field>) {
+    let Some((span, motif)) = crate::card::repeat_of(detail, fields) else {
+        return;
+    };
+    let known = fields.iter().any(|field| field.label == "Copies");
+    let found = repeat_fields(session, panel, span, &motif);
+    fields.extend(
+        found
+            .into_iter()
+            .filter(|field| !known || field.label != "Reference"),
+    );
+}
+
+/// The fields of the card of a tandem repeat: its copies on the reference, and the alleles of
+/// the reads of each read track in the panel that span it, with a line of bars of their copies.
+/// With more than one read track, the name of each allele starts with the name of its track.
+pub(super) fn repeat_fields(
+    session: &Session,
+    panel: usize,
+    span: Region,
+    motif: &str,
+) -> Vec<Field> {
+    let (contig, _) = session.view(panel);
+    let copies = span.len() as f64 / motif.len().max(1) as f64;
+    let mut fields = vec![Field {
+        label: "Reference".to_owned(),
+        value: format!(
+            "{} {motif} · {} bp",
+            track::made::copies_text(copies),
+            genie_core::grouped(span.len())
+        ),
+    }];
+    let piles: Vec<(&Track, &Pile)> = session
+        .tracks
+        .iter()
+        .filter(|track| track.lift.is_none())
+        .filter_map(|track| match &track.slot(panel).data(contig)?.content {
+            Content::Reads(pile) => Some((track, &**pile)),
+            _ => None,
+        })
+        .collect();
+    let named = piles.len() > 1;
+    for (track, pile) in piles {
+        let found = track::repeat_alleles(&pile.reads, span, motif);
+        for allele in &found.alleles {
+            let label = if named {
+                format!("{} · {}", track.name, allele.label)
+            } else {
+                allele.label.clone()
+            };
+            fields.push(Field {
+                label,
+                value: allele.words(motif),
+            });
+        }
+    }
+    fields
 }
 
 /// The bin or the segment under a point of a depth ratio track.

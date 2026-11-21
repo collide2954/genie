@@ -248,7 +248,7 @@ fn repeat(run: Region, (read, length): (Region, u64)) -> Feature {
 }
 
 /// The copies of the motif of a tandem repeat, with one decimal when they are not whole.
-fn copies_text(copies: f64) -> String {
+pub(crate) fn copies_text(copies: f64) -> String {
     let text = format!("{copies:.1}");
     text.strip_suffix(".0").map_or(text.clone(), str::to_owned)
 }

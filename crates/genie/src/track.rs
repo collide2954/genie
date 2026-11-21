@@ -391,6 +391,89 @@ pub enum Grouping {
     /// The epiallele of a read: its pattern of methylation at CpGs, with this number of
     /// epialleles.
     Epiallele(u8),
+    /// The allele of a tandem repeat in a read that spans it.
+    Repeat(RepeatKey),
+}
+
+/// The longest motif of a repeat that reads group by.
+const MOST_KEY_MOTIF: usize = 24;
+
+/// A tandem repeat that the reads of a read track group by: its bases on the reference and its
+/// motif.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepeatKey {
+    start: u64,
+    end: u64,
+    motif: [u8; MOST_KEY_MOTIF],
+    size: u8,
+}
+
+impl RepeatKey {
+    /// A repeat with bases and a motif of 1 to 24 bases of A, C, G and T.
+    pub fn new(span: Region, motif: &str) -> Option<Self> {
+        let bytes = motif.trim().as_bytes();
+        let good = !span.is_empty()
+            && (1..=MOST_KEY_MOTIF).contains(&bytes.len())
+            && bytes.iter().all(|base| b"ACGTacgt".contains(base));
+        if !good {
+            return None;
+        }
+        let mut stored = [0; MOST_KEY_MOTIF];
+        for (slot, base) in stored.iter_mut().zip(bytes) {
+            *slot = base.to_ascii_uppercase();
+        }
+        Some(Self {
+            start: span.start(),
+            end: span.end(),
+            motif: stored,
+            size: u8::try_from(bytes.len()).ok()?,
+        })
+    }
+
+    pub fn span(&self) -> Region {
+        Region::between(self.start, self.end)
+    }
+
+    pub fn motif(&self) -> &str {
+        std::str::from_utf8(&self.motif[..usize::from(self.size)]).unwrap_or("")
+    }
+}
+
+/// The motif of a tandem repeat feature: the first motif of a TRGT catalog (MOTIFS=CAG), a
+/// field named motif or sequence, as the simple repeats of UCSC have, or a name of bases such as
+/// CAG, (CAG)n or (CAG)21.
+pub fn repeat_motif(name: &str, fields: &[Field]) -> Option<String> {
+    let bases = |text: &str| {
+        let text = text.trim();
+        let good = (1..=MOST_KEY_MOTIF).contains(&text.len())
+            && text.bytes().all(|base| b"ACGTacgt".contains(&base));
+        good.then(|| text.to_ascii_uppercase())
+    };
+    if let Some(motifs) = name
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("MOTIFS="))
+    {
+        return bases(motifs.split(',').next()?);
+    }
+    let field = fields.iter().find(|field| {
+        field.label.eq_ignore_ascii_case("motif") || field.label.eq_ignore_ascii_case("sequence")
+    });
+    if let Some(found) = field.and_then(|field| bases(&field.value)) {
+        return Some(found);
+    }
+    let name = name.trim();
+    match name.strip_prefix('(').and_then(|rest| rest.split_once(')')) {
+        Some((motif, copies)) => {
+            let copies = copies.trim();
+            let counted = copies.is_empty()
+                || copies == "n"
+                || copies
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.');
+            counted.then(|| bases(motif)).flatten()
+        }
+        None => bases(name),
+    }
 }
 
 /// The numbers of epialleles that a read track can find.
@@ -415,9 +498,13 @@ pub fn tag(text: &str) -> Option<[u8; 2]> {
 pub struct Values {
     names: Vec<String>,
     numbers: HashMap<String, i64>,
-    /// The epiallele of each read of a pile grouped by epiallele, by the place of the read.
-    epialleles: Vec<Option<u8>>,
-    /// The names of the rows of the epialleles: their methylation, reads and haplotypes.
+    /// The group of each read of a pile whose groups come from all its reads, by the place of
+    /// the read: its epiallele, or its allele of a repeat.
+    members: Vec<Option<u8>>,
+    /// The short names of those groups, as HP1 or Allele 2.
+    labels: Vec<String>,
+    /// The names of the rows of those groups: their methylation or copies, reads and
+    /// haplotypes.
     headings: Vec<String>,
 }
 
@@ -767,21 +854,21 @@ const OTHER: GroupKey = (3, 0);
 
 /// The group of the read at a place in the reads of a pile.
 fn group_key(reads: &[Read], index: usize, grouping: Grouping, values: &Values) -> GroupKey {
-    if let Grouping::Epiallele(_) = grouping {
-        return epiallele_key(values.epialleles.get(index).copied().flatten());
+    if matches!(grouping, Grouping::Epiallele(_) | Grouping::Repeat(_)) {
+        return member_key(values.members.get(index).copied().flatten());
     }
     alignment_group(&reads[index].alignment, grouping, values)
 }
 
-/// The group of an epiallele, from 0 for the most methylated, or of the reads without one.
-fn epiallele_key(epiallele: Option<u8>) -> GroupKey {
-    epiallele.map_or((1, 0), |at| (0, i64::from(at)))
+/// The group of an epiallele or an allele of a repeat, from 0, or of the reads without one.
+fn member_key(member: Option<u8>) -> GroupKey {
+    member.map_or((1, 0), |at| (0, i64::from(at)))
 }
 
-/// The name of the row of a group: for an epiallele with its methylation, reads and
-/// haplotypes, else the name of the group.
+/// The name of the row of a group: for an epiallele or an allele with its methylation or its
+/// copies, its reads and its haplotypes, else the name of the group.
 fn group_heading(grouping: Grouping, key: GroupKey, values: &Values) -> String {
-    if let (Grouping::Epiallele(_), (0, at)) = (grouping, key)
+    if let (Grouping::Epiallele(_) | Grouping::Repeat(_), (0, at)) = (grouping, key)
         && let Some(heading) = usize::try_from(at)
             .ok()
             .and_then(|at| values.headings.get(at))
@@ -807,8 +894,8 @@ fn alignment_group(alignment: &Alignment, grouping: Grouping, values: &Values) -
         Grouping::Cell => barcode(alignment)
             .and_then(|barcode| values.numbers.get(barcode))
             .map_or((2, 0), |&number| (1, number)),
-        // A read gets its epiallele when the pile has all its reads.
-        Grouping::Epiallele(_) => epiallele_key(None),
+        // A read gets its epiallele or its allele when the pile has all its reads.
+        Grouping::Epiallele(_) | Grouping::Repeat(_) => member_key(None),
     }
 }
 
@@ -829,6 +916,11 @@ fn group_label(grouping: Grouping, key: (u8, i64), values: &Values) -> String {
         (Grouping::Cell, _) => "No cell type".to_owned(),
         (Grouping::Epiallele(_), (0, at)) => format!("Epiallele {}", at + 1),
         (Grouping::Epiallele(_), _) => "No epiallele".to_owned(),
+        (Grouping::Repeat(_), (0, at)) => usize::try_from(at)
+            .ok()
+            .and_then(|at| values.labels.get(at).cloned())
+            .unwrap_or_else(|| format!("Allele {}", at + 1)),
+        (Grouping::Repeat(_), _) => "Not spanning".to_owned(),
         (Grouping::None, _) => String::new(),
     }
 }
@@ -988,7 +1080,7 @@ fn group_epialleles(
     (count, cells): (u8, Option<&CellMap>),
 ) -> Methylation<GroupKey> {
     let Some(name) = methylation.busiest().map(str::to_owned) else {
-        values.epialleles = vec![None; reads.len()];
+        values.members = vec![None; reads.len()];
         return methylation;
     };
     let patterns: Vec<Vec<(u64, bool)>> = reads
@@ -996,17 +1088,140 @@ fn group_epialleles(
         .map(|read| genie_core::epiallele::cpg_calls(&read.alignment, &name, base))
         .collect();
     let found = genie_core::epiallele::epialleles(&patterns, usize::from(count));
-    values.epialleles = found
+    values.members = found
         .of
         .iter()
         .map(|of| of.and_then(|at| u8::try_from(at).ok()))
         .collect();
-    values.headings = epiallele_headings(reads, &values.epialleles, &found, cells);
+    values.headings = epiallele_headings(reads, &values.members, &found, cells);
+    tally_members(reads, &values.members, base)
+}
+
+/// The methylation of the reads of a pile by their groups from all its reads.
+fn tally_members(
+    reads: &[Read],
+    members: &[Option<u8>],
+    base: &dyn Fn(u64) -> Option<u8>,
+) -> Methylation<GroupKey> {
     let mut tally = genie_core::methylation::Tally::default();
-    for (read, &of) in reads.iter().zip(&values.epialleles) {
-        tally.add(&read.alignment, epiallele_key(of));
+    for (read, &member) in reads.iter().zip(members) {
+        tally.add(&read.alignment, member_key(member));
     }
     tally.finish(base)
+}
+
+/// An allele of a tandem repeat in reads: its name, as HP1 or Allele 2, its copies, and a line
+/// of bars of its reads by copies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepeatAllele {
+    pub label: String,
+    pub allele: genie_core::repeat::Allele,
+    pub histogram: String,
+}
+
+impl RepeatAllele {
+    /// The name of the row of the allele, as "Allele 1 · 42 CAG · 18 reads (40-44)".
+    fn heading(&self, motif: &str) -> String {
+        let allele = &self.allele;
+        let reads = if allele.reads == 1 { "read" } else { "reads" };
+        format!(
+            "{} · {} {motif} · {} {reads} ({}-{})",
+            self.label, allele.copies, allele.reads, allele.least, allele.most
+        )
+    }
+
+    /// The words of the allele in the card of the repeat, as "42 CAG (40-44) · 18 reads ▂█▃".
+    pub fn words(&self, motif: &str) -> String {
+        let allele = &self.allele;
+        let reads = if allele.reads == 1 { "read" } else { "reads" };
+        format!(
+            "{} {motif} ({}-{}) · {} {reads} {}",
+            allele.copies, allele.least, allele.most, allele.reads, self.histogram
+        )
+    }
+}
+
+/// The alleles of a tandem repeat in reads, and the allele of each read, or none for a read
+/// that does not span the repeat with `FLANK` bases on each side.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepeatAlleles {
+    pub of: Vec<Option<usize>>,
+    pub alleles: Vec<RepeatAllele>,
+}
+
+/// The alleles of a tandem repeat in reads: by haplotype when 2 spanning reads or more have
+/// HP1 and 2 or more have HP2, and then a spanning read without either joins the haplotype with
+/// the nearest middle copies; else one or two alleles by their copies, the shorter first.
+pub fn repeat_alleles(reads: &[Read], span: Region, motif: &str) -> RepeatAlleles {
+    use genie_core::repeat::{Allele, alleles, histogram, measure};
+    let copies: Vec<Option<u32>> = reads
+        .iter()
+        .map(|read| Some(measure(&read.alignment, span, motif.as_bytes())?.copies))
+        .collect();
+    let phase = |at: usize| reads[at].alignment.tags.phase;
+    let spanning: Vec<usize> = (0..reads.len())
+        .filter(|&at| copies[at].is_some())
+        .collect();
+    let phased = |haplotype: i64| {
+        spanning
+            .iter()
+            .filter(move |&&at| phase(at) == Some(haplotype))
+    };
+    let summary = |mut values: Vec<u32>| {
+        values.sort_unstable();
+        Allele {
+            copies: values[(values.len() - 1) / 2],
+            least: values[0],
+            most: values[values.len() - 1],
+            reads: values.len(),
+        }
+    };
+    let mut of = vec![None; reads.len()];
+    let mut groups: Vec<(String, Vec<u32>)>;
+    if phased(1).count() >= 2 && phased(2).count() >= 2 {
+        let middles: Vec<u32> = [1, 2]
+            .map(|haplotype| {
+                summary(phased(haplotype).filter_map(|&at| copies[at]).collect()).copies
+            })
+            .to_vec();
+        groups = vec![
+            ("HP1".to_owned(), Vec::new()),
+            ("HP2".to_owned(), Vec::new()),
+        ];
+        for &at in &spanning {
+            let value = copies[at].unwrap_or(0);
+            let side = match phase(at) {
+                Some(1) => 0,
+                Some(2) => 1,
+                _ => usize::from(value.abs_diff(middles[1]) < value.abs_diff(middles[0])),
+            };
+            of[at] = Some(side);
+            groups[side].1.push(value);
+        }
+    } else {
+        let values: Vec<u32> = spanning.iter().filter_map(|&at| copies[at]).collect();
+        let (found, owners) = alleles(&values);
+        groups = (0..found.len())
+            .map(|at| (format!("Allele {}", at + 1), Vec::new()))
+            .collect();
+        for ((&at, &value), &owner) in spanning.iter().zip(&values).zip(&owners) {
+            of[at] = Some(owner);
+            groups[owner].1.push(value);
+        }
+    }
+    let alleles = groups
+        .into_iter()
+        .filter(|(_, values)| !values.is_empty())
+        .map(|(label, values)| {
+            let allele = summary(values.clone());
+            RepeatAllele {
+                histogram: histogram(&values, allele.least, allele.most),
+                label,
+                allele,
+            }
+        })
+        .collect();
+    RepeatAlleles { of, alleles }
 }
 
 /// The names of the rows of epialleles: the methylation and the reads of each, its reads of
@@ -1122,7 +1337,7 @@ impl Pile {
     pub fn group_has_value(&self, key: GroupKey) -> bool {
         match self.grouping {
             Grouping::None => false,
-            Grouping::Phase | Grouping::Epiallele(_) => key.0 == 0,
+            Grouping::Phase | Grouping::Epiallele(_) | Grouping::Repeat(_) => key.0 == 0,
             Grouping::Strand => true,
             Grouping::Tag(_) | Grouping::Cell => key.0 != 2,
         }
@@ -1134,7 +1349,7 @@ impl Pile {
         if !matches!(self.grouping, Grouping::Epiallele(_)) {
             return None;
         }
-        let key = epiallele_key(self.values.epialleles.get(index).copied().flatten());
+        let key = member_key(self.values.members.get(index).copied().flatten());
         Some(self.group_name(key))
     }
 
@@ -1362,6 +1577,25 @@ impl Loaded {
             Grouping::Epiallele(count) => {
                 let place = (count, cells.as_deref());
                 group_epialleles(&reads, &mut values, (methylation, &base), place)
+            }
+            Grouping::Repeat(key) => {
+                let found = repeat_alleles(&reads, key.span(), key.motif());
+                values.members = found
+                    .of
+                    .iter()
+                    .map(|of| of.and_then(|at| u8::try_from(at).ok()))
+                    .collect();
+                values.labels = found
+                    .alleles
+                    .iter()
+                    .map(|allele| allele.label.clone())
+                    .collect();
+                values.headings = found
+                    .alleles
+                    .iter()
+                    .map(|allele| allele.heading(key.motif()))
+                    .collect();
+                tally_members(&reads, &values.members, &base)
             }
             _ => methylation,
         };
@@ -5953,6 +6187,34 @@ ORIGIN
                 .iter()
                 .all(|read| !read.alignment.has(DUPLICATE | QC_FAIL | SECONDARY))
         );
+    }
+
+    /// The motif of a repeat comes from a TRGT catalog, a motif or sequence field, or a name of
+    /// bases. Other names have none.
+    #[test]
+    fn repeats_find_their_motif() {
+        use genie_formats::fields::Field;
+        let field = |label: &str, value: &str| Field {
+            label: label.to_owned(),
+            value: value.to_owned(),
+        };
+        let motif = |name: &str| super::repeat_motif(name, &[]);
+        assert_eq!(
+            motif("ID=HTT;MOTIFS=CAG,CCG;STRUC=(CAG)nCAACAG(CCG)n").as_deref(),
+            Some("CAG")
+        );
+        assert_eq!(motif("(CAG)n").as_deref(), Some("CAG"));
+        assert_eq!(motif("(gaa)21.5").as_deref(), Some("GAA"));
+        assert_eq!(motif("CAG").as_deref(), Some("CAG"));
+        for none in ["HTT", "(CAG)x", "ID=X;MOTIFS=NNN", "", "trf"] {
+            assert_eq!(motif(none), None, "{none}");
+        }
+        let simple = [field("period", "2"), field("sequence", "ca")];
+        assert_eq!(super::repeat_motif("trf", &simple).as_deref(), Some("CA"));
+        let key = super::RepeatKey::new(region(10, 22), "cag").unwrap();
+        assert_eq!((key.span(), key.motif()), (region(10, 22), "CAG"));
+        assert_eq!(super::RepeatKey::new(region(10, 10), "CAG"), None);
+        assert_eq!(super::RepeatKey::new(region(10, 22), "CAX"), None);
     }
 
     /// The ratio of the depths of reads.bam and pairs.bam on chr1. A wide view takes the depths

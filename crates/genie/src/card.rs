@@ -1126,28 +1126,42 @@ fn field_row<'a>(
     .into()
 }
 
+/// The bases and the motif of the tandem repeat of a card: a feature with a motif in its name
+/// or its fields.
+pub(crate) fn repeat_of(detail: &Detail, fields: &[Field]) -> Option<(Region, String)> {
+    let Detail::Feature(feature) = detail else {
+        return None;
+    };
+    let motif = crate::track::repeat_motif(feature.name(), fields)?;
+    Some((feature.span(), motif))
+}
+
 /// The buttons of a pinned card: BLAT for a read, View mate for a read with a mapped mate,
-/// Primers for a variant, and Lead for a dot of a GWAS track.
-fn buttons(detail: &Detail) -> (bool, bool, bool, bool) {
-    match detail {
+/// Primers for a variant, Lead for a dot of a GWAS track, and Group reads for a tandem repeat.
+fn buttons(card: &Card) -> (bool, bool, bool, bool, bool) {
+    match &card.detail {
         Detail::Read { read, mate, .. } => {
             let mapped = read.has(PAIRED) && !read.has(MATE_UNMAPPED) && read.mate.is_some();
-            (true, mapped && mate.is_some(), false, false)
+            (true, mapped && mate.is_some(), false, false, false)
         }
-        Detail::Variant { .. } => (false, false, true, false),
-        Detail::Association { .. } => (false, false, false, true),
-        _ => (false, false, false, false),
+        Detail::Variant { .. } => (false, false, true, false, false),
+        Detail::Association { .. } => (false, false, false, true, false),
+        detail => {
+            let repeat = repeat_of(detail, &card.fields).is_some();
+            (false, false, false, false, repeat)
+        }
     }
 }
 
 /// The title of a card. A pinned card has a close button, a pinned read card a BLAT button
 /// and, when its mate is mapped, a button that shows the read and its mate side by side, a
-/// pinned variant card a button that designs primers around the variant, and a pinned GWAS card
-/// a button that makes its dot the lead of the LocusZoom colors.
+/// pinned variant card a button that designs primers around the variant, a pinned GWAS card a
+/// button that makes its dot the lead of the LocusZoom colors, and a pinned card of a tandem
+/// repeat a button that groups the reads by the alleles of the repeat.
 fn heading<'a>(
     title: String,
     pinned: bool,
-    (read, mate, variant, lead): (bool, bool, bool, bool),
+    (read, mate, variant, lead, repeat): (bool, bool, bool, bool, bool),
 ) -> Element<'a, Message> {
     let mut heading = row![
         text(title)
@@ -1188,6 +1202,14 @@ fn heading<'a>(
                 .padding([1, 6])
                 .style(style::ghost)
                 .on_press(Message::Lead),
+        );
+    }
+    if pinned && repeat {
+        heading = heading.push(
+            button(text("Group reads").size(11))
+                .padding([1, 6])
+                .style(style::ghost)
+                .on_press(Message::RepeatGroup),
         );
     }
     if pinned {
@@ -1280,7 +1302,7 @@ pub fn view_with<'a>(
     let height = BASE_HEIGHT + LINE_HEIGHT * count as f32;
     let locus = locus(card, span);
     let mut body = column![
-        heading(title, pinned, buttons(&card.detail)),
+        heading(title, pinned, buttons(card)),
         text(locus.to_string())
             .font(font::MONO)
             .size(11)

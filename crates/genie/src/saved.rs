@@ -432,6 +432,20 @@ fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
     })
 }
 
+/// The grouping by the alleles of a tandem repeat: its start from 0, its end and its motif, as
+/// `group = repeat 3074876 3074933 CAG`.
+fn repeat_group(name: &str) -> Option<Grouping> {
+    let mut words = name.strip_prefix("repeat ")?.split_whitespace();
+    let start: u64 = words.next()?.parse().ok()?;
+    let end: u64 = words.next()?.parse().ok()?;
+    let motif = words.next()?;
+    if end <= start || words.next().is_some() {
+        return None;
+    }
+    let key = crate::track::RepeatKey::new(genie_core::Region::between(start, end), motif)?;
+    Some(Grouping::Repeat(key))
+}
+
 /// The places of the two read tracks of a depth ratio track, counted from 1 in the file, as
 /// `depths = 2 3`.
 fn depths(section: &Section) -> Option<(usize, usize)> {
@@ -670,6 +684,7 @@ fn options(section: &Section) -> Options {
                             .contains(&count)
                             .then_some(Grouping::Epiallele(count))
                     })
+                    .or_else(|| repeat_group(name))
             })
             .unwrap_or_default(),
         methyl: Methyl {
@@ -729,6 +744,11 @@ fn option_entries(options: Options) -> Vec<(&'static str, String)> {
         Grouping::None => {}
         Grouping::Tag(tag) => entries.push(("group", format!("tag {}", tag_name(tag)))),
         Grouping::Epiallele(count) => entries.push(("group", format!("epiallele {count}"))),
+        Grouping::Repeat(key) => {
+            let span = key.span();
+            let words = format!("repeat {} {} {}", span.start(), span.end(), key.motif());
+            entries.push(("group", words));
+        }
         group => entries.push(("group", name(&GROUPS, group).to_owned())),
     }
     if let Some(tag) = options.color {
@@ -1122,6 +1142,34 @@ mod tests {
                 format!("[session]\nreference = ref.fa\n[track]\nmade = depth ratio 1\n{broken}\n");
             let parsed = Saved::parse(&text, &base()).unwrap();
             assert_eq!(parsed.tracks[0].depths, None, "{broken}");
+        }
+    }
+
+    /// A read track grouped by the alleles of a tandem repeat keeps the place and the motif of
+    /// the repeat.
+    #[test]
+    fn read_tracks_keep_the_repeat_of_their_alleles() {
+        use crate::track::RepeatKey;
+        let mut repeat = saved();
+        let span = genie_core::Region::between(3_074_876, 3_074_933);
+        let key = RepeatKey::new(span, "CAG").unwrap();
+        repeat.tracks[0].options.group = Grouping::Repeat(key);
+        let text = repeat.text(&base());
+        assert!(
+            text.contains("group = repeat 3074876 3074933 CAG"),
+            "{text}"
+        );
+        assert_eq!(Saved::parse(&text, &base()), Ok(repeat));
+        for broken in [
+            "repeat 10 5 CAG",
+            "repeat 1 9 XYZ",
+            "repeat 1 9",
+            "repeat a b CAG",
+        ] {
+            let text =
+                format!("[session]\nreference = ref.fa\n[track]\nfile = a.bam\ngroup = {broken}\n");
+            let parsed = Saved::parse(&text, &base()).unwrap();
+            assert_eq!(parsed.tracks[0].options.group, Grouping::None, "{broken}");
         }
     }
 

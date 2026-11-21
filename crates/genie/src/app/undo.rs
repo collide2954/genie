@@ -224,6 +224,7 @@ fn records(message: &Message) -> bool {
         | Message::Motifs(..)
         | Message::Review(..)
         | Message::Depth(..)
+        | Message::RepeatGroup
         | Message::Lead => true,
         _ => false,
     }

@@ -521,7 +521,7 @@ fn kind_height(track: &Track) -> f32 {
         let epialleles = 1.0
             + f32::from(u8::from(matches!(
                 track.options.group,
-                Grouping::Epiallele(_)
+                Grouping::Epiallele(_) | Grouping::Repeat(_)
             )));
         let difference = f32::from(u8::from(compares_groups(track)))
             + f32::from(u8::from(track.options.group != Grouping::None))
@@ -825,6 +825,11 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
             Change::Group(Grouping::Cell),
             chosen,
         ));
+    }
+    if let Grouping::Repeat(key) = options.group {
+        let words = format!("Group by repeat ({})", key.motif());
+        let change = Message::TrackChanged(id, Change::Group(options.group));
+        items.push(self::item(words, change, true, true));
     }
     if let Grouping::Epiallele(count) = options.group {
         let change = Change::Group(Grouping::Epiallele(count));

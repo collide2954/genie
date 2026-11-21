@@ -854,6 +854,9 @@ pub enum Message {
     Depth(u64, u64),
     /// Makes the dot of the pinned card the lead of the LocusZoom colors of its GWAS track.
     Lead,
+    /// Groups the reads of the read tracks by the alleles of the tandem repeat of the pinned
+    /// card, or stops.
+    RepeatGroup,
     /// The sequence and the track of a GenBank or EMBL file.
     RecordsOpened(
         Location,
@@ -1224,6 +1227,7 @@ impl Genie {
             Message::Review(reviewing) => return self.reviewing(reviewing),
             Message::Depth(first, second) => return self.compare_depths(first, second),
             Message::Lead => self.make_lead(),
+            Message::RepeatGroup => return self.group_by_repeat(),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
             }
@@ -6274,6 +6278,103 @@ ORIGIN
         }
     }
 
+    /// A read from 100 that spans a repeat of 4 CAG at 120-132 with 20 bases on each side, with
+    /// `extra` more copies as an insertion, and a haplotype when it has one.
+    fn repeat_read(name: &str, extra: u32, phase: Option<i64>) -> genie_core::alignment::Alignment {
+        use genie_core::alignment::{Op, Tags};
+        let mut bases = b"TTGACTTGACTTGACTTGAC".to_vec();
+        bases.extend(b"CAG".repeat(4 + extra as usize));
+        bases.extend(b"GTTCAGTTCAGTTCAGTTCA");
+        let cigar = if extra == 0 {
+            vec![(Op::Match, 52)]
+        } else {
+            vec![(Op::Match, 26), (Op::Insertion, 3 * extra), (Op::Match, 26)]
+        };
+        genie_core::alignment::Alignment {
+            cigar,
+            bases,
+            tags: Tags {
+                phase,
+                ..Tags::default()
+            },
+            ..read(name, 100)
+        }
+    }
+
+    /// The card of a tandem repeat gives the alleles of the reads of each read track, by
+    /// haplotype when the reads have HP tags, with a histogram. Its Group reads button groups
+    /// the reads of the read tracks by the alleles, and again stops.
+    #[test]
+    fn reads_group_by_the_alleles_of_a_repeat() {
+        use crate::track::RepeatKey;
+
+        let mut genie = opened();
+        let mut reads: Vec<_> = (0..3)
+            .map(|at| repeat_read(&format!("a{at}"), 0, Some(1)))
+            .collect();
+        reads.extend((0..3).map(|at| repeat_read(&format!("b{at}"), 2, Some(2))));
+        reads.push(read("far", 500));
+        add_named_reads(&mut genie, "reads.bam", reads.clone());
+        let span = Region::between(120, 132);
+        let session = genie.session.as_ref().unwrap();
+        let fields = super::tracks::repeat_fields(session, 0, span, "CAG");
+        let pairs: Vec<(&str, &str)> = fields
+            .iter()
+            .map(|field| (field.label.as_str(), field.value.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("Reference", "4 CAG · 12 bp"),
+                ("HP1", "4 CAG (4-4) · 3 reads █"),
+                ("HP2", "6 CAG (6-6) · 3 reads █"),
+            ]
+        );
+        let repeat = genie_core::Feature::new("(CAG)4", span, Strand::Unknown);
+        genie.pinned = Some(crate::card::Card {
+            track: 0,
+            contig: "chr1".to_owned(),
+            samples: Vec::new(),
+            detail: crate::card::Detail::Feature(repeat),
+            at: Point::ORIGIN,
+            fields: Vec::new(),
+            effects: Changes::default(),
+        });
+        let mut ui = simulator(genie.view());
+        ui.click("Group reads").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::RepeatGroup));
+        let _ = genie.update(Message::RepeatGroup);
+        let key = RepeatKey::new(span, "CAG").unwrap();
+        let group = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].options.group;
+        assert_eq!(group(&genie), Grouping::Repeat(key));
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        let region = Region::between(0, 1_000);
+        track.slot.wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, track.options);
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let Some(Content::Reads(pile)) = track.data(0).map(|data| &data.content) else {
+            panic!("expected reads");
+        };
+        let names: Vec<&str> = pile.groups.iter().map(|(_, name)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "HP1 · 4 CAG · 3 reads (4-4)",
+                "HP2 · 6 CAG · 3 reads (6-6)",
+                "Not spanning"
+            ]
+        );
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Group by repeat (CAG)"));
+        let _ = genie.update(Message::RepeatGroup);
+        assert_eq!(group(&genie), Grouping::None);
+    }
+
     /// A reference with a CpG at 1, 5, 9 and so on.
     fn cpg_reference() -> Vec<u8> {
         b"ACGT".repeat(250)
@@ -7069,6 +7170,7 @@ ORIGIN
             with_ratio(),
             with_spliced_groups(),
             with_epialleles(),
+            with_repeat_alleles(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));
@@ -7217,6 +7319,14 @@ ORIGIN
     }
 
     /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
+    /// A read track grouped by the alleles of a repeat of CAG.
+    fn with_repeat_alleles() -> Genie {
+        let mut genie = with_reads();
+        let key = crate::track::RepeatKey::new(Region::between(120, 132), "CAG").unwrap();
+        genie.session.as_mut().unwrap().tracks[0].options.group = Grouping::Repeat(key);
+        genie
+    }
+
     /// A read track grouped by 3 epialleles.
     fn with_epialleles() -> Genie {
         let mut genie = with_reads();
