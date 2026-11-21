@@ -426,6 +426,19 @@ The B-allele frequency of a sample at a site is the fraction of its reads that c
 - Put the pointer on a dot to see the sample, the fraction, the reads and the call.
 - The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.
 
+## Depth ratio
+
+The depth ratio of two read files shows where the copy number changes, for example in a tumor sample against a normal sample of the same person.
+
+- Right-click a read track and click the other read track under **Compare depth with**. A depth ratio track opens under the first read track, with the names of the two tracks, as "tumor.bam / normal.bam". The palette also has **Compare the depth with** each other read track. To remove the ratio track, click the name again, or remove the track.
+- Each dot is the log2 ratio of the depths of the two files in a bin: blue under 0 and vermillion over 0, as in copy number tracks. A line marks 0, where the two depths are the same. genie divides the depth of each file by its usual depth, the median of the bins of the chromosome. Thus a file with more reads does not move all the dots up.
+- In a view wider than 1 Mb, genie gets the depth of each bin of 16 kb from the index of the file alone, as goleft indexcov does: from the bytes between the windows of a BAI index, or from the bytes of each slice of a CRAI index. genie reads no reads, also for files on the web. A BAI index must have the counts of reads that samtools index adds.
+- In a view of 1 Mb or less, genie counts the reads that start in each bin, in bins of 4 pixels and 500 bases or more, if the reads of the view are 32 MB or less (8 MB for a file on the web). Only mapped primary reads count. With more data, the bins come from the indexes.
+- Lines in the color of the text show the segments: parts of the chromosome with one ratio. genie finds them in the bins of the whole chromosome from the indexes, by binary segmentation, a simple form of the circular binary segmentation (CBS) of DNAcopy. genie divides a part at the place where a t-test gives the smallest p, while p multiplied by the number of places is less than 0.001 and each new part has 5 bins or more. The line of a segment is at its mean log2 ratio.
+- Put the pointer on a dot to see the bin, its log2 ratio, the two depths over their usual depths, and where the depths come from. Put the pointer on a line to see the mean log2 ratio of the segment, its bins and its length.
+- The lane shows the log2 ratios from −2 to +2. To change the range, type a number in **Range ±** in the track menu and push Enter. **Default range (±2)** goes back. Drag the bottom edge of the track to make it taller.
+- Sessions keep the ratio track, its two read tracks and its range. A read track with a lift cannot be in a ratio.
+
 ## Variant review
 
 Look at the variants of a file one after the other, for example the calls of a variant caller with the reads under them, and mark each one true, false or not sure, with a note.

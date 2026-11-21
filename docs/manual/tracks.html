@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -49,6 +49,7 @@
           <li><a href="#tracks">Tracks</a></li>
           <li><a href="#variant-table">Variant table</a></li>
           <li><a href="#b-allele-frequency">B-allele frequency</a></li>
+          <li><a href="#depth-ratio">Depth ratio</a></li>
           <li><a href="#variant-review">Variant review</a></li>
           <li><a href="#ld">LD</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
@@ -167,6 +168,18 @@
 <li>When you zoom out, the sites in one pixel at the same height show as one dot.</li>
 <li>Put the pointer on a dot to see the sample, the fraction, the reads and the call.</li>
 <li>The lane does not use the filter of the track. Sessions, images and undo keep the lane and its sample.</li>
+</ul>
+<h2 id="depth-ratio">Depth ratio</h2>
+<p>The depth ratio of two read files shows where the copy number changes, for example in a tumor sample against a normal sample of the same person.</p>
+<ul>
+<li>Right-click a read track and click the other read track under <b>Compare depth with</b>. A depth ratio track opens under the first read track, with the names of the two tracks, as &quot;tumor.bam / normal.bam&quot;. The palette also has <b>Compare the depth with</b> each other read track. To remove the ratio track, click the name again, or remove the track.</li>
+<li>Each dot is the log2 ratio of the depths of the two files in a bin: blue under 0 and vermillion over 0, as in copy number tracks. A line marks 0, where the two depths are the same. genie divides the depth of each file by its usual depth, the median of the bins of the chromosome. Thus a file with more reads does not move all the dots up.</li>
+<li>In a view wider than 1 Mb, genie gets the depth of each bin of 16 kb from the index of the file alone, as goleft indexcov does: from the bytes between the windows of a BAI index, or from the bytes of each slice of a CRAI index. genie reads no reads, also for files on the web. A BAI index must have the counts of reads that samtools index adds.</li>
+<li>In a view of 1 Mb or less, genie counts the reads that start in each bin, in bins of 4 pixels and 500 bases or more, if the reads of the view are 32 MB or less (8 MB for a file on the web). Only mapped primary reads count. With more data, the bins come from the indexes.</li>
+<li>Lines in the color of the text show the segments: parts of the chromosome with one ratio. genie finds them in the bins of the whole chromosome from the indexes, by binary segmentation, a simple form of the circular binary segmentation (CBS) of DNAcopy. genie divides a part at the place where a t-test gives the smallest p, while p multiplied by the number of places is less than 0.001 and each new part has 5 bins or more. The line of a segment is at its mean log2 ratio.</li>
+<li>Put the pointer on a dot to see the bin, its log2 ratio, the two depths over their usual depths, and where the depths come from. Put the pointer on a line to see the mean log2 ratio of the segment, its bins and its length.</li>
+<li>The lane shows the log2 ratios from −2 to +2. To change the range, type a number in <b>Range ±</b> in the track menu and push Enter. <b>Default range (±2)</b> goes back. Drag the bottom edge of the track to make it taller.</li>
+<li>Sessions keep the ratio track, its two read tracks and its range. A read track with a lift cannot be in a ratio.</li>
 </ul>
 <h2 id="variant-review">Variant review</h2>
 <p>Look at the variants of a file one after the other, for example the calls of a variant caller with the reads under them, and mark each one true, false or not sure, with a note.</p>
