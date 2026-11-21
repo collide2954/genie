@@ -57,6 +57,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Isoforms",
             "Isoform table",
             "Phase reads",
+            "Single-cell",
             "Reference tracks",
             "Motif sites",
             "Dot plot",

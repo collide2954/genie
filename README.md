@@ -114,12 +114,14 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | Interaction track | bigInteract (`.bb`); BEDPE (`.bedpe`, plain or gzip, up to 50 MB); loop lists of Juicer and HiCCUPS (`.txt`, plain or gzip) |
 | Junction track | STAR splice junctions (`SJ.out.tab`); junction BED files of TopHat and regtools (`junctions.bed`, or a BED file with the track line `track name=junctions` or `graphType=junctions`). Plain or gzip, up to 50 MB |
 | Hi-C track | Juicer `.hic`, versions 6 to 9; cooler `.cool` and `.mcool`, as from the 4D Nucleome project |
+| Fragment track | Fragment files of single-cell ATAC-seq from Cell Ranger ATAC (`fragments.tsv.gz`) with their tabix index, or plain or gzip up to 256 MB (see [Single-cell](#single-cell)) |
 | Table track | Tab-separated tables compressed with bgzip and indexed with `tabix -s -b -e`, for example the CADD scores (`.tsv.gz`, `.txt.gz` and others, with `.tbi` or `.csi`) |
 | GWAS track | Summary statistics of the GWAS Catalog, PLINK 2 (`.glm.linear`, `.glm.logistic`), REGENIE (`.regenie`), SAIGE and BOLT-LMM: tab or space separated, plain or gzip up to 1 GB, or bgzip with a tabix index |
 | Copy number track | SEG (`.seg`, as from TCGA, DNAcopy or GISTIC); CNVkit (`.cns`, `.cnr`); GATK ModelSegments (`.seg`). Plain or gzip, up to 50 MB |
 | GenBank and EMBL | GenBank (`.gb`, `.gbk`, `.gbff`, `.genbank`) and EMBL (`.embl`, `.emb`) files, plain or gzip, up to 512 MB: the sequence and a feature track (see [GenBank and EMBL files](#genbank-and-embl-files)) |
 | Motifs | MEME (`.meme`), JASPAR (`.jaspar`, `.pfm`, and the `.txt` files of JASPAR) and HOMER (`.motif`) files of DNA motifs, plain or gzip, up to 64 MB (see [Motif sites](#motif-sites)) |
 | Sample table | Tab or comma separated text with a header line (`.tsv`, `.csv`, `.txt`, `.panel` from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK `.fam` and `.ped`. Plain or gzip, up to 64 MB |
+| Cell table | The cells of single-cell data, as the meta.data of Seurat or the obs of Scanpy written as CSV or TSV, plain or gzip, up to 256 MB. Open it from the menu of a track (see [Single-cell](#single-cell)) |
 | Session | genie session (`.genie`) |
 
 Open a genome or a reference sequence first. Then open tracks or drop them on the window.
@@ -488,6 +490,19 @@ The reads of a sample can have an HP tag with their haplotype, for example from 
 - Then **Group by phase** shows the reads of haplotype 1, of haplotype 2 and the reads without a haplotype, and **Methylation difference** and the **DMR table** compare the two haplotypes.
 - genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.
 - Click the variant track again to stop. The palette has **Phase the reads by** each variant track and **Stop phasing the reads**. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.
+
+## Single-cell
+
+The reads of single-cell RNA-seq and ATAC-seq have the barcode of their cell: the CB tag of 10x Genomics, or the XC tag of Drop-seq. A table of the cells gives each barcode a cell type.
+
+- Write the table of the cells in R or Python: `write.csv(seurat@meta.data, "cells.csv")` for Seurat, or `adata.obs.to_csv("cells.csv")` for Scanpy. genie takes the barcodes from the first column whose values are mostly barcodes. The file can be CSV or TSV, also compressed with gzip, and up to 256 MB.
+- Right-click a read track or a fragment track, click **Cell types…** and pick the table. genie uses the column whose name says cell type best, for example cell_type, predicted.celltype.l2, seurat_annotations or seurat_clusters. **Cell types by** in the track menu lists the columns with 2 to 100 values: click one to use it.
+- The barcode of a read finds its cell in the table by the same text, or else by its core: its longest run of A, C, G and T. Then a barcode with a sample prefix, as pbmc1_AAACCCAAGAAACACT-1 from a Seurat merge, or with another suffix, as AAACCCAAGAAACACT-1-0 from Scanpy, finds the reads with AAACCCAAGAAACACT-1. When cells of other types have the same core, the reads have no cell type.
+- **Group by cell type** puts the reads in rows by the cell type of their barcode. Reads without a barcode, or with the barcode of no cell of the table, are in "No cell type".
+- **Coverage by cell type** shows the coverage of the reads, and under it a lane for each cell type: the coverage of the reads of its cells divided by its number of cells in the table, on one scale for all lanes, as the CoveragePlot of Signac. The 12 cell types with the most cells have a lane each, and the other types share the lane "Other". genie counts all the reads, also the reads that down-sampling hides. Put the pointer on a lane to see its coverage and its coverage per cell.
+- When the table has the cells of more than one sample, the lanes divide by the cells of all samples. For the coverage per cell of one sample, use the table of that sample.
+- genie opens the fragment files of single-cell ATAC-seq, as the `fragments.tsv.gz` of Cell Ranger ATAC, with their tabix index. It also reads a small file without an index, up to 256 MB. A fragment track shows one lane with the coverage of all fragments, or with a cell table a lane for each cell type, as above. It shows views of 2 Mb or less, or 500 kb for a file on the web.
+- The palette has **Cell types…**, **Cell types by** each column, **Group by cell type**, **Coverage by cell type** and **Remove the cell table**. Sessions and images keep the cell table, its column, the groups and the lanes of each track.
 
 ## Reference tracks
 

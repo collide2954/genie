@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -55,6 +55,7 @@
           <li><a href="#isoforms">Isoforms</a></li>
           <li><a href="#isoform-table">Isoform table</a></li>
           <li><a href="#phase-reads">Phase reads</a></li>
+          <li><a href="#single-cell">Single-cell</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
           <li><a href="#dot-plot">Dot plot</a></li>
@@ -227,6 +228,18 @@
 <li>Then <b>Group by phase</b> shows the reads of haplotype 1, of haplotype 2 and the reads without a haplotype, and <b>Methylation difference</b> and the <b>DMR table</b> compare the two haplotypes.</li>
 <li>genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.</li>
 <li>Click the variant track again to stop. The palette has <b>Phase the reads by</b> each variant track and <b>Stop phasing the reads</b>. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.</li>
+</ul>
+<h2 id="single-cell">Single-cell</h2>
+<p>The reads of single-cell RNA-seq and ATAC-seq have the barcode of their cell: the CB tag of 10x Genomics, or the XC tag of Drop-seq. A table of the cells gives each barcode a cell type.</p>
+<ul>
+<li>Write the table of the cells in R or Python: <code>write.csv(seurat@meta.data, &quot;cells.csv&quot;)</code> for Seurat, or <code>adata.obs.to_csv(&quot;cells.csv&quot;)</code> for Scanpy. genie takes the barcodes from the first column whose values are mostly barcodes. The file can be CSV or TSV, also compressed with gzip, and up to 256 MB.</li>
+<li>Right-click a read track or a fragment track, click <b>Cell types…</b> and pick the table. genie uses the column whose name says cell type best, for example cell_type, predicted.celltype.l2, seurat_annotations or seurat_clusters. <b>Cell types by</b> in the track menu lists the columns with 2 to 100 values: click one to use it.</li>
+<li>The barcode of a read finds its cell in the table by the same text, or else by its core: its longest run of A, C, G and T. Then a barcode with a sample prefix, as pbmc1_AAACCCAAGAAACACT-1 from a Seurat merge, or with another suffix, as AAACCCAAGAAACACT-1-0 from Scanpy, finds the reads with AAACCCAAGAAACACT-1. When cells of other types have the same core, the reads have no cell type.</li>
+<li><b>Group by cell type</b> puts the reads in rows by the cell type of their barcode. Reads without a barcode, or with the barcode of no cell of the table, are in &quot;No cell type&quot;.</li>
+<li><b>Coverage by cell type</b> shows the coverage of the reads, and under it a lane for each cell type: the coverage of the reads of its cells divided by its number of cells in the table, on one scale for all lanes, as the CoveragePlot of Signac. The 12 cell types with the most cells have a lane each, and the other types share the lane &quot;Other&quot;. genie counts all the reads, also the reads that down-sampling hides. Put the pointer on a lane to see its coverage and its coverage per cell.</li>
+<li>When the table has the cells of more than one sample, the lanes divide by the cells of all samples. For the coverage per cell of one sample, use the table of that sample.</li>
+<li>genie opens the fragment files of single-cell ATAC-seq, as the <code>fragments.tsv.gz</code> of Cell Ranger ATAC, with their tabix index. It also reads a small file without an index, up to 256 MB. A fragment track shows one lane with the coverage of all fragments, or with a cell table a lane for each cell type, as above. It shows views of 2 Mb or less, or 500 kb for a file on the web.</li>
+<li>The palette has <b>Cell types…</b>, <b>Cell types by</b> each column, <b>Group by cell type</b>, <b>Coverage by cell type</b> and <b>Remove the cell table</b>. Sessions and images keep the cell table, its column, the groups and the lanes of each track.</li>
 </ul>
 <h2 id="reference-tracks">Reference tracks</h2>
 <p>genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.</p>
