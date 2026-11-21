@@ -36,6 +36,7 @@ pub mod samples;
 pub mod search;
 pub mod segment;
 pub mod signal;
+pub mod splicing;
 mod tile;
 pub mod trio;
 pub mod variant;
