@@ -1,5 +1,6 @@
 pub mod alignments;
 pub mod bands;
+pub mod cells;
 pub mod contacts;
 pub mod difference;
 pub mod dotplot;
