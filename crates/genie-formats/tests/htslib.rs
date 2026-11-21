@@ -215,6 +215,41 @@ fn bam_queries_match_samtools() {
     }
 }
 
+/// The index of a BAM file alone estimates the reads that start in each part of a reference, as
+/// goleft indexcov finds depth: over a whole reference, the estimates add up to its mapped reads.
+#[test]
+fn bai_indexes_estimate_the_reads_of_each_part() {
+    const UNMAPPED: u16 = 0x4;
+    for file in ["reads.bam", "pairs.bam"] {
+        let index = bai::Index::read(File::open(data(&format!("{file}.bai"))).unwrap()).unwrap();
+        let mut reader = reader(file);
+        let header = bam::header(&mut reader).unwrap();
+        for (reference, (_, length)) in header.references.iter().enumerate() {
+            let whole = Region::between(0, *length);
+            let mut mapped = 0_u32;
+            bam::query(&index, &mut reader, reference, whole, |alignment| {
+                mapped += u32::from(alignment.flags & UNMAPPED == 0);
+                Ok(())
+            })
+            .unwrap();
+            let Some(tally) = index.density(reference, whole, length.div_ceil(4), *length) else {
+                assert_eq!(mapped, 0, "{file} {reference}");
+                continue;
+            };
+            assert!(
+                (tally.total() - f64::from(mapped)).abs() < 0.5,
+                "{file} {reference}: {} {mapped}",
+                tally.total()
+            );
+        }
+        assert!(
+            index
+                .density(index.len(), Region::between(0, 10), 1, 10)
+                .is_none()
+        );
+    }
+}
+
 #[test]
 fn bam_modifications_match_samtools() {
     let index = bai::Index::read(File::open(data("mods.bam.bai")).unwrap()).unwrap();

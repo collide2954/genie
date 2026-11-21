@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 
 use genie_core::Region;
+use genie_core::signal::Tally;
 
 use crate::bam::{self, Header};
 use crate::bgzf::{self, Bgzf};
@@ -142,6 +143,21 @@ impl Index {
         self.references
             .get(reference)
             .map_or_else(Vec::new, |bins| bins.chunks(region))
+    }
+
+    /// An estimate of the reads that start in each part of a region of a reference, from the
+    /// index alone, as goleft indexcov estimates depth. `length` is the length of the reference.
+    /// It needs the pseudo-bin that htslib adds to its indexes.
+    pub fn density(
+        &self,
+        reference: usize,
+        region: Region,
+        step: u64,
+        length: u64,
+    ) -> Option<Tally> {
+        self.references
+            .get(reference)?
+            .density(region, step, length)
     }
 }
 
