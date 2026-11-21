@@ -6125,14 +6125,23 @@ ORIGIN
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
             let session = genie.session.as_ref().unwrap();
             let sections = super::view::links(session, &session.tracks[0]);
-            let expected =
-                menu::height(&session.tracks[0], &sections).min(menu::room(genie.window));
+            let full = menu::height(&session.tracks[0], &sections);
+            let expected = full.min(menu::room(genie.window));
             let mut ui = simulator(genie.view());
-            let height = ui.find(selector::id("menu")).unwrap().bounds().height;
+            let bounds = ui.find(selector::id("menu")).unwrap().bounds();
+            let height = bounds.height;
             assert!(
                 height <= expected && expected - height < 1.0,
                 "{height} {expected}"
             );
+            // A menu that scrolls is wider by its scrollbar.
+            let width = if session.tracks[0].filter.is_empty() {
+                menu::WIDTH
+            } else {
+                menu::FILTER_WIDTH
+            };
+            let tall = full > menu::room(genie.window);
+            assert_eq!(bounds.width > width + 1.0, tall, "{bounds:?}");
         }
     }
 

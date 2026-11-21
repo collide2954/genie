@@ -43,7 +43,7 @@ const COLORS_HEIGHT: f32 = SWATCH_ROW + SEPARATOR_HEIGHT;
 const MODES_HEIGHT: f32 = 3.0 * LINK_HEIGHT + SEPARATOR_HEIGHT;
 /// The row of the fields of a range, with the space of the menu under it.
 const RANGE_ROW: f32 = 25.6;
-const FILTER_WIDTH: f32 = 260.0;
+pub const FILTER_WIDTH: f32 = 260.0;
 pub const STYLES: [(&str, Style); 2] = [("Bars", Style::Bars), ("Line", Style::Line)];
 const EDGE: f32 = 4.0;
 pub const MODES: [(&str, Mode); 3] = [
@@ -520,16 +520,22 @@ pub fn sized(
 ) -> Element<'_, Message> {
     let room = room(window);
     let tall = height > room;
-    let body: Element<'_, Message> = if tall {
-        scrollable(content)
+    // A menu that scrolls is wider by its scrollbar, so that its items keep their width.
+    let (body, width): (Element<'_, Message>, f32) = if tall {
+        let body = scrollable(content)
             .direction(Direction::Vertical(
-                Scrollbar::new().width(6).scroller_width(6).margin(0),
+                Scrollbar::new()
+                    .width(6)
+                    .scroller_width(6)
+                    .margin(0)
+                    .spacing(2),
             ))
             .style(style::scrollbar)
-            .height(room - 8.0)
-            .into()
+            .width(Length::Fill)
+            .height(room - 8.0);
+        (body.into(), width + 8.0)
     } else {
-        content.into()
+        (content.into(), width)
     };
     let card = container(body)
         .id("menu")
