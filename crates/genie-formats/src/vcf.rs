@@ -2,6 +2,7 @@ use std::io::{BufRead, Read, Seek, Write};
 use std::str::{FromStr, Split};
 
 use genie_core::Region;
+use genie_core::haplotag::Phased;
 use genie_core::review::{Key, Reviews};
 use genie_core::variant::{Call, Fraction, Reads, Variant};
 
@@ -255,6 +256,78 @@ pub fn read_fractions(reader: impl BufRead, sample: usize) -> Result<Table<Fract
     Ok(Table::new(rows))
 }
 
+/// The contig of a record and the phased heterozygous SNV of one of its samples: the base of each
+/// haplotype from a GT with |, and the phase set from PS. Nothing for a record without the
+/// sample, for a call that is not phased or not heterozygous, or for alleles that are not one
+/// base.
+pub fn phased(line: &str, sample: usize) -> Option<(&str, Phased)> {
+    let mut fields = line.split('\t');
+    let contig = fields
+        .next()
+        .filter(|contig| !contig.is_empty() && !contig.starts_with('#'))?;
+    let position: u64 = fields.next()?.parse().ok()?;
+    let reference = fields.nth(1)?;
+    let alternates = fields.next()?;
+    let format = fields.nth(3)?;
+    let values = fields.nth(sample)?;
+    let mut genotype = None;
+    let mut set = 0;
+    for (key, value) in format.split(':').zip(values.split(':')) {
+        match key {
+            "GT" => genotype = Some(value),
+            "PS" => set = value.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    let (first, second) = genotype?.split_once('|')?;
+    let allele = |text: &str| -> Option<u8> {
+        let index: usize = text.parse().ok()?;
+        let allele = match index {
+            0 => reference,
+            _ => alternates.split(',').nth(index - 1)?,
+        };
+        let base = allele.as_bytes().first()?.to_ascii_uppercase();
+        (allele.len() == 1 && b"ACGT".contains(&base)).then_some(base)
+    };
+    let bases = [allele(first)?, allele(second)?];
+    (bases[0] != bases[1]).then_some((
+        contig,
+        Phased {
+            position: position.saturating_sub(1),
+            bases,
+            set,
+        },
+    ))
+}
+
+/// The phased heterozygous SNVs of a sample in a region, through the index of the file.
+pub fn phased_sites<R: Read + Seek>(
+    index: &Index,
+    reader: &mut Bgzf<R>,
+    (contig, region): (&str, Region),
+    sample: usize,
+) -> Result<Vec<Phased>, Error> {
+    let mut found = Vec::new();
+    index.query(reader, contig, region, |line| {
+        found.extend(phased(line, sample).map(|(_, site)| site));
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+/// The phased heterozygous SNVs of a sample in all of a file without an index.
+pub fn read_phased(reader: impl BufRead, sample: usize) -> Result<Table<Phased>, Error> {
+    let mut rows = Vec::new();
+    lines(reader, |_, line| {
+        if let Some((contig, site)) = phased(line, sample) {
+            let span = Region::between(site.position, site.position + 1);
+            rows.push((contig.to_owned(), span, site));
+        }
+        Ok(())
+    })?;
+    Ok(Table::new(rows))
+}
+
 /// The INFO field of the verdict of a variant in a reviewed copy.
 pub const REVIEW: &str = "REVIEW";
 /// The INFO field of the note of a variant in a reviewed copy.
@@ -448,8 +521,8 @@ mod tests {
     use genie_core::variant::{Call, Sv};
 
     use super::{
-        extent, fields, fraction, fractions, header, names, parse, query, read_fractions,
-        read_table, reviewed,
+        extent, fields, fraction, fractions, header, names, parse, phased, phased_sites, query,
+        read_fractions, read_phased, read_table, reviewed,
     };
     use crate::bgzf::Bgzf;
     use crate::bgzf::tests::{block, file};
@@ -761,6 +834,51 @@ mod tests {
         let found = fractions(&index, &mut reader, region, 0).unwrap();
         let places: Vec<u64> = found.iter().map(|site| site.position).collect();
         assert_eq!(places, [89]);
+    }
+
+    #[test]
+    fn records_give_the_phased_snvs_of_a_sample() {
+        use genie_core::haplotag::Phased;
+        let phased_site = |bases: [u8; 2], set| Phased {
+            position: 99,
+            bases,
+            set,
+        };
+        let line = "chr1\t100\t.\tA\tG,T\t.\tPASS\t.\tGT:PS\t0|1:5000\t1/2:.\t2|1:.";
+        let first = phased_site(*b"AG", 5_000);
+        assert_eq!(phased(line, 0), Some(("chr1", first)));
+        assert_eq!(phased(line, 1), None);
+        assert_eq!(phased(line, 2), Some(("chr1", phased_site(*b"TG", 0))));
+        for other in [
+            "chr1\t100\t.\tA\tG\t.\t.\t.\tGT\t1|1",
+            "chr1\t100\t.\tA\tGT\t.\t.\t.\tGT\t0|1",
+            "chr1\t100\t.\tA\tG\t.\t.\t.\tGT\t.|1",
+            "chr1\t100\t.\tA\tG\t.\t.\t.",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1",
+        ] {
+            assert_eq!(phased(other, 0), None, "{other}");
+        }
+        let text = "##fileformat=VCFv4.2\n\
+            #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNA1\n\
+            chr1\t10\t.\tA\tG\t.\tPASS\t.\tGT\t0|1\n\
+            chr1\t50\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n\
+            chr1\t90\t.\tG\tA\t.\tPASS\t.\tGT\t1|0\n";
+        let all = read_phased(text.as_bytes(), 0).unwrap();
+        let found: Vec<(u64, [u8; 2])> = all
+            .query("chr1", Region::between(0, 100))
+            .iter()
+            .map(|site| (site.position, site.bases))
+            .collect();
+        assert_eq!(found, [(9, *b"AG"), (89, *b"AG")]);
+        let data: String = text.lines().skip(2).flat_map(|line| [line, "\n"]).collect();
+        let end = (block(data.as_bytes()).len() as u64) << 16;
+        let bins: Bins = &[(4681, &[(0, end)])];
+        let index = index(VCF, &["chr1"], &[(bins, &[0])]);
+        let mut reader = Bgzf::new(Cursor::new(file(&[data.as_bytes()])));
+        let region = ("chr1", Region::between(40, 100));
+        let found = phased_sites(&index, &mut reader, region, 0).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].position, 89);
     }
 
     /// The copy has INFO lines for the review, and each marked record has its mark and note in

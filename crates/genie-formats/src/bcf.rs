@@ -5,6 +5,7 @@
 use std::io::{ErrorKind, Read, Seek};
 
 use genie_core::Region;
+use genie_core::haplotag::Phased;
 use genie_core::variant::{Call, Fraction, Reads, Variant};
 
 use crate::annotations::{self, Layout};
@@ -268,6 +269,116 @@ fn call_of(alleles: &[Option<i32>]) -> Call {
         })
         .collect();
     Call::parse(&alleles.join("/"))
+}
+
+/// The alleles of a record: the reference allele first.
+fn alleles(bytes: &[u8], shared: usize) -> Result<Vec<String>, Error> {
+    let mut values = Values {
+        data: &bytes[..shared],
+        at: 16,
+    };
+    let counts = values.u32()?;
+    values.at = FIXED;
+    values.text_value()?;
+    (0..counts >> 16).map(|_| values.text_value()).collect()
+}
+
+/// The phased heterozygous SNV of a sample of a record: the base of each haplotype from a
+/// phased GT, and the phase set from PS. Nothing for a record without the sample, for a call
+/// that is not phased or not heterozygous, or for alleles that are not one base.
+fn phased(
+    bytes: &[u8],
+    shared: usize,
+    header: &Header,
+    sample: usize,
+) -> Result<Option<Phased>, Error> {
+    let (_, start, _) = place(bytes)?;
+    let layout = Values {
+        data: &bytes[..shared],
+        at: 20,
+    }
+    .u32()?;
+    let (formats, samples) = (layout >> 24, (layout & 0x00FF_FFFF) as usize);
+    if sample >= samples {
+        return Ok(None);
+    }
+    let mut values = Values {
+        data: &bytes[shared..],
+        at: 0,
+    };
+    let (mut genotype, mut set) = (Vec::new(), 0);
+    for _ in 0..formats {
+        let key = values.int()?.and_then(|place| header.string(place));
+        let (kind, length) = values.kind()?;
+        let size = width(kind)? * length;
+        values.take(size * sample)?;
+        let integers = matches!(kind, INT8 | INT16 | INT32);
+        match key {
+            Some("GT") if integers => genotype = values.ints(kind, length)?,
+            Some("PS") if integers => {
+                let found = values.ints(kind, length)?.first().copied().flatten();
+                set = found
+                    .and_then(|value| u64::try_from(value).ok())
+                    .unwrap_or(0);
+            }
+            _ => {
+                values.take(size)?;
+            }
+        }
+        values.take(size * (samples - sample - 1))?;
+    }
+    let [Some(first), Some(second)] = genotype[..] else {
+        return Ok(None);
+    };
+    if second & 1 == 0 {
+        return Ok(None);
+    }
+    let alleles = alleles(bytes, shared)?;
+    let base = |value: i32| -> Option<u8> {
+        let allele = alleles.get(usize::try_from((value >> 1) - 1).ok()?)?;
+        let base = allele.as_bytes().first()?.to_ascii_uppercase();
+        (allele.len() == 1 && b"ACGT".contains(&base)).then_some(base)
+    };
+    let (Some(one), Some(other)) = (base(first), base(second)) else {
+        return Ok(None);
+    };
+    Ok((one != other).then_some(Phased {
+        position: start,
+        bases: [one, other],
+        set,
+    }))
+}
+
+/// The phased heterozygous SNVs of a sample in a region, with the CSI index of the file.
+pub fn phased_sites<R: Read + Seek>(
+    index: &Index,
+    reader: &mut Bgzf<R>,
+    header: &Header,
+    place: (&str, Region),
+    sample: usize,
+) -> Result<Vec<Phased>, Error> {
+    let mut found = Vec::new();
+    records(index, reader, header, place, |bytes, shared| {
+        found.extend(phased(bytes, shared, header, sample)?);
+        Ok(())
+    })?;
+    Ok(found)
+}
+
+/// The phased heterozygous SNVs of a sample in all of a file without an index.
+pub fn read_phased(mut reader: impl Read, sample: usize) -> Result<Table<Phased>, Error> {
+    let header = header(&mut reader)?;
+    let mut rows = Vec::new();
+    let mut bytes = Vec::new();
+    while let Some(shared) = next(&mut reader, &mut bytes)? {
+        let (contig, ..) = place(&bytes)?;
+        if let Some(site) = phased(&bytes, shared, &header, sample)? {
+            let name = header.contigs.get(contig).ok_or_else(bad)?.clone();
+            let span = Region::between(site.position, site.position + 1);
+            rows.push((name, span, site));
+        }
+    }
+    Ok(Table::new(rows))
 }
 
 /// The B-allele frequency of a sample of a record, from its GT and its AD, DP, VAF, AF or BAF
@@ -605,7 +716,9 @@ pub(crate) mod tests {
     use genie_core::Region;
     use genie_core::variant::{Call, Sv};
 
-    use super::{fraction, fractions, header, names, query, read_fractions, read_table};
+    use super::{
+        fraction, fractions, header, names, phased, query, read_fractions, read_phased, read_table,
+    };
     use crate::annotations;
     use crate::bgzf::{self, Bgzf};
     use crate::binning::{Builder, Scheme, put};
@@ -974,6 +1087,7 @@ pub(crate) mod tests {
         ##FORMAT=<ID=AD,Number=R,Type=Integer,Description=\"Allelic depths\",IDX=2>\n\
         ##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read depth\",IDX=3>\n\
         ##FORMAT=<ID=VAF,Number=A,Type=Float,Description=\"Allele fraction\",IDX=4>\n\
+        ##FORMAT=<ID=PS,Number=1,Type=Integer,Description=\"Phase set\",IDX=5>\n\
         ##contig=<ID=chr1,length=10000,IDX=0>\n\
         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\n";
 
@@ -1061,6 +1175,35 @@ pub(crate) mod tests {
             .map(|site| site.position)
             .collect();
         assert_eq!(places, [5, 99]);
+    }
+
+    #[test]
+    fn records_give_the_phased_snvs_of_a_sample() {
+        let header = header(&mut Cursor::new(header_bytes(FORMATS))).unwrap();
+        let ints = |values: [i32; 2]| -> Vec<u8> {
+            values
+                .iter()
+                .flat_map(|value| i16::try_from(*value).unwrap().to_le_bytes())
+                .collect()
+        };
+        let record = sampled(
+            99,
+            &[(1, 1, 2, vec![2, 5, 2, 4]), (5, 2, 1, ints([7_000, 7_000]))],
+        );
+        let (bytes, size) = (&record.0, record.1);
+        let first = phased(bytes, size, &header, 0).unwrap().unwrap();
+        assert_eq!(
+            (first.position, first.bases, first.set),
+            (99, *b"AG", 7_000)
+        );
+        assert_eq!(phased(bytes, size, &header, 1).unwrap(), None);
+        assert_eq!(phased(bytes, size, &header, 2).unwrap(), None);
+        let mut stream = header_bytes(FORMATS);
+        stream.extend(u32::try_from(size).unwrap().to_le_bytes());
+        stream.extend(u32::try_from(bytes.len() - size).unwrap().to_le_bytes());
+        stream.extend(bytes);
+        let all = read_phased(Cursor::new(stream), 0).unwrap();
+        assert_eq!(all.query("chr1", Region::between(0, 1_000)).len(), 1);
     }
 
     /// The test file has no AD, DP or fraction values, so no site has a fraction.
