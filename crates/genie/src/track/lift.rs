@@ -240,7 +240,7 @@ impl Lifted {
                     }
                 }
             }
-            Content::Reads(_) | Content::Contacts(_) | Content::Cells(_) => {}
+            Content::Reads(_) | Content::Contacts(_) | Content::Cells(_) | Content::Ratio(_) => {}
         }
     }
 
@@ -410,6 +410,7 @@ mod tests {
             length: 300_000,
             phased: &[],
             cells: None,
+            depths: None,
         };
         let gene = |loaded: Loaded| {
             let Content::Features(annotation) = loaded.content else {

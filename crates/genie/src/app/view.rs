@@ -9,8 +9,8 @@ use genie_core::{Feature, Region, Strand, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, contacts, features, fractions, ld, links, manhattan, matches, overview, ruler,
-    samples, sashimi, segments, sequence, signal, translation, variants,
+    alignments, contacts, features, fractions, ld, links, manhattan, matches, overview, ratio,
+    ruler, samples, sashimi, segments, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -111,6 +111,7 @@ impl Genie {
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
                     Some(Content::Cells(lanes)) => values += lanes.lanes.len(),
+                    Some(Content::Ratio(found)) => values += found.bins.len(),
                     None => {}
                 }
             }
@@ -869,7 +870,8 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
         | Content::Segments(_)
         | Content::Contacts(_)
         | Content::Associations(_)
-        | Content::Cells(_) => None,
+        | Content::Cells(_)
+        | Content::Ratio(_) => None,
     }
 }
 
@@ -1030,23 +1032,7 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             manhattan_body((session, panel), found, track, (shape.height, faint))
         }
         Some(Content::Features(annotation)) => {
-            let packed;
-            let (rows, count) = if repack {
-                packed = annotation.packed(viewport.visible());
-                (packed.0.as_slice(), packed.1)
-            } else {
-                (annotation.rows.as_slice(), annotation.count)
-            };
-            let mut primitives = features::scene(
-                viewport,
-                &annotation.features,
-                rows,
-                mode,
-                track.hue,
-                track.plot.colors,
-            );
-            primitives.extend(features::more_rows(count, mode));
-            Body::Scene(primitives, shape.height)
+            features_body(viewport, track, annotation, mode, (shape, repack))
         }
         Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
         Some(Content::Cells(lanes)) => {
@@ -1056,8 +1042,44 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
                 .collect();
             Body::Scene(primitives, shape.height)
         }
+        Some(Content::Ratio(found)) => {
+            let range = track.plot.range.map_or(ratio::RANGE, |range| range.max);
+            let data = (&found.bins[..], &found.segments[..]);
+            Body::Scene(
+                ratio::scene(viewport, data, range, shape.height),
+                shape.height,
+            )
+        }
         None => Body::Space(EMPTY_HEIGHT),
     }
+}
+
+/// The features of a track in their rows, packed again for the view when the rows change with
+/// it, and a note when some rows do not show.
+fn features_body(
+    viewport: Viewport,
+    track: &Track,
+    annotation: &track::Annotation,
+    mode: features::Mode,
+    (shape, repack): (Shape, bool),
+) -> Body {
+    let packed;
+    let (rows, count) = if repack {
+        packed = annotation.packed(viewport.visible());
+        (packed.0.as_slice(), packed.1)
+    } else {
+        (annotation.rows.as_slice(), annotation.count)
+    };
+    let mut primitives = features::scene(
+        viewport,
+        &annotation.features,
+        rows,
+        mode,
+        track.hue,
+        track.plot.colors,
+    );
+    primitives.extend(features::more_rows(count, mode));
+    Body::Scene(primitives, shape.height)
 }
 
 /// The sites of a variant track, its breakend arcs, the calls of its samples and, with its data
@@ -2065,6 +2087,8 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
             let lanes = genie_render::cells::height(lanes.lanes.len());
             Shape::plain(genie_render::cells::HEADER + lanes)
         }
+        Some(Content::Ratio(_)) => Shape::plain(track.height.unwrap_or(ratio::HEIGHT)),
+        None if track.source.has_ratio() => Shape::plain(track.height.unwrap_or(ratio::HEIGHT)),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None if track.source.has_junctions() => Shape::plain(junctions::HEIGHT),
@@ -2374,6 +2398,32 @@ fn cell_section(track: &Track) -> Option<Section> {
     Some(section)
 }
 
+/// The other read tracks that the depth of a read track can compare with: each one adds the
+/// track of the ratio of the two depths, or removes it when it is open.
+fn depth_section(session: &Session, track: &Track) -> Option<Section> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return None;
+    }
+    let mut section = Section::new("Compare depth with", Vec::new());
+    for other in session
+        .tracks
+        .iter()
+        .filter(|other| other.id != track.id && other.source.has_reads() && other.lift.is_none())
+    {
+        let pair = Some((track.id, other.id));
+        if session
+            .tracks
+            .iter()
+            .any(|ratio| ratio.options.depths == pair)
+        {
+            section.chosen.push(section.items.len());
+        }
+        let message = Message::Depth(track.id, other.id);
+        section.items.push((other.name.clone(), message));
+    }
+    (!section.items.is_empty()).then_some(section)
+}
+
 fn phase_section(session: &Session, track: &Track) -> Option<Section> {
     if !track.source.has_reads() || track.lift.is_some() {
         return None;
@@ -2458,6 +2508,7 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
     if track.source.has_reads() {
         return phase_section(session, track)
             .into_iter()
+            .chain(depth_section(session, track))
             .chain(cell_section(track))
             .collect();
     }

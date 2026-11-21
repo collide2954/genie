@@ -110,9 +110,11 @@ impl Genie {
 
     /// What a session keeps of an open track, with the places of the tracks that it links to.
     fn saved_track(&self, tracks: &[Track], track: &Track) -> SavedTrack {
+        let place = |id: u64| tracks.iter().position(|other| other.id == id);
+        let named = track.name != self.track_name(&track.source) || track.source.has_ratio();
         SavedTrack {
             location: track.source.location.clone(),
-            name: (track.name != self.track_name(&track.source)).then(|| track.name.clone()),
+            name: named.then(|| track.name.clone()),
             over: track
                 .over
                 .and_then(|base| tracks.iter().position(|other| other.id == base)),
@@ -129,6 +131,7 @@ impl Genie {
                 ld: None,
                 phase: None,
                 cells: 0,
+                depths: None,
                 ..track.options
             },
             plot: Plot {
@@ -174,6 +177,10 @@ impl Genie {
                 .cells
                 .as_ref()
                 .map(|cells| (cells.location.clone(), cells.column_name().to_owned())),
+            depths: track
+                .options
+                .depths
+                .and_then(|(first, second)| Some((place(first)?, place(second)?))),
         }
     }
 

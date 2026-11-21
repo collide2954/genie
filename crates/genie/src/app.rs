@@ -842,6 +842,9 @@ pub enum Message {
     Primers(Priming),
     /// Reviews the variants of a track.
     Review(Reviewing),
+    /// Adds the track of the ratio of the depth of the first read track over the depth of the
+    /// second one, or removes it when it is open.
+    Depth(u64, u64),
     /// Makes the dot of the pinned card the lead of the LocusZoom colors of its GWAS track.
     Lead,
     /// The sequence and the track of a GenBank or EMBL file.
@@ -1210,6 +1213,7 @@ impl Genie {
             Message::Motifs(motifing) => return self.motifing(motifing),
             Message::Primers(priming) => return self.priming(priming),
             Message::Review(reviewing) => return self.reviewing(reviewing),
+            Message::Depth(first, second) => return self.compare_depths(first, second),
             Message::Lead => self.make_lead(),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
@@ -6256,6 +6260,110 @@ ORIGIN
         ] {
             assert!(shows(&genie, line), "{line}");
         }
+    }
+
+    /// The menu of a read track compares its depth with another read track: the ratio track
+    /// comes after the first one, its card shows a bin or a segment, sessions keep its two read
+    /// tracks, and the menu removes it again.
+    #[test]
+    fn read_tracks_compare_their_depth_in_a_ratio_track() {
+        use genie_core::depth::{Bin, Segment};
+        let mut genie = opened();
+        for name in ["tumor.bam", "normal.bam"] {
+            let _ = genie.update(Message::TrackOpened(Ok(read_source(name))));
+        }
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Compare depth with"));
+        assert!(shows(&genie, "normal.bam"));
+        let words = "Compare the depth with normal.bam";
+        assert!(palette_shows(&mut genie, "compare depth normal", words));
+        let _ = genie.update(Message::Depth(0, 1));
+        let words = "Remove the depth ratio with normal.bam";
+        assert!(palette_shows(
+            &mut genie,
+            "remove depth ratio normal",
+            words
+        ));
+        let names = |genie: &Genie| -> Vec<String> {
+            let session = genie.session.as_ref().unwrap();
+            session
+                .tracks
+                .iter()
+                .map(|track| track.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names(&genie),
+            ["tumor.bam", "tumor.bam / normal.bam", "normal.bam"]
+        );
+        let ratio = &genie.session.as_ref().unwrap().tracks[1];
+        let id = ratio.id;
+        assert_eq!(ratio.options.depths, Some((0, 1)));
+        let region = Region::between(0, 1_000);
+        let bin = Bin {
+            span: Region::between(100, 200),
+            first: 1.5,
+            second: 1.0,
+            ratio: 1.5_f64.log2(),
+        };
+        let segment = Segment {
+            span: region,
+            bins: 10,
+            mean: 0.0,
+        };
+        let ratios = crate::track::Ratios {
+            bins: vec![bin],
+            segments: vec![segment],
+            reads: true,
+            step: 1,
+        };
+        let track = &mut genie.session.as_mut().unwrap().tracks[1];
+        track.slot.wanted = Some((0, region));
+        let loaded = Loaded {
+            options: track.options,
+            ..Loaded::ratios(region, ratios)
+        };
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let x = genie.session.as_ref().unwrap().viewport.to_px(150.0) as f32;
+        let _ = genie.update(Message::TrackHovered(id, 0, Some(over(x, 44.2))));
+        for line in [
+            "Depth ratio",
+            "log2 ratio 0.58",
+            "Depth over usual 1.50 / 1.00",
+            "Reads that start in the bin",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(id, 0, Some(over(x * 3.0, 60.0))));
+        for line in ["Segment", "Mean log2 ratio 0.00", "10 bins · 1,000 bp"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(id, 0, None));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[1].depths, Some((0, 2)));
+        assert_eq!(
+            saved.tracks[1].name.as_deref(),
+            Some("tumor.bam / normal.bam")
+        );
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        for name in ["tumor.bam", "normal.bam"] {
+            let _ = restored.update(Message::TrackOpened(Ok(read_source(name))));
+        }
+        assert_eq!(
+            names(&restored),
+            ["tumor.bam", "tumor.bam / normal.bam", "normal.bam"]
+        );
+        let session = restored.session.as_ref().unwrap();
+        let (tumor, normal) = (session.tracks[0].id, session.tracks[2].id);
+        assert_eq!(session.tracks[1].options.depths, Some((tumor, normal)));
+        let _ = genie.update(Message::Depth(0, 1));
+        assert_eq!(names(&genie), ["tumor.bam", "normal.bam"]);
+        let _ = genie.update(Message::Depth(0, 1));
+        let _ = genie.update(Message::TrackChanged(1, Change::Remove));
+        let ratio = &genie.session.as_ref().unwrap().tracks[1];
+        assert_eq!(ratio.options.depths, None);
     }
 
     fn read_source(name: &str) -> Arc<Source> {

@@ -84,6 +84,14 @@ pub enum Detail {
         span: Region,
         depth: f64,
     },
+    /// A bin of a depth ratio track, and whether its depths come from the reads, else from the
+    /// indexes.
+    RatioBin {
+        bin: genie_core::depth::Bin,
+        reads: bool,
+    },
+    /// A segment of a depth ratio track.
+    RatioSegment(genie_core::depth::Segment),
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -686,6 +694,37 @@ fn cell_content(
     (name.to_owned(), span, lines)
 }
 
+/// The card of a bin of a depth ratio: the log2 ratio, the depth of each file over its usual
+/// depth, and where the depths come from.
+fn ratio_content(bin: &genie_core::depth::Bin, reads: bool) -> (String, Region, Vec<String>) {
+    let from = if reads {
+        "Reads that start in the bin"
+    } else {
+        "Estimate from the indexes"
+    };
+    let lines = vec![
+        format!("log2 ratio {:.2}", bin.ratio),
+        format!("Depth over usual {:.2} / {:.2}", bin.first, bin.second),
+        from.to_owned(),
+    ];
+    ("Depth ratio".to_owned(), bin.span, lines)
+}
+
+/// The card of a segment of a depth ratio: its mean log2 ratio, its bins and its length.
+fn segment_ratio_content(segment: &genie_core::depth::Segment) -> (String, Region, Vec<String>) {
+    let count = u32::try_from(segment.bins).unwrap_or(u32::MAX);
+    let lines = vec![
+        format!("Mean log2 ratio {:.2}", segment.mean),
+        format!(
+            "{} {} · {} bp",
+            grouped(segment.bins as u64),
+            plural(count, "bin"),
+            grouped(segment.span.len())
+        ),
+    ];
+    ("Segment".to_owned(), segment.span, lines)
+}
+
 /// The card of a PCR product: its size, its strand, its mismatches and its primers.
 fn product_content(
     (forward, reverse): (&str, &str),
@@ -766,6 +805,8 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             span,
             depth,
         } => cell_content(name, *cells, *span, *depth),
+        Detail::RatioBin { bin, reads } => ratio_content(bin, *reads),
+        Detail::RatioSegment(segment) => segment_ratio_content(segment),
         Detail::Match {
             pattern,
             span,

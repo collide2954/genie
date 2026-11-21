@@ -124,8 +124,33 @@ fn tracks_actions(session: &Session) -> Vec<Action> {
     for track in &session.tracks {
         actions.extend(track_actions(track, fields));
         actions.extend(phase_actions(&session.tracks, track));
+        actions.extend(depth_actions(&session.tracks, track));
     }
     actions
+}
+
+/// The actions that compare the depth of a read track with each other read track in a ratio
+/// track, or remove the ratio track when it is open.
+fn depth_actions(tracks: &[Track], track: &Track) -> Vec<Action> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    tracks
+        .iter()
+        .filter(|other| other.id != id && other.source.has_reads() && other.lift.is_none())
+        .map(|other| {
+            let open = tracks
+                .iter()
+                .any(|ratio| ratio.options.depths == Some((id, other.id)));
+            let words = if open {
+                format!("Remove the depth ratio with {}", other.name)
+            } else {
+                format!("Compare the depth with {}", other.name)
+            };
+            Action::new(words, name, Message::Depth(id, other.id))
+        })
+        .collect()
 }
 
 /// The actions of the cell table of a track: open one, take the cell types of each of its

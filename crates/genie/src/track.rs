@@ -43,6 +43,7 @@ mod lift;
 mod links;
 pub mod made;
 pub mod motifs;
+pub mod ratio;
 pub(crate) mod reads;
 mod segments;
 mod signal;
@@ -59,6 +60,7 @@ pub use lift::{Lift, load_lifted};
 pub use links::LinkFile;
 pub use made::{Made, MadeFile};
 pub use motifs::MotifFile;
+pub use ratio::{Depths, RatioFile, Ratios};
 pub use reads::ReadFile;
 pub use segments::SegmentFile;
 pub use signal::SignalFile;
@@ -86,6 +88,8 @@ pub enum Format {
     Gwas(GwasFile),
     Junctions(JunctionFile),
     Fragments(FragmentFile),
+    /// The ratio of the depths of two read tracks, with no file of its own.
+    Ratio(RatioFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +130,13 @@ impl Source {
             Format::Gwas(file) => file.contigs(),
             Format::Junctions(file) => file.contigs(),
             Format::Fragments(file) => file.contigs(),
+            Format::Ratio(file) => file.contigs(),
         }
+    }
+
+    /// True for the ratio of the depths of two read tracks.
+    pub fn has_ratio(&self) -> bool {
+        matches!(self.format, Format::Ratio(_))
     }
 
     /// True for a fragment file of single-cell ATAC-seq.
@@ -276,7 +286,9 @@ impl Source {
             Format::Reads(_) => ReadFile::SPAN,
             Format::Signal(file) => file.span(),
             Format::Links(file) => file.span(),
-            Format::Segments(_) | Format::Contacts(_) | Format::Junctions(_) => u64::MAX,
+            Format::Segments(_) | Format::Contacts(_) | Format::Junctions(_) | Format::Ratio(_) => {
+                u64::MAX
+            }
             Format::Columns(_) => FEATURE_SPAN,
             Format::Gwas(file) => file.span(),
             Format::Fragments(file) => file.span(),
@@ -462,6 +474,9 @@ pub struct Options {
     /// A number that changes each time the cell table of the track or its column changes, so
     /// that data of the earlier cell types does not show.
     pub cells: u16,
+    /// The IDs of the two read tracks of a depth ratio track: the depth of the first over the
+    /// depth of the second.
+    pub depths: Option<(u64, u64)>,
 }
 
 /// The phased SNVs of a sample of a variant track, which give haplotypes to reads.
@@ -517,6 +532,7 @@ impl Default for Options {
             ld: None,
             phase: None,
             cells: 0,
+            depths: None,
         }
     }
 }
@@ -974,6 +990,8 @@ pub enum Content {
     Junctions(Splices),
     /// The coverage of each lane of cell types of a fragment file.
     Cells(CellLanes),
+    /// The log2 ratios of the depths of two read tracks in bins, and their segments.
+    Ratio(Ratios),
 }
 
 /// The splice junctions of a junction file in a region, and the fields of each for its card.
@@ -1318,7 +1336,8 @@ impl Loaded {
             | Content::Contacts(_)
             | Content::Associations(_)
             | Content::Junctions(_)
-            | Content::Cells(_) => 0,
+            | Content::Cells(_)
+            | Content::Ratio(_) => 0,
         }
     }
 
@@ -1326,7 +1345,19 @@ impl Loaded {
         match &self.content {
             Content::Signal(signal) => signal.step,
             Content::Contacts(contacts) => contacts.step,
+            Content::Ratio(ratios) => ratios.step,
             _ => 1,
+        }
+    }
+
+    /// The bins and the segments of a depth ratio in a region.
+    pub fn ratios(region: Region, ratios: Ratios) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            fractions: None,
+            ld: None,
+            content: Content::Ratio(ratios),
         }
     }
 }
@@ -1803,7 +1834,8 @@ impl Track {
             | Content::Segments(_)
             | Content::Contacts(_)
             | Content::Associations(_)
-            | Content::Cells(_) => return None,
+            | Content::Cells(_)
+            | Content::Ratio(_) => return None,
         };
         Some(Arc::new(Loaded {
             region: data.region,
@@ -2155,6 +2187,15 @@ fn removed(tracks: &mut [Track], id: u64) {
         track.options.phase = None;
         track.forget();
     }
+    for track in tracks.iter_mut().filter(|track| {
+        track
+            .options
+            .depths
+            .is_some_and(|(first, second)| first == id || second == id)
+    }) {
+        track.options.depths = None;
+        track.forget();
+    }
 }
 
 /// Changes the operation of the comparison of a signal track.
@@ -2473,6 +2514,22 @@ pub fn is_motifs(location: &Location) -> bool {
 }
 
 /// A track that genie makes from the bases of the reference, with no file.
+/// A depth ratio track on an assembly, with a name and a key that starts with `ratio::KEY` and
+/// keeps two ratio tracks apart in a session, as `depth ratio 7`.
+pub fn depth_ratio(assembly: &Assembly, name: &str, key: String) -> Source {
+    let contigs = assembly
+        .contigs()
+        .iter()
+        .map(|contig| contig.name.clone())
+        .collect();
+    Source {
+        location: Location::Made(key),
+        data: None,
+        name: name.to_owned(),
+        format: Format::Ratio(RatioFile::new(contigs)),
+    }
+}
+
 pub fn make(made: Made, reference: Arc<crate::reference::Reference>) -> Source {
     let (location, name) = (Location::Made(made.key()), made.name());
     let gc = matches!(made, Made::Gc(_));
@@ -2803,6 +2860,7 @@ pub fn load(
         length: region.end(),
         phased: &[],
         cells: None,
+        depths: None,
     };
     load_kept(source, contig, region, options, scope, reference)
 }
@@ -2818,6 +2876,8 @@ pub struct Scope<'a> {
     pub length: u64,
     pub phased: &'a [Phased],
     pub cells: Option<&'a Arc<CellMap>>,
+    /// The two read files of a depth ratio track.
+    pub depths: Option<&'a Depths>,
 }
 
 /// How far out of a region of reads genie reads the phased SNVs, for reads that reach out of it.
@@ -2899,7 +2959,7 @@ pub fn load_kept(
     region: Region,
     options: Options,
     scope: Scope<'_>,
-    reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
+    mut reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
 ) -> Result<Loaded, String> {
     let location = source.data();
     let loaded = match &source.format {
@@ -2930,6 +2990,10 @@ pub fn load_kept(
         Format::Gwas(file) => file.load(location, contig, region)?,
         Format::Junctions(file) => file.load(contig, region),
         Format::Fragments(file) => file.load(location, contig, region, scope.cells)?,
+        Format::Ratio(file) => {
+            let ratios = file.load(scope.depths, region, scope.step, &mut reference)?;
+            Loaded::ratios(region, ratios)
+        }
     };
     Ok(Loaded { options, ..loaded })
 }
@@ -3062,7 +3126,8 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         | Format::Columns(_)
         | Format::Gwas(_)
         | Format::Junctions(_)
-        | Format::Fragments(_) => Ok(Vec::new()),
+        | Format::Fragments(_)
+        | Format::Ratio(_) => Ok(Vec::new()),
     }
 }
 
@@ -3101,7 +3166,8 @@ fn kept(
         | Format::Columns(_)
         | Format::Gwas(_)
         | Format::Junctions(_)
-        | Format::Fragments(_) => Vec::new(),
+        | Format::Fragments(_)
+        | Format::Ratio(_) => Vec::new(),
     })
 }
 
@@ -3146,7 +3212,8 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, keep: Keep
         | Format::Columns(_)
         | Format::Gwas(_)
         | Format::Junctions(_)
-        | Format::Fragments(_) => Vec::new(),
+        | Format::Fragments(_)
+        | Format::Ratio(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -3192,7 +3259,8 @@ pub fn names(source: &Source, assembly: &Assembly, lift: Option<&Lift>) -> Resul
         | Format::Columns(_)
         | Format::Gwas(_)
         | Format::Junctions(_)
-        | Format::Fragments(_) => {
+        | Format::Fragments(_)
+        | Format::Ratio(_) => {
             return Ok(Names::default());
         }
     };
@@ -3891,6 +3959,7 @@ mod tests {
             length,
             phased: &[],
             cells: None,
+            depths: None,
         };
         load_kept(
             source,
@@ -4722,6 +4791,7 @@ ORIGIN
                 length: 20_000,
                 phased: &[],
                 cells: None,
+                depths: None,
             };
             let loaded = file
                 .load(source.data(), "chr1", whole, scope, budget)
@@ -5620,6 +5690,97 @@ ORIGIN
         );
     }
 
+    /// The ratio of the depths of reads.bam and pairs.bam on chr1. A wide view takes the depths
+    /// from the indexes, with the segments of the whole contig; a view of 1 Mb or less counts the
+    /// reads in bins of 4 pixels, and 500 bases at least.
+    #[test]
+    fn depth_ratios_compare_two_read_files() {
+        let assembly = assembly();
+        let first = Arc::new(open(fixture("reads.bam")).unwrap());
+        let second = Arc::new(open(fixture("pairs.bam")).unwrap());
+        let key = "depth ratio 7".to_owned();
+        let ratio = Arc::new(super::depth_ratio(&assembly, "reads.bam / pairs.bam", key));
+        assert_eq!(ratio.name, "reads.bam / pairs.bam");
+        assert!(ratio.has_ratio() && !first.has_ratio());
+        assert_eq!(ratio.location, Location::Made("depth ratio 7".to_owned()));
+        let mut tracks = vec![
+            Track::new(1, first, &assembly),
+            Track::new(2, second, &assembly),
+            Track::new(3, Arc::clone(&ratio), &assembly),
+        ];
+        let whole = (0, 1_000_000);
+        assert!(super::Depths::of(&tracks, &tracks[2], whole, region(0, 10)).is_none());
+        tracks[2].options.depths = Some((1, 2));
+        let load = |visible: Region, step: u64| {
+            let depths = super::Depths::of(&tracks, &tracks[2], whole, visible);
+            assert!(depths.is_some());
+            let scope = Scope {
+                step,
+                detail: true,
+                rules: &[],
+                length: 1_000_000,
+                phased: &[],
+                cells: None,
+                depths: depths.as_ref(),
+            };
+            let bases = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+            let loaded =
+                load_kept(&ratio, "chr1", visible, Options::default(), scope, bases).unwrap();
+            let Content::Ratio(found) = loaded.content else {
+                panic!("expected ratios");
+            };
+            found
+        };
+        let wide = load(region(0, 1_000_001), 1_024);
+        assert!(!wide.reads);
+        assert_eq!(wide.step, 1_024);
+        let window = super::ratio::WINDOW;
+        let spans: Vec<Region> = wide.bins.iter().map(|bin| bin.span).collect();
+        assert_eq!(
+            spans,
+            [
+                region(0, window),
+                region(window, 2 * window),
+                region(2 * window, 3 * window)
+            ]
+        );
+        assert_eq!(wide.segments.len(), 1);
+        let mean = wide.bins.iter().map(|bin| bin.ratio).sum::<f64>() / 3.0;
+        assert_eq!(wide.segments[0].span, region(0, 3 * window));
+        assert!((wide.segments[0].mean - mean).abs() < 1e-9);
+        let narrow = load(region(2_000, 8_000), 1);
+        assert!(narrow.reads);
+        assert_ne!(narrow.bins, []);
+        assert!(narrow.bins.iter().all(|bin| {
+            bin.span.len() == 500
+                && bin.span.start() >= 2_000
+                && bin.span.end() <= 8_000
+                && bin.ratio.is_finite()
+        }));
+        let scope = Scope {
+            step: 1,
+            detail: true,
+            rules: &[],
+            length: 1_000_000,
+            phased: &[],
+            cells: None,
+            depths: None,
+        };
+        let bases = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+        let error = load_kept(
+            &ratio,
+            "chr1",
+            region(0, 10),
+            Options::default(),
+            scope,
+            bases,
+        )
+        .unwrap_err();
+        assert_eq!(error, super::ratio::NOT_LINKED);
+        change(&mut tracks, 2, Change::Remove);
+        assert_eq!(tracks[1].options.depths, None);
+    }
+
     /// The reads of pairs.bam (samples A and B) and a plain VCF with the samples X and B, whose
     /// phased SNVs of B have the bases of a read without an HP tag on haplotype 2.
     #[test]
@@ -5636,6 +5797,7 @@ ORIGIN
                 length: 1_000_000,
                 phased,
                 cells: None,
+                depths: None,
             };
             let options = Options {
                 downsample: false,
@@ -5809,6 +5971,7 @@ ORIGIN
                 length: 8_000,
                 phased: &[],
                 cells: None,
+                depths: None,
             };
             let loaded = super::load_kept(
                 &source,

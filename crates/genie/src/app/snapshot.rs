@@ -350,8 +350,10 @@ impl Genie {
                 let ld = track.options.ld.map(|_| track.ld_samples());
                 let phasing = track::Phasing::of(&session.tracks, track, contig);
                 let cells = track.cells.as_ref().map(|cells| Arc::clone(&cells.map));
+                let size = session.reference.assembly.contigs()[contig].length;
+                let depths = track::Depths::of(&session.tracks, track, (contig, size), visible);
                 Some((
-                    (track.id, track.lift.clone(), ld, phasing, cells),
+                    (track.id, track.lift.clone(), ld, phasing, (cells, depths)),
                     source,
                     name,
                     (contig, region),
@@ -369,7 +371,14 @@ impl Genie {
             }
         }
         let length = viewport.length();
-        for ((id, lift, ld, phasing, cells), source, name, (contig, region), options, rules) in jobs
+        for (
+            (id, lift, ld, phasing, (cells, depths)),
+            source,
+            name,
+            (contig, region),
+            options,
+            rules,
+        ) in jobs
         {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
             let phased = phasing.map_or(Ok(Vec::new()), |phasing| phasing.sites(region));
@@ -381,6 +390,7 @@ impl Genie {
                     length,
                     phased: &phased,
                     cells: cells.as_ref(),
+                    depths: depths.as_ref(),
                 };
                 let lift = lift.as_deref();
                 track::load_track(&source, lift, (&name, region), options, scope, bases)

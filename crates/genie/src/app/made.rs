@@ -11,13 +11,15 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Task};
 
 use crate::icon::{self, Icon};
-use crate::track::{self, Made};
+use crate::track::{self, Change, Made};
 use crate::{font, style};
 
 use super::tracks::NO_REFERENCE;
 use super::{Genie, Message, Popup, Status};
 
 const FIELD: &str = "enzyme-site";
+/// The name of a depth ratio track of a session until the session gives its own.
+const RATIO_NAME: &str = "Depth ratio";
 /// The most width of the dialog: six enzymes in a row, each with its site beside its name.
 const WIDTH: f32 = 860.0;
 const COLUMNS: usize = 6;
@@ -128,8 +130,62 @@ impl Genie {
         task
     }
 
+    /// Adds the track of the ratio of the depth of a read track over the depth of another one,
+    /// after the first one, or removes it when it is open.
+    pub(super) fn compare_depths(&mut self, first: u64, second: u64) -> Task<Message> {
+        self.close_menus();
+        let Some(session) = &self.session else {
+            return Task::none();
+        };
+        let open = session
+            .tracks
+            .iter()
+            .find(|track| track.options.depths == Some((first, second)));
+        if let Some(id) = open.map(|track| track.id) {
+            return self.change_track(id, Change::Remove);
+        }
+        let name = |id: u64| {
+            let track = session.tracks.iter().find(|track| track.id == id)?;
+            Some(track.name.clone())
+        };
+        let (Some(top), Some(bottom)) = (name(first), name(second)) else {
+            return Task::none();
+        };
+        let key = format!("{} {}", track::ratio::KEY, self.next_track);
+        let name = format!("{top} / {bottom}");
+        let source = Arc::new(track::depth_ratio(&session.reference.assembly, &name, key));
+        let task = self.add_track(&source);
+        self.on_session(|session| {
+            let Some(at) = session
+                .tracks
+                .iter()
+                .position(|track| track.source == source)
+            else {
+                return;
+            };
+            let mut ratio = session.tracks.remove(at);
+            ratio.options.depths = Some((first, second));
+            let after = session.tracks.iter().position(|track| track.id == first);
+            let place = after.map_or(session.tracks.len(), |place| place + 1);
+            session.tracks.insert(place, ratio);
+        });
+        Task::batch([task, self.fetch()])
+    }
+
     /// Opens a track made from the reference that a session names.
     pub(super) fn open_made(&mut self, key: &str) -> Task<Message> {
+        if key.starts_with(track::ratio::KEY) {
+            let task = match &self.session {
+                Some(session) => {
+                    let assembly = &session.reference.assembly;
+                    let source = track::depth_ratio(assembly, RATIO_NAME, key.to_owned());
+                    self.add_track(&Arc::new(source))
+                }
+                None => Task::none(),
+            };
+            self.track_settled();
+            return task;
+        }
         let task = if let Some(made) = Made::parse(key) {
             self.add_made(made)
         } else {

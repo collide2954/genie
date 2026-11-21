@@ -554,6 +554,7 @@ impl Genie {
             Content::Cells(lanes) => {
                 cell_detail(viewport, lanes, (x, y - genie_render::cells::HEADER))?
             }
+            Content::Ratio(found) => ratio_detail(track, found, viewport, (x, y))?,
         };
         let fields = detail_fields(track, contig, &detail, file_fields);
         Some(Card {
@@ -678,6 +679,14 @@ impl Genie {
             .iter()
             .filter_map(|track| Some((track.id, Phasing::of(&session.tracks, track, contig)?)))
             .collect();
+        let depths: Vec<(u64, track::Depths)> = session
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let found = track::Depths::of(&session.tracks, track, (contig, length), visible)?;
+                Some((track.id, found))
+            })
+            .collect();
         session
             .tracks
             .iter_mut()
@@ -696,6 +705,10 @@ impl Genie {
                     .find(|(known, _)| *known == id)
                     .map(|(_, phasing)| phasing.clone());
                 let cells = track.cells.as_ref().map(|cells| Arc::clone(&cells.map));
+                let ratio = depths
+                    .iter()
+                    .find(|(known, _)| *known == id)
+                    .map(|(_, found)| found.clone());
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
@@ -711,6 +724,7 @@ impl Genie {
                                 length,
                                 phased: &phased,
                                 cells: cells.as_ref(),
+                                depths: ratio.as_ref(),
                             };
                             let lift = lift.as_deref();
                             track::load_track(&source, lift, (&name, wanted), options, scope, bases)
@@ -1211,6 +1225,26 @@ fn contact_detail(
     }))
 }
 
+/// The bin or the segment under a point of a depth ratio track.
+fn ratio_detail(
+    track: &Track,
+    found: &track::Ratios,
+    viewport: Viewport,
+    (x, y): (f32, f32),
+) -> Option<Detail> {
+    use genie_render::ratio::{self, Hit};
+    let height = track.height.unwrap_or(ratio::HEIGHT);
+    let range = track.plot.range.map_or(ratio::RANGE, |range| range.max);
+    let data = (&found.bins[..], &found.segments[..]);
+    Some(match ratio::hit(viewport, data, (range, height), (x, y))? {
+        Hit::Bin(index) => Detail::RatioBin {
+            bin: found.bins[index],
+            reads: found.reads,
+        },
+        Hit::Segment(index) => Detail::RatioSegment(found.segments[index]),
+    })
+}
+
 /// The name of the variant of a row of GWAS summary statistics, from its fields: its rsID or
 /// its ID, if the row has one.
 fn association_name(fields: &[Field]) -> String {
@@ -1292,6 +1326,8 @@ fn detail_fields(
         | Detail::Fraction { .. }
         | Detail::Ld { .. }
         | Detail::CellLane { .. }
+        | Detail::RatioBin { .. }
+        | Detail::RatioSegment(_)
         | Detail::Signal { .. }
         | Detail::Match { .. }
         | Detail::Product { .. }
@@ -1505,7 +1541,8 @@ fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Opt
 }
 
 /// Links the open tracks of a session that it restores as the session links them: the overlays,
-/// the comparisons of signal tracks, and the variant tracks that phase reads.
+/// the comparisons of signal tracks, the variant tracks that phase reads, and the read tracks of
+/// depth ratios.
 fn relink(tracks: &mut Vec<Track>, saved: &Saved) {
     let saved_at = |location: &Location| {
         saved
@@ -1561,6 +1598,20 @@ fn relink(tracks: &mut Vec<Track>, saved: &Saved) {
         .collect();
     for (id, phase) in phases {
         track::change(tracks, id, Change::Phase(Some(phase)));
+    }
+    let ratios: Vec<(u64, (u64, u64))> = tracks
+        .iter()
+        .filter(|track| track.source.has_ratio() && track.options.depths.is_none())
+        .filter_map(|track| {
+            let (first, second) = saved.tracks[saved_at(&track.source.location)?].depths?;
+            Some((track.id, (open(tracks, first)?, open(tracks, second)?)))
+        })
+        .collect();
+    for (id, depths) in ratios {
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == id) {
+            track.options.depths = Some(depths);
+            track.forget();
+        }
     }
 }
 

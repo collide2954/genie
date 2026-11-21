@@ -223,6 +223,7 @@ fn records(message: &Message) -> bool {
         | Message::Made(..)
         | Message::Motifs(..)
         | Message::Review(..)
+        | Message::Depth(..)
         | Message::Lead => true,
         _ => false,
     }

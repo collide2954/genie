@@ -104,6 +104,9 @@ pub struct SavedTrack {
     pub phase: Option<(usize, String)>,
     /// The cell table of a single-cell track and the name of the column of the cell types.
     pub cells: Option<(Location, String)>,
+    /// The places of the two read tracks of a depth ratio track: the depth of the first over
+    /// the depth of the second.
+    pub depths: Option<(usize, usize)>,
 }
 
 impl SavedTrack {
@@ -133,6 +136,7 @@ impl SavedTrack {
             lead: None,
             phase: None,
             cells: None,
+            depths: None,
         }
     }
 }
@@ -408,7 +412,16 @@ fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
             .value("cells")
             .zip(section.value("cell types"))
             .map(|(table, column)| (read(table, base), column.to_owned())),
+        depths: depths(section),
     })
+}
+
+/// The places of the two read tracks of a depth ratio track, counted from 1 in the file, as
+/// `depths = 2 3`.
+fn depths(section: &Section) -> Option<(usize, usize)> {
+    let (first, second) = section.value("depths")?.trim().split_once(' ')?;
+    let place = |text: &str| text.trim().parse::<usize>().ok()?.checked_sub(1);
+    Some((place(first)?, place(second)?))
 }
 
 /// The phase of a read track: the place of the variant track, counted from 1 in the file, and
@@ -507,6 +520,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if let Some((place, sample)) = &track.phase {
         entries.push(("phase", format!("{} {sample}", place + 1)));
+    }
+    if let Some((first, second)) = track.depths {
+        entries.push(("depths", format!("{} {}", first + 1, second + 1)));
     }
     if let Some(name) = &track.normalization {
         entries.push(("normalization", name.clone()));
@@ -661,6 +677,7 @@ fn options(section: &Section) -> Options {
         ld: None,
         phase: None,
         cells: 0,
+        depths: None,
     }
 }
 
@@ -822,6 +839,7 @@ mod tests {
             ld: None,
             phase: None,
             cells: 0,
+            depths: None,
         }
     }
 
@@ -1059,6 +1077,23 @@ mod tests {
         assert!(text.contains("made = gc 100"), "{text}");
         assert!(!text.contains("file = gc 100"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(made));
+    }
+
+    #[test]
+    fn depth_ratio_tracks_keep_the_places_of_their_read_tracks() {
+        let mut ratio = saved();
+        ratio.tracks[1].location = Location::Made("depth ratio 7".to_owned());
+        ratio.tracks[1].depths = Some((0, 2));
+        let text = ratio.text(&base());
+        assert!(text.contains("made = depth ratio 7"), "{text}");
+        assert!(text.contains("depths = 1 3"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(ratio));
+        for broken in ["depths = 1", "depths = 0 2", "depths = a b"] {
+            let text =
+                format!("[session]\nreference = ref.fa\n[track]\nmade = depth ratio 1\n{broken}\n");
+            let parsed = Saved::parse(&text, &base()).unwrap();
+            assert_eq!(parsed.tracks[0].depths, None, "{broken}");
+        }
     }
 
     #[test]
