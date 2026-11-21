@@ -24,6 +24,7 @@ pub mod fai;
 pub mod fasta;
 pub mod features;
 pub mod fields;
+pub mod fragments;
 pub mod genark;
 pub mod genbank;
 pub mod genepred;
