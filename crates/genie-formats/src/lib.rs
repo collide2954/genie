@@ -19,6 +19,7 @@ pub mod cool;
 pub mod cram;
 pub mod crc;
 pub mod cytoband;
+pub mod domains;
 mod error;
 pub mod fai;
 pub mod fasta;
