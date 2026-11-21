@@ -174,6 +174,8 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         }
         + if track.source.has_reads() {
             2.0 * LINK_HEIGHT
+        } else if track.source.has_fragments() {
+            LINK_HEIGHT
         } else {
             0.0
         }
@@ -436,7 +438,7 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_links() {
         // The file colors and the swatches.
         PLAIN_HEIGHT + LINK_HEIGHT + COLORS_HEIGHT
-    } else if track.source.has_junctions() {
+    } else if track.source.has_junctions() || track.source.has_fragments() {
         PLAIN_HEIGHT
     } else if track.source.has_contacts() {
         // The normalizations and observed/expected, with their separator, in a column of their
@@ -856,7 +858,10 @@ fn kind_items<'a>(
         signal_items(track, range).extend(window_items(id, *window))
     } else if track.source.has_signal() {
         signal_items(track, range)
-    } else if track.source.has_links() || track.source.has_junctions() {
+    } else if track.source.has_links()
+        || track.source.has_junctions()
+        || track.source.has_fragments()
+    {
         column![]
     } else if track.source.has_contacts() {
         column(contact_items(track, place.base)).spacing(1)
@@ -1000,10 +1005,11 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
     }
     if track.source.has_reads() {
         let open = Message::Isoforms(Isoforming::Open(id));
+        items = items.push(item("Isoform table", open, false, true));
+    }
+    if track.source.has_reads() || track.source.has_fragments() {
         let pick = Message::Cells(Celling::Pick(id));
-        items = items
-            .push(item("Isoform table", open, false, true))
-            .push(item("Cell types…", pick, false, true));
+        items = items.push(item("Cell types…", pick, false, true));
     }
     if has_enzymes(track) {
         let open = Message::Made(Making::Enzymes(Some(id)));

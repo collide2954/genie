@@ -110,6 +110,7 @@ impl Genie {
                     Some(Content::Associations(found)) => sites += found.len(),
                     Some(Content::Variants(calls)) => sites += calls.variants.len(),
                     Some(Content::Signal(data)) => values += data.summaries.len(),
+                    Some(Content::Cells(lanes)) => values += lanes.lanes.len(),
                     None => {}
                 }
             }
@@ -867,7 +868,8 @@ fn in_view(data: &Loaded, visible: Region) -> Option<usize> {
         | Content::Signal(_)
         | Content::Segments(_)
         | Content::Contacts(_)
-        | Content::Associations(_) => None,
+        | Content::Associations(_)
+        | Content::Cells(_) => None,
     }
 }
 
@@ -1045,6 +1047,10 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
+        Some(Content::Cells(lanes)) => {
+            let primitives = genie_render::cells::scene(viewport, &lanes.depths, &lanes.lanes);
+            Body::Scene(primitives, shape.height)
+        }
         None => Body::Space(EMPTY_HEIGHT),
     }
 }
@@ -2044,6 +2050,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         Some(Content::Junctions(_)) => Shape::plain(junctions::HEIGHT),
         Some(Content::Contacts(_)) => Shape::plain(contact_heights(track).1),
         Some(Content::Associations(_)) => Shape::plain(manhattan::HEIGHT),
+        Some(Content::Cells(lanes)) => Shape::plain(genie_render::cells::height(lanes.lanes.len())),
         None if track.source.has_signal() => Shape::plain(signal::HEIGHT),
         None if track.source.has_links() => Shape::plain(links::HEIGHT),
         None if track.source.has_junctions() => Shape::plain(junctions::HEIGHT),
@@ -2439,6 +2446,9 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
             .into_iter()
             .chain(cell_section(track))
             .collect();
+    }
+    if track.source.has_fragments() {
+        return cell_section(track).into_iter().collect();
     }
     if !track.source.has_signal() || track.over.is_some() {
         return Vec::new();

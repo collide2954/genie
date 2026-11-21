@@ -36,6 +36,7 @@ mod cells;
 mod columns;
 mod contacts;
 mod features;
+mod fragments;
 mod gwas;
 pub mod junctions;
 mod lift;
@@ -51,6 +52,7 @@ pub use cells::{CellLanes, Cells, barcode};
 pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
+pub use fragments::FragmentFile;
 pub use gwas::GwasFile;
 pub use junctions::JunctionFile;
 pub use lift::{Lift, load_lifted};
@@ -83,6 +85,7 @@ pub enum Format {
     Columns(ColumnFile),
     Gwas(GwasFile),
     Junctions(JunctionFile),
+    Fragments(FragmentFile),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,7 +125,13 @@ impl Source {
             Format::Columns(file) => file.contigs(),
             Format::Gwas(file) => file.contigs(),
             Format::Junctions(file) => file.contigs(),
+            Format::Fragments(file) => file.contigs(),
         }
+    }
+
+    /// True for a fragment file of single-cell ATAC-seq.
+    pub fn has_fragments(&self) -> bool {
+        matches!(self.format, Format::Fragments(_))
     }
 
     pub fn has_associations(&self) -> bool {
@@ -270,6 +279,7 @@ impl Source {
             Format::Segments(_) | Format::Contacts(_) | Format::Junctions(_) => u64::MAX,
             Format::Columns(_) => FEATURE_SPAN,
             Format::Gwas(file) => file.span(),
+            Format::Fragments(file) => file.span(),
         }
     }
 
@@ -962,6 +972,8 @@ pub enum Content {
     Contacts(Contacts),
     Associations(Vec<Association>),
     Junctions(Splices),
+    /// The coverage of each lane of cell types of a fragment file.
+    Cells(CellLanes),
 }
 
 /// The splice junctions of a junction file in a region, and the fields of each for its card.
@@ -1205,6 +1217,17 @@ impl Loaded {
         }
     }
 
+    /// The coverage of the lanes of cell types of a fragment file in a region.
+    pub fn cells(region: Region, lanes: CellLanes) -> Self {
+        Self {
+            region,
+            options: Options::default(),
+            fractions: None,
+            ld: None,
+            content: Content::Cells(lanes),
+        }
+    }
+
     pub fn associations(region: Region, associations: Vec<Association>) -> Self {
         Self {
             region,
@@ -1294,7 +1317,8 @@ impl Loaded {
             | Content::Links(_)
             | Content::Contacts(_)
             | Content::Associations(_)
-            | Content::Junctions(_) => 0,
+            | Content::Junctions(_)
+            | Content::Cells(_) => 0,
         }
     }
 
@@ -1778,7 +1802,8 @@ impl Track {
             | Content::Signal(_)
             | Content::Segments(_)
             | Content::Contacts(_)
-            | Content::Associations(_) => return None,
+            | Content::Associations(_)
+            | Content::Cells(_) => return None,
         };
         Some(Arc::new(Loaded {
             region: data.region,
@@ -2479,6 +2504,8 @@ pub fn open_with(
         open_bbi(reading, &name, crate::catalog::label(&location.to_string()))?
     } else if is_hic(&name) {
         Format::Contacts(ContactFile::open(reading, &name)?)
+    } else if genie_formats::fragments::is_fragments(&name) {
+        Format::Fragments(FragmentFile::open(reading, &name, index)?)
     } else if let Some(layout) = junctions::layout(reading, &name) {
         Format::Junctions(JunctionFile::open(reading, &name, layout)?)
     } else if is_bedpe(&name) || is_loop_list(reading) {
@@ -2875,6 +2902,7 @@ pub fn load_kept(
         }
         Format::Gwas(file) => file.load(location, contig, region)?,
         Format::Junctions(file) => file.load(contig, region),
+        Format::Fragments(file) => file.load(location, contig, region, scope.cells)?,
     };
     Ok(Loaded { options, ..loaded })
 }
@@ -3006,7 +3034,8 @@ fn spans(source: &Source, contig: &str, region: Region) -> Result<Vec<Region>, S
         | Format::Contacts(_)
         | Format::Columns(_)
         | Format::Gwas(_)
-        | Format::Junctions(_) => Ok(Vec::new()),
+        | Format::Junctions(_)
+        | Format::Fragments(_) => Ok(Vec::new()),
     }
 }
 
@@ -3044,7 +3073,8 @@ fn kept(
         | Format::Contacts(_)
         | Format::Columns(_)
         | Format::Gwas(_)
-        | Format::Junctions(_) => Vec::new(),
+        | Format::Junctions(_)
+        | Format::Fragments(_) => Vec::new(),
     })
 }
 
@@ -3088,7 +3118,8 @@ pub fn hides(source: &Source, contig: &str, span: Region, name: &str, keep: Keep
         | Format::Contacts(_)
         | Format::Columns(_)
         | Format::Gwas(_)
-        | Format::Junctions(_) => Vec::new(),
+        | Format::Junctions(_)
+        | Format::Fragments(_) => Vec::new(),
     };
     !passes.is_empty() && passes.iter().all(|kept| !kept)
 }
@@ -3133,7 +3164,8 @@ pub fn names(source: &Source, assembly: &Assembly, lift: Option<&Lift>) -> Resul
         | Format::Contacts(_)
         | Format::Columns(_)
         | Format::Gwas(_)
-        | Format::Junctions(_) => {
+        | Format::Junctions(_)
+        | Format::Fragments(_) => {
             return Ok(Names::default());
         }
     };

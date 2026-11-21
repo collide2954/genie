@@ -5913,6 +5913,57 @@ ORIGIN
     }
 
     #[test]
+    fn fragment_files_show_the_coverage_of_each_cell_type() {
+        use genie_render::scene::Primitive;
+        let scratch = Scratch::new("fragments");
+        let text = "# id=pbmc\nchr1\t100\t300\tAAACCCAAGAAACACT-1\t1\n\
+            chr1\t150\t250\tAAACCCAAGAAACCAT-1\t2\nchr1\t200\t400\tGGGGGGGGGGGGGGGG-1\t1\n";
+        let path = scratch.file("pbmc_atac_fragments.tsv", text);
+        let source = crate::track::open(path).unwrap();
+        assert!(source.has_fragments());
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(source))));
+        let texts = |genie: &mut Genie| {
+            genie.load_now();
+            let session = genie.session.as_ref().unwrap();
+            let track = &session.tracks[0];
+            let (shapes, _) = super::view::shapes(session, track, false);
+            let super::view::Body::Scene(primitives, _) =
+                super::view::body(session, track, 0, shapes[0], false)
+            else {
+                panic!("expected the lanes of the fragments");
+            };
+            primitives
+                .iter()
+                .filter_map(|primitive| match primitive {
+                    Primitive::Text { content, .. } => Some(content.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
+        };
+        assert_eq!(
+            texts(&mut genie),
+            ["Fragments", "0-3.0"],
+            "one lane of all fragments without a cell table"
+        );
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        assert!(shows(&genie, "Cell types…"));
+        let _ = genie.update(Message::MenuDismissed);
+        let location: Location = PathBuf::from("/data/meta.csv").into();
+        let opened = Celling::Opened(0, location, Ok(cell_table()), None);
+        let _ = genie.update(Message::Cells(opened));
+        assert_eq!(
+            texts(&mut genie),
+            ["CD4 T · 2 cells", "B · 1 cell", "0-1.0"],
+            "the fragment of a barcode that is not a cell does not count"
+        );
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(160.5, 5.0))));
+        for line in ["CD4 T", "Coverage 1.0", "2 cells · 0.50 per cell"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+    }
+
+    #[test]
     fn read_menus_open_a_cell_table_and_group_the_reads_by_cell_type() {
         let mut genie = opened();
         add_reads(&mut genie, vec![read("r1", 10)]);

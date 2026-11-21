@@ -240,7 +240,7 @@ impl Lifted {
                     }
                 }
             }
-            Content::Reads(_) | Content::Contacts(_) => {}
+            Content::Reads(_) | Content::Contacts(_) | Content::Cells(_) => {}
         }
     }
 

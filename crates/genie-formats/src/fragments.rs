@@ -42,8 +42,9 @@ pub fn parse(line: &str) -> Result<Option<(&str, Region, &str)>, Reason> {
     Ok(Some((contig, span, barcode.trim())))
 }
 
-/// All the fragments of a file without an index, for a small file.
-pub fn read_table(reader: impl BufRead) -> Result<Table<String>, Error> {
+/// All the fragments of a file without an index, for a small file: the place and the barcode of
+/// each fragment.
+pub fn read_table(reader: impl BufRead) -> Result<Table<(Region, String)>, Error> {
     let mut rows = Vec::new();
     lines(reader, |number, line| {
         let parsed = parse(line).map_err(|reason| Error::Format {
@@ -51,7 +52,7 @@ pub fn read_table(reader: impl BufRead) -> Result<Table<String>, Error> {
             reason,
         })?;
         if let Some((contig, span, barcode)) = parsed {
-            rows.push((contig.to_owned(), span, barcode.to_owned()));
+            rows.push((contig.to_owned(), span, (span, barcode.to_owned())));
         }
         Ok(())
     })?;
@@ -104,7 +105,10 @@ mod tests {
         let table = read_table(text.as_bytes()).unwrap();
         assert_eq!(
             table.query("chr1", Region::between(280, 290)),
-            ["AAAC-1".to_owned(), "GGGT-1".to_owned()]
+            [
+                (Region::between(100, 300), "AAAC-1".to_owned()),
+                (Region::between(250, 400), "GGGT-1".to_owned())
+            ]
         );
     }
 }

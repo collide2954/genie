@@ -139,10 +139,12 @@ fn cell_actions(track: &Track) -> Vec<Action> {
             let words = format!("Cell types by {}", cells.table.columns[column]);
             Action::new(words, name, cell(Celling::Column(id, column)))
         }));
-        let group = Message::TrackChanged(id, Change::Group(Grouping::Cell));
-        actions.push(Action::new("Group by cell type", name, group));
-        let lanes = Message::TrackChanged(id, Change::CellLanes);
-        actions.push(Action::new("Coverage by cell type", name, lanes));
+        if track.source.has_reads() {
+            let group = Message::TrackChanged(id, Change::Group(Grouping::Cell));
+            actions.push(Action::new("Group by cell type", name, group));
+            let lanes = Message::TrackChanged(id, Change::CellLanes);
+            actions.push(Action::new("Coverage by cell type", name, lanes));
+        }
         actions.push(Action::new(
             "Remove the cell table",
             name,
@@ -352,6 +354,8 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     }
     if source.has_reads() {
         actions.extend(read_actions(track));
+    }
+    if source.has_reads() || source.has_fragments() {
         actions.extend(cell_actions(track));
     }
     if source.has_signal() {

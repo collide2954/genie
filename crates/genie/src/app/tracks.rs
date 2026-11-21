@@ -544,6 +544,7 @@ impl Genie {
                 file_fields.clone_from(&found.fields[index]);
                 Detail::Junction(found.junctions[index])
             }
+            Content::Cells(lanes) => cell_detail(viewport, lanes, (x, y))?,
         };
         let fields = detail_fields(track, contig, &detail, file_fields);
         Some(Card {
@@ -1312,17 +1313,22 @@ fn pile_detail(
         return Some(Detail::Feature(shown.features[index].clone()));
     }
     if let Some(lanes) = pile.cells.as_ref().filter(|_| track.plot.cells) {
-        let (lane, span, depth, _) =
-            genie_render::cells::hit(viewport, &lanes.depths, &lanes.lanes, (x, y))?;
-        let (name, cells) = lanes.lanes[lane].clone();
-        return Some(Detail::CellLane {
-            name,
-            cells,
-            span,
-            depth,
-        });
+        return cell_detail(viewport, lanes, (x, y));
     }
     read_detail(track, panel, contig, pile, viewport, mode, (x, y))
+}
+
+/// The lane of cell types under the pointer, with its coverage there.
+fn cell_detail(viewport: Viewport, lanes: &track::CellLanes, (x, y): (f32, f32)) -> Option<Detail> {
+    let (lane, span, depth, _) =
+        genie_render::cells::hit(viewport, &lanes.depths, &lanes.lanes, (x, y))?;
+    let (name, cells) = lanes.lanes[lane].clone();
+    Some(Detail::CellLane {
+        name,
+        cells,
+        span,
+        depth,
+    })
 }
 
 fn read_detail(
