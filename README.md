@@ -434,6 +434,17 @@ Look at the variants of a file one after the other, for example the calls of a v
 - **Export…** saves the marks as a TSV file with the chromosome, the position, the ID, the alleles, the mark and the note. For a VCF file on the computer, it can also save a copy of the file with the INFO fields REVIEW and REVIEW_NOTE on the marked variants. A name that ends in .gz gives a copy with bgzip. genie does not write over the open file.
 - Sessions and undo keep the marks. genie cannot review the variants of a lifted track.
 
+## LD
+
+LD (linkage disequilibrium) tells how often the alleles of two variants go together in the samples of a file. genie shows the r² of each pair of variants in view, as Haploview does, and colors the dots of GWAS tracks by their r² with a lead variant, as LocusZoom does.
+
+- Right-click a variant track with two samples or more, for example a VCF file of the 1000 Genomes Project, and click **LD**. A lane under the sites shows a cell for each pair of variants in view, under the middle between them, and lower for variants farther apart. The color goes from light grey for an r² of 0 to vermillion for 1. Put the pointer on a cell to see the two variants and their r².
+- genie gets the r² from the genotypes, without phase: the squared correlation of the counts of the alternate allele (0, 1 or 2) over the samples. A sample without a call at one of the two variants does not count for the pair. A variant with the same count in all samples has no r².
+- The lane shows when the view has 200 variants or less, and genie finds the r² of the loaded variants when they are 1,000 or less. Zoom in when the lane tells you to.
+- LD differs between populations. To use a group of the samples, open a sample table and group the samples by a field, for example the super_pop field of the 1000 Genomes Project (see [Sample groups](#sample-groups)). Then right-click the track and click a group under **LD**, for example **EUR**. **All samples** goes back. The palette has **Show the LD of** each group.
+- While a variant track shows its LD, the dots of the GWAS tracks take the LocusZoom colors of their r² with the lead variant: red from 0.8, orange from 0.6, green from 0.4, light blue from 0.2, dark blue under 0.2, and grey when the variant of the dot is not in the variant track. genie finds the variant of a dot by its position. The lead is the top dot in view, as a purple diamond. To pick another lead, click a dot to keep its card open, then click **Lead**.
+- The LD lane does not use the filter of the track. Sessions and undo keep the LD, its group and the lead.
+
 ## Sashimi plots
 
 A Sashimi plot shows the coverage of an RNA-seq read track and the splice junctions between its exons, with the number of reads of each junction.
