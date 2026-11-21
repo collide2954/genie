@@ -373,11 +373,18 @@ impl Genie {
             let (min, max) = segment_range(track);
             return Some(signal::Scale { min, max });
         }
-        let Content::Signal(data) = &track.data(session.contig)?.content else {
-            return None;
-        };
-        let columns = shown_columns(session, track, 0, &data.summaries);
-        signal_scale(session, track, 0, &columns)
+        match &track.data(session.contig)?.content {
+            Content::Signal(data) => {
+                let columns = shown_columns(session, track, 0, &data.summaries);
+                signal_scale(session, track, 0, &columns)
+            }
+            Content::Contacts(found) => {
+                let (_, viewport) = session.view(0);
+                let max = contacts::full_color(viewport, &found.map, contact_heights(track).0)?;
+                Some(signal::Scale { min: 0.0, max })
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn range(&mut self, id: u64, ranging: Ranging) {

@@ -3346,7 +3346,7 @@ ORIGIN
     fn track_settings_show_the_settings_of_each_kind() {
         /// A genie with a track of one kind, and the lines of the settings of the kind.
         type Kind = (fn() -> Genie, &'static [&'static str]);
-        let kinds: [Kind; 3] = [
+        let kinds: [Kind; 4] = [
             (
                 with_reads,
                 &[
@@ -3358,6 +3358,7 @@ ORIGIN
             ),
             (with_signal, &["Bars", "Line", "Shared scale", "Auto range"]),
             (with_filtered, &["Filter"]),
+            (with_contact_map, &["Full color at", "Auto range"]),
         ];
         for (make, lines) in kinds {
             let mut genie = make();
@@ -4985,6 +4986,32 @@ ORIGIN
         let loaded = Loaded::contacts(region, contacts);
         track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
         genie
+    }
+
+    /// The menu of a Hi-C map takes the count that gets the full color. The box starts with the
+    /// count of the automatic range: the contacts 2 bins or more from the diagonal.
+    #[test]
+    fn hic_tracks_take_a_typed_count_for_the_full_color() {
+        let mut genie = with_contact_map();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(550.0, 40.0)));
+        assert!(shows(&genie, "Full color at"));
+        assert_eq!(
+            genie.range_draft.as_ref().map(|(_, max)| max.as_str()),
+            Some("6")
+        );
+        let _ = genie.update(Message::Range(0, Ranging::Max("50".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        let typed = Some(genie_render::signal::Scale {
+            min: 0.0,
+            max: 50.0,
+        });
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].plot.range, typed);
+        assert_eq!(genie.saved().unwrap().tracks[0].plot.range, typed);
+        let _ = genie.update(Message::Range(0, Ranging::Auto));
+        assert_eq!(genie.session.as_ref().unwrap().tracks[0].plot.range, None);
+        let _ = genie.update(Message::TrackChanged(0, Change::Ratio));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(550.0, 40.0)));
+        assert!(!shows(&genie, "Full color at"));
     }
 
     #[test]

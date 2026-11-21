@@ -316,9 +316,41 @@ pub fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         .collect()
 }
 
-/// The normalizations of a Hi-C map, observed/expected ratios, and the virtual 4C from the base
-/// under the pointer.
-pub fn contact_items<'a>(track: &Track, base: u64) -> Vec<Element<'a, Message>> {
+/// The count that gets the full color of a Hi-C map, typed in a box, and the automatic range.
+pub fn contact_range<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
+    let id = track.id;
+    let max = range.map_or("", |(_, max)| max.as_str());
+    let field = text_input("Count", max)
+        .size(12)
+        .padding([2, 4])
+        .style(style::locus)
+        .on_input(move |text| Message::Range(id, Ranging::Max(text)))
+        .on_submit(Message::Range(id, Ranging::Fix));
+    let typed = container(
+        row![text("Full color at").size(12).style(style::muted), field]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .padding([3, 8]);
+    column![
+        typed,
+        item(
+            "Auto range",
+            Message::Range(id, Ranging::Auto),
+            track.plot.range.is_none(),
+            true
+        ),
+    ]
+    .spacing(1)
+}
+
+/// The normalizations of a Hi-C map, observed/expected ratios, the count of the full color, and
+/// the virtual 4C from the base under the pointer.
+pub fn contact_items<'a>(
+    track: &Track,
+    base: u64,
+    range: Option<&(String, String)>,
+) -> Vec<Element<'a, Message>> {
     let (names, place) = track
         .source
         .normalizations(track.options.contacts.normalization);
@@ -346,6 +378,10 @@ pub fn contact_items<'a>(track: &Track, base: u64) -> Vec<Element<'a, Message>> 
         track.options.contacts.ratio,
         true,
     ));
+    if !track.options.contacts.ratio {
+        items.push(separator());
+        items.push(contact_range(track, range).into());
+    }
     let (label, viewpoint) = if track.plot.viewpoint.is_some() {
         ("Stop virtual 4C", None)
     } else {
@@ -443,9 +479,15 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_contacts() {
         // The normalizations and observed/expected, with their separator, in a column of their
         // own that has one space less.
-        // The normalizations, observed/expected and the virtual 4C.
+        // The normalizations, observed/expected and the virtual 4C, and for counts the full
+        // color and the automatic range after a separator.
         let choices = track.source.normalizations(None).0.len() as f32 + 2.0;
-        PLAIN_HEIGHT + choices * LINK_HEIGHT + SEPARATOR_HEIGHT - 1.0
+        let range = if track.options.contacts.ratio {
+            0.0
+        } else {
+            SEPARATOR_HEIGHT + RANGE_ROW + LINK_HEIGHT + 1.0
+        };
+        PLAIN_HEIGHT + choices * LINK_HEIGHT + SEPARATOR_HEIGHT - 1.0 + range
     } else if track.source.has_columns() {
         // The columns and the rows, with their separator, in a column of their own that has one
         // space less.
@@ -864,7 +906,7 @@ fn kind_items<'a>(
     {
         column![]
     } else if track.source.has_contacts() {
-        column(contact_items(track, place.base)).spacing(1)
+        column(contact_items(track, place.base, range)).spacing(1)
     } else if track.source.has_columns() {
         column(column_items(track))
             .push(column(modes).spacing(1))

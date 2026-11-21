@@ -1016,7 +1016,8 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         }
         Some(Content::Contacts(contacts)) => {
             let (map, total) = contact_heights(track);
-            let mut primitives = contacts::scene(viewport, &contacts.map, map);
+            let full = track.plot.range.map(|range| range.max);
+            let mut primitives = contacts::scene(viewport, &contacts.map, map, full);
             if let Some(viewpoint) = track.plot.viewpoint {
                 let lane = contacts::viewpoint_lane(viewport, &contacts.map, viewpoint, track.hue);
                 let top = map + VIEWPOINT_GAP;
