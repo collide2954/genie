@@ -4,11 +4,100 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use crate::Region;
+use crate::alignment::{Alignment, Op};
+
 /// The most cell types with a lane of their own. The cells of the other types share the lane
 /// "Other".
 pub const LANES: usize = 12;
 /// The fewest letters of the core of a barcode.
 const CORE: usize = 8;
+/// The most bins of the depths of a lane. A wider region has wider bins.
+const MOST_BINS: u64 = 100_000;
+
+/// The depths of the reads or the fragments of each lane of cell types in a region, as the sum
+/// of the depths of the bases of each bin. Bins have 1 base, or more in a wide region.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Depths {
+    region: Region,
+    bin: u64,
+    sums: Vec<Vec<u32>>,
+}
+
+impl Depths {
+    pub fn new(region: Region, lanes: usize) -> Self {
+        let bin = region.len().div_ceil(MOST_BINS).max(1);
+        let bins = usize::try_from(region.len().div_ceil(bin)).unwrap_or(usize::MAX);
+        Self {
+            region,
+            bin,
+            sums: vec![vec![0; bins]; lanes],
+        }
+    }
+
+    pub fn region(&self) -> Region {
+        self.region
+    }
+
+    /// The bases of each bin.
+    pub fn bin(&self) -> u64 {
+        self.bin
+    }
+
+    pub fn lanes(&self) -> usize {
+        self.sums.len()
+    }
+
+    /// Adds the bases of a part of the contig, as a fragment, to a lane.
+    pub fn add_span(&mut self, lane: usize, span: Region) {
+        let Some(part) = span.intersection(self.region) else {
+            return;
+        };
+        let Some(sums) = self.sums.get_mut(lane) else {
+            return;
+        };
+        let mut at = part.start();
+        while at < part.end() {
+            let index = (at - self.region.start()) / self.bin;
+            let to = (self.region.start() + (index + 1) * self.bin).min(part.end());
+            let slot = &mut sums[usize::try_from(index).unwrap_or(usize::MAX)];
+            *slot = slot.saturating_add(u32::try_from(to - at).unwrap_or(u32::MAX));
+            at = to;
+        }
+    }
+
+    /// Adds the aligned bases of a read to a lane: not its splice junctions and deletions.
+    pub fn add_read(&mut self, lane: usize, alignment: &Alignment) {
+        let mut position = alignment.start;
+        for &(op, length) in &alignment.cigar {
+            let length = u64::from(length);
+            if matches!(op, Op::Match | Op::Equal | Op::Diff) {
+                self.add_span(lane, Region::between(position, position + length));
+            }
+            if op.consumes_reference() {
+                position += length;
+            }
+        }
+    }
+
+    /// The mean depth of a lane in a part of the region.
+    pub fn mean(&self, lane: usize, part: Region) -> f64 {
+        let (Some(part), Some(sums)) = (part.intersection(self.region), self.sums.get(lane)) else {
+            return 0.0;
+        };
+        let first = (part.start() - self.region.start()) / self.bin;
+        let last = (part.end() - 1 - self.region.start()) / self.bin;
+        let mut total = 0.0;
+        for index in first..=last {
+            let start = self.region.start() + index * self.bin;
+            let bin = Region::between(start, (start + self.bin).min(self.region.end()));
+            let overlap = bin.intersection(part).map_or(0, Region::len);
+            let sum = sums[usize::try_from(index).unwrap_or(usize::MAX)];
+            total += f64::from(sum) * overlap as f64 / bin.len() as f64;
+        }
+        total / part.len() as f64
+    }
+}
 
 /// The cell type of each barcode of a table, with the number of cells of each type.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -125,7 +214,45 @@ pub fn core(barcode: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellMap, LANES, core};
+    use super::{CellMap, Depths, LANES, core};
+    use crate::Region;
+    use crate::alignment::{Alignment, Op, Tags};
+
+    #[test]
+    fn depths_add_reads_and_fragments_to_lanes_in_bins() {
+        let mut depths = Depths::new(Region::between(100, 200), 2);
+        assert_eq!(depths.bin(), 1);
+        depths.add_span(0, Region::between(90, 110));
+        depths.add_span(0, Region::between(105, 106));
+        let read = Alignment {
+            name: "r".to_owned(),
+            start: 150,
+            flags: 0,
+            mapq: 60,
+            cigar: vec![(Op::Match, 10), (Op::Skip, 20), (Op::Match, 10)],
+            bases: Vec::new(),
+            qualities: Vec::new(),
+            mate: None,
+            tags: Tags::default(),
+        };
+        depths.add_read(1, &read);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(close(depths.mean(0, Region::between(100, 110)), 1.1));
+        assert!(close(depths.mean(1, Region::between(150, 160)), 1.0));
+        assert!(
+            close(depths.mean(1, Region::between(160, 180)), 0.0),
+            "the junction does not count"
+        );
+        assert!(close(depths.mean(1, Region::between(175, 185)), 0.5));
+        let mut wide = Depths::new(Region::between(0, 10_000_000), 1);
+        assert_eq!(wide.bin(), 100, "a wide region has wider bins");
+        wide.add_span(0, Region::between(150, 250));
+        assert!(close(wide.mean(0, Region::between(100, 200)), 0.5));
+        assert!(
+            close(wide.mean(0, Region::between(150, 160)), 0.5),
+            "a part of a bin"
+        );
+    }
 
     #[test]
     fn barcodes_find_their_cell_type_also_by_their_core() {
