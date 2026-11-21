@@ -146,7 +146,7 @@ impl Genie {
                     ..VariantTable::default()
                 });
                 if self.table.is_some() {
-                    self.dmrs = None;
+                    (self.dmrs, self.isoforms) = (None, None);
                 }
             }
             Tabling::Close => self.table = None,

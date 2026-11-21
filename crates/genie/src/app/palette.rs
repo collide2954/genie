@@ -154,7 +154,8 @@ fn phase_actions(tracks: &[Track], track: &Track) -> Vec<Action> {
     actions
 }
 
-/// The actions that show a view of a track: its variant table, its dot plot or its DMR table.
+/// The actions that show a view of a track: its variant table, its dot plot, its DMR table or
+/// its isoform table.
 fn view_actions(track: &Track) -> Vec<Action> {
     let (id, name) = (track.id, track.name.as_str());
     let views = [
@@ -172,6 +173,11 @@ fn view_actions(track: &Track) -> Vec<Action> {
             track.shows_difference(),
             "Show the DMR table",
             Message::Dmrs(super::Dmring::Open(id)),
+        ),
+        (
+            track.source.has_reads(),
+            "Show the isoform table",
+            Message::Isoforms(super::Isoforming::Open(id)),
         ),
     ];
     views

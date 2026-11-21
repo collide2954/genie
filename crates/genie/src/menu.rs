@@ -10,8 +10,8 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Dmring, Filtering, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming, Reviewing,
-    Sampling, Tabling, active, arranging_words,
+    Dmring, Filtering, Isoforming, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming,
+    Reviewing, Sampling, Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
@@ -168,6 +168,11 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
         0.0
     } + if can_review(track) { LINK_HEIGHT } else { 0.0 }
         + if track.shows_difference() {
+            LINK_HEIGHT
+        } else {
+            0.0
+        }
+        + if track.source.has_reads() {
             LINK_HEIGHT
         } else {
             0.0
@@ -977,6 +982,10 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
     if track.shows_difference() {
         let open = Message::Dmrs(Dmring::Open(id));
         items = items.push(item("DMR table", open, false, true));
+    }
+    if track.source.has_reads() {
+        let open = Message::Isoforms(Isoforming::Open(id));
+        items = items.push(item("Isoform table", open, false, true));
     }
     if has_enzymes(track) {
         let open = Message::Made(Making::Enzymes(Some(id)));

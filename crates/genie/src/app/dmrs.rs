@@ -131,7 +131,7 @@ impl Genie {
                 let open = self.dmrs.as_ref().is_some_and(|table| table.track == id);
                 self.dmrs = (!open).then(|| DmrTable::new(id));
                 if self.dmrs.is_some() {
-                    self.table = None;
+                    (self.table, self.isoforms) = (None, None);
                 }
             }
             Dmring::Close => self.dmrs = None,

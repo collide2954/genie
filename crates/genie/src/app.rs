@@ -52,6 +52,7 @@ mod filters;
 mod find;
 mod gnomad;
 mod hubs;
+mod isoforms;
 mod lift;
 mod made;
 mod motifs;
@@ -81,6 +82,7 @@ pub(crate) use dmrs::Dmring;
 pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
 pub(crate) use gnomad::Gnomading;
+pub(crate) use isoforms::Isoforming;
 pub(crate) use lift::Lifting;
 pub(crate) use made::{Making, additions};
 pub(crate) use motifs::Motifing;
@@ -159,6 +161,8 @@ pub struct Genie {
     table: Option<table::VariantTable>,
     /// The table of the DMRs of the methylation difference of a track.
     dmrs: Option<dmrs::DmrTable>,
+    /// The table of the isoforms in view of a read track.
+    isoforms: Option<isoforms::IsoformTable>,
     field_draft: Option<String>,
     hubs: Vec<Arc<Hub>>,
     hub_view: Option<hubs::View>,
@@ -276,6 +280,7 @@ impl Default for Genie {
             finder: None,
             table: None,
             dmrs: None,
+            isoforms: None,
             field_draft: None,
             hubs: Vec::new(),
             hub_view: None,
@@ -823,6 +828,8 @@ pub enum Message {
     Gnomad(Gnomading),
     /// The table of the DMRs of a methylation difference.
     Dmrs(Dmring),
+    /// The table of the isoforms of a read track.
+    Isoforms(Isoforming),
     /// Adds or changes a track that genie makes from the reference.
     Made(Making),
     /// Picks the motifs of a motif track, or changes its threshold.
@@ -1124,6 +1131,7 @@ impl Genie {
         self.keep_step(before);
         self.refresh_table();
         self.refresh_dmrs();
+        self.refresh_isoforms();
         let plot = self.refresh_plot();
         self.answer();
         self.stats.update = started.elapsed();
@@ -1170,7 +1178,7 @@ impl Genie {
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
             Message::Lift(lifting) => return self.lift(lifting),
-            Message::Table(_) | Message::Plot(_) | Message::Dmrs(_) => {
+            Message::Table(_) | Message::Plot(_) | Message::Dmrs(_) | Message::Isoforms(_) => {
                 return self.pane_message(message);
             }
             Message::Address(action) => return self.address(action),
@@ -1265,6 +1273,7 @@ impl Genie {
             Message::Table(tabling) => self.tabling(tabling),
             Message::Plot(plotting) => self.plotting(plotting),
             Message::Dmrs(dmring) => self.dmring(dmring),
+            Message::Isoforms(isoforming) => self.isoforming(isoforming),
             _ => Task::none(),
         }
     }
@@ -1499,9 +1508,9 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Arranging, Caching, Copying, Drafting, Figuring, Filtering, Genie, Lane, Lifting,
-        Message, Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions, Renaming,
-        Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
+        Address, Arranging, Caching, Copying, Drafting, Figuring, Filtering, Genie, Isoforming,
+        Lane, Lifting, Message, Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions,
+        Renaming, Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -5508,7 +5517,10 @@ ORIGIN
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 5.0))));
         assert!(shows(&genie, "TX1 ENST1.2 · 3 reads"));
         let _ = genie.update(Message::TrackHovered(0, 0, Some(over(200.5, 25.0))));
-        assert!(shows(&genie, "novel 1 · 2 reads"));
+        assert!(
+            shows(&genie, "TX1 novel 1 · 2 reads"),
+            "a novel isoform takes the gene of a transcript with one of its junctions"
+        );
         let session = genie.session.as_ref().unwrap();
         let Some(Content::Reads(pile)) = session.tracks[0].data(0).map(|data| &data.content) else {
             panic!("expected reads");
@@ -5605,7 +5617,7 @@ ORIGIN
                 vec![
                     "TX1 ENST1.2 · 202 reads".to_owned(),
                     "novel 1 · 4 reads".to_owned(),
-                    "novel 2 · 3 reads".to_owned(),
+                    "TX1 novel 1 · 3 reads".to_owned(),
                 ],
                 "1 more isoform with 2 reads".to_owned()
             ),
@@ -5618,12 +5630,177 @@ ORIGIN
             (
                 vec![
                     "TX1 ENST1.2 · 202 reads".to_owned(),
-                    "novel 1 · 3 reads".to_owned(),
+                    "TX1 novel 1 · 3 reads".to_owned(),
                 ],
                 "1 more isoform with 2 reads".to_owned()
             ),
             "the 4 reads after 700 are out of view"
         );
+    }
+
+    /// Adds a read track with reads on chr1 from 0 to 1,000 that load with some options.
+    fn add_reads_with(
+        genie: &mut Genie,
+        reads: Vec<genie_core::alignment::Alignment>,
+        options: Options,
+    ) {
+        let _ = genie.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let region = Region::between(0, 1_000);
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        track.options = options;
+        track.slot.wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, options);
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+    }
+
+    /// Long reads in groups by phase, and the transcript TX1 (ENST1.2) with the intron 100-300:
+    /// 6 reads of TX1 (4 of haplotype 1 and 2 of haplotype 2), 3 reads of haplotype 2 with one
+    /// more junction that no transcript has, 2 reads of haplotype 1 with a junction of no
+    /// transcript, and 1 read without a haplotype.
+    fn with_isoform_reads() -> Genie {
+        use genie_core::alignment::{Alignment, Op};
+        let mut genie = opened();
+        let (m, n) = (Op::Match, Op::Skip);
+        let mut reads = Vec::new();
+        for (name, start, cigar, phases) in [
+            (
+                "a",
+                60,
+                vec![(m, 40), (n, 200), (m, 100)],
+                vec![Some(1), Some(1), Some(1), Some(1), Some(2), Some(2)],
+            ),
+            (
+                "b",
+                60,
+                vec![(m, 40), (n, 200), (m, 50), (n, 70), (m, 30)],
+                vec![Some(2); 3],
+            ),
+            ("c", 450, vec![(m, 50), (n, 100), (m, 50)], vec![Some(1); 2]),
+            ("d", 700, vec![(m, 50), (n, 100), (m, 50)], vec![None]),
+        ] {
+            for (index, phase) in phases.into_iter().enumerate() {
+                let mut alignment = Alignment {
+                    cigar: cigar.clone(),
+                    ..read(&format!("{name}{index}"), start)
+                };
+                alignment.tags.phase = phase;
+                reads.push(alignment);
+            }
+        }
+        let options = Options {
+            group: Grouping::Phase,
+            ..Options::default()
+        };
+        add_reads_with(&mut genie, reads, options);
+        let transcript = Feature::new("ENST1.2", Region::between(50, 450), Strand::Forward)
+            .with_blocks(vec![Region::between(50, 100), Region::between(300, 450)])
+            .with_label("TX1");
+        add_features(&mut genie, "genes.bb", vec![transcript]);
+        genie
+    }
+
+    #[test]
+    fn isoform_tables_list_the_isoforms_in_view_with_the_reads_of_each_group() {
+        let mut genie = with_isoform_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Isoform table").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Isoforms(Isoforming::Open(0))));
+        assert!(palette_shows(
+            &mut genie,
+            "isoform table",
+            "Show the isoform table"
+        ));
+        let _ = genie.update(Message::Isoforms(Isoforming::Open(0)));
+        for words in [
+            "Isoforms · reads.bam",
+            "3 isoforms in view · 1 with fewer reads",
+            "TX1 ENST1.2",
+            "known",
+            "chr1:61-400",
+            "50.0 %",
+            "140 bp",
+            "TX1 novel 1",
+            "new junction",
+            "novel 1",
+            "Haplotype 1",
+            "No haplotype",
+            "4 · 66.7 %",
+            "2 · 40.0 %",
+        ] {
+            assert!(shows(&genie, words), "{words}");
+        }
+        let p = crate::card::p_value(genie_core::methylation::fisher([[0, 6], [3, 2]]));
+        assert!(shows(&genie, &p), "the p of TX1 novel 1: {p}");
+        assert!(!shows(&genie, "novel 2"));
+        let _ = genie.update(Message::Isoforms(Isoforming::All));
+        assert!(shows(&genie, "4 isoforms in view"));
+        assert!(shows(&genie, "novel 2"));
+    }
+
+    #[test]
+    fn isoform_tables_sort_go_to_the_isoforms_and_export_them() {
+        let mut genie = with_isoform_reads();
+        let _ = genie.update(Message::Isoforms(Isoforming::Open(0)));
+        let _ = genie.update(Message::Isoforms(Isoforming::All));
+        let _ = genie.update(Message::Isoforms(Isoforming::Sort(3)));
+        assert!(shows(&genie, "Reads ▲"));
+        let scratch = Scratch::new("isoform-table");
+        let path = scratch.file("isoforms", "");
+        let export = |genie: &mut Genie, extension: &str| {
+            let file = path.with_extension(extension);
+            let picked = Isoforming::ExportPicked(Some(file.clone()));
+            let _ = genie.update(Message::Isoforms(picked));
+            std::fs::read_to_string(file).unwrap()
+        };
+        let tsv = export(&mut genie, "tsv");
+        let mut lines = tsv.lines();
+        assert_eq!(
+            lines.next(),
+            Some(
+                "Name\tKind\tChrom\tStart\tEnd\tStrand\tReads\tShare\tExons\tLength\t\
+                 Haplotype 1 reads\tHaplotype 1 share\tHaplotype 2 reads\tHaplotype 2 share\t\
+                 No haplotype reads\tNo haplotype share\tp"
+            )
+        );
+        let names: Vec<&str> = lines.map(|line| line.split('\t').next().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["novel 2", "novel 1", "TX1 novel 1", "TX1 ENST1.2"],
+            "the fewest reads first"
+        );
+        let bed = export(&mut genie, "bed");
+        assert!(
+            bed.contains("chr1\t60\t400\tENST1.2\t6\t+\t60\t60\t0\t2\t40,100,\t0,240,\n"),
+            "{bed}"
+        );
+        let gtf = export(&mut genie, "gtf");
+        for line in [
+            "chr1\tgenie\ttranscript\t61\t400\t.\t+\t.\tgene_id \"TX1\"; transcript_id \
+             \"ENST1.2\"; reads \"6\"; kind \"known\";",
+            "chr1\tgenie\texon\t301\t400\t.\t+\t.\tgene_id \"TX1\"; transcript_id \"ENST1.2\"; \
+             exon_number \"2\";",
+            "chr1\tgenie\ttranscript\t451\t650\t.\t.\t.\tgene_id \"novel_1\"; transcript_id \
+             \"novel_1\"; reads \"2\"; kind \"new junction\";",
+        ] {
+            assert!(gtf.lines().any(|known| known == line), "{line}\n{gtf}");
+        }
+        for _ in 0..2 {
+            let _ = genie.update(Message::Isoforms(Isoforming::Sort(3)));
+        }
+        let _ = genie.update(Message::Isoforms(Isoforming::Go(0)));
+        settle(&mut genie);
+        assert!(
+            shows(&genie, "chr1:27-434"),
+            "TX1 ENST1.2 with a tenth of its length at each side"
+        );
+        let _ = genie.update(Message::TrackChanged(0, Change::Remove));
+        assert!(genie.isoforms.is_none());
     }
 
     #[test]

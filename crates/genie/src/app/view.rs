@@ -1,9 +1,11 @@
+use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use genie_core::isoform::Isoform;
 use genie_core::pileup::sort_rows;
-use genie_core::{Feature, Region, Viewport, grouped, trio};
+use genie_core::{Feature, Region, Strand, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
@@ -407,7 +409,11 @@ impl Genie {
             if let Some(bar) = self.review_bar(session) {
                 main = main.push(hairline()).push(bar);
             }
-            if let Some(table) = self.table_view(session).or_else(|| self.dmr_view(session)) {
+            let table = self
+                .table_view(session)
+                .or_else(|| self.dmr_view(session))
+                .or_else(|| self.isoform_view(session));
+            if let Some(table) = table {
                 main = main.push(table);
             }
             main.into()
@@ -1295,7 +1301,7 @@ const ISOFORM_READS: usize = 2;
 /// view: 1 %.
 const ISOFORM_SHARE: usize = 100;
 /// How far apart two junctions of one isoform can be, in bases.
-const SLACK: u64 = 5;
+pub(super) const SLACK: u64 = 5;
 /// How far an end of a junction of a read moves to the end of an intron of an open transcript,
 /// in bases.
 const SNAP: u64 = 20;
@@ -1304,8 +1310,8 @@ const OTHERS_HEIGHT: f32 = 16.0;
 
 /// The isoforms of a read track in a panel, as features for the feature lane: each with the name
 /// of the transcript of an open feature track that has the same introns, with its ID when the
-/// track shows a gene name in place of it, or "novel" with a number, and its reads. The line
-/// under them counts the other reads.
+/// track shows a gene name in place of it, or "novel" with a number, and its reads in view. The
+/// line under them counts the other reads.
 pub(super) struct Isoforms {
     pub features: Vec<Feature>,
     pub rows: Vec<usize>,
@@ -1353,6 +1359,18 @@ fn all_isoforms(pile: &Pile, transcripts: &[&Feature]) -> Arc<Vec<Isoform<GroupK
     })
 }
 
+/// The introns of each transcript of the open feature tracks in a panel.
+pub(super) fn transcript_introns(
+    session: &Session,
+    panel: usize,
+    contig: usize,
+) -> Vec<Vec<Region>> {
+    transcripts(session, panel, contig)
+        .into_iter()
+        .map(introns)
+        .collect()
+}
+
 /// The height of the isoforms of a pile under its coverage: a row for each isoform, and the line
 /// of the other reads.
 fn isoforms_height(session: &Session, panel: usize, pile: &Pile) -> f32 {
@@ -1360,28 +1378,160 @@ fn isoforms_height(session: &Session, panel: usize, pile: &Pile) -> f32 {
     rows as f32 * features::Mode::Expanded.row_height() + OTHERS_HEIGHT
 }
 
-/// The name of an isoform: the transcript with the same introns, with an ID before one without,
-/// or "novel" with the next number.
+/// An isoform in view of a read track: its place in the isoforms of the pile, its name, its ID
+/// and its gene for exports, its strand, and its reads in view, also for each group of the
+/// reads.
+pub(super) struct Seen {
+    pub index: usize,
+    pub name: String,
+    pub id: String,
+    pub gene: String,
+    pub strand: Strand,
+    pub reads: usize,
+    pub groups: Vec<(GroupKey, usize)>,
+}
+
+/// The isoforms in view of a read track: the isoforms of the pile, the isoforms with reads in
+/// view with the most reads first, the least reads of an isoform with a row in the lane, and the
+/// reads in view without a splice junction.
+pub(super) struct InView {
+    pub all: Arc<Vec<Isoform<GroupKey>>>,
+    pub seen: Vec<Seen>,
+    pub least: usize,
+    pub unspliced: usize,
+}
+
+/// The name, the ID, the gene and the strand of an isoform.
+struct Named {
+    name: String,
+    id: String,
+    gene: String,
+    strand: Strand,
+}
+
+/// The name, the ID, the gene and the strand of an isoform: those of the transcript with the
+/// same introns, with an ID before one without. Else the isoform is novel: "novel" with the next
+/// number of the gene of the transcript that has the most of its junctions, or of no gene. The
+/// isoform keeps the strand of its reads when they give one.
 fn isoform_name(
     transcripts: &[&Feature],
     isoform: &Isoform<GroupKey>,
-    novel: &mut usize,
-) -> String {
+    novel: &mut HashMap<String, usize>,
+) -> Named {
+    let strand = |transcript: &Feature| match isoform.strand {
+        Strand::Unknown => transcript.strand(),
+        strand => strand,
+    };
     let same = || {
-        transcripts.iter().filter(|transcript| {
+        transcripts.iter().copied().filter(|transcript| {
             genie_core::isoform::agree(&introns(transcript), &isoform.junctions, SLACK)
         })
     };
     let with_id = same().find_map(|transcript| {
         let id = transcript.id().filter(|id| *id != transcript.name())?;
-        Some(format!("{} {id}", transcript.name()))
-    });
-    with_id
-        .or_else(|| same().next().map(|transcript| transcript.name().to_owned()))
-        .unwrap_or_else(|| {
-            *novel += 1;
-            format!("novel {novel}")
+        Some(Named {
+            name: format!("{} {id}", transcript.name()),
+            id: id.to_owned(),
+            gene: transcript.name().to_owned(),
+            strand: strand(transcript),
         })
+    });
+    let known = with_id.or_else(|| {
+        same().next().map(|transcript| Named {
+            name: transcript.name().to_owned(),
+            id: transcript.name().to_owned(),
+            gene: transcript.name().to_owned(),
+            strand: strand(transcript),
+        })
+    });
+    if let Some(named) = known {
+        return named;
+    }
+    let closest = transcripts
+        .iter()
+        .copied()
+        .map(|transcript| {
+            let shared =
+                genie_core::isoform::shared(&introns(transcript), &isoform.junctions, SLACK);
+            (shared, transcript)
+        })
+        .filter(|(shared, _)| *shared > 0)
+        .min_by_key(|(shared, _)| Reverse(*shared))
+        .map(|(_, transcript)| transcript);
+    let gene = closest.map(|transcript| transcript.name().to_owned());
+    let number = novel.entry(gene.clone().unwrap_or_default()).or_default();
+    *number += 1;
+    let number = *number;
+    match (gene, closest) {
+        (Some(gene), Some(transcript)) => Named {
+            name: format!("{gene} novel {number}"),
+            id: format!(
+                "{}_novel_{number}",
+                gene.split_whitespace().collect::<Vec<_>>().join("_")
+            ),
+            strand: strand(transcript),
+            gene,
+        },
+        _ => Named {
+            name: format!("novel {number}"),
+            id: format!("novel_{number}"),
+            gene: format!("novel_{number}"),
+            strand: isoform.strand,
+        },
+    }
+}
+
+/// The isoforms of a pile with reads in a region of a contig, with the names of the transcripts
+/// of the open feature tracks of a panel.
+pub(super) fn isoforms_in_view(
+    session: &Session,
+    panel: usize,
+    pile: &Pile,
+    (contig, visible): (usize, Region),
+) -> InView {
+    let in_sight = |span: &Region| span.intersection(visible).is_some();
+    let transcripts = transcripts(session, panel, contig);
+    let all = all_isoforms(pile, &transcripts);
+    let mut seen: Vec<Seen> = Vec::new();
+    for (index, isoform) in all.iter().enumerate() {
+        if !in_sight(&isoform.span) {
+            continue;
+        }
+        let mut groups: Vec<(GroupKey, usize)> = Vec::new();
+        for read in isoform.reads.iter().filter(|read| in_sight(&read.span)) {
+            match groups.iter_mut().find(|(key, _)| *key == read.group) {
+                Some((_, count)) => *count += 1,
+                None => groups.push((read.group, 1)),
+            }
+        }
+        let reads: usize = groups.iter().map(|(_, count)| count).sum();
+        if reads > 0 {
+            groups.sort_unstable();
+            seen.push(Seen {
+                index,
+                name: String::new(),
+                id: String::new(),
+                gene: String::new(),
+                strand: isoform.strand,
+                reads,
+                groups,
+            });
+        }
+    }
+    seen.sort_by_key(|seen| Reverse(seen.reads));
+    let spliced: usize = seen.iter().map(|seen| seen.reads).sum();
+    let mut novel = HashMap::new();
+    for seen in &mut seen {
+        let named = isoform_name(&transcripts, &all[seen.index], &mut novel);
+        (seen.name, seen.id, seen.gene, seen.strand) =
+            (named.name, named.id, named.gene, named.strand);
+    }
+    InView {
+        least: ISOFORM_READS.max(spliced.div_ceil(ISOFORM_SHARE)),
+        seen,
+        unspliced: pile.chains.1.iter().filter(|read| in_sight(read)).count(),
+        all,
+    }
 }
 
 /// "1 read" or the number of reads.
@@ -1396,34 +1546,21 @@ fn reads_text(count: usize) -> String {
 /// the spliced reads in view, and the line that counts the other isoforms and reads in view.
 pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms {
     let (contig, viewport) = session.view(panel);
-    let visible = viewport.visible();
-    let seen = |span: &Region| span.intersection(visible).is_some();
-    let transcripts = transcripts(session, panel, contig);
-    let all = all_isoforms(pile, &transcripts);
-    let spliced = pile
-        .chains
-        .0
+    let shown = isoforms_in_view(session, panel, pile, (contig, viewport.visible()));
+    let (lane, few): (Vec<&Seen>, Vec<&Seen>) = shown
+        .seen
         .iter()
-        .flat_map(|chain| &chain.reads)
-        .filter(|read| seen(&read.span))
-        .count();
-    let least = ISOFORM_READS.max(spliced.div_ceil(ISOFORM_SHARE));
-    let (shown, few): (Vec<&Isoform<GroupKey>>, Vec<&Isoform<GroupKey>>) = all
+        .partition(|seen| seen.reads >= shown.least);
+    let features: Vec<Feature> = lane
         .iter()
-        .filter(|isoform| seen(&isoform.span))
-        .partition(|isoform| isoform.reads.len() >= least);
-    let mut novel = 0;
-    let features: Vec<Feature> = shown
-        .iter()
-        .map(|isoform| {
-            let name = isoform_name(&transcripts, isoform, &mut novel);
-            let reads = reads_text(isoform.reads.len());
-            Feature::new(format!("{name} · {reads}"), isoform.span, isoform.strand)
-                .with_blocks(isoform.exons())
+        .map(|seen| {
+            let isoform = &shown.all[seen.index];
+            let name = format!("{} · {}", seen.name, reads_text(seen.reads));
+            Feature::new(name, isoform.span, seen.strand).with_blocks(isoform.exons())
         })
         .collect();
     let mut parts = Vec::new();
-    let few_reads: usize = few.iter().map(|isoform| isoform.reads.len()).sum();
+    let few_reads: usize = few.iter().map(|seen| seen.reads).sum();
     match few.len() {
         0 => {}
         1 => parts.push(format!("1 more isoform with {}", reads_text(few_reads))),
@@ -1433,11 +1570,10 @@ pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms
             reads_text(few_reads)
         )),
     }
-    let unspliced = pile.chains.1.iter().filter(|read| seen(read)).count();
-    if unspliced > 0 {
+    if shown.unspliced > 0 {
         parts.push(format!(
             "{} without a splice junction",
-            reads_text(unspliced)
+            reads_text(shown.unspliced)
         ));
     }
     let others = if features.is_empty() && parts.is_empty() {

@@ -869,6 +869,22 @@ impl Annotation {
 }
 
 impl Pile {
+    /// The name of a group of the reads, for example "Haplotype 1".
+    pub fn group_name(&self, key: GroupKey) -> String {
+        group_label(self.grouping, key, &self.values)
+    }
+
+    /// Whether a group has the reads with a haplotype or with a value of the tag, and not the
+    /// reads without one.
+    pub fn group_has_value(&self, key: GroupKey) -> bool {
+        match self.grouping {
+            Grouping::None => false,
+            Grouping::Phase => key.0 == 0,
+            Grouping::Strand => true,
+            Grouping::Tag(_) => key.0 != 2,
+        }
+    }
+
     pub fn packed(&self, visible: Region) -> (Vec<usize>, usize, Vec<(usize, String)>) {
         let shown: Vec<usize> = (0..self.reads.len())
             .filter(|&index| {
