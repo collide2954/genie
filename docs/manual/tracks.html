@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -58,6 +58,7 @@
           <li><a href="#splicing-differences">Splicing differences</a></li>
           <li><a href="#phase-reads">Phase reads</a></li>
           <li><a href="#epialleles">Epialleles</a></li>
+          <li><a href="#repeat-expansions">Repeat expansions</a></li>
           <li><a href="#single-cell">Single-cell</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
@@ -267,6 +268,15 @@
 <li>The methylation lanes show each epiallele, and <b>Methylation difference</b> and the <b>DMR table</b> compare epiallele 1 with epiallele 2. Put the pointer on a read to see its epiallele in its card.</li>
 <li>genie finds the epialleles of the reads that it loads for the view and that show, so down-sampling can hide some reads. Sessions keep the grouping and the number of epialleles.</li>
 </ul>
+<h2 id="repeat-expansions">Repeat expansions</h2>
+<p>A tandem repeat can be longer or shorter in a sample than in the reference, for example the CAG repeat of HTT in Huntington disease. Long reads that span a repeat give its length on each allele.</p>
+<ul>
+<li>Open a catalog of repeats, for example a repeat definition BED file of TRGT or STRchive, with the motif in its fourth column as <code>MOTIFS=CAG</code>, a BED file with the motif as the name, as <code>CAG</code> or <code>(CAG)n</code>, or the Simple Repeats track of UCSC, with the motif in its <code>sequence</code> field. Or add the <b>Tandem repeats</b> track of the reference (see <a href="#reference-tracks">Reference tracks</a>).</li>
+<li>Put the pointer on a repeat. Its card gives its copies in the reference, and for each read track in view the alleles of the reads that span the repeat, as &quot;42 CAG (40-44) · 18 reads ▂█▃&quot;: the middle copies of the allele, the fewest and the most, the reads, and a bar for the reads of each number of copies. With more than one read track, the name of each allele starts with the name of its track.</li>
+<li>A read spans a repeat when it covers 20 bases or more on each side of it. genie takes the bases of the read between the two flanks from the alignment, and counts the copies of the motif in them, as TRGT gives repeat lengths. A copy is a part with the length of the motif that differs from a rotation of the motif in at most one base, or in none for a motif of 1 or 2 bases. Thus an insertion that the aligner puts somewhere else in the repeat counts all the same.</li>
+<li>When 2 spanning reads or more have HP1 and 2 or more have HP2, as from whatshap haplotag or <b>Phase by</b>, the alleles are the two haplotypes, HP1 and HP2. A spanning read without a haplotype joins the haplotype with the nearest middle copies. Else genie finds one or two alleles by the copies of the reads: two when one split of the sorted copies leaves the least sum of squares, each side has 2 reads and a tenth of the reads or more, and the middle copies differ by 2 or more, and by a twentieth or more. The shorter allele is Allele 1.</li>
+<li>Click the repeat to keep its card open, and click <b>Group reads</b>. genie puts the reads of each read track in rows by allele, as &quot;Allele 1 · 42 CAG · 18 reads (40-44)&quot;, and the reads that do not span the repeat in &quot;Not spanning&quot;. The methylation lanes show each allele, so <b>Methylation difference</b> compares the two alleles, for example the methylation of an expanded FMR1 allele. Click <b>Group reads</b> again, or <b>Group by repeat</b> in the track menu, to stop. Sessions and undo keep the grouping.</li>
+</ul>
 <h2 id="single-cell">Single-cell</h2>
 <p>The reads of single-cell RNA-seq and ATAC-seq have the barcode of their cell: the CB tag of 10x Genomics, or the XC tag of Drop-seq. A table of the cells gives each barcode a cell type.</p>
 <ul>
@@ -280,13 +290,14 @@
 <li>The palette has <b>Cell types…</b>, <b>Cell types by</b> each column, <b>Group by cell type</b>, <b>Coverage by cell type</b> and <b>Remove the cell table</b>. Sessions and images keep the cell table, its column, the groups and the lanes of each track.</li>
 </ul>
 <h2 id="reference-tracks">Reference tracks</h2>
-<p>genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.</p>
+<p>genie can make tracks from the bases of the open reference, without a file: the GC content, the CpG islands, the repeats, the tandem repeats and the sites of restriction enzymes. They help most with a genome that has no tracks of its own, for example a new assembly in a FASTA file.</p>
 <ul>
-<li>Right-click the sequence and click a track under <b>Add a track</b>. The genie menu has the same tracks under <b>Reference tracks</b>, and the palette has <b>Add a GC % track</b>, <b>Add a CpG islands track</b>, <b>Add a repeats track</b> and <b>Add restriction sites…</b>.</li>
+<li>Right-click the sequence and click a track under <b>Add a track</b>. The genie menu has the same tracks under <b>Reference tracks</b>, and the palette has <b>Add a GC % track</b>, <b>Add a CpG islands track</b>, <b>Add a repeats track</b>, <b>Add a tandem repeats track</b> and <b>Add restriction sites…</b>.</li>
 <li>The tracks show when the view is 10 Mb or less. They work as other tracks: you can move, rename, hide and filter them, and sessions, images and undo keep them.</li>
 <li><b>GC %</b> is a signal track. Each bar shows the share of G and C bases in windows of 100 bases. Click 5, 20, 500 or 1,000 under <b>Window (bp)</b> in the track menu to use other windows. When you zoom out, a bar shows the mean of its windows, and a light color goes up to the highest window. A window with more N bases than known bases has no value.</li>
 <li><b>CpG islands</b> finds islands as the CpG Islands track of UCSC finds them. Each CG scores +17 and each other pair of bases scores -1, and the segments with the highest scores are the candidates. An island is a candidate of more than 200 bases, with 50 % GC or more and a ratio of observed to expected CpG of more than 0.6. genie uses all bases, also the soft-masked bases, as the unmasked CpG islands of UCSC do. The name of an island is &quot;CpG:&quot; and its number of CpGs. Its card shows the CpGs, the C and G bases, the percent of CpG and of GC, and the observed/expected ratio.</li>
 <li><b>Repeats</b> shows the soft-masked bases of the reference: the runs of lower-case bases. Most genomes from UCSC and the <code>dna_sm</code> files of Ensembl mark their repeats in this way, for example the repeats that RepeatMasker and Tandem Repeats Finder find. A reference with only upper-case bases has no repeats. The track is squished at first. A repeat that goes on past the 20 kb that genie reads on each side of the view has a note in its card.</li>
+<li><b>Tandem repeats</b> shows the perfect tandem repeats of the reference: runs of 4 copies or more of a motif of 1 to 6 bases, and 12 bases or more, as <code>(CAG)21</code>. Each repeat has the shortest motif that repeats, as the run starts, so ATAT is AT. The card of a repeat gives its motif, its copies and its length, and the alleles of the reads that span it, as in <a href="#repeat-expansions">Repeat expansions</a>.</li>
 <li><b>Restriction sites…</b> opens a list of 60 common enzymes. Click enzymes to pick them, or type a site with ^ at the cut, for example <code>G^AATTC</code>, and click <b>Add</b>. A site can have IUPAC codes, such as N. Then click <b>Add the track</b>. When the track has more than one enzyme, each enzyme has its own color. Click <b>Enzymes…</b> in the track menu to change the enzymes.</li>
 <li>The card of a site shows the site, the base after which the enzyme cuts, and the lengths of the fragments to the nearest cuts before and after it. A fragment that goes past the 20 kb that genie reads on each side of the view shows its least length, for example &quot;more than 21000&quot;. Filters work on these fields, for example to keep the cuts with a fragment of 500 bases or more after them.</li>
 </ul>

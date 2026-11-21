@@ -60,6 +60,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Splicing differences",
             "Phase reads",
             "Epialleles",
+            "Repeat expansions",
             "Single-cell",
             "Reference tracks",
             "Motif sites",
