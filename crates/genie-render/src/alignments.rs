@@ -326,43 +326,72 @@ pub fn arcs(viewport: Viewport, junctions: &[Junction]) -> Vec<Primitive> {
     arcs_in(viewport, junctions, JUNCTION_HEIGHT)
 }
 
+/// The look of the arc of a junction in place of the color of its strand and the number of its
+/// reads, for example the color and the difference of a splicing difference. Empty words show
+/// no label.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArcLook {
+    pub paint: Paint,
+    pub words: String,
+}
+
 /// The arcs of junctions in a lane of a height: an arc rises higher for more reads, and has the
 /// color of its strand and the number of its reads.
 pub fn arcs_in(viewport: Viewport, junctions: &[Junction], height: f32) -> Vec<Primitive> {
+    arcs_looked(viewport, junctions, height, &[])
+}
+
+fn strand_paint(strand: Strand) -> Paint {
+    match strand {
+        Strand::Forward => Paint::Hue(Hue::Blue),
+        Strand::Reverse => Paint::Hue(Hue::Vermillion),
+        Strand::Unknown => Paint::Muted,
+    }
+}
+
+/// The arcs of junctions in a lane of a height, as `arcs_in` draws them, with the look of each
+/// junction that has one in `looks`, at the place of the junction.
+pub fn arcs_looked(
+    viewport: Viewport,
+    junctions: &[Junction],
+    height: f32,
+    looks: &[Option<ArcLook>],
+) -> Vec<Primitive> {
     let base = height - ARC_FOOT;
     let visible = viewport.visible();
     let most = most(junctions);
-    let mut shown: Vec<&Junction> = junctions
-        .iter()
-        .filter(|junction| {
-            junction.span.end() >= visible.start() && junction.span.start() <= visible.end()
+    let look = |at: usize| looks.get(at).and_then(Option::as_ref);
+    let mut shown: Vec<usize> = (0..junctions.len())
+        .filter(|&at| {
+            let span = junctions[at].span;
+            span.end() >= visible.start() && span.start() <= visible.end()
         })
         .collect();
-    shown.sort_by_key(|junction| junction.count);
+    shown.sort_by_key(|&at| junctions[at].count);
     let mut primitives: Vec<Primitive> = shown
         .iter()
-        .map(|junction| {
+        .map(|&at| {
+            let junction = &junctions[at];
             let (from, to, rise) = arc_shape(viewport, junction, most, height);
-            let paint = match junction.strand {
-                Strand::Forward => Paint::Hue(Hue::Blue),
-                Strand::Reverse => Paint::Hue(Hue::Vermillion),
-                Strand::Unknown => Paint::Muted,
-            };
             Primitive::Arc {
                 from,
                 to,
                 base,
                 rise,
                 width: arc_width(junction.count),
-                paint,
+                paint: look(at).map_or_else(|| strand_paint(junction.strand), |look| look.paint),
             }
         })
         .collect();
     let mut placed: Vec<(f32, f32, f32)> = Vec::new();
-    for junction in shown.into_iter().rev() {
+    for at in shown.into_iter().rev() {
+        let junction = &junctions[at];
         let (from, to, rise) = arc_shape(viewport, junction, most, height);
-        let words = junction.count.to_string();
-        let half = words.len() as f32 * COUNT_SIZE * 0.3;
+        let words = look(at).map_or_else(|| junction.count.to_string(), |look| look.words.clone());
+        if words.is_empty() {
+            continue;
+        }
+        let half = words.chars().count() as f32 * COUNT_SIZE * 0.3;
         let peak = base - rise;
         let y = if peak - COUNT_GAP - COUNT_SIZE / 2.0 >= 0.0 {
             peak - COUNT_GAP
@@ -840,8 +869,9 @@ mod tests {
     use genie_core::methylation::Site;
 
     use super::{
-        LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, coverage, fit, hit, insertion_hit,
-        methylation, methylation_height, methylation_hit, painted, reads,
+        ArcLook, JUNCTION_HEIGHT, LIMIT, Look, arc_hit, arc_hit_in, arcs, arcs_in, arcs_looked,
+        coverage, fit, hit, insertion_hit, methylation, methylation_height, methylation_hit,
+        painted, reads,
     };
     use crate::features::Mode;
     use crate::scene::{Align, Base, Hue, Paint, Primitive, Shade};
@@ -1225,6 +1255,42 @@ mod tests {
         assert_eq!(
             texts(&primitives),
             [("10".to_owned(), 20.0), ("1".to_owned(), 75.0)]
+        );
+    }
+
+    /// The looks of a splicing difference replace the colors of the strands and the counts of
+    /// reads. Empty words show no label.
+    #[test]
+    fn looks_replace_the_colors_and_the_counts_of_arcs() {
+        let junction = |start, end, count| Junction {
+            span: region(start, end),
+            count,
+            strand: Strand::Forward,
+        };
+        let junctions = [junction(10, 60, 8), junction(70, 90, 4)];
+        let looks = [
+            Some(ArcLook {
+                paint: Paint::Change(-56),
+                words: "\u{2212}56".to_owned(),
+            }),
+            Some(ArcLook {
+                paint: Paint::Muted,
+                words: String::new(),
+            }),
+        ];
+        let primitives = arcs_looked(view(0, 100), &junctions, JUNCTION_HEIGHT, &looks);
+        let paints: Vec<Paint> = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Arc { paint, .. } => Some(*paint),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paints, [Paint::Muted, Paint::Change(-56)]);
+        assert_eq!(texts(&primitives), [("\u{2212}56".to_owned(), 35.0)]);
+        assert_eq!(
+            arcs_looked(view(0, 100), &junctions, JUNCTION_HEIGHT, &[]),
+            arcs(view(0, 100), &junctions)
         );
     }
 

@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use genie_core::Viewport;
 use genie_core::pileup::{Coverage, Junction};
 
+use crate::alignments::ArcLook;
 use crate::scene::{Align, Font, Hue, LABEL_INSET, Paint, Primitive};
 
 /// The height of the band of arcs above the coverage, and of the band below it.
@@ -106,8 +107,22 @@ pub fn scene(
     viewport: Viewport,
     coverage: &Coverage,
     junctions: &[Junction],
-    (hue, least, top): (Hue, u32, u32),
+    look: (Hue, u32, u32),
 ) -> Vec<Primitive> {
+    scene_looked(viewport, coverage, junctions, look, &[])
+}
+
+/// The Sashimi plot of `scene`, with the look of each junction that has one in `looks`, at the
+/// place of the junction: the color of its arc and its words in place of the color of the track
+/// and the count of reads.
+pub fn scene_looked(
+    viewport: Viewport,
+    coverage: &Coverage,
+    junctions: &[Junction],
+    (hue, least, top): (Hue, u32, u32),
+    looks: &[Option<ArcLook>],
+) -> Vec<Primitive> {
+    let look = |at: usize| looks.get(at).and_then(Option::as_ref);
     let top = top.max(1);
     let bars = bars(viewport, coverage);
     let mut primitives: Vec<Primitive> = bars
@@ -140,13 +155,17 @@ pub fn scene(
             base,
             rise,
             width: arc_width(junctions[at].count),
-            paint: Paint::Hue(hue),
+            paint: look(at).map_or(Paint::Hue(hue), |look| look.paint),
         });
     }
     let mut placed: Vec<(f32, f32, f32)> = Vec::new();
     for (at, [from, to, base, rise]) in shown {
-        let words = junctions[at].count.to_string();
-        let half = words.len() as f32 * COUNT_SIZE * 0.3;
+        let count = junctions[at].count;
+        let words = look(at).map_or_else(|| count.to_string(), |look| look.words.clone());
+        if words.is_empty() {
+            continue;
+        }
+        let half = words.chars().count() as f32 * COUNT_SIZE * 0.3;
         let peak = base - rise;
         let offset = COUNT_SIZE / 2.0 + arc_width(junctions[at].count) / 2.0 + COUNT_GAP;
         let y = if rise > 0.0 {
@@ -205,7 +224,8 @@ mod tests {
     use genie_core::pileup::{Coverage, Junction};
     use genie_core::{Region, Strand, Viewport};
 
-    use super::{ARCS, COVERAGE, HEIGHT, deepest, hit, scene};
+    use super::{ARCS, COVERAGE, HEIGHT, deepest, hit, scene, scene_looked};
+    use crate::alignments::ArcLook;
     use crate::scene::{Hue, Paint, Primitive};
 
     fn view(start: u64, end: u64) -> Viewport {
@@ -343,5 +363,29 @@ mod tests {
         assert_eq!(at(45.0, ARCS + COVERAGE - below.3), Some(1));
         assert_eq!(at(75.0, ARCS - 4.0), None);
         assert_eq!(at(25.0, ARCS + COVERAGE / 2.0), None);
+    }
+
+    /// The look of a junction gives the color of its arc and its words, in place of the color of
+    /// the track and the count of reads.
+    #[test]
+    fn looks_color_the_arcs_and_give_their_words() {
+        let junctions = [junction(10, 40, 2), junction(30, 60, 12)];
+        let looks = [
+            Some(ArcLook {
+                paint: Paint::Change(40),
+                words: "+40".to_owned(),
+            }),
+            None,
+        ];
+        let look = (Hue::Green, 1, 3);
+        let primitives = scene_looked(view(0, 100), &covered(), &junctions, look, &looks);
+        let found = arcs(&primitives);
+        assert_eq!(found[0].4, Paint::Change(40));
+        assert_eq!(found[1].4, Paint::Hue(Hue::Green));
+        let words: Vec<String> = texts(&primitives)
+            .into_iter()
+            .map(|(words, _, _)| words)
+            .collect();
+        assert_eq!(words, ["+40", "12"]);
     }
 }
