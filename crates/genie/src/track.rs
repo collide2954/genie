@@ -47,7 +47,7 @@ mod segments;
 mod signal;
 mod variants;
 
-pub use cells::{Cells, barcode};
+pub use cells::{CellLanes, Cells, barcode};
 pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
@@ -532,6 +532,9 @@ pub struct Plot {
     /// Whether a read track shows its isoforms: a row for each chain of splice junctions of its
     /// reads, in place of the reads.
     pub isoforms: bool,
+    /// Whether a track with a cell table shows a lane with the coverage of each cell type, in
+    /// place of the reads.
+    pub cells: bool,
     /// The fewest reads of a splice junction that the Sashimi plot of a read track shows.
     pub junction_reads: u32,
     /// The comparison that a signal track shows instead of its own values.
@@ -554,6 +557,7 @@ impl Default for Plot {
             range: None,
             sashimi: false,
             isoforms: false,
+            cells: false,
             junction_reads: 1,
             math: None,
             viewpoint: None,
@@ -661,6 +665,8 @@ pub struct Pile {
     pub values: Values,
     /// The hue of each read when the track colors reads by a tag, or nothing.
     pub hues: Vec<Option<Hue>>,
+    /// The coverage of each lane of cell types, when the track has a cell table.
+    pub cells: Option<CellLanes>,
 }
 
 /// A value that the view finds once and keeps: genie finds it again only when its key changes.
@@ -994,6 +1000,8 @@ pub struct Gather {
     values: Values,
     /// The cell type of each barcode, from the cell table of the track.
     cells: Option<Arc<CellMap>>,
+    /// The coverage of each lane of cell types, from all reads.
+    lanes: Option<CellLanes>,
 }
 
 impl Gather {
@@ -1014,18 +1022,21 @@ impl Gather {
             sampler: Sampler::new(WINDOW, limit),
             values: Values::default(),
             cells: None,
+            lanes: None,
         }
     }
 
-    /// Gives the reads the cell types of their barcodes, from the cell table of the track.
+    /// Gives the reads the cell types of their barcodes, from the cell table of the track, and
+    /// counts the coverage of each lane of cell types.
     #[must_use]
     pub fn with_cells(mut self, cells: Option<Arc<CellMap>>) -> Self {
-        if let Some(map) = &cells
-            && self.options.group == Grouping::Cell
-        {
-            for name in &map.types {
-                self.values.add(name);
+        if let Some(map) = &cells {
+            if self.options.group == Grouping::Cell {
+                for name in &map.types {
+                    self.values.add(name);
+                }
             }
+            self.lanes = Some(CellLanes::new(map, self.coverage.region()));
         }
         self.cells = cells;
         self
@@ -1035,12 +1046,16 @@ impl Gather {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
-        if self.options.group == Grouping::Cell
-            && let Some(map) = &self.cells
+        if let Some(map) = &self.cells
             && let Some(barcode) = barcode(&alignment)
             && let Some(kind) = map.type_of(barcode)
         {
-            self.values.alias(barcode, kind);
+            if self.options.group == Grouping::Cell {
+                self.values.alias(barcode, kind);
+            }
+            if let Some(lanes) = &mut self.lanes {
+                lanes.depths.add_read(map.lane(kind), &alignment);
+            }
         }
         if let Grouping::Tag(name) = self.options.group
             && let Some(text) = alignment.tags.get(name)
@@ -1097,6 +1112,7 @@ impl Loaded {
             sampler,
             values,
             cells: _,
+            lanes,
         } = gather;
         let methylation = methylation.finish(|position| {
             let index = usize::try_from(position.checked_sub(offset)?).ok()?;
@@ -1150,6 +1166,7 @@ impl Loaded {
                 mates: options.mates,
                 values,
                 hues,
+                cells: lanes,
             })),
         }
     }
@@ -1911,6 +1928,8 @@ pub enum Change {
     Sashimi,
     /// Show the isoforms of the reads of a track, or show the reads again.
     Isoforms,
+    /// Show a lane with the coverage of each cell type of a track, or show the reads again.
+    CellLanes,
     /// The fewest reads of a splice junction that a Sashimi plot shows.
     JunctionReads(u32),
     Modification(usize),
@@ -1967,6 +1986,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         | Change::Mods
         | Change::Sashimi
         | Change::Isoforms
+        | Change::CellLanes
         | Change::JunctionReads(_) => replot(&mut tracks[position].plot, change),
         Change::Modification(index) => {
             let track = &mut tracks[position];
@@ -2053,10 +2073,17 @@ fn replot(plot: &mut Plot, change: Change) {
         Change::Sashimi => {
             plot.sashimi = !plot.sashimi;
             plot.isoforms &= !plot.sashimi;
+            plot.cells &= !plot.sashimi;
         }
         Change::Isoforms => {
             plot.isoforms = !plot.isoforms;
             plot.sashimi &= !plot.isoforms;
+            plot.cells &= !plot.isoforms;
+        }
+        Change::CellLanes => {
+            plot.cells = !plot.cells;
+            plot.sashimi &= !plot.cells;
+            plot.isoforms &= !plot.cells;
         }
         Change::JunctionReads(reads) => plot.junction_reads = reads.max(1),
         _ => {}

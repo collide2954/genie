@@ -1275,6 +1275,9 @@ fn reads_body(
     if track.plot.isoforms {
         return isoform_body(session, track, panel, pile);
     }
+    if let Some(lanes) = pile.cells.as_ref().filter(|_| track.plot.cells) {
+        return cell_body(session, panel, pile, lanes);
+    }
     let mode = track.mode_at(panel, contig);
     let coverage = alignments::coverage(
         viewport,
@@ -1585,6 +1588,23 @@ pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms
         rows: (0..features.len()).collect(),
         features,
         others,
+    }
+}
+
+/// The coverage of a read track and the lanes of its cell types under it.
+fn cell_body(session: &Session, panel: usize, pile: &Pile, lanes: &track::CellLanes) -> Body {
+    let (_, viewport) = session.view(panel);
+    let coverage = alignments::coverage(
+        viewport,
+        &pile.coverage,
+        |at| pile.base(at),
+        alignments::COVERAGE_HEIGHT,
+    );
+    let primitives = genie_render::cells::scene(viewport, &lanes.depths, &lanes.lanes);
+    let height = genie_render::cells::height(lanes.lanes.len());
+    Body::Reads {
+        coverage,
+        reads: Some((primitives, height)),
     }
 }
 
@@ -1914,6 +1934,55 @@ pub(super) fn shapes(session: &Session, track: &Track, repack: bool) -> (Vec<Sha
     (shapes, tallest)
 }
 
+/// The shape of a read track: its Sashimi plot, its isoforms, the lanes of its cell types, or
+/// its reads in a mode, packed again for the view when `repack` is on.
+fn read_shape(
+    session: &Session,
+    track: &Track,
+    (panel, mode, repack): (usize, features::Mode, bool),
+    pile: &Pile,
+) -> Shape {
+    let (_, viewport) = session.view(panel);
+    if track.plot.sashimi {
+        return Shape::plain(sashimi::HEIGHT);
+    }
+    if track.plot.isoforms {
+        let isoforms = isoforms_height(session, panel, pile);
+        return Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + isoforms);
+    }
+    if let Some(cells) = pile.cells.as_ref().filter(|_| track.plot.cells) {
+        let lanes = genie_render::cells::height(cells.lanes.len());
+        return Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + lanes);
+    }
+    if mode == features::Mode::Collapsed {
+        let above = lanes_height(track, pile) + pile.arc_height();
+        return if above > 0.0 {
+            Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + above)
+        } else {
+            Shape::plain(alignments::COVERAGE_HEIGHT)
+        };
+    }
+    let (count, groups) = if repack {
+        let (_, count, groups) = pile.packed(viewport.visible());
+        (count, groups.len())
+    } else {
+        (pile.count, pile.groups.len())
+    };
+    let count = count.max(1);
+    let row_height = alignments::row_height(mode);
+    let fixed = alignments::COVERAGE_HEIGHT
+        + 1.0
+        + lanes_height(track, pile)
+        + pile.arc_height()
+        + groups as f32 * alignments::GROUP_GAP;
+    Shape {
+        height: fixed + count as f32 * row_height,
+        rows: count,
+        fixed,
+        row_height,
+    }
+}
+
 fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape {
     let (contig, viewport) = session.view(panel);
     let slot = track.slot(panel);
@@ -1956,39 +2025,7 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 row_height,
             }
         }
-        Some(Content::Reads(_)) if track.plot.sashimi => Shape::plain(sashimi::HEIGHT),
-        Some(Content::Reads(pile)) if track.plot.isoforms => {
-            Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + isoforms_height(session, panel, pile))
-        }
-        Some(Content::Reads(pile)) if mode == features::Mode::Collapsed => {
-            let above = lanes_height(track, pile) + pile.arc_height();
-            if above > 0.0 {
-                Shape::plain(alignments::COVERAGE_HEIGHT + 1.0 + above)
-            } else {
-                Shape::plain(alignments::COVERAGE_HEIGHT)
-            }
-        }
-        Some(Content::Reads(pile)) => {
-            let (count, groups) = if repack {
-                let (_, count, groups) = pile.packed(viewport.visible());
-                (count, groups.len())
-            } else {
-                (pile.count, pile.groups.len())
-            };
-            let count = count.max(1);
-            let row_height = alignments::row_height(mode);
-            let fixed = alignments::COVERAGE_HEIGHT
-                + 1.0
-                + lanes_height(track, pile)
-                + pile.arc_height()
-                + groups as f32 * alignments::GROUP_GAP;
-            Shape {
-                height: fixed + count as f32 * row_height,
-                rows: count,
-                fixed,
-                row_height,
-            }
-        }
+        Some(Content::Reads(pile)) => read_shape(session, track, (panel, mode, repack), pile),
         Some(Content::Segments(copies)) => {
             let rows = track.rows.len().max(1);
             let row_height = segments::row_height(mode, copies.samples);

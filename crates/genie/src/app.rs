@@ -5831,6 +5831,87 @@ ORIGIN
         ))
     }
 
+    /// A read track with the cell table of `cell_table`: 2 reads of each CD4 T cell, 1 read of
+    /// the B cell and 1 read of a barcode that is not a cell, each from 100 to 140.
+    fn with_cell_reads() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let location: Location = PathBuf::from("/data/meta.csv").into();
+        let opened = Celling::Opened(0, location, Ok(cell_table()), None);
+        let _ = genie.update(Message::Cells(opened));
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let cells = track.cells.as_ref().map(|cells| Arc::clone(&cells.map));
+        let mut gather = crate::track::Gather::new(region, 0, track.options).with_cells(cells);
+        for (index, barcode) in [
+            "AAACCCAAGAAACACT-1",
+            "AAACCCAAGAAACACT-1",
+            "AAACCCAAGAAACCCA-1",
+            "AAACCCAAGAAACCCA-1",
+            "AAACCCAAGAAACCAT-1",
+            "TTTTTTTTTTTTTTTT-1",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut alignment = read(&format!("c{index}"), 100);
+            alignment.tags.all.push((*b"CB", barcode.to_owned()));
+            gather.add(alignment);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    #[test]
+    fn coverage_by_cell_type_shows_a_lane_for_each_cell_type() {
+        use genie_render::cells::LANE_HEIGHT;
+        use genie_render::scene::Primitive;
+        let mut genie = with_cell_reads();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Coverage by cell type").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::TrackChanged(0, Change::CellLanes)));
+        let _ = genie.update(Message::TrackChanged(0, Change::CellLanes));
+        let session = genie.session.as_ref().unwrap();
+        let track = &session.tracks[0];
+        let (shapes, _) = super::view::shapes(session, track, false);
+        let super::view::Body::Reads {
+            reads: Some((primitives, height)),
+            ..
+        } = super::view::body(session, track, 0, shapes[0], false)
+        else {
+            panic!("expected the lanes of the cell types");
+        };
+        let texts: Vec<String> = primitives
+            .iter()
+            .filter_map(|primitive| match primitive {
+                Primitive::Text { content, .. } => Some(content.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            ["CD4 T · 2 cells", "B · 1 cell", "0-2.0"],
+            "4 reads of 2 CD4 T cells are 2 per cell, and the read of no cell does not count"
+        );
+        assert!((height - 2.0 * LANE_HEIGHT).abs() < 0.5);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(120.5, 5.0))));
+        for line in ["CD4 T", "Coverage 4.0", "2 cells · 2.0 per cell"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        assert!(palette_shows(
+            &mut genie,
+            "coverage by cell type",
+            "Coverage by cell type"
+        ));
+        let _ = genie.update(Message::TrackChanged(0, Change::Isoforms));
+        let plot = genie.session.as_ref().unwrap().tracks[0].plot;
+        assert!(plot.isoforms && !plot.cells, "isoforms end the lanes");
+    }
+
     #[test]
     fn read_menus_open_a_cell_table_and_group_the_reads_by_cell_type() {
         let mut genie = opened();

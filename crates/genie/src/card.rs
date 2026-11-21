@@ -76,6 +76,14 @@ pub enum Detail {
         r2: Option<f32>,
         span: Region,
     },
+    /// The coverage of a lane of cell types in a part of the contig: the name of the lane, its
+    /// number of cells (none without a cell table), and the mean depth there.
+    CellLane {
+        name: String,
+        cells: usize,
+        span: Region,
+        depth: f64,
+    },
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -657,6 +665,27 @@ fn ld_content(
     )
 }
 
+/// The card of a lane of cell types: the mean depth, and the depth per cell with the number of
+/// cells.
+fn cell_content(
+    name: &str,
+    cells: usize,
+    span: Region,
+    depth: f64,
+) -> (String, Region, Vec<String>) {
+    let mut lines = vec![format!("Coverage {depth:.1}")];
+    if cells > 0 {
+        let count = u32::try_from(cells).unwrap_or(u32::MAX);
+        lines.push(format!(
+            "{} {} · {} per cell",
+            grouped(cells as u64),
+            plural(count, "cell"),
+            genie_render::cells::scale_text(depth / cells as f64)
+        ));
+    }
+    (name.to_owned(), span, lines)
+}
+
 /// The card of a PCR product: its size, its strand, its mismatches and its primers.
 fn product_content(
     (forward, reverse): (&str, &str),
@@ -731,6 +760,12 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             r2,
             span,
         } => ld_content((first, second), *r2, *span),
+        Detail::CellLane {
+            name,
+            cells,
+            span,
+            depth,
+        } => cell_content(name, *cells, *span, *depth),
         Detail::Match {
             pattern,
             span,

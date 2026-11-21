@@ -292,6 +292,7 @@ fn plot(section: &Section) -> Plot {
         range: section.value("range").and_then(range),
         sashimi: section.value("sashimi") == Some("on"),
         isoforms: section.value("isoforms") == Some("on"),
+        cells: section.value("cell lanes") == Some("on"),
         junction_reads: section
             .value("junction reads")
             .and_then(|text| text.parse().ok())
@@ -447,6 +448,9 @@ fn plot_entries(plot: &Plot) -> Vec<(&'static str, String)> {
     }
     if plot.isoforms {
         entries.push(("isoforms", on()));
+    }
+    if plot.cells {
+        entries.push(("cell lanes", on()));
     }
     if plot.junction_reads > 1 {
         entries.push(("junction reads", plot.junction_reads.to_string()));
@@ -1063,10 +1067,12 @@ mod tests {
         let table = Location::File(base().join("pbmc").join("meta.csv"));
         cells.tracks[0].cells = Some((table, "cell_type".to_owned()));
         cells.tracks[0].options.group = Grouping::Cell;
+        cells.tracks[0].plot.cells = true;
         let text = cells.text(&base());
         assert!(text.contains("cells = pbmc/meta.csv"), "{text}");
         assert!(text.contains("cell types = cell_type"), "{text}");
         assert!(text.contains("group = cell type"), "{text}");
+        assert!(text.contains("cell lanes = on"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(cells));
     }
 

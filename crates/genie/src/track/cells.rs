@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use genie_core::alignment::Alignment;
-use genie_core::cells::CellMap;
+use genie_core::cells::{CellMap, Depths};
 use genie_core::samples::Table;
 
 use crate::location::Location;
@@ -69,6 +69,25 @@ impl Cells {
     pub fn with_column(&self, column: usize) -> Self {
         Self::new(self.location.clone(), Arc::clone(&self.table), Some(column))
             .unwrap_or_else(|| self.clone())
+    }
+}
+
+/// The coverage of the lanes of cell types: the name and the number of cells of each lane, and
+/// the depths of its reads or fragments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellLanes {
+    pub lanes: Vec<(String, usize)>,
+    pub depths: Depths,
+}
+
+impl CellLanes {
+    /// Empty lanes for the cell types of a map in a region.
+    pub fn new(map: &CellMap, region: genie_core::Region) -> Self {
+        let lanes = map.lanes();
+        Self {
+            depths: Depths::new(region, lanes.len()),
+            lanes,
+        }
     }
 }
 

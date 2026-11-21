@@ -1281,6 +1281,7 @@ fn detail_fields(
         | Detail::Difference { .. }
         | Detail::Fraction { .. }
         | Detail::Ld { .. }
+        | Detail::CellLane { .. }
         | Detail::Signal { .. }
         | Detail::Match { .. }
         | Detail::Product { .. }
@@ -1309,6 +1310,17 @@ fn pile_detail(
         let expanded = features::Mode::Expanded;
         let index = features::hit(viewport, &shown.features, &shown.rows, expanded, x, y)?;
         return Some(Detail::Feature(shown.features[index].clone()));
+    }
+    if let Some(lanes) = pile.cells.as_ref().filter(|_| track.plot.cells) {
+        let (lane, span, depth, _) =
+            genie_render::cells::hit(viewport, &lanes.depths, &lanes.lanes, (x, y))?;
+        let (name, cells) = lanes.lanes[lane].clone();
+        return Some(Detail::CellLane {
+            name,
+            cells,
+            span,
+            depth,
+        });
     }
     read_detail(track, panel, contig, pile, viewport, mode, (x, y))
 }

@@ -141,6 +141,8 @@ fn cell_actions(track: &Track) -> Vec<Action> {
         }));
         let group = Message::TrackChanged(id, Change::Group(Grouping::Cell));
         actions.push(Action::new("Group by cell type", name, group));
+        let lanes = Message::TrackChanged(id, Change::CellLanes);
+        actions.push(Action::new("Coverage by cell type", name, lanes));
         actions.push(Action::new(
             "Remove the cell table",
             name,
