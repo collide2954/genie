@@ -8,6 +8,7 @@ pub mod codon;
 pub mod composition;
 pub mod contact;
 pub mod cpg;
+pub mod depth;
 pub mod dotplot;
 pub mod effect;
 pub mod enzyme;
