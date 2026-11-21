@@ -57,6 +57,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Sashimi plots",
             "Isoforms",
             "Isoform table",
+            "Splicing differences",
             "Phase reads",
             "Single-cell",
             "Reference tracks",
