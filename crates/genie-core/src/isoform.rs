@@ -2,41 +2,59 @@
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::slice;
 
 use crate::Region;
 use crate::Strand;
 use crate::alignment::{Alignment, Op};
 
-/// The reads of one exact chain of splice junctions: the junctions in their order, the first and
-/// the last base of each read, and the strand of the splice sites if a read gives it.
+/// A read with splice junctions: its first and its last base, and its group, for example its
+/// haplotype.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplicedRead<G> {
+    pub span: Region,
+    pub group: G,
+}
+
+/// The reads of one exact chain of splice junctions: the junctions in their order, the reads,
+/// and the strand of the splice sites if a read gives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chain {
+pub struct Chain<G = ()> {
     pub junctions: Vec<Region>,
-    pub reads: Vec<Region>,
+    pub reads: Vec<SplicedRead<G>>,
     pub strand: Strand,
 }
 
-impl Chain {
+impl<G> Chain<G> {
     /// The part of the contig from the first base of the reads to the last.
     pub fn span(&self) -> Region {
         hull(&self.reads)
     }
 }
 
-fn hull(reads: &[Region]) -> Region {
+fn hull<G>(reads: &[SplicedRead<G>]) -> Region {
     reads
         .iter()
-        .copied()
+        .map(|read| read.span)
         .reduce(Region::hull)
         .unwrap_or_else(|| Region::between(0, 0))
 }
 
-/// Counts the chains of splice junctions of reads, and keeps the first and the last base of each
-/// read without a junction.
-#[derive(Debug, Default)]
-pub struct Chains {
-    found: HashMap<Vec<Region>, (Vec<Region>, Strand)>,
+/// Counts the chains of splice junctions of reads, each read with its group, and keeps the first
+/// and the last base of each read without a junction.
+#[derive(Debug)]
+pub struct Chains<G = ()> {
+    found: HashMap<Vec<Region>, (Vec<SplicedRead<G>>, Strand)>,
     unspliced: Vec<Region>,
+}
+
+impl<G> Default for Chains<G> {
+    fn default() -> Self {
+        Self {
+            found: HashMap::new(),
+            unspliced: Vec::new(),
+        }
+    }
 }
 
 /// The splice junctions of a read, in their order on the contig.
@@ -55,8 +73,8 @@ pub fn junctions(alignment: &Alignment) -> Vec<Region> {
     found
 }
 
-impl Chains {
-    pub fn add(&mut self, alignment: &Alignment) {
+impl<G> Chains<G> {
+    pub fn add(&mut self, alignment: &Alignment, group: G) {
         let junctions = junctions(alignment);
         if junctions.is_empty() {
             self.unspliced.push(alignment.span());
@@ -67,15 +85,18 @@ impl Chains {
             .found
             .entry(junctions)
             .or_insert((Vec::new(), Strand::Unknown));
-        entry.0.push(alignment.span());
+        entry.0.push(SplicedRead {
+            span: alignment.span(),
+            group,
+        });
         if entry.1 == Strand::Unknown {
             entry.1 = strand;
         }
     }
 
     /// The chains, the one with the most reads first, and the reads without a junction.
-    pub fn finish(self) -> (Vec<Chain>, Vec<Region>) {
-        let mut chains: Vec<Chain> = self
+    pub fn finish(self) -> (Vec<Chain<G>>, Vec<Region>) {
+        let mut chains: Vec<Chain<G>> = self
             .found
             .into_iter()
             .map(|(junctions, (reads, strand))| Chain {
@@ -84,7 +105,7 @@ impl Chains {
                 strand,
             })
             .collect();
-        let places = |chain: &Chain| {
+        let places = |chain: &Chain<G>| {
             chain
                 .junctions
                 .iter()
@@ -104,14 +125,14 @@ impl Chains {
 /// An isoform: the junctions of its most common chain, its reads, the part of the contig from
 /// the first base of its reads to the last, and its strand.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Isoform {
+pub struct Isoform<G = ()> {
     pub junctions: Vec<Region>,
-    pub reads: usize,
+    pub reads: Vec<SplicedRead<G>>,
     pub span: Region,
     pub strand: Strand,
 }
 
-impl Isoform {
+impl<G> Isoform<G> {
     /// The exons of the isoform: the parts of its span between its junctions.
     pub fn exons(&self) -> Vec<Region> {
         let mut found = Vec::new();
@@ -141,7 +162,7 @@ pub fn agree(first: &[Region], second: &[Region], slack: u64) -> bool {
 /// Moves each end of each junction to the nearest end of the same kind of an annotated intron
 /// within `window` bases, because an aligner can put a splice site of a noisy read some bases off.
 /// A junction keeps its ends when the moved start is not before the moved end.
-pub fn snap(chains: &[Chain], introns: &[Region], window: u64) -> Vec<Chain> {
+pub fn snap<G: Clone>(chains: &[Chain<G>], introns: &[Region], window: u64) -> Vec<Chain<G>> {
     let mut starts: Vec<u64> = introns.iter().map(|intron| intron.start()).collect();
     let mut ends: Vec<u64> = introns.iter().map(|intron| intron.end()).collect();
     for places in [&mut starts, &mut ends] {
@@ -209,10 +230,14 @@ fn fits(junctions: &[Region], (at, count): (usize, usize), read: Region, slack: 
 /// with reads that fit no longer isoform is an isoform of its own, and it keeps a read that fits
 /// both when it has as many such reads as the longer isoform has reads. Isoforms with fewer than
 /// `least` reads leave the list, and the second value counts them and their reads.
-pub fn isoforms(chains: &[Chain], slack: u64, least: usize) -> (Vec<Isoform>, (usize, usize)) {
-    let mut ordered: Vec<&Chain> = chains.iter().collect();
+pub fn isoforms<G: Clone>(
+    chains: &[Chain<G>],
+    slack: u64,
+    least: usize,
+) -> (Vec<Isoform<G>>, (usize, usize)) {
+    let mut ordered: Vec<&Chain<G>> = chains.iter().collect();
     ordered.sort_by_key(|chain| Reverse(chain.reads.len()));
-    let mut joined: Vec<Chain> = Vec::new();
+    let mut joined: Vec<Chain<G>> = Vec::new();
     for chain in ordered {
         match joined
             .iter_mut()
@@ -233,7 +258,7 @@ pub fn isoforms(chains: &[Chain], slack: u64, least: usize) -> (Vec<Isoform>, (u
             Reverse(isoform.reads.len()),
         )
     });
-    let mut kept: Vec<Chain> = Vec::new();
+    let mut kept: Vec<Chain<G>> = Vec::new();
     for mut part in joined {
         let count = part.junctions.len();
         let runs: Vec<Option<usize>> = kept
@@ -243,11 +268,11 @@ pub fn isoforms(chains: &[Chain], slack: u64, least: usize) -> (Vec<Isoform>, (u
         let choices: Vec<Vec<usize>> = part
             .reads
             .iter()
-            .map(|&read| {
+            .map(|read| {
                 (0..kept.len())
                     .filter(|&index| {
                         runs[index].is_some_and(|at| {
-                            fits(&kept[index].junctions, (at, count), read, slack)
+                            fits(&kept[index].junctions, (at, count), read.span, slack)
                         })
                     })
                     .collect()
@@ -270,28 +295,114 @@ pub fn isoforms(chains: &[Chain], slack: u64, least: usize) -> (Vec<Isoform>, (u
             kept.push(part);
         }
     }
-    let mut found: Vec<Isoform> = kept
+    let mut found: Vec<Isoform<G>> = kept
         .into_iter()
         .map(|isoform| Isoform {
-            reads: isoform.reads.len(),
             span: hull(&isoform.reads),
+            reads: isoform.reads,
             junctions: isoform.junctions,
             strand: isoform.strand,
         })
         .collect();
-    found.sort_by_key(|isoform| Reverse(isoform.reads));
-    let (kept, few): (Vec<Isoform>, Vec<Isoform>) = found
+    found.sort_by_key(|isoform| Reverse(isoform.reads.len()));
+    let (kept, few): (Vec<Isoform<G>>, Vec<Isoform<G>>) = found
         .into_iter()
-        .partition(|isoform| isoform.reads >= least);
-    let others = (few.len(), few.iter().map(|isoform| isoform.reads).sum());
+        .partition(|isoform| isoform.reads.len() >= least);
+    let others = (
+        few.len(),
+        few.iter().map(|isoform| isoform.reads.len()).sum(),
+    );
     (kept, others)
+}
+
+/// How the junctions of an isoform compare with the introns of known transcripts, as the
+/// structural classes of SQANTI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Kind {
+    /// The junctions agree with all the introns of a transcript: a full splice match.
+    Known,
+    /// The junctions agree with a run of introns next to each other of a transcript: an
+    /// incomplete splice match.
+    Part,
+    /// Each start and each end of the junctions is a start or an end of a known intron, but no
+    /// transcript has this chain: novel in catalog.
+    Combination,
+    /// A start or an end of a junction is not a start or an end of a known intron: novel not in
+    /// catalog.
+    Junction,
+}
+
+impl Kind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Known => "known",
+            Self::Part => "part of a known",
+            Self::Combination => "new combination",
+            Self::Junction => "new junction",
+        }
+    }
+}
+
+/// The kind of an isoform with these junctions for the introns of each known transcript, when
+/// the ends agree within `slack` bases.
+pub fn kind(junctions: &[Region], transcripts: &[Vec<Region>], slack: u64) -> Kind {
+    if transcripts
+        .iter()
+        .any(|introns| agree(introns, junctions, slack))
+    {
+        return Kind::Known;
+    }
+    if transcripts
+        .iter()
+        .any(|introns| run(introns, junctions, slack).is_some())
+    {
+        return Kind::Part;
+    }
+    let introns = || transcripts.iter().flatten();
+    let known = |junction: &Region| {
+        introns().any(|intron| intron.start().abs_diff(junction.start()) <= slack)
+            && introns().any(|intron| intron.end().abs_diff(junction.end()) <= slack)
+    };
+    if junctions.iter().all(known) {
+        Kind::Combination
+    } else {
+        Kind::Junction
+    }
+}
+
+/// The number of junctions that agree within `slack` bases with an intron of a transcript.
+pub fn shared(introns: &[Region], junctions: &[Region], slack: u64) -> usize {
+    junctions
+        .iter()
+        .filter(|junction| {
+            introns
+                .iter()
+                .any(|intron| agree(slice::from_ref(intron), slice::from_ref(junction), slack))
+        })
+        .count()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Chain, Chains, Isoform, agree, isoforms, junctions, snap};
+    use super::{Chain, Chains, Isoform, Kind, SplicedRead, agree, isoforms, junctions, kind};
+    use super::{shared, snap};
     use crate::alignment::{Alignment, Op, Tags};
     use crate::{Region, Strand};
+
+    fn ungrouped(spans: Vec<Region>) -> Vec<SplicedRead<()>> {
+        spans
+            .into_iter()
+            .map(|span| SplicedRead { span, group: () })
+            .collect()
+    }
+
+    /// The junctions, the number of reads and the span of each isoform.
+    fn summary<G>(found: &[Isoform<G>]) -> Vec<(Vec<Region>, usize, Region)> {
+        found
+            .iter()
+            .map(|isoform| (isoform.junctions.clone(), isoform.reads.len(), isoform.span))
+            .collect()
+    }
 
     fn read(start: u64, cigar: &[(Op, u32)]) -> Alignment {
         Alignment {
@@ -316,12 +427,12 @@ mod tests {
         let spliced = [(Op::Match, 50), (Op::Skip, 100), (Op::Match, 50)];
         assert_eq!(junctions(&read(1_000, &spliced)), [region(1_050, 1_150)]);
         let mut chains = Chains::default();
-        chains.add(&read(1_000, &spliced));
-        chains.add(&read(990, &spliced[..]));
+        chains.add(&read(1_000, &spliced), ());
+        chains.add(&read(990, &spliced[..]), ());
         let mut other = read(1_010, &[(Op::Match, 40), (Op::Skip, 100), (Op::Match, 50)]);
         other.tags.ts = Some(Strand::Forward);
-        chains.add(&other);
-        chains.add(&read(1_000, &[(Op::Match, 200)]));
+        chains.add(&other, ());
+        chains.add(&read(1_000, &[(Op::Match, 200)]), ());
         let (found, unspliced) = chains.finish();
         assert_eq!(unspliced, [region(1_000, 1_200)]);
         assert_eq!(
@@ -329,12 +440,12 @@ mod tests {
             [
                 Chain {
                     junctions: vec![region(1_050, 1_150)],
-                    reads: vec![region(1_000, 1_200), region(1_010, 1_200)],
+                    reads: ungrouped(vec![region(1_000, 1_200), region(1_010, 1_200)]),
                     strand: Strand::Forward,
                 },
                 Chain {
                     junctions: vec![region(1_040, 1_140)],
-                    reads: vec![region(990, 1_190)],
+                    reads: ungrouped(vec![region(990, 1_190)]),
                     strand: Strand::Unknown,
                 },
             ]
@@ -345,9 +456,63 @@ mod tests {
     fn chain(junctions: Vec<Region>, reads: Vec<Region>) -> Chain {
         Chain {
             junctions,
-            reads,
+            reads: ungrouped(reads),
             strand: Strand::Unknown,
         }
+    }
+
+    #[test]
+    fn reads_keep_their_groups_in_their_isoforms() {
+        let grouped = |junctions: Vec<Region>, reads: &[(Region, u8)]| Chain {
+            junctions,
+            reads: reads
+                .iter()
+                .map(|&(span, group)| SplicedRead { span, group })
+                .collect(),
+            strand: Strand::Unknown,
+        };
+        let chains = [
+            grouped(
+                vec![region(100, 200), region(300, 400)],
+                &[(region(50, 450), 1), (region(50, 450), 2)],
+            ),
+            grouped(
+                vec![region(102, 200), region(300, 400)],
+                &[(region(60, 450), 2)],
+            ),
+            grouped(vec![region(300, 400)], &[(region(250, 450), 1)]),
+        ];
+        let (found, _) = isoforms(&chains, 5, 1);
+        assert_eq!(found.len(), 1, "the chains join and the part folds in");
+        let mut groups: Vec<u8> = found[0].reads.iter().map(|read| read.group).collect();
+        groups.sort_unstable();
+        assert_eq!(groups, [1, 1, 2, 2]);
+    }
+
+    #[test]
+    fn kinds_compare_junctions_with_the_introns_of_transcripts() {
+        let transcripts = [
+            vec![region(100, 200), region(300, 400), region(500, 600)],
+            vec![region(100, 250)],
+        ];
+        let of = |junctions: &[Region]| kind(junctions, &transcripts, 5);
+        assert_eq!(
+            of(&[region(100, 200), region(302, 400), region(500, 600)]),
+            Kind::Known
+        );
+        assert_eq!(of(&[region(300, 400), region(500, 600)]), Kind::Part);
+        assert_eq!(
+            of(&[region(100, 400), region(500, 600)]),
+            Kind::Combination,
+            "a known start and a known end in a new junction"
+        );
+        assert_eq!(of(&[region(100, 250), region(300, 400)]), Kind::Combination);
+        assert_eq!(of(&[region(100, 350)]), Kind::Junction);
+        assert_eq!(Kind::Combination.label(), "new combination");
+        assert_eq!(
+            shared(&transcripts[0], &[region(100, 200), region(700, 800)], 5),
+            1
+        );
     }
 
     #[test]
@@ -371,20 +536,14 @@ mod tests {
         assert!(!agree(&chains[0].junctions, &chains[1].junctions, 2));
         let (found, others) = isoforms(&chains, 5, 2);
         assert_eq!(
-            found,
+            summary(&found),
             [
-                Isoform {
-                    junctions: vec![region(100, 200), region(300, 400)],
-                    reads: 13,
-                    span: region(50, 500),
-                    strand: Strand::Unknown,
-                },
-                Isoform {
-                    junctions: vec![region(100, 200)],
-                    reads: 5,
-                    span: region(50, 350),
-                    strand: Strand::Unknown,
-                },
+                (
+                    vec![region(100, 200), region(300, 400)],
+                    13,
+                    region(50, 500)
+                ),
+                (vec![region(100, 200)], 5, region(50, 350)),
             ],
             "reads that go into the next intron do not fold into the longer isoform"
         );
@@ -417,20 +576,14 @@ mod tests {
         ];
         let (found, others) = isoforms(&chains, 5, 2);
         assert_eq!(
-            found,
+            summary(&found),
             [
-                Isoform {
-                    junctions: vec![region(100, 200), region(300, 400), region(500, 600)],
-                    reads: 6,
-                    span: region(50, 700),
-                    strand: Strand::Unknown,
-                },
-                Isoform {
-                    junctions: vec![region(100, 400), region(500, 600)],
-                    reads: 2,
-                    span: region(50, 700),
-                    strand: Strand::Unknown,
-                },
+                (
+                    vec![region(100, 200), region(300, 400), region(500, 600)],
+                    6,
+                    region(50, 700)
+                ),
+                (vec![region(100, 400), region(500, 600)], 2, region(50, 700)),
             ],
             "a part fits the isoform with the most reads, and a read that starts in an intron \
              of the isoform does not fit"
@@ -487,7 +640,7 @@ mod tests {
         let (found, _) = isoforms(&chains, 5, 2);
         let reads: Vec<(usize, usize)> = found
             .iter()
-            .map(|isoform| (isoform.junctions.len(), isoform.reads))
+            .map(|isoform| (isoform.junctions.len(), isoform.reads.len()))
             .collect();
         assert_eq!(
             reads,

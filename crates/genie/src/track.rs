@@ -627,12 +627,12 @@ pub struct Pile {
     pub offset: u64,
     pub reads: Vec<Read>,
     pub junctions: Vec<Junction>,
-    /// The chains of splice junctions of all reads, also the reads that down-sampling hides,
-    /// and the first and the last base of each read without a junction.
-    pub chains: (Vec<Chain>, Vec<Region>),
+    /// The chains of splice junctions of all reads with the group of each read, also the reads
+    /// that down-sampling hides, and the first and the last base of each read without a junction.
+    pub chains: (Vec<Chain<GroupKey>>, Vec<Region>),
     /// The isoforms of the chains, which genie finds again only when the introns of the open
     /// transcripts change.
-    pub isoforms: Memo<Vec<Isoform>>,
+    pub isoforms: Memo<Vec<Isoform<GroupKey>>>,
     pub methylation: Methylation<GroupKey>,
     pub rows: Vec<usize>,
     pub count: usize,
@@ -949,7 +949,7 @@ pub struct Gather {
     coverage: Coverage,
     inserts: Inserts,
     junctions: Junctions,
-    chains: Chains,
+    chains: Chains<GroupKey>,
     methylation: Tally<GroupKey>,
     sampler: Sampler,
     values: Values,
@@ -979,7 +979,6 @@ impl Gather {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
-        self.chains.add(&alignment);
         if let Grouping::Tag(name) = self.options.group
             && let Some(text) = alignment.tags.get(name)
             && text.parse::<i64>().is_err()
@@ -987,6 +986,7 @@ impl Gather {
             self.values.add(text);
         }
         let group = alignment_group(&alignment, self.options.group, &self.values);
+        self.chains.add(&alignment, group);
         self.methylation.add(&alignment, group);
         self.sampler.push(alignment);
     }

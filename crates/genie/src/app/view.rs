@@ -32,7 +32,7 @@ use crate::recent::Entry;
 use crate::settings;
 use crate::theme::{Appearance, tokens};
 use crate::tiles;
-use crate::track::{self, Calls, Change, Content, Loaded, Pile, Track, junctions};
+use crate::track::{self, Calls, Change, Content, GroupKey, Loaded, Pile, Track, junctions};
 use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
@@ -1337,7 +1337,7 @@ fn transcripts(session: &Session, panel: usize, contig: usize) -> Vec<&Feature> 
 
 /// The isoforms of all reads of a pile, the most reads first, after the ends of their junctions
 /// snap to the introns of the transcripts. genie finds them again only when the introns change.
-fn all_isoforms(pile: &Pile, transcripts: &[&Feature]) -> Arc<Vec<Isoform>> {
+fn all_isoforms(pile: &Pile, transcripts: &[&Feature]) -> Arc<Vec<Isoform<GroupKey>>> {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut known: Vec<Region> = transcripts
         .iter()
@@ -1362,7 +1362,11 @@ fn isoforms_height(session: &Session, panel: usize, pile: &Pile) -> f32 {
 
 /// The name of an isoform: the transcript with the same introns, with an ID before one without,
 /// or "novel" with the next number.
-fn isoform_name(transcripts: &[&Feature], isoform: &Isoform, novel: &mut usize) -> String {
+fn isoform_name(
+    transcripts: &[&Feature],
+    isoform: &Isoform<GroupKey>,
+    novel: &mut usize,
+) -> String {
     let same = || {
         transcripts.iter().filter(|transcript| {
             genie_core::isoform::agree(&introns(transcript), &isoform.junctions, SLACK)
@@ -1401,25 +1405,25 @@ pub(super) fn isoforms(session: &Session, panel: usize, pile: &Pile) -> Isoforms
         .0
         .iter()
         .flat_map(|chain| &chain.reads)
-        .filter(|read| seen(read))
+        .filter(|read| seen(&read.span))
         .count();
     let least = ISOFORM_READS.max(spliced.div_ceil(ISOFORM_SHARE));
-    let (shown, few): (Vec<&Isoform>, Vec<&Isoform>) = all
+    let (shown, few): (Vec<&Isoform<GroupKey>>, Vec<&Isoform<GroupKey>>) = all
         .iter()
         .filter(|isoform| seen(&isoform.span))
-        .partition(|isoform| isoform.reads >= least);
+        .partition(|isoform| isoform.reads.len() >= least);
     let mut novel = 0;
     let features: Vec<Feature> = shown
         .iter()
         .map(|isoform| {
             let name = isoform_name(&transcripts, isoform, &mut novel);
-            let reads = reads_text(isoform.reads);
+            let reads = reads_text(isoform.reads.len());
             Feature::new(format!("{name} · {reads}"), isoform.span, isoform.strand)
                 .with_blocks(isoform.exons())
         })
         .collect();
     let mut parts = Vec::new();
-    let few_reads: usize = few.iter().map(|isoform| isoform.reads).sum();
+    let few_reads: usize = few.iter().map(|isoform| isoform.reads.len()).sum();
     match few.len() {
         0 => {}
         1 => parts.push(format!("1 more isoform with {}", reads_text(few_reads))),
