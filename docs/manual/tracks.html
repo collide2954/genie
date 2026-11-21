@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, variant review, ld, sashimi plots, isoforms, isoform table, phase reads, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -53,6 +53,7 @@
           <li><a href="#ld">LD</a></li>
           <li><a href="#sashimi-plots">Sashimi plots</a></li>
           <li><a href="#isoforms">Isoforms</a></li>
+          <li><a href="#isoform-table">Isoform table</a></li>
           <li><a href="#phase-reads">Phase reads</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
@@ -199,14 +200,23 @@
 <h2 id="isoforms">Isoforms</h2>
 <p>The isoforms of a read track with long RNA reads, for example PacBio Iso-Seq or Oxford Nanopore cDNA reads, are the groups of reads with the same splice junctions.</p>
 <ul>
-<li>Right-click a read track and click <b>Isoforms</b>. The palette also has <b>Isoforms</b>. The track then shows the coverage, and under it a row for each isoform in view with its exons, its name and its number of reads. The isoform with the most reads is at the top.</li>
+<li>Right-click a read track and click <b>Isoforms</b>. The palette also has <b>Isoforms</b>. The track then shows the coverage, and under it a row for each isoform in view with its exons, its name and its number of reads in view. The isoform with the most reads is at the top.</li>
 <li>Two reads are in the same isoform when they have the same number of splice junctions, and each junction starts and stops in 5 bases or less of the same junction of the other read. The exons of an isoform go from the first base of its reads to the last.</li>
 <li>Many long reads do not start at the first exon. A read can be a part of a longer isoform: its junctions are the same as a run of junctions of that isoform. Then the read counts for that isoform if its ends stay in the exons at the two ends of the run. If it fits more than one isoform, the isoform with the most reads gets it.</li>
 <li>When a feature track with transcripts is in view, genie first moves the ends of the junctions of the reads. An end that is 20 bases or less from the end of an intron of a transcript moves to that end, because aligners can put the splice sites of noisy reads some bases off.</li>
-<li>If a transcript has the same introns as an isoform, in 5 bases or less, the isoform has the name of the transcript. When the track shows gene names in place of transcript IDs, as GENCODE V48 does, the name also has the ID, for example &quot;HNRNPA1 ENST00000546500.5 · 1,334 reads&quot;. A transcript with an ID gives the name before a transcript without one. If no transcript has the same introns, the name is &quot;novel 1&quot;, &quot;novel 2&quot; and so on.</li>
-<li>An isoform gets a row when it has 2 reads or more and 1 % or more of the spliced reads in view. The line under the rows counts the other isoforms and their reads, and the reads without a splice junction.</li>
+<li>If a transcript has the same introns as an isoform, in 5 bases or less, the isoform has the name of the transcript. When the track shows gene names in place of transcript IDs, as GENCODE V48 does, the name also has the ID, for example &quot;HNRNPA1 ENST00000546500.5 · 1,334 reads&quot;. A transcript with an ID gives the name before a transcript without one. If no transcript has the same introns, the name is the gene of the transcript that has the most of the junctions of the isoform, with &quot;novel 1&quot;, &quot;novel 2&quot; and so on for that gene, for example &quot;HNRNPA1 novel 1&quot;. When no transcript has one of its junctions, the name is &quot;novel 1&quot;, &quot;novel 2&quot; and so on. An isoform whose reads give no strand (XS or ts tags) gets the strand of the transcript that gives its name.</li>
+<li>An isoform gets a row when it has 2 reads or more in view and 1 % or more of the spliced reads in view. The line under the rows counts the other isoforms and their reads, and the reads without a splice junction.</li>
 <li>Put the pointer on a row to see the card of the isoform: its name, its place, its length and its number of exons.</li>
 <li>Click <b>Isoforms</b> again to see the reads. The Sashimi plot and the isoforms do not show at the same time. Sessions keep the isoforms of each track.</li>
+</ul>
+<h2 id="isoform-table">Isoform table</h2>
+<ul>
+<li>Right-click a read track and click <b>Isoform table</b>, or use <b>Show the isoform table</b> in the palette. A table under the tracks shows the isoforms of the rows of the <b>Isoforms</b> lane in view, also when the track shows its reads: the name, the kind, the place, the reads in view, their share of the spliced reads in view, the exons and the length of the exons. <b>Show all</b> adds the isoforms with fewer reads, in grey.</li>
+<li>Click a row to go to the isoform. Click the name of a column to sort the rows by it, click it again to sort them the other way, and a third time to show the isoform with the most reads first again.</li>
+<li>The kind compares the junctions of the isoform with the introns of the transcripts of the open feature tracks, as the structural classes of SQANTI: <b>known</b> (the same introns as a transcript), <b>part of a known</b> (the same introns as a run of introns next to each other of a transcript), <b>new combination</b> (each start and each end of the junctions is a start or an end of a known intron) and <b>new junction</b> (a start or an end that no transcript has). Without a transcript in view, the kind is empty.</li>
+<li>When the reads are in groups, for example with <b>Group by phase</b>, a column for each group gives the reads of the isoform in the group and their share of the spliced reads of the group in view. The 6 largest groups get a column, and the other groups share the column &quot;Other&quot;. When the reads have exactly two groups besides the reads without a haplotype or a value of the tag, as haplotype 1 and haplotype 2, the p column gives the two-sided Fisher's exact test of the reads of the isoform against the other spliced reads of the two groups. A small p shows an isoform that one group uses more than the other, for example an isoform of one allele.</li>
+<li><b>Export…</b> saves the rows in the order of the table. The end of the file name gives the format. .bed gives BED12: the ID as the name (the transcript ID, or for example HNRNPA1_novel_1), the reads up to 1,000 as the score, and the exons as the blocks. .gtf gives GTF: a transcript line and exon lines for each isoform, with gene_id, transcript_id, reads and kind. .tsv gives all the columns with a tab between them, the place in four columns and the shares from 0 to 1. A file with another end gets .bed.</li>
+<li>One table shows at a time: the variant table, the DMR table or the isoform table. The table closes when its track closes.</li>
 </ul>
 <h2 id="phase-reads">Phase reads</h2>
 <p>The reads of a sample can have an HP tag with their haplotype, for example from whatshap haplotag. genie can give a haplotype to the reads without an HP tag from the phased SNVs of an open VCF file.</p>
