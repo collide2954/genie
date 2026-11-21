@@ -9,7 +9,7 @@ use crate::location::Location;
 use crate::paths::{self, file_name};
 use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
-use crate::track::{Options, Plot, Track};
+use crate::track::{ALL_SAMPLES, Options, Plot, Track};
 
 use super::{Genie, LAST, Message};
 
@@ -137,6 +137,7 @@ impl Genie {
                     options: Options {
                         lift: 0,
                         baf: None,
+                        ld: None,
                         ..track.options
                     },
                     plot: Plot {
@@ -165,6 +166,13 @@ impl Genie {
                         .baf
                         .and_then(|index| track.source.samples().get(index).cloned()),
                     reviews: (*track.reviews).clone(),
+                    ld: track.options.ld.map(|_| {
+                        track
+                            .ld_group
+                            .clone()
+                            .unwrap_or_else(|| ALL_SAMPLES.to_owned())
+                    }),
+                    lead: track.lead,
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

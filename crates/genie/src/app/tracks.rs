@@ -485,7 +485,7 @@ impl Genie {
                 (x, y),
             )?,
             Content::Variants(calls) => {
-                let place = (contig, data, calls);
+                let place = (panel, contig, data, calls);
                 variants_detail(session, track, place, (viewport, mode), (x, y))?
             }
             Content::Signal(_) if under_density(track, data, y).is_some() => {
@@ -562,6 +562,22 @@ impl Genie {
         }
         self.on_session(|session| track::change(&mut session.tracks, id, change));
         self.fetch_features()
+    }
+
+    /// Makes the dot of the pinned card the lead of the LocusZoom colors of its GWAS track.
+    pub(super) fn make_lead(&mut self) {
+        let Some(card) = &self.pinned else {
+            return;
+        };
+        let Detail::Association { association, .. } = &card.detail else {
+            return;
+        };
+        let (id, position) = (card.track, association.position);
+        self.on_session(|session| {
+            if let Some(track) = session.tracks.iter_mut().find(|track| track.id == id) {
+                track.lead = Some(position);
+            }
+        });
     }
 
     pub(super) fn forget(&mut self, id: u64) {
@@ -656,6 +672,7 @@ impl Genie {
                 let (id, source, options) = (track.id, Arc::clone(&track.source), track.options);
                 let (reference, rules) = (Arc::clone(reference), track.filter.rules.clone());
                 let (detail, lift) = (source.detailed(visible), track.lift.clone());
+                let ld = options.ld.map(|_| track.ld_samples());
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
@@ -676,6 +693,12 @@ impl Genie {
                             scope,
                             bases,
                         );
+                        let result = match &ld {
+                            Some(samples) => {
+                                result.map(|loaded| track::with_ld(loaded, samples.as_deref()))
+                            }
+                            None => result,
+                        };
                         match &result {
                             Ok(loaded) => log::debug!(
                                 "Loaded {} items of {} at {name}:{}-{} in {:.0?}",
@@ -1277,6 +1300,7 @@ fn detail_fields(
         Detail::Methylation { .. }
         | Detail::Difference { .. }
         | Detail::Fraction { .. }
+        | Detail::Ld { .. }
         | Detail::Signal { .. }
         | Detail::Match { .. }
         | Detail::Product { .. }
@@ -1370,13 +1394,14 @@ fn read_detail(
 fn variants_detail(
     session: &Session,
     track: &Track,
-    (contig, data, calls): (usize, &Loaded, &Calls),
+    (panel, contig, data, calls): (usize, usize, &Loaded, &Calls),
     (viewport, mode): (Viewport, Mode),
     (x, y): (f32, f32),
 ) -> Option<Detail> {
     let arcs = variants::breakend_height(&calls.variants);
     let top = arcs + super::view::review_strip(track);
     let room = super::view::fraction_height(data);
+    let ld = super::view::ld_height(track, panel, contig);
     let under = y - top - variants::SITE_HEIGHT;
     if y < arcs {
         let name = &session.reference.assembly.contigs()[contig].name;
@@ -1392,7 +1417,11 @@ fn variants_detail(
     if (0.0..room).contains(&under) {
         return fraction_detail(track, data, viewport, (x, under));
     }
-    let y = if under >= room { y - room } else { y };
+    if (room..room + ld).contains(&under) {
+        let data = super::view::ld_data(track, panel, contig)?;
+        return ld_detail(session, (contig, data), viewport, (x, under - room));
+    }
+    let y = if under >= room + ld { y - room - ld } else { y };
     let rows = &track.rows;
     let below = (y - top).max(0.0);
     let (index, line) = variants::hit(viewport, &calls.variants, mode, rows, x, below)?;
@@ -1402,6 +1431,35 @@ fn variants_detail(
         calls.variants[index].clone(),
         line,
     ))
+}
+
+/// The card of the cell of the LD lane under a point: the two variants and their r².
+fn ld_detail(
+    session: &Session,
+    (contig, data): (usize, &Loaded),
+    viewport: Viewport,
+    at: (f32, f32),
+) -> Option<Detail> {
+    let Content::Variants(calls) = &data.content else {
+        return None;
+    };
+    let starts = super::view::ld_starts(data);
+    let (first, second) = genie_render::ld::hit(viewport, &starts, at)?;
+    let name = &session.reference.assembly.contigs()[contig].name;
+    let label = |variant: &Variant| {
+        if variant.id.is_empty() {
+            format!("{name}:{}", genie_core::grouped(variant.span.start() + 1))
+        } else {
+            variant.id.clone()
+        }
+    };
+    let (one, other) = (&calls.variants[first], &calls.variants[second]);
+    Some(Detail::Ld {
+        first: label(one),
+        second: label(other),
+        r2: data.ld.as_deref().and_then(|ld| ld.get(first, second)),
+        span: Region::between(one.span.start(), other.span.end().max(one.span.end())),
+    })
 }
 
 /// The height of a point in the lane of B-allele frequencies under the density of a variant
@@ -1459,6 +1517,9 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
         baf,
         ..found.options
     };
+    let group = found.ld.clone().filter(|group| group != track::ALL_SAMPLES);
+    track.set_ld(found.ld.is_some(), group);
+    track.lead = found.lead;
     track.plot = found.plot;
     track.filter = found.filter.clone();
     track.set_modification(found.modification.clone());

@@ -8,6 +8,7 @@ use genie_core::association::Association;
 use genie_core::contact::ContactMap;
 use genie_core::interaction::Interaction;
 use genie_core::isoform::{Chain, Chains, Isoform};
+use genie_core::ld::Matrix;
 use genie_core::methylation::{Methylation, Site, Tally};
 use genie_core::pileup::{Coverage, Junction, Junctions, Read, Sampler, motif_strand, sort_rows};
 use genie_core::review::{Key, Review, Reviews};
@@ -15,7 +16,7 @@ use genie_core::samples::{Arrangement, Choice, Table};
 use genie_core::segment::Segment;
 use genie_core::signal::{Summary, reduce as signal_reduce};
 use genie_core::trio::{self, Trio};
-use genie_core::variant::{Fraction, Variant};
+use genie_core::variant::{Call, Fraction, Variant};
 use genie_core::{Assembly, Feature, Named, Names, Region, Strand};
 use genie_formats::features::Kind;
 use genie_formats::fields::{self, Field, Rule};
@@ -420,6 +421,9 @@ pub struct Options {
     pub mates: bool,
     /// The sample of a variant track whose B-allele frequency shows in a lane under the sites.
     pub baf: Option<usize>,
+    /// The samples whose LD shows in a lane under the sites of a variant track: 0 for all
+    /// samples, or the key of a group of the samples.
+    pub ld: Option<u64>,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -463,6 +467,7 @@ impl Default for Options {
             lift: 0,
             mates: false,
             baf: None,
+            ld: None,
         }
     }
 }
@@ -972,6 +977,9 @@ pub struct Loaded {
     /// The B-allele frequencies of the sample of `options.baf` in the region, or nothing when
     /// their data is too large to read.
     pub fractions: Option<Arc<[Fraction]>>,
+    /// The r² of each pair of the variants of the region for `options.ld`, or nothing when the
+    /// region has more than `LD_LIMIT` variants.
+    pub ld: Option<Arc<Matrix>>,
 }
 
 impl Loaded {
@@ -982,6 +990,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Features(Annotation {
                 features,
                 rows,
@@ -1037,6 +1046,7 @@ impl Loaded {
             region,
             options,
             fractions: None,
+            ld: None,
             content: Content::Reads(Box::new(Pile {
                 coverage,
                 reference,
@@ -1062,6 +1072,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Variants(Calls { variants, samples }),
         }
     }
@@ -1071,6 +1082,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Links(links),
         }
     }
@@ -1084,6 +1096,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Junctions(Splices { junctions, fields }),
         }
     }
@@ -1093,6 +1106,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Associations(associations),
         }
     }
@@ -1102,6 +1116,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Contacts(contacts),
         }
     }
@@ -1111,6 +1126,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Segments(Copies { segments, samples }),
         }
     }
@@ -1120,6 +1136,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1135,6 +1152,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1152,6 +1170,7 @@ impl Loaded {
             region,
             options: Options::default(),
             fractions: None,
+            ld: None,
             content: Content::Signal(Signal {
                 summaries,
                 step,
@@ -1263,6 +1282,11 @@ pub struct Track {
     pub lifting: Option<Location>,
     /// The review marks of the variants of the file.
     pub reviews: Arc<Reviews>,
+    /// The group of the samples whose LD shows, or nothing for all samples.
+    pub ld_group: Option<String>,
+    /// The place of the lead variant of the LocusZoom colors of a GWAS track, when somebody
+    /// picked one.
+    pub lead: Option<u64>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -1320,9 +1344,41 @@ impl Track {
             lift: None,
             lifting: None,
             reviews: Arc::default(),
+            ld_group: None,
+            lead: None,
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// Shows the LD of a group of the samples, or of all samples without a group, or stops.
+    pub fn set_ld(&mut self, on: bool, group: Option<String>) {
+        self.options.ld = on.then(|| ld_key(group.as_deref()));
+        self.ld_group = group.filter(|_| on);
+    }
+
+    /// Shows the LD of all samples (0) or of a group of the arrangement (its place from 1), or
+    /// stops.
+    fn change_ld(&mut self, choice: Option<u16>) {
+        let group = choice.filter(|&place| place > 0).and_then(|place| {
+            let groups = &self.arrangement.groups;
+            Some(groups.get(usize::from(place) - 1)?.name.clone())
+        });
+        self.set_ld(choice.is_some(), group);
+        self.forget();
+    }
+
+    /// The samples of the LD of the track, by their place in the file: nothing for all samples,
+    /// and the samples of the group of the LD in the arrangement of the samples.
+    pub fn ld_samples(&self) -> Option<Arc<[usize]>> {
+        let name = self.ld_group.as_deref()?;
+        let arrangement = &self.arrangement;
+        let group = arrangement.groups.iter().find(|group| group.name == name);
+        let members = group.map_or(&[][..], |group| {
+            let end = (group.first + group.size).min(arrangement.order.len());
+            &arrangement.order[group.first.min(end)..end]
+        });
+        Some(Arc::from(members))
     }
 
     /// The key of a variant of a contig in view in the review marks: the name of the contig in
@@ -1387,6 +1443,14 @@ impl Track {
         if *self.trios != *trios {
             self.trios = trios.into();
             self.refilter();
+        }
+        if let Some(group) = &self.ld_group {
+            let groups = &self.arrangement.groups;
+            if table.is_some() && !groups.iter().any(|known| &known.name == group) {
+                self.set_ld(true, None);
+            }
+            // The LD of a group comes from its samples, which can change with the groups.
+            self.drop_data();
         }
     }
 
@@ -1602,6 +1666,7 @@ impl Track {
             options: data.options,
             content,
             fractions: data.fractions.clone(),
+            ld: data.ld.clone(),
         }))
     }
 
@@ -1754,6 +1819,9 @@ pub enum Change {
     Mapq(u8),
     /// Show the B-allele frequency of a sample of a variant track in a lane, or remove the lane.
     Baf(Option<usize>),
+    /// Show the LD of a variant track in a lane, of all samples (0) or of a group of the samples
+    /// (its place from 1), or remove the lane.
+    Ld(Option<u16>),
     /// Color the reads by the values of a tag, or stop when the tag already colors them.
     Color([u8; 2]),
     /// Normalize a Hi-C map with the normalization at this place in the list of the file.
@@ -1878,6 +1946,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Compare(other) => compare(tracks, position, other),
         Change::Operation(operation) => operate(&mut tracks[position], operation),
         Change::Viewpoint(viewpoint) => tracks[position].plot.viewpoint = viewpoint,
+        Change::Ld(choice) => tracks[position].change_ld(choice),
     }
 }
 
@@ -2416,6 +2485,41 @@ pub fn link_fields(source: &Source, link: &Interaction) -> Vec<Field> {
 
 /// The name of the field of a variant that tells what the calls of the trios of a family say.
 pub const INHERITANCE: &str = "Inheritance";
+/// The most variants of a loaded region whose LD genie finds.
+pub const LD_LIMIT: usize = 1_000;
+/// The word of sessions for the LD of all samples.
+pub const ALL_SAMPLES: &str = "all";
+
+/// The key of the samples of the LD of a track in its options: 0 for all samples, and a hash
+/// of the name of a group.
+pub fn ld_key(group: Option<&str>) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    group.map_or(0, |name| {
+        BuildHasherDefault::<DefaultHasher>::default().hash_one(name) | 1
+    })
+}
+
+/// Loaded variants with the r² of each pair of them over some samples, or over all samples
+/// without `samples`. A region with more than `LD_LIMIT` variants gets no r².
+pub fn with_ld(loaded: Loaded, samples: Option<&[usize]>) -> Loaded {
+    let Content::Variants(calls) = &loaded.content else {
+        return loaded;
+    };
+    if calls.variants.len() > LD_LIMIT {
+        return Loaded { ld: None, ..loaded };
+    }
+    let rows: Vec<&[Call]> = calls
+        .variants
+        .iter()
+        .map(|variant| variant.calls.as_slice())
+        .collect();
+    let matrix = Matrix::new(&rows, samples);
+    Loaded {
+        ld: Some(Arc::new(matrix)),
+        ..loaded
+    }
+}
+
 /// The name of the field of the review mark of a variant.
 pub const REVIEW: &str = "Review";
 /// The name of the field of the review note of a variant.

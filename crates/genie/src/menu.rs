@@ -396,13 +396,12 @@ fn kind_height(track: &Track) -> f32 {
         let difference = f32::from(u8::from(compares_groups(track)));
         READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
-        let rows = fraction_rows(track);
-        let lane = if rows == 0 {
-            0.0
-        } else {
-            rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT
-        };
-        VARIANTS_HEIGHT + lane
+        let lanes: f32 = [fraction_rows(track), ld_rows(track)]
+            .iter()
+            .filter(|rows| **rows > 0)
+            .map(|rows| *rows as f32 * LINK_HEIGHT + SEPARATOR_HEIGHT)
+            .sum();
+        VARIANTS_HEIGHT + lanes
     } else if track.source.is_bedmethyl() {
         SIGNAL_HEIGHT + choices + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if matches!(track.source.made(), Some(Made::Gc(_))) {
@@ -705,6 +704,50 @@ fn fraction_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     items
 }
 
+/// The most groups of samples that the menu of a variant track lists for its LD.
+const LD_GROUPS: usize = 12;
+
+/// The number of the items of the LD lane in the menu of a variant track: the item that adds
+/// or removes the lane and, while it shows, all samples and the groups of the samples.
+fn ld_rows(track: &Track) -> usize {
+    if track.source.samples().len() < 2 {
+        return 0;
+    }
+    let groups = track.arrangement.groups.len().min(LD_GROUPS);
+    if track.options.ld.is_some() && groups > 0 {
+        2 + groups
+    } else {
+        1
+    }
+}
+
+/// The item that adds or removes the LD lane of a variant track and, while the lane shows and
+/// the samples are in groups, the samples whose LD it shows: all samples or one group.
+fn ld_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
+    if track.source.samples().len() < 2 {
+        return Vec::new();
+    }
+    let (id, on) = (track.id, track.options.ld.is_some());
+    let change = |choice| Message::TrackChanged(id, Change::Ld(choice));
+    let mut items = vec![item(
+        "LD",
+        change(if on { None } else { Some(0) }),
+        on,
+        true,
+    )];
+    let groups = &track.arrangement.groups;
+    if on && !groups.is_empty() {
+        let all = track.ld_group.is_none();
+        items.push(choice("All samples".to_owned(), change(Some(0)), all));
+        for (place, group) in (1..).zip(groups.iter().take(LD_GROUPS)) {
+            let chosen = track.ld_group.as_deref() == Some(group.name.as_str());
+            items.push(choice(group.name.clone(), change(Some(place)), chosen));
+        }
+    }
+    items.push(separator());
+    items
+}
+
 /// An indented item on one line, cut at the edge of the menu, in the style of a chosen item
 /// when it is chosen.
 fn choice<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Message> {
@@ -769,6 +812,7 @@ fn kind_items<'a>(
         column![column(modes).spacing(1), separator()]
             .spacing(1)
             .extend(fraction_items(track))
+            .extend(ld_items(track))
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     }

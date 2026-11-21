@@ -183,6 +183,29 @@ fn fraction_actions(track: &Track) -> Vec<Action> {
     actions
 }
 
+/// The actions that show the LD of a variant track, of all samples or of each group of the
+/// samples, and that remove the lane.
+fn ld_actions(track: &Track) -> Vec<Action> {
+    if !track.source.has_variants() || track.source.samples().len() < 2 {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    let change = move |choice| Message::TrackChanged(id, Change::Ld(choice));
+    let mut actions = vec![Action::new(
+        "Show the LD of all samples",
+        name,
+        change(Some(0)),
+    )];
+    for (place, group) in (1..).zip(&track.arrangement.groups) {
+        let words = format!("Show the LD of {}", group.name);
+        actions.push(Action::new(words, name, change(Some(place))));
+    }
+    if track.options.ld.is_some() {
+        actions.push(Action::new("Remove the LD lane", name, change(None)));
+    }
+    actions
+}
+
 /// The actions of the bases of the reference: find a sequence, BLAT a sequence and design
 /// primers.
 fn sequence_actions() -> [Action; 3] {
@@ -263,6 +286,7 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
         actions.push(Action::new("Review the variants", name, review));
     }
     actions.extend(fraction_actions(track));
+    actions.extend(ld_actions(track));
     let source = &track.source;
     if !source.has_signal() && !source.has_links() && !source.has_junctions() {
         actions.extend(

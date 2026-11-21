@@ -7,8 +7,8 @@ use genie_core::{Feature, Region, Viewport, grouped, trio};
 use genie_formats::fields::{Rule, Test};
 use genie_render::scene::{Hue, Paint, Primitive};
 use genie_render::{
-    alignments, contacts, features, fractions, links, manhattan, matches, overview, ruler, samples,
-    sashimi, segments, sequence, signal, translation, variants,
+    alignments, contacts, features, fractions, ld, links, manhattan, matches, overview, ruler,
+    samples, sashimi, segments, sequence, signal, translation, variants,
 };
 use iced::time::Instant;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -1018,7 +1018,7 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         }
         Some(Content::Associations(found)) => {
             let faint = session.genome && panel % 2 == 1;
-            manhattan_body(viewport, found, track, (shape.height, faint))
+            manhattan_body((session, panel), found, track, (shape.height, faint))
         }
         Some(Content::Features(annotation)) => {
             let packed;
@@ -1080,17 +1080,108 @@ fn variants_body(
     let mut marks = variants::trio_marks(viewport, found, mode, rows, &trios);
     marks.extend(variants::scene(viewport, found, mode, rows));
     let lane = baf.map_or(0.0, fraction_height);
+    let linked = ld_data(track, panel, contig);
+    let ld = if linked.is_some() { ld::HEIGHT } else { 0.0 };
     primitives.extend(
-        variants::rows_lowered(marks, lane)
+        variants::rows_lowered(marks, lane + ld)
             .into_iter()
             .map(|primitive| primitive.lowered(top)),
     );
+    let under = top + variants::SITE_HEIGHT;
     if let Some(data) = baf {
         let shown = fraction_lane(session, track, panel, data);
-        let under = top + variants::SITE_HEIGHT;
         primitives.extend(shown.into_iter().map(|primitive| primitive.lowered(under)));
     }
+    if let Some(data) = linked {
+        let shown = ld_lane(session, track, panel, data);
+        let below = under + lane;
+        primitives.extend(shown.into_iter().map(|primitive| primitive.lowered(below)));
+    }
     Body::Scene(primitives, height)
+}
+
+/// The loaded data of a variant track with LD, also the variants that its filter hides, for
+/// the LD lane.
+pub(super) fn ld_data(track: &Track, panel: usize, contig: usize) -> Option<&Loaded> {
+    let (loaded, data) = track.slot(panel).loaded.as_ref()?;
+    let variants = matches!(data.content, Content::Variants(_));
+    (*loaded == contig && variants && data.options.ld.is_some()).then_some(data)
+}
+
+/// The height of the LD lane of a variant track, or 0 without the lane.
+pub(super) fn ld_height(track: &Track, panel: usize, contig: usize) -> f32 {
+    if ld_data(track, panel, contig).is_some() {
+        ld::HEIGHT
+    } else {
+        0.0
+    }
+}
+
+/// The starts of the loaded variants of LD data, in the order of its matrix.
+pub(super) fn ld_starts(data: &Loaded) -> Vec<u64> {
+    match &data.content {
+        Content::Variants(calls) => calls
+            .variants
+            .iter()
+            .map(|variant| variant.span.start())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The LD lane of a variant track, with the samples of its LD.
+fn ld_lane(session: &Session, track: &Track, panel: usize, data: &Loaded) -> Vec<Primitive> {
+    let (_, viewport) = session.view(panel);
+    let samples = track.ld_group.as_deref().unwrap_or("all samples");
+    let label = format!("LD r² · {samples}");
+    ld::lane(viewport, &ld_starts(data), data.ld.as_deref(), &label)
+}
+
+/// The LocusZoom colors of the dots of a GWAS track: the r² of each association with the lead
+/// from the first variant track with LD, by the places of its loaded variants, and the place of
+/// the lead. The lead is the dot that a card made the lead, when it is in view, or else the top
+/// dot in view with a variant.
+pub(super) fn locus_zoom(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+    found: &[genie_core::association::Association],
+) -> Option<(Vec<Option<f32>>, usize)> {
+    let (contig, viewport) = session.view(panel);
+    let visible = viewport.visible();
+    let data = session
+        .tracks
+        .iter()
+        .filter(|other| !other.hidden)
+        .find_map(|other| ld_data(other, panel, contig))?;
+    let matrix = data.ld.as_deref()?;
+    let mut places = std::collections::HashMap::new();
+    for (index, start) in ld_starts(data).into_iter().enumerate() {
+        places.entry(start).or_insert(index);
+    }
+    let variant_of = |position: u64| places.get(&position).copied();
+    let shown = |position: u64| visible.contains(position);
+    let picked = track.lead.and_then(|lead| {
+        found
+            .iter()
+            .position(|association| association.position == lead && shown(lead))
+    });
+    let lead = picked.or_else(|| {
+        found
+            .iter()
+            .enumerate()
+            .filter(|(_, association)| {
+                shown(association.position) && variant_of(association.position).is_some()
+            })
+            .max_by(|a, b| a.1.value.total_cmp(&b.1.value))
+            .map(|(index, _)| index)
+    })?;
+    let lead_variant = variant_of(found[lead].position)?;
+    let r2 = found
+        .iter()
+        .map(|association| matrix.get(lead_variant, variant_of(association.position)?))
+        .collect();
+    Some((r2, lead))
 }
 
 /// The height of the strip of review marks over the sites of a variant track: none until the
@@ -1417,13 +1508,18 @@ fn sashimi_top(session: &Session, track: &Track, panel: usize) -> u32 {
 /// The dots of a GWAS track. `faint` gives a lighter color to the dots of every second
 /// chromosome of the whole-genome view.
 fn manhattan_body(
-    viewport: Viewport,
+    (session, panel): (&Session, usize),
     found: &[genie_core::association::Association],
     track: &Track,
     (height, faint): (f32, bool),
 ) -> Body {
+    let (_, viewport) = session.view(panel);
     let height = track.height.unwrap_or(height);
-    let primitives = manhattan::scene(viewport, found, height, (track.hue, faint), None);
+    let zoom = locus_zoom(session, track, panel, found);
+    let zoom = zoom
+        .as_ref()
+        .map(|(r2, lead)| manhattan::Zoom { r2, lead: *lead });
+    let primitives = manhattan::scene(viewport, found, height, (track.hue, faint), zoom);
     Body::Scene(primitives, height)
 }
 
@@ -1705,7 +1801,8 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
         }
         Some(Content::Variants(calls)) => {
             let arcs = variants::breakend_height(&calls.variants) + review_strip(track);
-            let above = arcs + variants::SITE_HEIGHT + lane;
+            let ld = ld_height(track, panel, contig);
+            let above = arcs + variants::SITE_HEIGHT + lane + ld;
             if mode == features::Mode::Collapsed || calls.samples == 0 {
                 return Shape::plain(above);
             }

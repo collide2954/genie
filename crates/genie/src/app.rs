@@ -831,6 +831,8 @@ pub enum Message {
     Primers(Priming),
     /// Reviews the variants of a track.
     Review(Reviewing),
+    /// Makes the dot of the pinned card the lead of the LocusZoom colors of its GWAS track.
+    Lead,
     /// The sequence and the track of a GenBank or EMBL file.
     RecordsOpened(
         Location,
@@ -1192,6 +1194,7 @@ impl Genie {
             Message::Motifs(motifing) => return self.motifing(motifing),
             Message::Primers(priming) => return self.priming(priming),
             Message::Review(reviewing) => return self.reviewing(reviewing),
+            Message::Lead => self.make_lead(),
             Message::RecordsOpened(location, reference, source) => {
                 return self.records_opened(&location, reference, source);
             }
@@ -4521,6 +4524,8 @@ ORIGIN
             motifs: None,
             baf: None,
             reviews: genie_core::review::Reviews::default(),
+            ld: None,
+            lead: None,
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4620,6 +4625,8 @@ ORIGIN
                 motifs: None,
                 baf: None,
                 reviews: genie_core::review::Reviews::default(),
+                ld: None,
+                lead: None,
             }],
             regions: Vec::new(),
             hubs: Vec::new(),
@@ -6341,6 +6348,98 @@ ORIGIN
         let _ = genie.update(Message::Review(Reviewing::Close));
         let _ = genie.update(Message::Command(Command::Mark(Verdict::True)));
         assert_eq!(reviews(&genie), 0);
+    }
+
+    /// LD in the track menu adds the r² of the pairs of variants in view under the sites. A
+    /// group of the samples gives its own LD, and sessions keep the choice.
+    #[test]
+    fn variant_tracks_show_the_ld_of_their_variants() {
+        let height = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            super::view::body_height(session, &session.tracks[0])
+        };
+        let mut genie = with_sample_table();
+        let plain = height(&genie);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("LD").unwrap();
+        let on = Message::TrackChanged(0, Change::Ld(Some(0)));
+        assert!(ui.into_messages().any(|message| message == on));
+        let _ = genie.update(on);
+        let region = Region::between(0, 1_000);
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.slot.wanted = Some((0, region));
+        let variants = vec![
+            site(20, vec![Call::Het, Call::Alternate]),
+            site(30, vec![Call::Het, Call::Alternate]),
+            site(40, vec![Call::Alternate, Call::Het]),
+        ];
+        let loaded = Loaded {
+            options: track.options,
+            ..Loaded::variants(region, variants, 2)
+        };
+        let loaded = crate::track::with_ld(loaded, None);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        assert!((height(&genie) - plain - genie_render::ld::HEIGHT).abs() < 0.01);
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(25.5, 15.0))));
+        for line in ["LD", "rs20 · rs30", "r² 1.00"] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        arrange(&mut genie, Arranging::Group("pop".to_owned()));
+        let _ = genie.update(Message::TrackChanged(0, Change::Ld(Some(2))));
+        let track = &genie.session.as_ref().unwrap().tracks[0];
+        assert_eq!(track.ld_group.as_deref(), Some("EUR"));
+        assert_eq!(track.ld_samples().as_deref(), Some(&[0][..]));
+        let text = genie.saved().unwrap().text(std::path::Path::new("/data"));
+        assert!(text.contains("ld = EUR"), "{text}");
+    }
+
+    /// With LD on in a variant track, GWAS dots take the LocusZoom colors of their r² with the
+    /// top dot, or with a dot that its card makes the lead.
+    #[test]
+    fn gwas_dots_take_the_r2_with_the_lead() {
+        let scratch = crate::scratch::Scratch::new("app-locuszoom");
+        let text = "chromosome\tbase_pair_location\tbeta\tp_value\trsid\n\
+                    chr1\t500\t0.1\t5e-9\trs1\nchr1\t600\t-0.02\t0.2\trs2\n";
+        let mut genie = opened();
+        let source = crate::track::open(scratch.file("height.tsv", text)).unwrap();
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(source))));
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let region = Region::between(0, 1_000);
+        let session = genie.session.as_mut().unwrap();
+        let gwas = &mut session.tracks[0];
+        gwas.slot.wanted = Some((0, region));
+        let options = crate::track::Options::default();
+        let none = |_| Err(String::new());
+        let loaded = crate::track::load(&gwas.source, "chr1", region, options, 1, true, none);
+        gwas.accept_at(0, 0, region, Ok(Arc::new(loaded.unwrap())));
+        let id = session.tracks[1].id;
+        let _ = genie.update(Message::TrackChanged(id, Change::Ld(Some(0))));
+        let calls = &mut genie.session.as_mut().unwrap().tracks[1];
+        calls.slot.wanted = Some((0, region));
+        let variants = vec![
+            site(499, vec![Call::Het, Call::Alternate]),
+            site(599, vec![Call::Het, Call::Alternate]),
+        ];
+        let loaded = Loaded {
+            options: calls.options,
+            ..Loaded::variants(region, variants, 2)
+        };
+        let loaded = crate::track::with_ld(loaded, None);
+        calls.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        let zoom = |genie: &Genie| {
+            let session = genie.session.as_ref().unwrap();
+            let gwas = &session.tracks[0];
+            let Content::Associations(found) = &gwas.data(0).unwrap().content else {
+                panic!("expected associations");
+            };
+            super::view::locus_zoom(session, gwas, 0, found)
+        };
+        let (r2, lead) = zoom(&genie).unwrap();
+        assert_eq!((lead, r2[1]), (0, Some(1.0)));
+        let _ = genie.update(Message::TrackClicked(0, 0, over(599.5, 91.0)));
+        let _ = genie.update(Message::Lead);
+        assert_eq!(zoom(&genie).unwrap().1, 1);
     }
 
     /// A variant track with rs20 (depth 12) and rs700 (depth 40) loaded on chr1.

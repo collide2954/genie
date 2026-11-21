@@ -68,6 +68,14 @@ pub enum Detail {
         sample: String,
         fraction: Fraction,
     },
+    /// The LD of two variants: their names, their r², and the span from the first to the
+    /// second.
+    Ld {
+        first: String,
+        second: String,
+        r2: Option<f32>,
+        span: Region,
+    },
     Variant {
         variant: Variant,
         sample: Option<(String, Call)>,
@@ -608,6 +616,43 @@ fn fraction_content(sample: &str, fraction: &Fraction) -> (String, Region, Vec<S
     ("B-allele frequency".to_owned(), span, lines)
 }
 
+/// The card of a variant: its ID or its change as the title, the call of a sample, and the
+/// lines about the samples. A variant with no ID has its change as the title, so the change is
+/// not a line too.
+fn variant_content(
+    variant: &Variant,
+    sample: Option<&(String, Call)>,
+    groups: &[String],
+) -> (String, Region, Vec<String>) {
+    let mut lines = Vec::new();
+    let title = if variant.id.is_empty() {
+        change(variant)
+    } else {
+        lines.push(change(variant));
+        variant.id.clone()
+    };
+    lines.extend(sample.map(|(name, call)| genotype(name, *call)));
+    lines.extend(groups.iter().cloned());
+    (title, variant.span, lines)
+}
+
+/// The card of a cell of an LD lane: the two variants and their r².
+fn ld_content(
+    (first, second): (&str, &str),
+    r2: Option<f32>,
+    span: Region,
+) -> (String, Region, Vec<String>) {
+    let value = r2.map_or_else(
+        || "No r²: a variant has the same calls in all samples".to_owned(),
+        |r2| format!("r² {r2:.2}"),
+    );
+    (
+        "LD".to_owned(),
+        span,
+        vec![format!("{first} · {second}"), value],
+    )
+}
+
 /// The card of a PCR product: its size, its strand, its mismatches and its primers.
 fn product_content(
     (forward, reverse): (&str, &str),
@@ -629,19 +674,7 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             variant,
             sample,
             groups,
-        } => {
-            // A variant with no ID has its change as the title, so the change is not a line too.
-            let mut lines = Vec::new();
-            let title = if variant.id.is_empty() {
-                change(variant)
-            } else {
-                lines.push(change(variant));
-                variant.id.clone()
-            };
-            lines.extend(sample.as_ref().map(|(name, call)| genotype(name, *call)));
-            lines.extend(groups.iter().cloned());
-            (title, variant.span, lines)
-        }
+        } => variant_content(variant, sample.as_ref(), groups),
         Detail::Feature(feature) => {
             let title = if feature.name().is_empty() {
                 "Feature".to_owned()
@@ -688,6 +721,12 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             difference,
         } => difference_content(name, groups, difference),
         Detail::Fraction { sample, fraction } => fraction_content(sample, fraction),
+        Detail::Ld {
+            first,
+            second,
+            r2,
+            span,
+        } => ld_content((first, second), *r2, *span),
         Detail::Match {
             pattern,
             span,
@@ -954,26 +993,28 @@ fn field_row<'a>(
     .into()
 }
 
-/// The buttons of a pinned card: BLAT for a read, View mate for a read with a mapped mate, and
-/// Primers for a variant.
-fn buttons(detail: &Detail) -> (bool, bool, bool) {
+/// The buttons of a pinned card: BLAT for a read, View mate for a read with a mapped mate,
+/// Primers for a variant, and Lead for a dot of a GWAS track.
+fn buttons(detail: &Detail) -> (bool, bool, bool, bool) {
     match detail {
         Detail::Read { read, mate, .. } => {
             let mapped = read.has(PAIRED) && !read.has(MATE_UNMAPPED) && read.mate.is_some();
-            (true, mapped && mate.is_some(), false)
+            (true, mapped && mate.is_some(), false, false)
         }
-        Detail::Variant { .. } => (false, false, true),
-        _ => (false, false, false),
+        Detail::Variant { .. } => (false, false, true, false),
+        Detail::Association { .. } => (false, false, false, true),
+        _ => (false, false, false, false),
     }
 }
 
 /// The title of a card. A pinned card has a close button, a pinned read card a BLAT button
-/// and, when its mate is mapped, a button that shows the read and its mate side by side, and a
-/// pinned variant card a button that designs primers around the variant.
+/// and, when its mate is mapped, a button that shows the read and its mate side by side, a
+/// pinned variant card a button that designs primers around the variant, and a pinned GWAS card
+/// a button that makes its dot the lead of the LocusZoom colors.
 fn heading<'a>(
     title: String,
     pinned: bool,
-    (read, mate, variant): (bool, bool, bool),
+    (read, mate, variant, lead): (bool, bool, bool, bool),
 ) -> Element<'a, Message> {
     let mut heading = row![
         text(title)
@@ -1006,6 +1047,14 @@ fn heading<'a>(
                 .padding([1, 6])
                 .style(style::ghost)
                 .on_press(Message::Primers(crate::app::Priming::Card)),
+        );
+    }
+    if pinned && lead {
+        heading = heading.push(
+            button(text("Lead").size(11))
+                .padding([1, 6])
+                .style(style::ghost)
+                .on_press(Message::Lead),
         );
     }
     if pinned {

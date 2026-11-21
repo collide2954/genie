@@ -42,6 +42,8 @@ struct Kept {
     lift: Option<Arc<Lift>>,
     lifting: Option<Location>,
     reviews: Arc<Reviews>,
+    ld_group: Option<String>,
+    lead: Option<u64>,
 }
 
 impl PartialEq for Kept {
@@ -53,6 +55,7 @@ impl PartialEq for Kept {
         lifts
             && Arc::ptr_eq(&self.source, &other.source)
             && (Arc::ptr_eq(&self.reviews, &other.reviews) || self.reviews == other.reviews)
+            && (&self.ld_group, self.lead) == (&other.ld_group, other.lead)
             && (
                 self.id,
                 &self.name,
@@ -107,6 +110,8 @@ impl Kept {
             lift: track.lift.clone(),
             lifting: track.lifting.clone(),
             reviews: Arc::clone(&track.reviews),
+            ld_group: track.ld_group.clone(),
+            lead: track.lead,
         }
     }
 
@@ -140,6 +145,8 @@ impl Kept {
         }
         track.lifting = self.lifting;
         track.reviews = self.reviews;
+        track.ld_group = self.ld_group;
+        track.lead = self.lead;
         track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
         track.forget_kept();
         track.forget();
@@ -215,7 +222,8 @@ fn records(message: &Message) -> bool {
         | Message::Folder(..)
         | Message::Made(..)
         | Message::Motifs(..)
-        | Message::Review(..) => true,
+        | Message::Review(..)
+        | Message::Lead => true,
         _ => false,
     }
 }

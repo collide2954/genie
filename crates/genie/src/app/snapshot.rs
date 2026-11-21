@@ -320,8 +320,9 @@ impl Genie {
                 let name = track.contigs[contig].clone()?;
                 let source = Arc::clone(&track.source);
                 let rules = track.filter.rules.clone();
+                let ld = track.options.ld.map(|_| track.ld_samples());
                 Some((
-                    (track.id, track.lift.clone()),
+                    (track.id, track.lift.clone(), ld),
                     source,
                     name,
                     (contig, region),
@@ -339,7 +340,7 @@ impl Genie {
             }
         }
         let length = viewport.length();
-        for ((id, lift), source, name, (contig, region), options, rules) in jobs {
+        for ((id, lift, ld), source, name, (contig, region), options, rules) in jobs {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
             let scope = track::Scope {
                 step,
@@ -348,8 +349,12 @@ impl Genie {
                 length,
             };
             let lift = lift.as_deref();
-            let result = track::load_track(&source, lift, (&name, region), options, scope, bases)
-                .map(Arc::new);
+            let result = track::load_track(&source, lift, (&name, region), options, scope, bases);
+            let result = match &ld {
+                Some(samples) => result.map(|loaded| track::with_ld(loaded, samples.as_deref())),
+                None => result,
+            }
+            .map(Arc::new);
             self.on_session(|session| session.accept((id, 0), contig, region, result));
         }
     }

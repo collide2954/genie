@@ -91,6 +91,10 @@ pub struct SavedTrack {
     pub baf: Option<String>,
     /// The review marks of the variants of a variant track.
     pub reviews: Reviews,
+    /// The LD of a variant track: `all` for all samples, or the name of a group.
+    pub ld: Option<String>,
+    /// The place of the lead variant of the LocusZoom colors of a GWAS track.
+    pub lead: Option<u64>,
 }
 
 impl SavedTrack {
@@ -116,6 +120,8 @@ impl SavedTrack {
             motifs: None,
             baf: None,
             reviews: Reviews::default(),
+            ld: None,
+            lead: None,
         }
     }
 }
@@ -150,53 +156,7 @@ impl Saved {
         };
         let tracks = document
             .sections("track")
-            .filter_map(|section| {
-                Some(SavedTrack {
-                    location: match section.value("made") {
-                        Some(key) => Location::Made(key.to_owned()),
-                        None => read(section.value("file")?, base),
-                    },
-                    name: section.value("name").map(str::to_owned),
-                    over: section
-                        .value("overlay")
-                        .and_then(|text| text.parse::<usize>().ok())
-                        .and_then(|number| number.checked_sub(1)),
-                    compare: comparison(section),
-                    mode: section.value("mode").and_then(|name| find(&MODES, name)),
-                    hue: section
-                        .value("color")
-                        .and_then(|name| find(&HUES, name))
-                        .unwrap_or_default(),
-                    height: section.value("height").and_then(|text| text.parse().ok()),
-                    options: options(section),
-                    plot: plot(section),
-                    filter: Filter {
-                        rules: section
-                            .entries
-                            .iter()
-                            .filter_map(|(key, value)| rule(key, value))
-                            .collect(),
-                        label: section.value("label").map(str::to_owned),
-                    },
-                    modification: section.value("methylation").map(str::to_owned),
-                    normalization: section.value("normalization").map(str::to_owned),
-                    declared: section.value("type").map(|kind| Declared {
-                        kind: kind.to_owned(),
-                        index: section.value("index").map(|text| read(text, base)),
-                    }),
-                    choice: Choice {
-                        group: section.value(GROUP_SAMPLES).map(str::to_owned),
-                        sort: section.value(SORT_SAMPLES).map(str::to_owned),
-                        color: section.value(COLOR_SAMPLES).map(str::to_owned),
-                    },
-                    lift: section.value("lift").map(|text| read(text, base)),
-                    hidden: section.value("hidden") == Some("on"),
-                    folder: section.value("folder").map(str::to_owned),
-                    motifs: motif_picks(section),
-                    baf: section.value("baf").map(str::to_owned),
-                    reviews: Reviews::from_lines(section.values(REVIEW)),
-                })
-            })
+            .filter_map(|section| saved_track(section, base))
             .collect();
         let hubs = document
             .sections("hub")
@@ -380,6 +340,60 @@ fn comparison(section: &Section) -> Option<(usize, Operation)> {
     Some((other, operation))
 }
 
+/// The track of a section of a session, or nothing without a file.
+fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
+    Some(SavedTrack {
+        location: match section.value("made") {
+            Some(key) => Location::Made(key.to_owned()),
+            None => read(section.value("file")?, base),
+        },
+        name: section.value("name").map(str::to_owned),
+        over: section
+            .value("overlay")
+            .and_then(|text| text.parse::<usize>().ok())
+            .and_then(|number| number.checked_sub(1)),
+        compare: comparison(section),
+        mode: section.value("mode").and_then(|name| find(&MODES, name)),
+        hue: section
+            .value("color")
+            .and_then(|name| find(&HUES, name))
+            .unwrap_or_default(),
+        height: section.value("height").and_then(|text| text.parse().ok()),
+        options: options(section),
+        plot: plot(section),
+        filter: Filter {
+            rules: section
+                .entries
+                .iter()
+                .filter_map(|(key, value)| rule(key, value))
+                .collect(),
+            label: section.value("label").map(str::to_owned),
+        },
+        modification: section.value("methylation").map(str::to_owned),
+        normalization: section.value("normalization").map(str::to_owned),
+        declared: section.value("type").map(|kind| Declared {
+            kind: kind.to_owned(),
+            index: section.value("index").map(|text| read(text, base)),
+        }),
+        choice: Choice {
+            group: section.value(GROUP_SAMPLES).map(str::to_owned),
+            sort: section.value(SORT_SAMPLES).map(str::to_owned),
+            color: section.value(COLOR_SAMPLES).map(str::to_owned),
+        },
+        lift: section.value("lift").map(|text| read(text, base)),
+        hidden: section.value("hidden") == Some("on"),
+        folder: section.value("folder").map(str::to_owned),
+        motifs: motif_picks(section),
+        baf: section.value("baf").map(str::to_owned),
+        reviews: Reviews::from_lines(section.values(REVIEW)),
+        ld: section.value("ld").map(str::to_owned),
+        lead: section
+            .value("lead")
+            .and_then(|text| text.parse::<u64>().ok())
+            .and_then(|place| place.checked_sub(1)),
+    })
+}
+
 /// The entries of how a track shows its data that differ from the defaults, except the colors
 /// of the file.
 fn plot_entries(plot: &Plot) -> Vec<(&'static str, String)> {
@@ -455,6 +469,12 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if let Some(name) = &track.baf {
         entries.push(("baf", name.clone()));
+    }
+    if let Some(group) = &track.ld {
+        entries.push(("ld", group.clone()));
+    }
+    if let Some(lead) = track.lead {
+        entries.push(("lead", (lead + 1).to_string()));
     }
     if let Some(name) = &track.normalization {
         entries.push(("normalization", name.clone()));
@@ -602,6 +622,7 @@ fn options(section: &Section) -> Options {
         lift: 0,
         mates: on("mates"),
         baf: None,
+        ld: None,
     }
 }
 
@@ -760,6 +781,7 @@ mod tests {
             lift: 0,
             mates: true,
             baf: None,
+            ld: None,
         }
     }
 
