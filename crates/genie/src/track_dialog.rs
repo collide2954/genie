@@ -233,6 +233,9 @@ pub fn view<'a>(
     if track.source.has_contacts() && !track.options.contacts.ratio {
         body = body.push(line("Range", menu::contact_range(track, range)));
     }
+    if track.source.has_ratio() {
+        body = body.push(line("Range", menu::ratio_range(track, range)));
+    }
     if track.source.has_colors() {
         let colors = menu::item(
             "Use file colors",

@@ -6366,6 +6366,51 @@ ORIGIN
         assert_eq!(ratio.options.depths, None);
     }
 
+    /// A depth ratio track first, with the read tracks tumor.bam and normal.bam after it.
+    fn with_ratio() -> Genie {
+        let mut genie = opened();
+        let assembly = &genie.session.as_ref().unwrap().reference.assembly;
+        let key = "depth ratio 0".to_owned();
+        let ratio = crate::track::depth_ratio(assembly, "tumor.bam / normal.bam", key);
+        let _ = genie.update(Message::TrackOpened(Ok(Arc::new(ratio))));
+        for name in ["tumor.bam", "normal.bam"] {
+            let _ = genie.update(Message::TrackOpened(Ok(read_source(name))));
+        }
+        genie.session.as_mut().unwrap().tracks[0].options.depths = Some((1, 2));
+        genie
+    }
+
+    /// The menu of a depth ratio track takes a typed range: the log2 ratios from minus the
+    /// number to the number. The default range is ±2.
+    #[test]
+    fn ratio_menus_take_a_typed_range() {
+        let mut genie = with_ratio();
+        let at = Point::new(100.0, 40.0);
+        let range = |genie: &Genie| genie.session.as_ref().unwrap().tracks[0].plot.range;
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert_eq!(genie.range_draft, Some(("-2".to_owned(), "2".to_owned())));
+        assert!(shows(&genie, "Range ±"));
+        assert!(shows(&genie, "Default range (±2)"));
+        let _ = genie.update(Message::Range(0, Ranging::Max("3".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        let fixed = Scale {
+            min: -3.0,
+            max: 3.0,
+        };
+        assert_eq!(range(&genie), Some(fixed));
+        let _ = genie.update(Message::TrackMenu(0, at));
+        assert_eq!(genie.range_draft, Some(("-3".to_owned(), "3".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Max("-1".to_owned())));
+        let _ = genie.update(Message::Range(0, Ranging::Fix));
+        assert!(shows(&genie, "Type a number larger than 0."));
+        assert_eq!(range(&genie), Some(fixed));
+        let _ = genie.update(Message::TrackMenu(0, at));
+        let _ = genie.update(Message::Range(0, Ranging::Auto));
+        assert_eq!(range(&genie), None);
+        let _ = genie.update(Message::TrackSettings(0));
+        assert!(shows(&genie, "Range ±"));
+    }
+
     fn read_source(name: &str) -> Arc<Source> {
         Arc::new(Source {
             location: PathBuf::from(format!("/data/{name}")).into(),
@@ -6695,6 +6740,7 @@ ORIGIN
             with_family(),
             with_fractions(),
             with_phased_reads(),
+            with_ratio(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));

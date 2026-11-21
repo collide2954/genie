@@ -46,6 +46,7 @@ use super::{
 
 pub(super) const TRACK_NAME: &str = "track-name";
 const BAD_RANGE: &str = "Type two numbers. The maximum must be larger than the minimum.";
+const BAD_RATIO_RANGE: &str = "Type a number larger than 0.";
 pub(super) const MIN_HEIGHT: f32 = 10.0;
 const GRAB: f32 = 8.0;
 pub(super) const NO_REFERENCE: &str = "Open a reference sequence before you add tracks.";
@@ -373,6 +374,10 @@ impl Genie {
             let (min, max) = segment_range(track);
             return Some(signal::Scale { min, max });
         }
+        if track.source.has_ratio() {
+            let max = genie_render::ratio::RANGE;
+            return Some(signal::Scale { min: -max, max });
+        }
         match &track.data(session.contig)?.content {
             Content::Signal(data) => {
                 let columns = shown_columns(session, track, 0, &data.summaries);
@@ -411,12 +416,21 @@ impl Genie {
                         .filter(|value| value.is_finite())
                 };
                 let draft = self.range_draft.as_ref();
-                let parsed = draft.map(|(min, max)| (number(min), number(max)));
+                let mut parsed = draft.map(|(min, max)| (number(min), number(max)));
+                // The range of a depth ratio goes from minus its number to its number.
+                let ratio = self.session.as_ref().is_some_and(|session| {
+                    let mut tracks = session.tracks.iter();
+                    tracks.any(|track| track.id == id && track.source.has_ratio())
+                });
+                if ratio {
+                    parsed = parsed.map(|(_, max)| (max.map(|max| -max), max));
+                }
                 let Some((Some(min), Some(max))) = parsed.filter(|pair| match pair {
                     (Some(min), Some(max)) => max > min,
                     _ => false,
                 }) else {
-                    self.warn(BAD_RANGE.to_owned());
+                    let words = if ratio { BAD_RATIO_RANGE } else { BAD_RANGE };
+                    self.warn(words.to_owned());
                     return;
                 };
                 Some(signal::Scale { min, max })

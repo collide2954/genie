@@ -316,6 +316,35 @@ pub fn modification_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         .collect()
 }
 
+/// The range of a depth ratio track, typed in a box: the log2 ratios from minus the number to
+/// the number. The default range goes back to ±2.
+pub fn ratio_range<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
+    let id = track.id;
+    let max = range.map_or("", |(_, max)| max.as_str());
+    let field = text_input("log2", max)
+        .size(12)
+        .padding([2, 4])
+        .style(style::locus)
+        .on_input(move |text| Message::Range(id, Ranging::Max(text)))
+        .on_submit(Message::Range(id, Ranging::Fix));
+    let typed = container(
+        row![text("Range ±").size(12).style(style::muted), field]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .padding([3, 8]);
+    column![
+        typed,
+        item(
+            "Default range (±2)",
+            Message::Range(id, Ranging::Auto),
+            track.plot.range.is_none(),
+            true
+        ),
+    ]
+    .spacing(1)
+}
+
 /// The count that gets the full color of a Hi-C map, typed in a box, and the automatic range.
 pub fn contact_range<'a>(track: &Track, range: Option<&(String, String)>) -> Column<'a, Message> {
     let id = track.id;
@@ -497,6 +526,9 @@ fn kind_height(track: &Track) -> f32 {
         // The range and the default range, with their separator.
         let range = RANGE_ROW + LINK_HEIGHT + SEPARATOR_HEIGHT;
         PLAIN_HEIGHT + MODES_HEIGHT + range + COLORS_HEIGHT
+    } else if track.source.has_ratio() {
+        // The typed range and the default range, with their separator.
+        PLAIN_HEIGHT + RANGE_ROW + LINK_HEIGHT + SEPARATOR_HEIGHT
     } else if track.source.has_colors() {
         COLORED_HEIGHT
     } else {
@@ -925,6 +957,8 @@ fn kind_items<'a>(
             .spacing(1)
             .extend(fraction_items(track))
             .extend(ld_items(track))
+    } else if track.source.has_ratio() {
+        column![ratio_range(track, range), separator()].spacing(1)
     } else {
         column![column(modes).spacing(1), separator()].spacing(1)
     }
@@ -959,6 +993,7 @@ pub fn view<'a>(
     } else if !track.source.has_variants()
         && !track.source.has_contacts()
         && !track.source.has_junctions()
+        && !track.source.has_ratio()
     {
         if track.source.has_colors() {
             content = content.push(item(
