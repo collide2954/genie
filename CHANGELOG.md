@@ -69,6 +69,7 @@
 
 - A 2bit file on the web opens with the contig sizes of the `.chrom.sizes` file beside it, as at UCSC. Before, genie read the length of each contig from the 2bit file: about 10 MB in 100 requests for hg38.
 - A feature track shows at most 100 rows: an expanded track with more rows shows squished, and a line counts the other rows, as "242 more rows · zoom in or filter". Before, a track with many sites on one place, such as the JASPAR track of UCSC, could be thousands of points tall.
+- A filter rule in a session file can name an INFO key of a VCF track, for example `least = EUR_AF: 0.05`. Before, genie looked only for the label of the field, so such a rule hid all variants.
 - A menu that is taller than the window scrolls. Before, the items at its bottom, such as **Remove**, could be out of the window.
 - **View mate** of a spliced read, as in RNA-seq, shows the start of the read and the start of its mate. Before, genie used the length of the read with its introns, so the panels could show an intron and miss the mate.
 - A tall read track stops at the top of the variant table or the DMR table. Before, its reads could show over the table.
