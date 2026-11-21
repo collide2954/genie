@@ -497,6 +497,7 @@ fn masked(job: &Job, region: Region) -> Vec<u64> {
             rules,
             length,
             phased: &[],
+            cells: None,
         };
         let loaded = track::load_track(
             source,

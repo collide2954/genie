@@ -10,8 +10,8 @@ use iced::widget::{
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
-    Dmring, Filtering, Isoforming, Lifting, Making, Message, Motifing, Plotting, Ranging, Renaming,
-    Reviewing, Sampling, Tabling, active, arranging_words,
+    Celling, Dmring, Filtering, Isoforming, Lifting, Making, Message, Motifing, Plotting, Ranging,
+    Renaming, Reviewing, Sampling, Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
@@ -173,7 +173,7 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
             0.0
         }
         + if track.source.has_reads() {
-            LINK_HEIGHT
+            2.0 * LINK_HEIGHT
         } else {
             0.0
         }
@@ -688,6 +688,14 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
             item(label, Change::Group(grouping), options.group == grouping)
         }),
     );
+    if track.cells.is_some() {
+        let chosen = options.group == Grouping::Cell;
+        items.push(item(
+            "Group by cell type",
+            Change::Group(Grouping::Cell),
+            chosen,
+        ));
+    }
     if let Grouping::Tag(name) = options.group {
         let change = Change::Group(Grouping::Tag(name));
         let words = format!("Group by {}", tag_name(name));
@@ -815,10 +823,12 @@ fn choice<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Mess
         .into()
 }
 
-/// The number of menu items for a tag that groups or colors the reads of a track.
+/// The number of menu items for a tag that groups or colors the reads of a track, and for the
+/// groups by cell type.
 fn tag_items(track: &Track) -> usize {
     usize::from(matches!(track.options.group, Grouping::Tag(_)))
         + usize::from(track.options.color.is_some())
+        + usize::from(track.cells.is_some())
 }
 
 /// The items of the kind of a track: its modes, the style of a signal, the normalizations of a
@@ -985,7 +995,10 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
     }
     if track.source.has_reads() {
         let open = Message::Isoforms(Isoforming::Open(id));
-        items = items.push(item("Isoform table", open, false, true));
+        let pick = Message::Cells(Celling::Pick(id));
+        items = items
+            .push(item("Isoform table", open, false, true))
+            .push(item("Cell types…", pick, false, true));
     }
     if has_enzymes(track) {
         let open = Message::Made(Making::Enzymes(Some(id)));

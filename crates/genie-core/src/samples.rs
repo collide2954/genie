@@ -116,6 +116,28 @@ impl Table {
     pub fn matches(&self, samples: &[String]) -> usize {
         samples.iter().filter(|sample| self.has(sample)).count()
     }
+
+    /// The name of each row with a value in a column, and the value, in no order.
+    pub fn entries(&self, column: usize) -> impl Iterator<Item = (&str, &str)> {
+        self.rows.iter().filter_map(move |(name, &row)| {
+            let value = self.values[row].get(column)?;
+            (!value.is_empty()).then_some((name.as_str(), value.as_str()))
+        })
+    }
+
+    /// The number of other values of a column, up to `most`.
+    pub fn distinct(&self, column: usize, most: usize) -> usize {
+        let mut found: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for row in &self.values {
+            if let Some(value) = row.get(column).filter(|value| !value.is_empty()) {
+                found.insert(value);
+                if found.len() >= most {
+                    break;
+                }
+            }
+        }
+        found.len()
+    }
 }
 
 fn is_missing(value: &str) -> bool {
@@ -390,6 +412,17 @@ mod tests {
                 row("NA4", &["n/a", ".", ""]),
             ],
         )
+    }
+
+    #[test]
+    fn tables_give_the_values_of_a_column_and_count_them() {
+        let table = table();
+        let mut pops: Vec<(&str, &str)> = table.entries(0).collect();
+        pops.sort_unstable();
+        assert_eq!(pops, [("NA1", "EUR"), ("NA2", "AFR"), ("NA3", "EAS")]);
+        assert_eq!(table.distinct(0, 10), 3);
+        assert_eq!(table.distinct(0, 2), 2, "counting stops at the most");
+        assert_eq!(table.distinct(1, 10), 1, "missing values do not count");
     }
 
     #[test]

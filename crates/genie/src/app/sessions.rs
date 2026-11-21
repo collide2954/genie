@@ -108,6 +108,75 @@ impl Genie {
         }
     }
 
+    /// What a session keeps of an open track, with the places of the tracks that it links to.
+    fn saved_track(&self, tracks: &[Track], track: &Track) -> SavedTrack {
+        SavedTrack {
+            location: track.source.location.clone(),
+            name: (track.name != self.track_name(&track.source)).then(|| track.name.clone()),
+            over: track
+                .over
+                .and_then(|base| tracks.iter().position(|other| other.id == base)),
+            compare: track.plot.math.and_then(|math| {
+                let place = |other: &Track| other.id == math.other;
+                Some((tracks.iter().position(place)?, math.operation))
+            }),
+            mode: track.mode,
+            hue: track.hue,
+            height: track.height,
+            options: Options {
+                lift: 0,
+                baf: None,
+                ld: None,
+                phase: None,
+                cells: 0,
+                ..track.options
+            },
+            plot: Plot {
+                math: None,
+                ..track.plot
+            },
+            filter: track.filter.clone(),
+            modification: track.modification.clone(),
+            normalization: track.normalization(),
+            declared: track.declared.clone(),
+            choice: track.choice.clone(),
+            lift: track
+                .lift
+                .as_ref()
+                .map(|lift| lift.location.clone())
+                .or_else(|| track.lifting.clone()),
+            hidden: track.hidden,
+            folder: track.folder.clone(),
+            motifs: track.source.motifs().map(|file| {
+                let ids = file.picks.iter();
+                let ids = ids.filter_map(|&at| Some(file.set.motifs.get(at)?.id.clone()));
+                (ids.collect(), file.p)
+            }),
+            baf: track
+                .options
+                .baf
+                .and_then(|index| track.source.samples().get(index).cloned()),
+            reviews: (*track.reviews).clone(),
+            ld: track.options.ld.map(|_| {
+                track
+                    .ld_group
+                    .clone()
+                    .unwrap_or_else(|| ALL_SAMPLES.to_owned())
+            }),
+            lead: track.lead,
+            phase: track.options.phase.and_then(|phase| {
+                let place = |other: &Track| other.id == phase.track;
+                let other = tracks.iter().position(place)?;
+                let sample = tracks[other].source.samples().get(phase.sample)?;
+                Some((other, sample.clone()))
+            }),
+            cells: track
+                .cells
+                .as_ref()
+                .map(|cells| (cells.location.clone(), cells.column_name().to_owned())),
+        }
+    }
+
     pub(super) fn saved(&self) -> Option<Saved> {
         let session = self.session.as_ref()?;
         let contigs = session.reference.assembly.contigs();
@@ -120,67 +189,7 @@ impl Genie {
             tracks: session
                 .tracks
                 .iter()
-                .map(|track| SavedTrack {
-                    location: track.source.location.clone(),
-                    name: (track.name != self.track_name(&track.source))
-                        .then(|| track.name.clone()),
-                    over: track
-                        .over
-                        .and_then(|base| session.tracks.iter().position(|other| other.id == base)),
-                    compare: track.plot.math.and_then(|math| {
-                        let place = |other: &Track| other.id == math.other;
-                        Some((session.tracks.iter().position(place)?, math.operation))
-                    }),
-                    mode: track.mode,
-                    hue: track.hue,
-                    height: track.height,
-                    options: Options {
-                        lift: 0,
-                        baf: None,
-                        ld: None,
-                        phase: None,
-                        ..track.options
-                    },
-                    plot: Plot {
-                        math: None,
-                        ..track.plot
-                    },
-                    filter: track.filter.clone(),
-                    modification: track.modification.clone(),
-                    normalization: track.normalization(),
-                    declared: track.declared.clone(),
-                    choice: track.choice.clone(),
-                    lift: track
-                        .lift
-                        .as_ref()
-                        .map(|lift| lift.location.clone())
-                        .or_else(|| track.lifting.clone()),
-                    hidden: track.hidden,
-                    folder: track.folder.clone(),
-                    motifs: track.source.motifs().map(|file| {
-                        let ids = file.picks.iter();
-                        let ids = ids.filter_map(|&at| Some(file.set.motifs.get(at)?.id.clone()));
-                        (ids.collect(), file.p)
-                    }),
-                    baf: track
-                        .options
-                        .baf
-                        .and_then(|index| track.source.samples().get(index).cloned()),
-                    reviews: (*track.reviews).clone(),
-                    ld: track.options.ld.map(|_| {
-                        track
-                            .ld_group
-                            .clone()
-                            .unwrap_or_else(|| ALL_SAMPLES.to_owned())
-                    }),
-                    lead: track.lead,
-                    phase: track.options.phase.and_then(|phase| {
-                        let place = |other: &Track| other.id == phase.track;
-                        let other = session.tracks.iter().position(place)?;
-                        let sample = session.tracks[other].source.samples().get(phase.sample)?;
-                        Some((other, sample.clone()))
-                    }),
-                })
+                .map(|track| self.saved_track(&session.tracks, track))
                 .chain(session.preparing.iter().map(|item| {
                     item.saved
                         .clone()

@@ -26,7 +26,7 @@ use crate::tiles::TILING;
 use crate::track;
 
 use super::sessions::local;
-use super::{Genie, Message, Motifing, Sampling};
+use super::{Celling, Genie, Message, Motifing, Sampling};
 
 pub(super) const USAGE: &str = "Usage: genie snapshot SESSION REGIONS FOLDER [--width POINTS] [--theme light|dark] [--format png|svg]";
 const WIDTH: f32 = 1280.0;
@@ -215,6 +215,15 @@ impl Genie {
             _ => reference::open(saved.reference.clone(), cache.as_deref(), &mut |_| {})?,
         };
         let samples = saved.samples.clone();
+        let cell_tables: Vec<(Location, Location, String)> = saved
+            .tracks
+            .iter()
+            .zip(&tracks)
+            .filter_map(|(found, track)| {
+                let (table, column) = found.cells.clone()?;
+                Some((track.clone(), table, column))
+            })
+            .collect();
         self.pending.clone_from(&tracks);
         self.restoring = Some(saved);
         let _ = self.update(Message::Opened(Ok(Arc::new(reference))));
@@ -247,6 +256,24 @@ impl Genie {
             }
             let opened = Sampling::Opened(location, result);
             let _ = self.update(Message::Samples(opened));
+        }
+        for (track, table, column) in cell_tables {
+            let id = self.session.as_ref().and_then(|session| {
+                let found = session.tracks.iter();
+                found
+                    .map(|known| (known.id, &known.source.location))
+                    .find(|(_, location)| **location == track)
+                    .map(|(id, _)| id)
+            });
+            let Some(id) = id else {
+                continue;
+            };
+            let result = super::cells::read(&table).map(Arc::new);
+            if let Err(error) = &result {
+                report(error.clone());
+            }
+            let opened = Celling::Opened(id, table, result, Some(column));
+            let _ = self.update(Message::Cells(opened));
         }
         Ok(())
     }
@@ -322,8 +349,9 @@ impl Genie {
                 let rules = track.filter.rules.clone();
                 let ld = track.options.ld.map(|_| track.ld_samples());
                 let phasing = track::Phasing::of(&session.tracks, track, contig);
+                let cells = track.cells.as_ref().map(|cells| Arc::clone(&cells.map));
                 Some((
-                    (track.id, track.lift.clone(), ld, phasing),
+                    (track.id, track.lift.clone(), ld, phasing, cells),
                     source,
                     name,
                     (contig, region),
@@ -341,7 +369,8 @@ impl Genie {
             }
         }
         let length = viewport.length();
-        for ((id, lift, ld, phasing), source, name, (contig, region), options, rules) in jobs {
+        for ((id, lift, ld, phasing, cells), source, name, (contig, region), options, rules) in jobs
+        {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
             let phased = phasing.map_or(Ok(Vec::new()), |phasing| phasing.sites(region));
             let result = phased.and_then(|phased| {
@@ -351,6 +380,7 @@ impl Genie {
                     rules: &rules,
                     length,
                     phased: &phased,
+                    cells: cells.as_ref(),
                 };
                 let lift = lift.as_deref();
                 track::load_track(&source, lift, (&name, region), options, scope, bases)

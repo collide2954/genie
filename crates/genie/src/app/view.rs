@@ -39,8 +39,8 @@ use crate::{font, scene, style};
 
 use super::tracks::TRACK_NAME;
 use super::{
-    Filtering, Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation, Preparing,
-    Renaming, Session, Status, Suggestion, Sweep, whole,
+    Celling, Filtering, Genie, Lane, Message, Notice, PANEL_GAP, Paneling, Popup, Preparation,
+    Preparing, Renaming, Session, Status, Suggestion, Sweep, whole,
 };
 
 const OVERVIEW_HEIGHT: f32 = 12.0;
@@ -2293,6 +2293,29 @@ fn trio_section(track: &Track) -> Option<Section> {
 /// The items of the menu of a read track that give haplotypes to its reads without HP tags
 /// from the phased SNVs of a variant track: the variant tracks and, under the one in use, its
 /// samples. A chosen variant track stops the phase.
+/// The most columns of a cell table that the menu of a track lists.
+const CELL_COLUMNS: usize = 8;
+
+/// The columns of the cell table of a track that can give cell types, with the column in use.
+fn cell_section(track: &Track) -> Option<Section> {
+    let cells = track.cells.as_ref()?;
+    let mut section = Section::new("Cell types by", Vec::new());
+    let mut columns: Vec<usize> = cells.columns.iter().copied().take(CELL_COLUMNS).collect();
+    if !columns.contains(&cells.column) {
+        columns.push(cells.column);
+    }
+    for column in columns {
+        if column == cells.column {
+            section.chosen.push(section.items.len());
+        }
+        let message = Message::Cells(Celling::Column(track.id, column));
+        section
+            .items
+            .push((cells.table.columns[column].clone(), message));
+    }
+    Some(section)
+}
+
 fn phase_section(session: &Session, track: &Track) -> Option<Section> {
     if !track.source.has_reads() || track.lift.is_some() {
         return None;
@@ -2375,7 +2398,10 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
         return trio_section(track).into_iter().collect();
     }
     if track.source.has_reads() {
-        return phase_section(session, track).into_iter().collect();
+        return phase_section(session, track)
+            .into_iter()
+            .chain(cell_section(track))
+            .collect();
     }
     if !track.source.has_signal() || track.over.is_some() {
         return Vec::new();

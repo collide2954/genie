@@ -9,13 +9,13 @@ use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::track::made::{self, WINDOWS};
 use crate::track::motifs::THRESHOLDS;
-use crate::track::{Change, Made, Toggle, Track};
+use crate::track::{Change, Grouping, Made, Toggle, Track};
 use genie_core::grouped;
 
 use super::hubs::Hubbing;
 use super::{
-    Arranging, Assembling, Blatting, Genie, Lifting, Making, Message, Motifing, Paletting, Popup,
-    Ranging, Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
+    Arranging, Assembling, Blatting, Celling, Genie, Lifting, Making, Message, Motifing, Paletting,
+    Popup, Ranging, Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
 };
 
 /// The actions that need no open genome: open files, hubs and assemblies, keys, settings and
@@ -124,6 +124,28 @@ fn tracks_actions(session: &Session) -> Vec<Action> {
     for track in &session.tracks {
         actions.extend(track_actions(track, fields));
         actions.extend(phase_actions(&session.tracks, track));
+    }
+    actions
+}
+
+/// The actions of the cell table of a track: open one, take the cell types of each of its
+/// columns, group the reads by cell type, and forget the table.
+fn cell_actions(track: &Track) -> Vec<Action> {
+    let (id, name) = (track.id, track.name.as_str());
+    let cell = move |celling| Message::Cells(celling);
+    let mut actions = vec![Action::new("Cell types…", name, cell(Celling::Pick(id)))];
+    if let Some(cells) = &track.cells {
+        actions.extend(cells.columns.iter().map(|&column| {
+            let words = format!("Cell types by {}", cells.table.columns[column]);
+            Action::new(words, name, cell(Celling::Column(id, column)))
+        }));
+        let group = Message::TrackChanged(id, Change::Group(Grouping::Cell));
+        actions.push(Action::new("Group by cell type", name, group));
+        actions.push(Action::new(
+            "Remove the cell table",
+            name,
+            cell(Celling::Remove(id)),
+        ));
     }
     actions
 }
@@ -328,6 +350,7 @@ fn track_actions(track: &Track, fields: &[String]) -> Vec<Action> {
     }
     if source.has_reads() {
         actions.extend(read_actions(track));
+        actions.extend(cell_actions(track));
     }
     if source.has_signal() {
         actions.extend(

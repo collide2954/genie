@@ -166,10 +166,11 @@ impl Genie {
                         .iter_mut()
                         .find(|track| track.source == source)
                 });
-                let mut lift = None;
+                let (mut lift, mut cells) = (None, None);
                 if let Some(track) = track {
                     if let Some(found) = &item.saved {
                         lift = apply_saved(track, found).map(|location| (track.id, location));
+                        cells = found.cells.clone().map(|cells| (track.id, cells));
                     }
                     if let Some((_, Some(name))) = &item.reply {
                         track.name.clone_from(name);
@@ -178,12 +179,14 @@ impl Genie {
                 if let Some((reply, _)) = &item.reply {
                     self.answers.push((Answer::Done, reply.clone()));
                 }
-                match lift {
-                    Some((id, location)) => {
-                        Task::batch([task, self.lift(Lifting::Open(Some(id), location))])
-                    }
-                    None => task,
+                let mut tasks = vec![task];
+                if let Some((id, (location, column))) = cells {
+                    tasks.push(self.open_cells(id, location, Some(column)));
                 }
+                if let Some((id, location)) = lift {
+                    tasks.push(self.lift(Lifting::Open(Some(id), location)));
+                }
+                Task::batch(tasks)
             }
             Preparation::Done(Err(error)) | Preparation::Opened(Err(error)) => {
                 let item = session.preparing.remove(at);
@@ -682,6 +685,7 @@ impl Genie {
                     .iter()
                     .find(|(known, _)| *known == id)
                     .map(|(_, phasing)| phasing.clone());
+                let cells = track.cells.as_ref().map(|cells| Arc::clone(&cells.map));
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
@@ -696,6 +700,7 @@ impl Genie {
                                 rules: &rules,
                                 length,
                                 phased: &phased,
+                                cells: cells.as_ref(),
                             };
                             let lift = lift.as_deref();
                             track::load_track(&source, lift, (&name, wanted), options, scope, bases)
@@ -1036,7 +1041,7 @@ impl Genie {
         self.next_track += 1;
         let mut track = Track::new(id, Arc::clone(source), &session.reference.assembly);
         track.name = name;
-        let mut lift = None;
+        let (mut lift, mut cells) = (None, None);
         if let Some(saved) = &self.restoring {
             let saved_at = |location: &Location| {
                 saved
@@ -1046,6 +1051,7 @@ impl Genie {
             };
             if let Some(found) = saved_at(&source.location).map(|at| &saved.tracks[at]) {
                 lift = apply_saved(&mut track, found);
+                cells.clone_from(&found.cells);
             }
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
@@ -1057,14 +1063,16 @@ impl Genie {
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
         }
+        let mut tasks = vec![self.fetch_features()];
+        if let Some((location, column)) = cells {
+            tasks.push(self.open_cells(id, location, Some(column)));
+        }
         if let Some(location) = lift {
-            let read = self.lift(Lifting::Open(Some(id), location));
-            return Task::batch([self.fetch_features(), read]);
+            tasks.push(self.lift(Lifting::Open(Some(id), location)));
+        } else if !source.has_reads() {
+            tasks.push(self.find_names(id));
         }
-        if source.has_reads() {
-            return self.fetch_features();
-        }
-        Task::batch([self.fetch_features(), self.find_names(id)])
+        Task::batch(tasks)
     }
 
     /// Reads the names of the features of a track, on the assembly in view.

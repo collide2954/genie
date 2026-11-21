@@ -150,7 +150,7 @@ impl ReadFile {
                 && alignment.mapq >= options.mapq
                 && (rules.is_empty() || fields::passes(rules, &super::read_fields(alignment)))
         };
-        let mut gather = Gather::new(region, id, options);
+        let mut gather = Gather::new(region, id, options).with_cells(scope.cells.cloned());
         let mut add = |mut alignment: Alignment| {
             if keeps(&alignment) {
                 haplotag::tag(&mut alignment, scope.phased);

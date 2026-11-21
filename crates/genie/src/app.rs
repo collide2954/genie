@@ -40,6 +40,7 @@ mod app_menu;
 mod assemblies;
 mod blat;
 mod caching;
+mod cells;
 #[cfg(test)]
 mod clips;
 mod copy;
@@ -78,6 +79,7 @@ mod whole;
 
 pub(crate) use assemblies::Assembling;
 pub(crate) use blat::Blatting;
+pub(crate) use cells::Celling;
 pub(crate) use dmrs::Dmring;
 pub(crate) use dotplot::Plotting;
 pub(crate) use export::Figuring;
@@ -830,6 +832,8 @@ pub enum Message {
     Dmrs(Dmring),
     /// The table of the isoforms of a read track.
     Isoforms(Isoforming),
+    /// The cell table of a single-cell track.
+    Cells(Celling),
     /// Adds or changes a track that genie makes from the reference.
     Made(Making),
     /// Picks the motifs of a motif track, or changes its threshold.
@@ -1178,7 +1182,11 @@ impl Genie {
             Message::Jumped(id, forward, result) => return self.jumped(id, forward, result),
             Message::Regions(action) => return self.regions(action),
             Message::Lift(lifting) => return self.lift(lifting),
-            Message::Table(_) | Message::Plot(_) | Message::Dmrs(_) | Message::Isoforms(_) => {
+            Message::Table(_)
+            | Message::Plot(_)
+            | Message::Dmrs(_)
+            | Message::Isoforms(_)
+            | Message::Cells(_) => {
                 return self.pane_message(message);
             }
             Message::Address(action) => return self.address(action),
@@ -1274,6 +1282,7 @@ impl Genie {
             Message::Plot(plotting) => self.plotting(plotting),
             Message::Dmrs(dmring) => self.dmring(dmring),
             Message::Isoforms(isoforming) => self.isoforming(isoforming),
+            Message::Cells(celling) => self.celling(celling),
             _ => Task::none(),
         }
     }
@@ -1508,9 +1517,10 @@ mod tests {
     use super::tracks::{NO_REFERENCE, REMOTE_SESSION};
     use super::view::{DROP_HINT, SIGNAL_HINT, VARIANT_HINT, WELCOME, ZOOM_HINT};
     use super::{
-        Address, Arranging, Caching, Copying, Drafting, Figuring, Filtering, Genie, Isoforming,
-        Lane, Lifting, Message, Offline, Paletting, Paneling, Port, Preparation, Ranging, Regions,
-        Renaming, Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut, window_event,
+        Address, Arranging, Caching, Celling, Copying, Drafting, Figuring, Filtering, Genie,
+        Isoforming, Lane, Lifting, Message, Offline, Paletting, Paneling, Port, Preparation,
+        Ranging, Regions, Renaming, Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut,
+        window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -5801,6 +5811,90 @@ ORIGIN
         );
         let _ = genie.update(Message::TrackChanged(0, Change::Remove));
         assert!(genie.isoforms.is_none());
+    }
+
+    /// A cell table of three cells with the columns `orig.ident`, `seurat_clusters` and
+    /// `cell_type`.
+    fn cell_table() -> Arc<genie_core::samples::Table> {
+        let row = |barcode: &str, values: [&str; 3]| {
+            (barcode.to_owned(), values.map(str::to_owned).to_vec())
+        };
+        Arc::new(genie_core::samples::Table::new(
+            ["orig.ident", "seurat_clusters", "cell_type"]
+                .map(str::to_owned)
+                .to_vec(),
+            vec![
+                row("AAACCCAAGAAACACT-1", ["pbmc", "0", "CD4 T"]),
+                row("AAACCCAAGAAACCAT-1", ["pbmc", "2", "B"]),
+                row("AAACCCAAGAAACCCA-1", ["pbmc", "0", "CD4 T"]),
+            ],
+        ))
+    }
+
+    #[test]
+    fn read_menus_open_a_cell_table_and_group_the_reads_by_cell_type() {
+        let mut genie = opened();
+        add_reads(&mut genie, vec![read("r1", 10)]);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let mut ui = simulator(genie.view());
+        ui.click("Cell types…").unwrap();
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.contains(&Message::Cells(Celling::Pick(0))));
+        let location: Location = PathBuf::from("/data/meta.csv").into();
+        let opened = Celling::Opened(0, location.clone(), Ok(cell_table()), None);
+        let _ = genie.update(Message::Cells(opened));
+        let cells = |genie: &Genie| {
+            let track = &genie.session.as_ref().unwrap().tracks[0];
+            let column = track
+                .cells
+                .as_ref()
+                .map(|cells| cells.column_name().to_owned());
+            (column, track.options.cells, track.options.group)
+        };
+        assert_eq!(
+            cells(&genie),
+            (Some("cell_type".to_owned()), 1, Grouping::None)
+        );
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        for words in [
+            "Cell types by",
+            "seurat_clusters",
+            "cell_type",
+            "Group by cell type",
+        ] {
+            assert!(shows(&genie, words), "{words}");
+        }
+        let _ = genie.update(Message::Cells(Celling::Column(0, 1)));
+        assert_eq!(
+            cells(&genie),
+            (Some("seurat_clusters".to_owned()), 2, Grouping::None)
+        );
+        let _ = genie.update(Message::TrackChanged(0, Change::Group(Grouping::Cell)));
+        assert_eq!(cells(&genie).2, Grouping::Cell);
+        assert!(palette_shows(
+            &mut genie,
+            "cell types cell_type",
+            "Cell types by cell_type"
+        ));
+        assert!(palette_shows(
+            &mut genie,
+            "remove cell table",
+            "Remove the cell table"
+        ));
+        let named = Some("cell_type".to_owned());
+        let session = Celling::Opened(0, location, Ok(cell_table()), named);
+        let _ = genie.update(Message::Cells(session));
+        assert_eq!(
+            cells(&genie).0.as_deref(),
+            Some("cell_type"),
+            "a session gives the column by its name"
+        );
+        let _ = genie.update(Message::Cells(Celling::Remove(0)));
+        assert_eq!(
+            cells(&genie),
+            (None, 4, Grouping::None),
+            "the reads leave their groups by cell type"
+        );
     }
 
     #[test]

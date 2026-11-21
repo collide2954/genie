@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE, SECONDARY, SUPPLEMENTARY};
 use genie_core::association::Association;
+use genie_core::cells::CellMap;
 use genie_core::contact::ContactMap;
 use genie_core::haplotag::Phased;
 use genie_core::interaction::Interaction;
@@ -31,6 +32,7 @@ use genie_render::signal::{Operation, Scale, Style};
 
 use crate::location::{Location, Reader};
 
+mod cells;
 mod columns;
 mod contacts;
 mod features;
@@ -45,6 +47,7 @@ mod segments;
 mod signal;
 mod variants;
 
+pub use cells::{Cells, barcode};
 pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
 pub use features::FeatureFile;
@@ -361,6 +364,8 @@ pub enum Grouping {
     Strand,
     /// The value of a tag, for example CB for the cell of a read.
     Tag([u8; 2]),
+    /// The cell type of the barcode of a read, from the cell table of the track.
+    Cell,
 }
 
 /// The most groups of a tag before genie puts the smallest ones together.
@@ -395,6 +400,14 @@ impl Values {
 
     fn number(&self, text: &str) -> i64 {
         self.numbers.get(text).copied().unwrap_or(-1)
+    }
+
+    /// Gives a text the number of a value, as the barcode of a cell the number of its type.
+    fn alias(&mut self, text: &str, number: usize) {
+        if !self.numbers.contains_key(text) {
+            let number = i64::try_from(number).unwrap_or(i64::MAX);
+            self.numbers.insert(text.to_owned(), number);
+        }
     }
 
     fn name(&self, number: i64) -> &str {
@@ -436,6 +449,9 @@ pub struct Options {
     /// The variant track and the sample whose phased SNVs give haplotypes to the reads of a
     /// read track that have no HP tag.
     pub phase: Option<Phase>,
+    /// A number that changes each time the cell table of the track or its column changes, so
+    /// that data of the earlier cell types does not show.
+    pub cells: u16,
 }
 
 /// The phased SNVs of a sample of a variant track, which give haplotypes to reads.
@@ -490,6 +506,7 @@ impl Default for Options {
             baf: None,
             ld: None,
             phase: None,
+            cells: 0,
         }
     }
 }
@@ -704,6 +721,9 @@ fn alignment_group(alignment: &Alignment, grouping: Grouping, values: &Values) -
                 .parse::<i64>()
                 .map_or_else(|_| (1, values.number(text)), |number| (0, number)),
         },
+        Grouping::Cell => barcode(alignment)
+            .and_then(|barcode| values.numbers.get(barcode))
+            .map_or((2, 0), |&number| (1, number)),
     }
 }
 
@@ -719,6 +739,9 @@ fn group_label(grouping: Grouping, key: (u8, i64), values: &Values) -> String {
         }
         (Grouping::Tag(name), (3, _)) => format!("Other {} values", tag_name(name)),
         (Grouping::Tag(name), _) => format!("No {}", tag_name(name)),
+        (Grouping::Cell, (1, number)) => values.name(number).to_owned(),
+        (Grouping::Cell, (3, _)) => "Other cell types".to_owned(),
+        (Grouping::Cell, _) => "No cell type".to_owned(),
         (Grouping::None, _) => String::new(),
     }
 }
@@ -881,7 +904,7 @@ impl Pile {
             Grouping::None => false,
             Grouping::Phase => key.0 == 0,
             Grouping::Strand => true,
-            Grouping::Tag(_) => key.0 != 2,
+            Grouping::Tag(_) | Grouping::Cell => key.0 != 2,
         }
     }
 
@@ -969,6 +992,8 @@ pub struct Gather {
     methylation: Tally<GroupKey>,
     sampler: Sampler,
     values: Values,
+    /// The cell type of each barcode, from the cell table of the track.
+    cells: Option<Arc<CellMap>>,
 }
 
 impl Gather {
@@ -988,13 +1013,35 @@ impl Gather {
             methylation: Tally::default(),
             sampler: Sampler::new(WINDOW, limit),
             values: Values::default(),
+            cells: None,
         }
+    }
+
+    /// Gives the reads the cell types of their barcodes, from the cell table of the track.
+    #[must_use]
+    pub fn with_cells(mut self, cells: Option<Arc<CellMap>>) -> Self {
+        if let Some(map) = &cells
+            && self.options.group == Grouping::Cell
+        {
+            for name in &map.types {
+                self.values.add(name);
+            }
+        }
+        self.cells = cells;
+        self
     }
 
     pub fn add(&mut self, alignment: Alignment) {
         self.coverage.add(&alignment);
         self.inserts.add(&alignment);
         self.junctions.add(&alignment);
+        if self.options.group == Grouping::Cell
+            && let Some(map) = &self.cells
+            && let Some(barcode) = barcode(&alignment)
+            && let Some(kind) = map.type_of(barcode)
+        {
+            self.values.alias(barcode, kind);
+        }
         if let Grouping::Tag(name) = self.options.group
             && let Some(text) = alignment.tags.get(name)
             && text.parse::<i64>().is_err()
@@ -1049,6 +1096,7 @@ impl Loaded {
             methylation,
             sampler,
             values,
+            cells: _,
         } = gather;
         let methylation = methylation.finish(|position| {
             let index = usize::try_from(position.checked_sub(offset)?).ok()?;
@@ -1326,6 +1374,8 @@ pub struct Track {
     /// The place of the lead variant of the LocusZoom colors of a GWAS track, when somebody
     /// picked one.
     pub lead: Option<u64>,
+    /// The cell table that gives the barcodes of the reads or fragments their cell types.
+    pub cells: Option<Cells>,
     pub slot: Slot,
     pub extra: Vec<Slot>,
 }
@@ -1385,9 +1435,22 @@ impl Track {
             reviews: Arc::default(),
             ld_group: None,
             lead: None,
+            cells: None,
             slot: Slot::default(),
             extra: Vec::new(),
         }
+    }
+
+    /// Gives the barcodes of the track the cell types of a cell table, or forgets the cell
+    /// table, and loads the data again. Without a cell table, the reads leave their groups by
+    /// cell type.
+    pub fn set_cells(&mut self, cells: Option<Cells>) {
+        if cells.is_none() && self.options.group == Grouping::Cell {
+            self.options.group = Grouping::None;
+        }
+        self.cells = cells;
+        self.options.cells = self.options.cells.wrapping_add(1);
+        self.forget();
     }
 
     /// Shows the LD of a group of the samples, or of all samples without a group, or stops.
@@ -2658,13 +2721,14 @@ pub fn load(
         rules: &[],
         length: region.end(),
         phased: &[],
+        cells: None,
     };
     load_kept(source, contig, region, options, scope, reference)
 }
 
 /// How to load a region: the step of the summaries, whether to load the records or their
-/// density, the filter, the length of the contig, and the phased SNVs that give haplotypes to
-/// reads, in the order of their places.
+/// density, the filter, the length of the contig, the phased SNVs that give haplotypes to
+/// reads, in the order of their places, and the cell type of each barcode.
 #[derive(Debug, Clone, Copy)]
 pub struct Scope<'a> {
     pub step: u64,
@@ -2672,6 +2736,7 @@ pub struct Scope<'a> {
     pub rules: &'a [Rule],
     pub length: u64,
     pub phased: &'a [Phased],
+    pub cells: Option<&'a Arc<CellMap>>,
 }
 
 /// How far out of a region of reads genie reads the phased SNVs, for reads that reach out of it.
@@ -3328,6 +3393,46 @@ mod tests {
     }
 
     #[test]
+    fn cell_groups_put_the_reads_by_the_cell_types_of_their_barcodes() {
+        let map = Arc::new(genie_core::cells::CellMap::new([
+            ("pbmc1_AAACCCAAGAAACACT-1", "B cell"),
+            ("pbmc1_AAACCCAAGAAACCAT-1", "T cell"),
+            ("pbmc1_AAACCCAAGAAACCCA-1", "T cell"),
+        ]));
+        let reads = vec![
+            tagged(10, &[(b"CB", "AAACCCAAGAAACACT-1")]),
+            tagged(10, &[(b"CB", "AAACCCAAGAAACCAT-1")]),
+            tagged(10, &[(b"CB", "GGGGGGGGGGGGGGGG-1")]),
+            tagged(10, &[]),
+            tagged(10, &[(b"XC", "AAACCCAAGAAACCCA")]),
+        ];
+        let options = Options {
+            group: Grouping::Cell,
+            ..Options::default()
+        };
+        let mut gather = Gather::new(region(0, 100), 0, options).with_cells(Some(map));
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 100], 0);
+        let Content::Reads(pile) = &loaded.content else {
+            panic!("expected reads");
+        };
+        let labels: Vec<&str> = pile
+            .groups
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            ["T cell", "B cell", "No cell type"],
+            "the XC barcode is a T cell by its core, and the others have no cell type"
+        );
+        assert_eq!(pile.group_name((1, 0)), "T cell");
+        assert!(!pile.group_has_value((2, 0)));
+    }
+
+    #[test]
     fn tag_colors_go_to_the_most_common_values() {
         let mut reads: Vec<Alignment> = Vec::new();
         for (value, count) in [("a", 1), ("b", 6), ("c", 5), ("d", 4), ("e", 3), ("f", 2)] {
@@ -3699,6 +3804,7 @@ mod tests {
             rules: &[],
             length,
             phased: &[],
+            cells: None,
         };
         load_kept(
             source,
@@ -4529,6 +4635,7 @@ ORIGIN
                 rules,
                 length: 20_000,
                 phased: &[],
+                cells: None,
             };
             let loaded = file
                 .load(source.data(), "chr1", whole, scope, budget)
@@ -5442,6 +5549,7 @@ ORIGIN
                 rules: &[],
                 length: 1_000_000,
                 phased,
+                cells: None,
             };
             let options = Options {
                 downsample: false,
@@ -5614,6 +5722,7 @@ ORIGIN
                 rules,
                 length: 8_000,
                 phased: &[],
+                cells: None,
             };
             let loaded = super::load_kept(
                 &source,

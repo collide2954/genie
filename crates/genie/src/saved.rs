@@ -26,7 +26,11 @@ const MODES: [(&str, Mode); 3] = [
     ("squished", Mode::Squished),
     ("collapsed", Mode::Collapsed),
 ];
-const GROUPS: [(&str, Grouping); 2] = [("phase", Grouping::Phase), ("strand", Grouping::Strand)];
+const GROUPS: [(&str, Grouping); 3] = [
+    ("phase", Grouping::Phase),
+    ("strand", Grouping::Strand),
+    ("cell type", Grouping::Cell),
+];
 const HUES: [(&str, Hue); 5] = [
     ("blue", Hue::Blue),
     ("green", Hue::Green),
@@ -98,6 +102,8 @@ pub struct SavedTrack {
     /// The place of the variant track whose phased SNVs give haplotypes to the reads of a read
     /// track, and the name of the sample.
     pub phase: Option<(usize, String)>,
+    /// The cell table of a single-cell track and the name of the column of the cell types.
+    pub cells: Option<(Location, String)>,
 }
 
 impl SavedTrack {
@@ -126,6 +132,7 @@ impl SavedTrack {
             ld: None,
             lead: None,
             phase: None,
+            cells: None,
         }
     }
 }
@@ -396,6 +403,10 @@ fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
             .and_then(|text| text.parse::<u64>().ok())
             .and_then(|place| place.checked_sub(1)),
         phase: phase(section),
+        cells: section
+            .value("cells")
+            .zip(section.value("cell types"))
+            .map(|(table, column)| (read(table, base), column.to_owned())),
     })
 }
 
@@ -521,6 +532,10 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     if let Some(lift) = &track.lift {
         entries.push(("lift", written(lift, base)));
     }
+    if let Some((table, column)) = &track.cells {
+        entries.push(("cells", written(table, base)));
+        entries.push(("cell types", column.clone()));
+    }
     let choice = &track.choice;
     for (key, field) in [
         (GROUP_SAMPLES, &choice.group),
@@ -641,6 +656,7 @@ fn options(section: &Section) -> Options {
         baf: None,
         ld: None,
         phase: None,
+        cells: 0,
     }
 }
 
@@ -801,6 +817,7 @@ mod tests {
             baf: None,
             ld: None,
             phase: None,
+            cells: 0,
         }
     }
 
@@ -1038,6 +1055,19 @@ mod tests {
         assert!(text.contains("made = gc 100"), "{text}");
         assert!(!text.contains("file = gc 100"), "{text}");
         assert_eq!(Saved::parse(&text, &base()), Ok(made));
+    }
+
+    #[test]
+    fn read_tracks_keep_their_cell_table_and_its_column() {
+        let mut cells = saved();
+        let table = Location::File(base().join("pbmc").join("meta.csv"));
+        cells.tracks[0].cells = Some((table, "cell_type".to_owned()));
+        cells.tracks[0].options.group = Grouping::Cell;
+        let text = cells.text(&base());
+        assert!(text.contains("cells = pbmc/meta.csv"), "{text}");
+        assert!(text.contains("cell types = cell_type"), "{text}");
+        assert!(text.contains("group = cell type"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(cells));
     }
 
     #[test]
