@@ -47,6 +47,7 @@ pub enum Reason {
     CramReference,
     SegmentHeader,
     SampleTable,
+    CellTable,
     NotHic,
     HicVersion,
     NotBcf,
@@ -134,6 +135,10 @@ impl fmt::Display for Reason {
             }
             Self::SampleTable => {
                 "the file has no header line with sample names and fields, or no samples"
+            }
+            Self::CellTable => {
+                "the file has no header line with the barcodes and the fields of the cells, or \
+                 no cells"
             }
             Self::NotHic => "the file is not a Hi-C file of Juicer",
             Self::HicVersion => "genie reads Hi-C files of version 6 to 9",

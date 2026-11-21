@@ -121,7 +121,81 @@ fn is_sample_column(name: &str) -> bool {
     SAMPLES.iter().any(|known| name.eq_ignore_ascii_case(known))
 }
 
+/// The lines of a table with a header line: the names of the columns, the rows, and the names
+/// to show from the first line of a cBioPortal file.
+struct Parsed {
+    names: Vec<String>,
+    rows: Vec<Vec<String>>,
+    shown: Option<Vec<String>>,
+}
+
 fn delimited(reader: impl BufRead) -> Result<Table, Error> {
+    let parsed = parse(reader, Reason::SampleTable)?;
+    let sample = parsed
+        .names
+        .iter()
+        .position(|name| is_sample_column(name))
+        .unwrap_or(0);
+    Ok(table(parsed, sample))
+}
+
+/// The most rows that tell if a column has barcodes.
+const BARCODE_ROWS: usize = 100;
+
+/// Reads a table of the cells of a single-cell data set, as the meta.data of Seurat or the obs
+/// of Scanpy written as CSV or TSV: a header line and a row for each cell. The barcodes of the
+/// cells are in the first column whose values are mostly barcodes, else in the first column.
+pub fn read_cells(reader: impl BufRead) -> Result<Table, Error> {
+    let parsed = parse(reader, Reason::CellTable)?;
+    let barcodes = |column: usize| {
+        let values: Vec<&String> = parsed
+            .rows
+            .iter()
+            .take(BARCODE_ROWS)
+            .filter_map(|row| row.get(column))
+            .collect();
+        let found = values
+            .iter()
+            .filter(|value| genie_core::cells::core(value).is_some())
+            .count();
+        found * 2 > values.len()
+    };
+    let column = (0..parsed.names.len()).find(|&column| barcodes(column));
+    Ok(table(parsed, column.unwrap_or(0)))
+}
+
+/// The table of parsed lines with the names of the rows in a column.
+fn table(parsed: Parsed, names_column: usize) -> Table {
+    let Parsed { names, rows, shown } = parsed;
+    let others = |fields: Vec<String>| -> Vec<String> {
+        fields
+            .into_iter()
+            .enumerate()
+            .filter(|(place, _)| *place != names_column)
+            .map(|(_, field)| field)
+            .collect()
+    };
+    let rows = rows
+        .into_iter()
+        .map(|mut fields| {
+            fields.resize(names.len(), String::new());
+            let name = fields[names_column].clone();
+            (name, others(fields))
+        })
+        .collect();
+    let columns = others(match shown {
+        Some(mut shown) => {
+            shown.truncate(names.len());
+            shown
+        }
+        None => names,
+    });
+    Table::new(columns, rows)
+}
+
+/// The lines of a tab or comma separated table, or an error with the reason `invalid` when the
+/// file has no header line or no rows.
+fn parse(reader: impl BufRead, invalid: Reason) -> Result<Parsed, Error> {
     let mut section = Section::Table;
     let mut header: Option<(Vec<String>, char)> = None;
     // Lines that start with # and can be the header, as in "#sample<tab>population". Two or
@@ -178,42 +252,15 @@ fn delimited(reader: impl BufRead) -> Result<Table, Error> {
         header = Some(candidates.remove(0));
     }
     let Some((mut names, _)) = header else {
-        return Err(Error::Invalid(Reason::SampleTable));
+        return Err(Error::Invalid(invalid));
     };
     while names.last().is_some_and(String::is_empty) {
         names.pop();
     }
     if names.len() < 2 || rows.is_empty() {
-        return Err(Error::Invalid(Reason::SampleTable));
+        return Err(Error::Invalid(invalid));
     }
-    let sample = names
-        .iter()
-        .position(|name| is_sample_column(name))
-        .unwrap_or(0);
-    let others = |fields: Vec<String>| -> Vec<String> {
-        fields
-            .into_iter()
-            .enumerate()
-            .filter(|(place, _)| *place != sample)
-            .map(|(_, field)| field)
-            .collect()
-    };
-    let rows = rows
-        .into_iter()
-        .map(|mut fields| {
-            fields.resize(names.len(), String::new());
-            let name = fields[sample].clone();
-            (name, others(fields))
-        })
-        .collect();
-    let columns = others(match shown {
-        Some(mut shown) => {
-            shown.truncate(names.len());
-            shown
-        }
-        None => names,
-    });
-    Ok(Table::new(columns, rows))
+    Ok(Parsed { names, rows, shown })
 }
 
 fn plink(reader: impl BufRead) -> Result<Table, Error> {
@@ -284,11 +331,41 @@ mod tests {
 
     use genie_core::samples::Table;
 
-    use super::{is_plink, read};
+    use super::{is_plink, read, read_cells};
     use crate::{Error, Reason};
 
     fn opened(text: &str, name: &str) -> Table {
         read(Cursor::new(text), name).unwrap()
+    }
+
+    #[test]
+    fn cell_tables_take_the_barcodes_from_the_first_column_with_barcodes() {
+        let seurat = "\"\",\"orig.ident\",\"nCount_RNA\",\"seurat_clusters\",\"cell_type\"\n\
+            \"AAACCCAAGAAACACT-1\",\"pbmc\",4520,\"0\",\"CD4 T\"\n\
+            \"AAACCCAAGAAACCAT-1\",\"pbmc\",3011,\"2\",\"B\"\n";
+        let table = read_cells(Cursor::new(seurat)).unwrap();
+        assert_eq!(
+            table.columns,
+            ["orig.ident", "nCount_RNA", "seurat_clusters", "cell_type"]
+        );
+        assert_eq!(table.value("AAACCCAAGAAACCAT-1", 3), Some("B"));
+        let scanpy = ",sample,n_genes,leiden\nAAACCCAAGAAACACT-1-0,s1,1200,3\n";
+        let table = read_cells(Cursor::new(scanpy)).unwrap();
+        assert_eq!(
+            table.columns,
+            ["sample", "n_genes", "leiden"],
+            "a sample column does not name the cells"
+        );
+        assert!(table.has("AAACCCAAGAAACACT-1-0"));
+        let later = "cell_type\tbarcode\nT\tAAACCCAAGAAACACT-1\n";
+        let table = read_cells(Cursor::new(later)).unwrap();
+        assert_eq!(table.columns, ["cell_type"]);
+        assert!(table.has("AAACCCAAGAAACACT-1"));
+        let failed = read_cells(Cursor::new("barcode\nAAACCCAAGAAACACT-1\n")).unwrap_err();
+        assert!(
+            matches!(failed, Error::Invalid(Reason::CellTable)),
+            "{failed}"
+        );
     }
 
     fn fields(table: &Table, sample: &str) -> Vec<(String, String)> {
