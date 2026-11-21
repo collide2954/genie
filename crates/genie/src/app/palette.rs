@@ -123,6 +123,33 @@ fn tracks_actions(session: &Session) -> Vec<Action> {
     }
     for track in &session.tracks {
         actions.extend(track_actions(track, fields));
+        actions.extend(phase_actions(&session.tracks, track));
+    }
+    actions
+}
+
+/// The actions that give haplotypes to the reads without HP tags of a read track from the
+/// phased SNVs of each variant track, and that stop the phase.
+fn phase_actions(tracks: &[Track], track: &Track) -> Vec<Action> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    let change = move |phase| Message::TrackChanged(id, Change::Phase(phase));
+    let mut actions: Vec<Action> = tracks
+        .iter()
+        .filter(|other| crate::track::can_phase(other))
+        .map(|variants| {
+            let phase = crate::track::Phase {
+                track: variants.id,
+                sample: crate::track::phase_sample(&track.source, &variants.source),
+            };
+            let words = format!("Phase the reads by {}", variants.name);
+            Action::new(words, name, change(Some(phase)))
+        })
+        .collect();
+    if track.options.phase.is_some() {
+        actions.push(Action::new("Stop phasing the reads", name, change(None)));
     }
     actions
 }

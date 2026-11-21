@@ -1,6 +1,7 @@
 use std::io::BufReader;
 
 use genie_core::Region;
+use genie_core::haplotag::Phased;
 use genie_core::signal::Tally;
 use genie_core::variant::{Fraction, Variant};
 use genie_formats::annotations::{self, Layout};
@@ -34,6 +35,8 @@ pub enum VariantFile {
         /// The B-allele frequencies of a sample in all of the file. genie reads the file again
         /// only for another sample.
         fractions: Memo<Result<Table<Fraction>, String>>,
+        /// The phased heterozygous SNVs of a sample in all of the file, as `fractions`.
+        phased: Memo<Result<Table<Phased>, String>>,
     },
     /// A BCF file with its CSI index.
     Bcf {
@@ -58,6 +61,7 @@ impl VariantFile {
                 samples: header.samples,
                 infos: header.infos,
                 fractions: Memo::default(),
+                phased: Memo::default(),
             });
         }
         let index = tabix_index(location, name, index)?;
@@ -93,6 +97,7 @@ impl VariantFile {
                 samples: header.vcf.samples,
                 infos: header.vcf.infos,
                 fractions: Memo::default(),
+                phased: Memo::default(),
             });
         };
         let header = bcf::header(&mut Bgzf::new(location.open()?)).map_err(invalid)?;
@@ -217,6 +222,49 @@ impl VariantFile {
         }
     }
 
+    /// The phased heterozygous SNVs of a sample in a region, or nothing when the records of the
+    /// region are more than the budget of `fractions`. A file without an index has all its
+    /// phased SNVs.
+    pub fn phased(
+        &self,
+        location: &Location,
+        (contig, region): (&str, Region),
+        sample: usize,
+    ) -> Result<Option<Vec<Phased>>, String> {
+        let budget = if location.is_remote() {
+            WEB_FRACTION_BUDGET
+        } else {
+            FRACTION_BUDGET
+        };
+        let failed = |error: genie_formats::Error| error.to_string();
+        match self {
+            Self::Table { phased, .. } => {
+                let all = phased.get_or(sample as u64, || all_phased(location, sample));
+                match all.as_ref() {
+                    Ok(all) => Ok(Some(all.query(contig, region))),
+                    Err(error) => Err(error.clone()),
+                }
+            }
+            Self::Indexed { index, .. } | Self::Bcf { index, .. }
+                if index.data_size(contig, region) > budget =>
+            {
+                Ok(None)
+            }
+            Self::Indexed { index, .. } => {
+                let mut reader = Bgzf::new(location.open()?);
+                vcf::phased_sites(index, &mut reader, (contig, region), sample)
+                    .map(Some)
+                    .map_err(failed)
+            }
+            Self::Bcf { index, header, .. } => {
+                let mut reader = Bgzf::new(location.open()?);
+                bcf::phased_sites(index, &mut reader, header, (contig, region), sample)
+                    .map(Some)
+                    .map_err(failed)
+            }
+        }
+    }
+
     pub fn spans(
         &self,
         location: &Location,
@@ -281,5 +329,16 @@ fn all_fractions(location: &Location, sample: usize) -> Result<Table<Fraction>, 
         bcf::read_fractions(Bgzf::new(location.open()?), sample).map_err(invalid)
     } else {
         vcf::read_fractions(BufReader::new(location.open()?), sample).map_err(invalid)
+    }
+}
+
+/// The phased heterozygous SNVs of a sample in all of a VCF or BCF file without an index.
+fn all_phased(location: &Location, sample: usize) -> Result<Table<Phased>, String> {
+    let name = location.name();
+    let invalid = |error: genie_formats::Error| format!("The file {name} is not valid. {error}");
+    if is_bcf(&name) {
+        bcf::read_phased(Bgzf::new(location.open()?), sample).map_err(invalid)
+    } else {
+        vcf::read_phased(BufReader::new(location.open()?), sample).map_err(invalid)
     }
 }

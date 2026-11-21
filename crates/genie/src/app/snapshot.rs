@@ -321,8 +321,9 @@ impl Genie {
                 let source = Arc::clone(&track.source);
                 let rules = track.filter.rules.clone();
                 let ld = track.options.ld.map(|_| track.ld_samples());
+                let phasing = track::Phasing::of(&session.tracks, track, contig);
                 Some((
-                    (track.id, track.lift.clone(), ld),
+                    (track.id, track.lift.clone(), ld, phasing),
                     source,
                     name,
                     (contig, region),
@@ -340,16 +341,20 @@ impl Genie {
             }
         }
         let length = viewport.length();
-        for ((id, lift, ld), source, name, (contig, region), options, rules) in jobs {
+        for ((id, lift, ld, phasing), source, name, (contig, region), options, rules) in jobs {
             let bases = |window: Region| reference.fetch(contig, window.clamp_to(length));
-            let scope = track::Scope {
-                step,
-                detail: source.detailed(visible),
-                rules: &rules,
-                length,
-            };
-            let lift = lift.as_deref();
-            let result = track::load_track(&source, lift, (&name, region), options, scope, bases);
+            let phased = phasing.map_or(Ok(Vec::new()), |phasing| phasing.sites(region));
+            let result = phased.and_then(|phased| {
+                let scope = track::Scope {
+                    step,
+                    detail: source.detailed(visible),
+                    rules: &rules,
+                    length,
+                    phased: &phased,
+                };
+                let lift = lift.as_deref();
+                track::load_track(&source, lift, (&name, region), options, scope, bases)
+            });
             let result = match &ld {
                 Some(samples) => result.map(|loaded| track::with_ld(loaded, samples.as_deref())),
                 None => result,

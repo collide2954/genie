@@ -2147,10 +2147,54 @@ fn trio_section(track: &Track) -> Option<Section> {
             (words.to_owned(), add)
         })
         .collect();
-    Some(Section {
-        heading: "Trios",
-        items,
-    })
+    Some(Section::new("Trios", items))
+}
+
+/// The items of the menu of a read track that give haplotypes to its reads without HP tags
+/// from the phased SNVs of a variant track: the variant tracks and, under the one in use, its
+/// samples. A chosen variant track stops the phase.
+fn phase_section(session: &Session, track: &Track) -> Option<Section> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return None;
+    }
+    let (id, phase) = (track.id, track.options.phase);
+    let mut section = Section::new("Phase by", Vec::new());
+    for variants in session
+        .tracks
+        .iter()
+        .filter(|other| track::can_phase(other))
+    {
+        let used = phase.filter(|phase| phase.track == variants.id);
+        let change = match used {
+            Some(_) => None,
+            None => Some(track::Phase {
+                track: variants.id,
+                sample: track::phase_sample(&track.source, &variants.source),
+            }),
+        };
+        if used.is_some() {
+            section.chosen.push(section.items.len());
+        }
+        let message = Message::TrackChanged(id, Change::Phase(change));
+        section.items.push((variants.name.clone(), message));
+        let samples = variants.source.samples();
+        let Some(used) = used.filter(|_| samples.len() > 1) else {
+            continue;
+        };
+        for index in menu::sample_choices(samples.len(), used.sample) {
+            if index == used.sample {
+                section.chosen.push(section.items.len());
+            }
+            section.indented.push(section.items.len());
+            let change = Change::Phase(Some(track::Phase {
+                sample: index,
+                ..used
+            }));
+            let message = Message::TrackChanged(id, change);
+            section.items.push((samples[index].clone(), message));
+        }
+    }
+    Some(section)
 }
 
 /// The folder items of a track menu: the other folders of the tracks panel, a new folder, and
@@ -2173,10 +2217,7 @@ fn folder_section(session: &Session, track: &Track) -> Section {
         let out = Message::Folder(folder.clone(), Foldering::Take(id));
         items.push(("Out of the folder".to_owned(), out));
     }
-    Section {
-        heading: "Folder",
-        items,
-    }
+    Section::new("Folder", items)
 }
 
 /// The sections of a track menu: the links of the kind of the track, then its folder.
@@ -2192,6 +2233,9 @@ pub(super) fn links(session: &Session, track: &Track) -> Vec<Section> {
 fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
     if track.source.has_variants() {
         return trio_section(track).into_iter().collect();
+    }
+    if track.source.has_reads() {
+        return phase_section(session, track).into_iter().collect();
     }
     if !track.source.has_signal() || track.over.is_some() {
         return Vec::new();
@@ -2211,10 +2255,7 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
             .collect();
         let stop = Message::TrackChanged(id, Change::Compare(None));
         items.push(("Stop comparing".to_owned(), stop));
-        return vec![Section {
-            heading: "Comparison",
-            items,
-        }];
+        return vec![Section::new("Comparison", items)];
     }
     let members = members(session, track);
     if !members.is_empty() {
@@ -2225,10 +2266,7 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
                 (member.name.clone(), change)
             })
             .collect();
-        return vec![Section {
-            heading: "Separate",
-            items,
-        }];
+        return vec![Section::new("Separate", items)];
     }
     let others: Vec<&Track> = session
         .tracks
@@ -2251,14 +2289,8 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
         })
         .collect();
     vec![
-        Section {
-            heading: "Overlay on",
-            items: overlay,
-        },
-        Section {
-            heading: "Compare with",
-            items: compare,
-        },
+        Section::new("Overlay on", overlay),
+        Section::new("Compare with", compare),
     ]
 }
 

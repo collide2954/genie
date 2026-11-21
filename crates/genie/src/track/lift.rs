@@ -408,6 +408,7 @@ mod tests {
             detail: true,
             rules: &[],
             length: 300_000,
+            phased: &[],
         };
         let gene = |loaded: Loaded| {
             let Content::Features(annotation) = loaded.content else {

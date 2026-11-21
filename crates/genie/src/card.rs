@@ -378,7 +378,11 @@ pub fn pair_lines(read: &Alignment, mate: Option<&str>, same: bool) -> Vec<Strin
     let mut lines: Vec<String> = mate_line(read, mate, same).into_iter().collect();
     let mut tags = Vec::new();
     if let Some(phase) = read.tags.phase {
-        tags.push(format!("HP {phase}"));
+        tags.push(if read.tags.phase_from_vcf {
+            format!("HP {phase} from the VCF")
+        } else {
+            format!("HP {phase}")
+        });
     }
     if let Some(group) = &read.tags.group {
         tags.push(format!("RG {group}"));
@@ -1493,6 +1497,18 @@ mod tests {
         assert_eq!(
             pair_lines(&read, Some("chr2"), false)[0],
             "Mate chr2:4,401 · insert 4,350 · first"
+        );
+        let phased = Alignment {
+            tags: Tags {
+                phase: Some(2),
+                phase_from_vcf: true,
+                ..Tags::default()
+            },
+            ..read.clone()
+        };
+        assert_eq!(
+            pair_lines(&phased, Some("chr1"), true)[1],
+            "HP 2 from the VCF"
         );
         let outward = Alignment {
             flags: PAIRED | REVERSE | SECOND,

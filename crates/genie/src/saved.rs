@@ -95,6 +95,9 @@ pub struct SavedTrack {
     pub ld: Option<String>,
     /// The place of the lead variant of the LocusZoom colors of a GWAS track.
     pub lead: Option<u64>,
+    /// The place of the variant track whose phased SNVs give haplotypes to the reads of a read
+    /// track, and the name of the sample.
+    pub phase: Option<(usize, String)>,
 }
 
 impl SavedTrack {
@@ -122,6 +125,7 @@ impl SavedTrack {
             reviews: Reviews::default(),
             ld: None,
             lead: None,
+            phase: None,
         }
     }
 }
@@ -391,7 +395,17 @@ fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
             .value("lead")
             .and_then(|text| text.parse::<u64>().ok())
             .and_then(|place| place.checked_sub(1)),
+        phase: phase(section),
     })
+}
+
+/// The phase of a read track: the place of the variant track, counted from 1 in the file, and
+/// the name of the sample, as `phase = 2 HG002`.
+fn phase(section: &Section) -> Option<(usize, String)> {
+    let (place, sample) = section.value("phase")?.trim().split_once(' ')?;
+    let place = place.parse::<usize>().ok()?.checked_sub(1)?;
+    let sample = sample.trim();
+    (!sample.is_empty()).then(|| (place, sample.to_owned()))
 }
 
 /// The entries of how a track shows its data that differ from the defaults, except the colors
@@ -475,6 +489,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if let Some(lead) = track.lead {
         entries.push(("lead", (lead + 1).to_string()));
+    }
+    if let Some((place, sample)) = &track.phase {
+        entries.push(("phase", format!("{} {sample}", place + 1)));
     }
     if let Some(name) = &track.normalization {
         entries.push(("normalization", name.clone()));
@@ -623,6 +640,7 @@ fn options(section: &Section) -> Options {
         mates: on("mates"),
         baf: None,
         ld: None,
+        phase: None,
     }
 }
 
@@ -782,6 +800,7 @@ mod tests {
             mates: true,
             baf: None,
             ld: None,
+            phase: None,
         }
     }
 

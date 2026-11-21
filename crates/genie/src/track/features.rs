@@ -135,6 +135,7 @@ impl FeatureFile {
             detail,
             rules,
             length,
+            ..
         } = scope;
         match self {
             Self::Table { table, .. } | Self::Records { table, .. } if !detail => {

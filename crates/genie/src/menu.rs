@@ -3,7 +3,10 @@ use genie_formats::fields::{Rule, Test};
 use genie_render::features::Mode;
 use genie_render::scene::Hue;
 use genie_render::signal::Style;
-use iced::widget::{Column, button, column, container, opaque, pin, row, space, text, text_input};
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{
+    Column, button, column, container, opaque, pin, row, scrollable, space, text, text_input,
+};
 use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
@@ -123,6 +126,21 @@ fn junction_row<'a>(track: &Track) -> Element<'a, Message> {
 pub struct Section {
     pub heading: &'static str,
     pub items: Vec<(String, Message)>,
+    /// The places in `items` of the chosen items.
+    pub chosen: Vec<usize>,
+    /// The places in `items` of the items that show indented: the choices of the item over them.
+    pub indented: Vec<usize>,
+}
+
+impl Section {
+    pub fn new(heading: &'static str, items: Vec<(String, Message)>) -> Self {
+        Self {
+            heading,
+            items,
+            chosen: Vec::new(),
+            indented: Vec::new(),
+        }
+    }
 }
 
 pub fn height(track: &Track, sections: &[Section]) -> f32 {
@@ -227,6 +245,7 @@ pub fn filter_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
         items.push(link(
             "Label with name".to_owned(),
             Message::Filter(id, Filtering::Label(None)),
+            false,
         ));
     }
     items.push(separator());
@@ -253,12 +272,12 @@ fn rule_row<'a>(id: u64, index: usize, rule: &Rule) -> Element<'a, Message> {
         .into()
 }
 
-fn link<'a>(label: String, message: Message) -> Element<'a, Message> {
+fn link<'a>(label: String, message: Message, chosen: bool) -> Element<'a, Message> {
     button(text(label).size(12).wrapping(text::Wrapping::None))
         .width(Length::Fill)
         .padding([3, 8])
         .clip(true)
-        .style(style::ghost)
+        .style(if chosen { style::chosen } else { style::ghost })
         .on_press(message)
         .into()
 }
@@ -488,19 +507,39 @@ pub fn card(
     sized(content, at, window, (WIDTH, height))
 }
 
+/// The most height of a menu in a window. A higher menu scrolls.
+pub fn room(window: Size) -> f32 {
+    (window.height - 2.0 * EDGE).max(0.0)
+}
+
 pub fn sized(
     content: Column<'_, Message>,
     at: Point,
     window: Size,
     (width, height): (f32, f32),
 ) -> Element<'_, Message> {
-    let card = container(content)
+    let room = room(window);
+    let tall = height > room;
+    let body: Element<'_, Message> = if tall {
+        scrollable(content)
+            .direction(Direction::Vertical(
+                Scrollbar::new().width(6).scroller_width(6).margin(0),
+            ))
+            .style(style::scrollbar)
+            .height(room - 8.0)
+            .into()
+    } else {
+        content.into()
+    };
+    let card = container(body)
         .id("menu")
         .width(width)
         .padding(4)
         .style(style::menu);
     let x = at.x.min(window.width - width - EDGE).max(0.0);
-    let y = if at.y + height > window.height {
+    let y = if tall {
+        EDGE
+    } else if at.y + height > window.height {
         (at.y - height).max(0.0)
     } else {
         at.y
@@ -661,9 +700,9 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
 /// frequencies.
 const FRACTION_SAMPLES: usize = 8;
 
-/// The samples that the menu lists for the lane of B-allele frequencies: up to
+/// The samples that a menu lists, for example for the lane of B-allele frequencies: up to
 /// `FRACTION_SAMPLES` around the sample that shows.
-fn fraction_choices(count: usize, shown: usize) -> std::ops::Range<usize> {
+pub fn sample_choices(count: usize, shown: usize) -> std::ops::Range<usize> {
     let start = shown
         .saturating_sub(FRACTION_SAMPLES / 2)
         .min(count.saturating_sub(FRACTION_SAMPLES));
@@ -676,7 +715,7 @@ fn fraction_rows(track: &Track) -> usize {
     let count = track.source.samples().len();
     match track.options.baf {
         _ if count == 0 => 0,
-        Some(shown) if count > 1 => 1 + fraction_choices(count, shown).len(),
+        Some(shown) if count > 1 => 1 + sample_choices(count, shown).len(),
         _ => 1,
     }
 }
@@ -695,7 +734,7 @@ fn fraction_items<'a>(track: &Track) -> Vec<Element<'a, Message>> {
     if let Some(shown) = shown
         && samples.len() > 1
     {
-        items.extend(fraction_choices(samples.len(), shown).map(|index| {
+        items.extend(sample_choices(samples.len(), shown).map(|index| {
             let message = Message::TrackChanged(id, Change::Baf(Some(index)));
             choice(samples[index].clone(), message, index == shown)
         }));
@@ -864,14 +903,26 @@ pub fn view<'a>(
         .into_iter()
         .filter(|section| !section.items.is_empty())
     {
+        let Section {
+            heading,
+            items,
+            chosen,
+            indented,
+        } = section;
+        let items = items
+            .into_iter()
+            .enumerate()
+            .map(|(place, (label, message))| {
+                let on = chosen.contains(&place);
+                if indented.contains(&place) {
+                    choice(label, message, on)
+                } else {
+                    link(label, message, on)
+                }
+            });
         content = content
-            .push(self::heading(section.heading))
-            .extend(
-                section
-                    .items
-                    .into_iter()
-                    .map(|(label, message)| link(label, message)),
-            )
+            .push(self::heading(heading))
+            .extend(items)
             .push(separator());
     }
     let content = content

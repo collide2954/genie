@@ -33,7 +33,7 @@ use crate::reference::{self, Reference};
 use crate::saved::{self, Saved, SavedTrack};
 use crate::scene::Pointer;
 use crate::tiles::{Key, TILING};
-use crate::track::{self, Calls, Change, Content, Loaded, Pile, Scope, Source, Track};
+use crate::track::{self, Calls, Change, Content, Loaded, Phasing, Pile, Scope, Source, Track};
 
 use super::orders::Answer;
 use super::view::{
@@ -660,6 +660,11 @@ impl Genie {
             .filter(|track| track.hidden)
             .map(|track| track.id)
             .collect();
+        let phasings: Vec<(u64, Phasing)> = session
+            .tracks
+            .iter()
+            .filter_map(|track| Some((track.id, Phasing::of(&session.tracks, track, contig)?)))
+            .collect();
         session
             .tracks
             .iter_mut()
@@ -673,26 +678,28 @@ impl Genie {
                 let (reference, rules) = (Arc::clone(reference), track.filter.rules.clone());
                 let (detail, lift) = (source.detailed(visible), track.lift.clone());
                 let ld = options.ld.map(|_| track.ld_samples());
+                let phasing = phasings
+                    .iter()
+                    .find(|(known, _)| *known == id)
+                    .map(|(_, phasing)| phasing.clone());
                 Some(Task::perform(
                     async move {
                         let started = Instant::now();
                         let bases =
                             |window: Region| reference.fetch(contig, window.clamp_to(length));
-                        let scope = Scope {
-                            step,
-                            detail,
-                            rules: &rules,
-                            length,
-                        };
-                        let lift = lift.as_deref();
-                        let result = track::load_track(
-                            &source,
-                            lift,
-                            (&name, wanted),
-                            options,
-                            scope,
-                            bases,
-                        );
+                        let phased =
+                            phasing.map_or(Ok(Vec::new()), |phasing| phasing.sites(wanted));
+                        let result = phased.and_then(|phased| {
+                            let scope = Scope {
+                                step,
+                                detail,
+                                rules: &rules,
+                                length,
+                                phased: &phased,
+                            };
+                            let lift = lift.as_deref();
+                            track::load_track(&source, lift, (&name, wanted), options, scope, bases)
+                        });
                         let result = match &ld {
                             Some(samples) => {
                                 result.map(|loaded| track::with_ld(loaded, samples.as_deref()))
@@ -1045,42 +1052,7 @@ impl Genie {
             session
                 .tracks
                 .sort_by_key(|track| saved_at(&track.source.location).unwrap_or(usize::MAX));
-            let links: Vec<(u64, u64)> = session
-                .tracks
-                .iter()
-                .filter(|track| track.over.is_none())
-                .filter_map(|track| {
-                    let base = saved.tracks[saved_at(&track.source.location)?].over?;
-                    let location = &saved.tracks.get(base)?.location;
-                    let base = session
-                        .tracks
-                        .iter()
-                        .find(|other| other.source.location == *location)?;
-                    Some((track.id, base.id))
-                })
-                .collect();
-            for (member, base) in links {
-                track::change(&mut session.tracks, member, Change::Overlay(base));
-            }
-            let comparisons: Vec<(u64, u64, signal::Operation)> = session
-                .tracks
-                .iter()
-                .filter(|track| track.plot.math.is_none())
-                .filter_map(|track| {
-                    let (other, operation) =
-                        saved.tracks[saved_at(&track.source.location)?].compare?;
-                    let location = &saved.tracks.get(other)?.location;
-                    let other = session
-                        .tracks
-                        .iter()
-                        .find(|known| known.source.location == *location)?;
-                    Some((track.id, other.id, operation))
-                })
-                .collect();
-            for (id, other, operation) in comparisons {
-                track::change(&mut session.tracks, id, Change::Compare(Some(other)));
-                track::change(&mut session.tracks, id, Change::Operation(operation));
-            }
+            relink(&mut session.tracks, saved);
         } else {
             track.arrange(session.samples.as_ref().map(|samples| &*samples.table));
             session.tracks.push(track);
@@ -1497,6 +1469,66 @@ fn site_detail(track: &Track, viewport: Viewport, sites: &[Site], x: f32) -> Opt
     })
 }
 
+/// Links the open tracks of a session that it restores as the session links them: the overlays,
+/// the comparisons of signal tracks, and the variant tracks that phase reads.
+fn relink(tracks: &mut Vec<Track>, saved: &Saved) {
+    let saved_at = |location: &Location| {
+        saved
+            .tracks
+            .iter()
+            .position(|known| known.location == *location)
+    };
+    let open = |tracks: &[Track], other: usize| {
+        let location = &saved.tracks.get(other)?.location;
+        tracks
+            .iter()
+            .find(|known| known.source.location == *location)
+            .map(|known| known.id)
+    };
+    let links: Vec<(u64, u64)> = tracks
+        .iter()
+        .filter(|track| track.over.is_none())
+        .filter_map(|track| {
+            let base = saved.tracks[saved_at(&track.source.location)?].over?;
+            Some((track.id, open(tracks, base)?))
+        })
+        .collect();
+    for (member, base) in links {
+        track::change(tracks, member, Change::Overlay(base));
+    }
+    let comparisons: Vec<(u64, u64, signal::Operation)> = tracks
+        .iter()
+        .filter(|track| track.plot.math.is_none())
+        .filter_map(|track| {
+            let (other, operation) = saved.tracks[saved_at(&track.source.location)?].compare?;
+            Some((track.id, open(tracks, other)?, operation))
+        })
+        .collect();
+    for (id, other, operation) in comparisons {
+        track::change(tracks, id, Change::Compare(Some(other)));
+        track::change(tracks, id, Change::Operation(operation));
+    }
+    let phases: Vec<(u64, track::Phase)> = tracks
+        .iter()
+        .filter(|track| track.options.phase.is_none())
+        .filter_map(|track| {
+            let found = &saved.tracks[saved_at(&track.source.location)?];
+            let (other, sample) = found.phase.as_ref()?;
+            let variants = open(tracks, *other)?;
+            let source = &tracks.iter().find(|known| known.id == variants)?.source;
+            let sample = source.samples().iter().position(|name| name == sample)?;
+            let phase = track::Phase {
+                track: variants,
+                sample,
+            };
+            Some((track.id, phase))
+        })
+        .collect();
+    for (id, phase) in phases {
+        track::change(tracks, id, Change::Phase(Some(phase)));
+    }
+}
+
 /// Gives a track the settings of a session, and the chain file to read for its lift.
 fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     if let Some(name) = &found.name {
@@ -1515,6 +1547,7 @@ fn apply_saved(track: &mut Track, found: &SavedTrack) -> Option<Location> {
     track.options = track::Options {
         lift: track.options.lift,
         baf,
+        phase: None,
         ..found.options
     };
     let group = found.ld.clone().filter(|group| group != track::ALL_SAMPLES);

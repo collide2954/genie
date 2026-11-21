@@ -138,6 +138,7 @@ impl Genie {
                         lift: 0,
                         baf: None,
                         ld: None,
+                        phase: None,
                         ..track.options
                     },
                     plot: Plot {
@@ -173,6 +174,12 @@ impl Genie {
                             .unwrap_or_else(|| ALL_SAMPLES.to_owned())
                     }),
                     lead: track.lead,
+                    phase: track.options.phase.and_then(|phase| {
+                        let place = |other: &Track| other.id == phase.track;
+                        let other = session.tracks.iter().position(place)?;
+                        let sample = session.tracks[other].source.samples().get(phase.sample)?;
+                        Some((other, sample.clone()))
+                    }),
                 })
                 .chain(session.preparing.iter().map(|item| {
                     item.saved

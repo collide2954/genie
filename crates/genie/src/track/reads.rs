@@ -2,12 +2,13 @@ use std::io::BufReader;
 
 use genie_core::Region;
 use genie_core::alignment::{Alignment, DUPLICATE, Filter, QC_FAIL, SECONDARY, SUPPLEMENTARY};
+use genie_core::haplotag;
 use genie_formats::bgzf::Bgzf;
 use genie_formats::cram::{Cram, crai};
-use genie_formats::fields::{self, Rule};
+use genie_formats::fields;
 use genie_formats::{bai, bam};
 
-use super::{Gather, Loaded, Options};
+use super::{Gather, Loaded, Options, Scope};
 use crate::location::Location;
 
 const MARGIN: u64 = 1_000;
@@ -24,6 +25,8 @@ pub enum Reads {
 pub struct ReadFile {
     pub index: Reads,
     pub contigs: Vec<String>,
+    /// The samples of the read groups of the file (SM of @RG).
+    pub samples: Vec<String>,
 }
 
 /// The flags that hide reads: the default ones, less the kinds that the options show.
@@ -90,6 +93,7 @@ impl ReadFile {
         Ok(Self {
             index: Reads::Bam(index),
             contigs,
+            samples: header.samples,
         })
     }
 
@@ -117,18 +121,22 @@ impl ReadFile {
             .iter()
             .map(|(contig, _)| contig.clone())
             .collect();
+        let samples = cram.samples.clone();
         Ok(Self {
             index: Reads::Cram(Box::new(cram), index),
             contigs,
+            samples,
         })
     }
 
+    /// The reads of a region that pass the options and the rules of the scope. A read without
+    /// an HP tag gets the haplotype of the phased SNVs of the scope that it covers.
     pub fn load(
         &self,
         location: &Location,
         contig: &str,
         region: Region,
-        (options, rules): (Options, &[Rule]),
+        (options, scope): (Options, Scope<'_>),
         mut reference: impl FnMut(Region) -> Result<Vec<u8>, String>,
     ) -> Result<Loaded, String> {
         let id = self
@@ -136,20 +144,24 @@ impl ReadFile {
             .iter()
             .position(|known| known == contig)
             .ok_or_else(|| format!("The file has no contig {contig}."))?;
-        let filter = flags(options);
+        let (filter, rules) = (flags(options), scope.rules);
         let keeps = |alignment: &Alignment| {
             filter.keeps(alignment)
                 && alignment.mapq >= options.mapq
                 && (rules.is_empty() || fields::passes(rules, &super::read_fields(alignment)))
         };
         let mut gather = Gather::new(region, id, options);
+        let mut add = |mut alignment: Alignment| {
+            if keeps(&alignment) {
+                haplotag::tag(&mut alignment, scope.phased);
+                gather.add(alignment);
+            }
+        };
         match &self.index {
             Reads::Bam(index) => {
                 let mut reader = Bgzf::new(location.open()?);
                 bam::query(index, &mut reader, id, region, |alignment| {
-                    if keeps(&alignment) {
-                        gather.add(alignment);
-                    }
+                    add(alignment);
                     Ok(())
                 })
                 .map_err(|error| error.to_string())?;
@@ -157,12 +169,8 @@ impl ReadFile {
             Reads::Cram(cram, index) => {
                 let mut reader = BufReader::new(location.open()?);
                 let mut fetch = |_: usize, window: Region| reference(window);
-                cram.query(index, &mut reader, id, region, &mut fetch, |alignment| {
-                    if keeps(&alignment) {
-                        gather.add(alignment);
-                    }
-                })
-                .map_err(|error| error.to_string())?;
+                cram.query(index, &mut reader, id, region, &mut fetch, add)
+                    .map_err(|error| error.to_string())?;
             }
         }
         let window = Region::between(

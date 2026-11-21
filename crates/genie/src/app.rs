@@ -4504,28 +4504,8 @@ ORIGIN
     #[test]
     fn tracks_opened_after_a_restore_keep_their_moves() {
         let saved_track = |name: &str| crate::saved::SavedTrack {
-            location: PathBuf::from(format!("/data/{name}")).into(),
-            name: None,
-            over: None,
-            compare: None,
-            mode: None,
             hue: Hue::Blue,
-            height: None,
-            options: crate::track::Options::default(),
-            plot: crate::track::Plot::default(),
-            filter: crate::track::Filter::default(),
-            modification: None,
-            normalization: None,
-            declared: None,
-            choice: genie_core::samples::Choice::default(),
-            lift: None,
-            hidden: false,
-            folder: None,
-            motifs: None,
-            baf: None,
-            reviews: genie_core::review::Reviews::default(),
-            ld: None,
-            lead: None,
+            ..crate::saved::SavedTrack::plain(PathBuf::from(format!("/data/{name}")).into())
         };
         let saved = crate::saved::Saved {
             reference: PathBuf::from("ref.fa").into(),
@@ -4605,28 +4585,8 @@ ORIGIN
             locus: Some("chr1:1,000-2,000".to_owned()),
             reading: crate::reading::Reading::default(),
             tracks: vec![crate::saved::SavedTrack {
-                location: PathBuf::from("/data/reads.bam").into(),
-                name: None,
-                over: None,
-                compare: None,
-                mode: None,
                 hue: Hue::Blue,
-                height: None,
-                options: crate::track::Options::default(),
-                plot: crate::track::Plot::default(),
-                filter: crate::track::Filter::default(),
-                modification: None,
-                normalization: None,
-                declared: None,
-                choice: genie_core::samples::Choice::default(),
-                lift: None,
-                hidden: false,
-                folder: None,
-                motifs: None,
-                baf: None,
-                reviews: genie_core::review::Reviews::default(),
-                ld: None,
-                lead: None,
+                ..crate::saved::SavedTrack::plain(PathBuf::from("/data/reads.bam").into())
             }],
             regions: Vec::new(),
             hubs: Vec::new(),
@@ -5244,16 +5204,7 @@ ORIGIN
         name: &str,
         reads: Vec<genie_core::alignment::Alignment>,
     ) {
-        let source = Arc::new(Source {
-            location: PathBuf::from(format!("/data/{name}")).into(),
-            name: name.to_owned(),
-            data: None,
-            format: Format::Reads(ReadFile {
-                index: crate::track::reads::Reads::Bam(genie_formats::bai::Index::default()),
-                contigs: vec!["chr1".to_owned()],
-            }),
-        });
-        let _ = genie.update(Message::TrackOpened(Ok(source)));
+        let _ = genie.update(Message::TrackOpened(Ok(read_source(name))));
         let region = Region::between(0, 1_000);
         let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
         track.slot.wanted = Some((0, region));
@@ -5847,6 +5798,7 @@ ORIGIN
             format: Format::Reads(ReadFile {
                 index: crate::track::reads::Reads::Bam(genie_formats::bai::Index::default()),
                 contigs: vec!["chr1".to_owned()],
+                samples: Vec::new(),
             }),
         })
     }
@@ -6166,12 +6118,15 @@ ORIGIN
             with_table(),
             with_family(),
             with_fractions(),
+            with_phased_reads(),
         ];
         for mut genie in tracks {
+            let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));
             let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
             let session = genie.session.as_ref().unwrap();
             let sections = super::view::links(session, &session.tracks[0]);
-            let expected = menu::height(&session.tracks[0], &sections);
+            let expected =
+                menu::height(&session.tracks[0], &sections).min(menu::room(genie.window));
             let mut ui = simulator(genie.view());
             let height = ui.find(selector::id("menu")).unwrap().bounds().height;
             assert!(
@@ -6212,6 +6167,7 @@ ORIGIN
                 samples: vec!["NA1".to_owned(), "NA2".to_owned()],
                 infos: vec![("DP".to_owned(), "Read depth".to_owned())],
                 fractions: crate::track::Memo::default(),
+                phased: crate::track::Memo::default(),
             }),
         })
     }
@@ -6299,6 +6255,85 @@ ORIGIN
         assert_eq!(track.options.baf, Some(1));
         let _ = genie.update(Message::TrackChanged(0, Change::Baf(None)));
         assert_eq!(genie.session.as_ref().unwrap().tracks[0].options.baf, None);
+    }
+
+    /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
+    fn with_phased_reads() -> Genie {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let phase = crate::track::Phase {
+            track: 1,
+            sample: 0,
+        };
+        let _ = genie.update(Message::TrackChanged(0, Change::Phase(Some(phase))));
+        genie
+    }
+
+    /// The menu of a read track lists the variant tracks under "Phase by", and the samples of
+    /// the one in use. Sessions keep the variant track and the sample, and the phase stops when
+    /// the variant track goes.
+    #[test]
+    fn read_menus_phase_the_reads_by_the_snvs_of_a_variant_track() {
+        use crate::track::Phase;
+        let window = Size::new(1024.0, 1200.0);
+        let settings = iced::Settings::default;
+        let mut genie = with_reads();
+        let _ = genie.update(Message::WindowResized(window));
+        let _ = genie.update(Message::TrackOpened(Ok(variant_source())));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        // The items under the heading, the first at 0: the variant track names are also the
+        // labels of their lanes.
+        let click_item = |genie: &Genie, place: f32| -> Vec<Message> {
+            let mut ui = iced_test::Simulator::with_size(settings(), window, genie.view());
+            let heading = ui.find("Phase by").unwrap().bounds();
+            let y = heading.y + 18.0 + place * 22.6 + 10.0;
+            ui.point_at(Point::new(heading.x + 10.0, y));
+            let _ = ui.simulate(simulator::click());
+            ui.into_messages().collect()
+        };
+        let phase = Phase {
+            track: 1,
+            sample: 0,
+        };
+        let on = Message::TrackChanged(0, Change::Phase(Some(phase)));
+        let messages = click_item(&genie, 0.0);
+        assert!(messages.contains(&on), "{messages:?}");
+        let _ = genie.update(on);
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 40.0)));
+        let second = Phase { sample: 1, ..phase };
+        let second = Message::TrackChanged(0, Change::Phase(Some(second)));
+        let messages = click_item(&genie, 2.0);
+        assert!(messages.contains(&second), "{messages:?}");
+        let _ = genie.update(second);
+        assert!(palette_shows(
+            &mut genie,
+            "stop phas",
+            "Stop phasing the reads"
+        ));
+        let base = std::path::Path::new("/data");
+        let text = genie.saved().unwrap().text(base);
+        assert!(text.contains("phase = 2 NA2"), "{text}");
+        let mut restored = opened();
+        restored.restoring = Some(crate::saved::Saved::parse(&text, base).unwrap());
+        restored.waiting = 2;
+        let _ = restored.update(Message::TrackOpened(Ok(variant_source())));
+        let _ = restored.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let session = restored.session.as_ref().unwrap();
+        let reads = session.tracks.iter().find(|track| track.source.has_reads());
+        let variants = session
+            .tracks
+            .iter()
+            .find(|track| track.source.has_variants());
+        let expected = Phase {
+            track: variants.unwrap().id,
+            sample: 1,
+        };
+        assert_eq!(reads.unwrap().options.phase, Some(expected));
+        let _ = genie.update(Message::TrackChanged(1, Change::Remove));
+        assert_eq!(
+            genie.session.as_ref().unwrap().tracks[0].options.phase,
+            None
+        );
     }
 
     /// The review bar goes to a variant and marks it with keys and a note. The mark shows over
@@ -6966,6 +7001,7 @@ ORIGIN
                 samples,
                 infos: Vec::new(),
                 fractions: crate::track::Memo::default(),
+                phased: crate::track::Memo::default(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));
@@ -7291,6 +7327,7 @@ ORIGIN
                 samples: names(&["kid", "dad", "mum"]),
                 infos: Vec::new(),
                 fractions: crate::track::Memo::default(),
+                phased: crate::track::Memo::default(),
             }),
         });
         let _ = genie.update(Message::TrackOpened(Ok(source)));

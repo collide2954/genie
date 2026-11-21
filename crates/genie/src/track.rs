@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use genie_core::alignment::{Alignment, Inserts, PAIRED, REVERSE, SECONDARY, SUPPLEMENTARY};
 use genie_core::association::Association;
 use genie_core::contact::ContactMap;
+use genie_core::haplotag::Phased;
 use genie_core::interaction::Interaction;
 use genie_core::isoform::{Chain, Chains, Isoform};
 use genie_core::ld::Matrix;
@@ -247,6 +248,14 @@ impl Source {
         }
     }
 
+    /// The samples of the read groups of a read file (SM of @RG).
+    pub fn read_samples(&self) -> &[String] {
+        match &self.format {
+            Format::Reads(file) => &file.samples,
+            _ => &[],
+        }
+    }
+
     /// The widest view that shows data.
     pub fn span(&self) -> u64 {
         match &self.format {
@@ -424,6 +433,18 @@ pub struct Options {
     /// The samples whose LD shows in a lane under the sites of a variant track: 0 for all
     /// samples, or the key of a group of the samples.
     pub ld: Option<u64>,
+    /// The variant track and the sample whose phased SNVs give haplotypes to the reads of a
+    /// read track that have no HP tag.
+    pub phase: Option<Phase>,
+}
+
+/// The phased SNVs of a sample of a variant track, which give haplotypes to reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Phase {
+    /// The ID of the variant track.
+    pub track: u64,
+    /// The sample of the variant track.
+    pub sample: usize,
 }
 
 /// The kinds of reads that show besides primary reads.
@@ -468,6 +489,7 @@ impl Default for Options {
             mates: false,
             baf: None,
             ld: None,
+            phase: None,
         }
     }
 }
@@ -564,6 +586,7 @@ impl Options {
             Change::Column(pick) => options.table = pick,
             Change::Mapq(floor) => options.mapq = floor,
             Change::Baf(sample) => options.baf = sample,
+            Change::Phase(phase) => options.phase = phase,
             Change::Color(name) => {
                 options.color = if options.color == Some(name) {
                     None
@@ -1822,6 +1845,9 @@ pub enum Change {
     /// Show the LD of a variant track in a lane, of all samples (0) or of a group of the samples
     /// (its place from 1), or remove the lane.
     Ld(Option<u16>),
+    /// Give haplotypes to the reads without HP tags of a read track from the phased SNVs of a
+    /// sample of a variant track, or stop.
+    Phase(Option<Phase>),
     /// Color the reads by the values of a tag, or stop when the tag already colors them.
     Color([u8; 2]),
     /// Normalize a Hi-C map with the normalization at this place in the list of the file.
@@ -1855,34 +1881,14 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         Change::Mode(mode) => tracks[position].mode = Some(mode),
         Change::Hue(hue) => tracks[position].hue = hue,
         Change::Visible(visible) => tracks[position].set_visible(visible),
-        Change::Difference => tracks[position].plot.look.difference ^= true,
-        Change::Style(style) => tracks[position].plot.style = style,
-        Change::Link => {
-            let plot = &mut tracks[position].plot;
-            plot.linked = !plot.linked;
-            if plot.linked {
-                plot.range = None;
-            }
-        }
-        Change::Pairs => {
-            let look = &mut tracks[position].plot.look;
-            look.pairs = !look.pairs;
-        }
-        Change::Mods => {
-            let look = &mut tracks[position].plot.look;
-            look.mods = !look.mods;
-        }
-        Change::Sashimi => {
-            let plot = &mut tracks[position].plot;
-            plot.sashimi = !plot.sashimi;
-            plot.isoforms &= !plot.sashimi;
-        }
-        Change::Isoforms => {
-            let plot = &mut tracks[position].plot;
-            plot.isoforms = !plot.isoforms;
-            plot.sashimi &= !plot.isoforms;
-        }
-        Change::JunctionReads(reads) => tracks[position].plot.junction_reads = reads.max(1),
+        Change::Difference
+        | Change::Style(_)
+        | Change::Link
+        | Change::Pairs
+        | Change::Mods
+        | Change::Sashimi
+        | Change::Isoforms
+        | Change::JunctionReads(_) => replot(&mut tracks[position].plot, change),
         Change::Modification(index) => {
             let track = &mut tracks[position];
             if let Some(name) = track.modification_names().get(index).cloned() {
@@ -1922,6 +1928,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         }
         Change::Mapq(_)
         | Change::Baf(_)
+        | Change::Phase(_)
         | Change::Color(_)
         | Change::Normalization(_)
         | Change::Ratio
@@ -1950,6 +1957,33 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
     }
 }
 
+/// Changes how a track shows its data: the style of a signal, a shared scale, the colors of
+/// pairs and modifications, a Sashimi plot, isoforms, or a methylation difference.
+fn replot(plot: &mut Plot, change: Change) {
+    match change {
+        Change::Difference => plot.look.difference ^= true,
+        Change::Style(style) => plot.style = style,
+        Change::Link => {
+            plot.linked = !plot.linked;
+            if plot.linked {
+                plot.range = None;
+            }
+        }
+        Change::Pairs => plot.look.pairs = !plot.look.pairs,
+        Change::Mods => plot.look.mods = !plot.look.mods,
+        Change::Sashimi => {
+            plot.sashimi = !plot.sashimi;
+            plot.isoforms &= !plot.sashimi;
+        }
+        Change::Isoforms => {
+            plot.isoforms = !plot.isoforms;
+            plot.sashimi &= !plot.isoforms;
+        }
+        Change::JunctionReads(reads) => plot.junction_reads = reads.max(1),
+        _ => {}
+    }
+}
+
 /// Puts a track in a folder after the other tracks of the folder, or takes it out of its folder
 /// after the tracks that stay in it, so that the tracks of each folder follow each other.
 pub fn file(tracks: &mut Vec<Track>, position: usize, folder: Option<String>) {
@@ -1965,7 +1999,8 @@ pub fn file(tracks: &mut Vec<Track>, position: usize, folder: Option<String>) {
     tracks.insert(at, track);
 }
 
-/// Frees the tracks that overlay a removed track, and stops the comparisons with it.
+/// Frees the tracks that overlay a removed track, stops the comparisons with it, and stops the
+/// haplotypes that its phased SNVs give to reads.
 fn removed(tracks: &mut [Track], id: u64) {
     free(tracks, id);
     for track in tracks
@@ -1973,6 +2008,13 @@ fn removed(tracks: &mut [Track], id: u64) {
         .filter(|track| track.plot.math.is_some_and(|math| math.other == id))
     {
         track.plot.math = None;
+    }
+    for track in tracks
+        .iter_mut()
+        .filter(|track| track.options.phase.is_some_and(|phase| phase.track == id))
+    {
+        track.options.phase = None;
+        track.forget();
     }
 }
 
@@ -2599,18 +2641,92 @@ pub fn load(
         detail,
         rules: &[],
         length: region.end(),
+        phased: &[],
     };
     load_kept(source, contig, region, options, scope, reference)
 }
 
 /// How to load a region: the step of the summaries, whether to load the records or their
-/// density, the filter, and the length of the contig.
+/// density, the filter, the length of the contig, and the phased SNVs that give haplotypes to
+/// reads, in the order of their places.
 #[derive(Debug, Clone, Copy)]
 pub struct Scope<'a> {
     pub step: u64,
     pub detail: bool,
     pub rules: &'a [Rule],
     pub length: u64,
+    pub phased: &'a [Phased],
+}
+
+/// How far out of a region of reads genie reads the phased SNVs, for reads that reach out of it.
+const PHASE_MARGIN: u64 = 100_000;
+
+/// The phased SNVs that give haplotypes to the reads of a read track: a variant track, its name
+/// of the contig in view, and a sample.
+#[derive(Debug, Clone)]
+pub struct Phasing {
+    pub source: Arc<Source>,
+    pub contig: String,
+    pub sample: usize,
+}
+
+impl Phasing {
+    /// The phasing of the reads of a track on a contig, from its options. A track with a lift,
+    /// or a variant track with a lift, has none.
+    pub fn of(tracks: &[Track], track: &Track, contig: usize) -> Option<Self> {
+        let phase = track.options.phase?;
+        if track.lift.is_some() || !track.source.has_reads() {
+            return None;
+        }
+        let variants = tracks
+            .iter()
+            .find(|other| other.id == phase.track && other.lift.is_none())?;
+        Some(Self {
+            source: Arc::clone(&variants.source),
+            contig: variants.contigs.get(contig)?.clone()?,
+            sample: phase.sample,
+        })
+    }
+
+    /// The phased SNVs of the sample in a region and `PHASE_MARGIN` on each side, in the order
+    /// of their places. A region whose records are too large to read has none.
+    pub fn sites(&self, region: Region) -> Result<Vec<Phased>, String> {
+        let Format::Variants(file) = &self.source.format else {
+            return Ok(Vec::new());
+        };
+        let around = Region::between(
+            region.start().saturating_sub(PHASE_MARGIN),
+            region.end().saturating_add(PHASE_MARGIN),
+        );
+        let found = file
+            .phased(self.source.data(), (&self.contig, around), self.sample)
+            .map_err(|error| format!("{}: {error}", self.source.name))?;
+        let Some(mut sites) = found else {
+            log::info!(
+                "The phased SNVs of {} are too large to read.",
+                self.source.name
+            );
+            return Ok(Vec::new());
+        };
+        sites.sort_by_key(|site| site.position);
+        Ok(sites)
+    }
+}
+
+/// The sample of a variant track whose phased SNVs give haplotypes to the reads of a read
+/// track: the first sample with the name of a sample of the reads (SM of @RG), else the first.
+pub fn phase_sample(reads: &Source, variants: &Source) -> usize {
+    variants
+        .samples()
+        .iter()
+        .position(|name| reads.read_samples().contains(name))
+        .unwrap_or(0)
+}
+
+/// True for a track whose phased SNVs can give haplotypes to reads: a variant track with
+/// samples, without a lift.
+pub fn can_phase(track: &Track) -> bool {
+    track.source.has_variants() && track.lift.is_none() && !track.source.samples().is_empty()
 }
 
 /// Loads like `load`, and a zoomed-out bigBed density counts only the features that pass the
@@ -2639,9 +2755,7 @@ pub fn load_kept(
                 None => loaded,
             }
         }
-        Format::Reads(file) => {
-            file.load(location, contig, region, (options, scope.rules), reference)?
-        }
+        Format::Reads(file) => file.load(location, contig, region, (options, scope), reference)?,
         Format::Signal(file) => file.load(location, contig, region, scope.step, options.methyl)?,
         Format::Links(file) => file.load(location, contig, region)?,
         Format::Segments(file) => file.load(contig, region),
@@ -3568,6 +3682,7 @@ mod tests {
             detail: false,
             rules: &[],
             length,
+            phased: &[],
         };
         load_kept(
             source,
@@ -4397,6 +4512,7 @@ ORIGIN
                 detail: false,
                 rules,
                 length: 20_000,
+                phased: &[],
             };
             let loaded = file
                 .load(source.data(), "chr1", whole, scope, budget)
@@ -5295,6 +5411,98 @@ ORIGIN
         );
     }
 
+    /// The reads of pairs.bam (samples A and B) and a plain VCF with the samples X and B, whose
+    /// phased SNVs of B have the bases of a read without an HP tag on haplotype 2.
+    #[test]
+    fn reads_without_hp_tags_take_the_haplotype_of_the_phased_snvs_of_a_variant_track() {
+        let scratch = Scratch::new("phased-reads");
+        let reads = Arc::new(open(fixture("pairs.bam")).unwrap());
+        assert_eq!(reads.read_samples(), ["A", "B"]);
+        let window = region(2_000, 8_000);
+        let load_with = |phased: &[genie_core::haplotag::Phased]| {
+            let scope = Scope {
+                step: 1,
+                detail: true,
+                rules: &[],
+                length: 1_000_000,
+                phased,
+            };
+            let options = Options {
+                downsample: false,
+                ..Options::default()
+            };
+            let bases = |window: Region| Ok(vec![b'A'; window.len() as usize]);
+            let loaded = load_kept(&reads, "chr1", window, options, scope, bases).unwrap();
+            let Content::Reads(pile) = loaded.content else {
+                panic!("expected reads");
+            };
+            let found: Vec<Alignment> = pile.reads.into_iter().map(|read| read.alignment).collect();
+            found
+        };
+        let plain = load_with(&[]);
+        let picked = plain
+            .iter()
+            .find(|read| {
+                read.tags.phase.is_none()
+                    && read.start >= window.start()
+                    && read
+                        .cigar
+                        .first()
+                        .is_some_and(|&(op, size)| op == Op::Match && size >= 20)
+            })
+            .unwrap()
+            .clone();
+        let tagged = plain.iter().find(|read| read.tags.phase.is_some()).unwrap();
+        let base = |offset: usize| picked.bases[offset].to_ascii_uppercase();
+        let other = |base: u8| if base == b'A' { 'C' } else { 'A' };
+        let line = |offset: usize| {
+            let at = picked.start + offset as u64 + 1;
+            let alt = char::from(base(offset));
+            format!(
+                "chr1\t{at}\t.\t{}\t{alt}\t.\tPASS\t.\tGT:PS\t0/0:.\t0|1:7\n",
+                other(base(offset))
+            )
+        };
+        let text = format!(
+            "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tX\tB\n{}{}",
+            line(5),
+            line(10)
+        );
+        let variants = Arc::new(open(scratch.file("phased.vcf", text.as_bytes())).unwrap());
+        assert_eq!(super::phase_sample(&reads, &variants), 1);
+        let mut tracks = vec![
+            Track::new(1, Arc::clone(&reads), &assembly()),
+            Track::new(2, variants, &assembly()),
+        ];
+        assert!(super::can_phase(&tracks[1]) && !super::can_phase(&tracks[0]));
+        assert!(super::Phasing::of(&tracks, &tracks[0], 0).is_none());
+        let phase = super::Phase {
+            track: 2,
+            sample: 1,
+        };
+        change(&mut tracks, 1, Change::Phase(Some(phase)));
+        assert_eq!(tracks[0].options.phase, Some(phase));
+        let phasing = super::Phasing::of(&tracks, &tracks[0], 0).unwrap();
+        let sites = phasing.sites(window).unwrap();
+        assert_eq!(sites.len(), 2);
+        let phased = load_with(&sites);
+        let same = |read: &&Alignment, other: &Alignment| {
+            read.name == other.name && read.start == other.start && read.flags == other.flags
+        };
+        let found = phased.iter().find(|read| same(read, &picked)).unwrap();
+        assert_eq!(
+            (found.tags.phase, found.tags.phase_from_vcf),
+            (Some(2), true)
+        );
+        let kept = phased.iter().find(|read| same(read, tagged)).unwrap();
+        assert_eq!(
+            (kept.tags.phase, kept.tags.phase_from_vcf),
+            (tagged.tags.phase, false)
+        );
+        change(&mut tracks, 2, Change::Remove);
+        assert_eq!(tracks[0].options.phase, None);
+    }
+
     #[test]
     fn quick_filters_show_or_hide_kinds_of_reads_and_low_mapq() {
         let source = open(fixture("reads.bam")).unwrap();
@@ -5389,6 +5597,7 @@ ORIGIN
                 detail: true,
                 rules,
                 length: 8_000,
+                phased: &[],
             };
             let loaded = super::load_kept(
                 &source,
