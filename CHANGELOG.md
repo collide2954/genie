@@ -67,6 +67,7 @@
 
 ### Fixes
 
+- The colors of a Hi-C map come from the contacts 2 bins or more from the diagonal, so far contacts show also when the diagonal is much higher. **Full color at** in the track menu takes a count of your own, and sessions keep it.
 - A 2bit file on the web opens with the contig sizes of the `.chrom.sizes` file beside it, as at UCSC. Before, genie read the length of each contig from the 2bit file: about 10 MB in 100 requests for hg38.
 - A feature track shows at most 100 rows: an expanded track with more rows shows squished, and a line counts the other rows, as "242 more rows · zoom in or filter". Before, a track with many sites on one place, such as the JASPAR track of UCSC, could be thousands of points tall.
 - A filter rule in a session file can name an INFO key of a VCF track, for example `least = EUR_AF: 0.05`. Before, genie looked only for the label of the field, so such a rule hid all variants.
