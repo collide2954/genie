@@ -69,6 +69,8 @@ pub struct Mate {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tags {
     pub phase: Option<i64>,
+    /// Whether `phase` comes from the phased SNVs of a VCF file, not from an HP tag.
+    pub phase_from_vcf: bool,
     pub group: Option<String>,
     pub parts: Vec<Part>,
     pub xs: Option<Strand>,

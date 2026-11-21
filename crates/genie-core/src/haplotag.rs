@@ -76,9 +76,21 @@ pub fn haplotype(alignment: &Alignment, sites: &[Phased]) -> Option<i64> {
     (winner >= LEAST_VOTES && winner >= 2 * other && winner > other).then_some(haplotype)
 }
 
+/// Gives a read without a haplotype from an HP tag the haplotype of `haplotype`, and notes that
+/// it comes from the phased SNVs. A read with an HP tag keeps its haplotype.
+pub fn tag(alignment: &mut Alignment, sites: &[Phased]) {
+    if alignment.tags.phase.is_some() || sites.is_empty() {
+        return;
+    }
+    if let Some(found) = haplotype(alignment, sites) {
+        alignment.tags.phase = Some(found);
+        alignment.tags.phase_from_vcf = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Phased, haplotype};
+    use super::{Phased, haplotype, tag};
     use crate::alignment::{Alignment, Op, Tags};
 
     fn read(start: u64, cigar: &[(Op, u32)], bases: &str, low: &[usize]) -> Alignment {
@@ -160,6 +172,33 @@ mod tests {
         );
         let both = read(8, &deleted, "nnAnGnnn", &[]);
         assert_eq!(haplotype(&both, &sites()), Some(1));
+    }
+
+    #[test]
+    fn reads_with_hp_tags_keep_them_and_others_get_the_vcf_haplotype() {
+        let all = [(Op::Match, 10)];
+        let mut tagged = read(8, &all, "nnGnTnAnnn", &[]);
+        tagged.tags.phase = Some(1);
+        tag(&mut tagged, &sites());
+        assert_eq!(
+            (tagged.tags.phase, tagged.tags.phase_from_vcf),
+            (Some(1), false)
+        );
+        let mut plain = read(8, &all, "nnGnTnAnnn", &[]);
+        tag(&mut plain, &sites());
+        assert_eq!(
+            (plain.tags.phase, plain.tags.phase_from_vcf),
+            (Some(2), true)
+        );
+        let mut unclear = read(8, &all, "nnAnTnnnnn", &[]);
+        tag(&mut unclear, &sites());
+        assert_eq!(
+            (unclear.tags.phase, unclear.tags.phase_from_vcf),
+            (None, false)
+        );
+        let mut alone = read(8, &all, "nnGnTnAnnn", &[]);
+        tag(&mut alone, &[]);
+        assert_eq!(alone.tags.phase, None);
     }
 
     #[test]
