@@ -36,6 +36,8 @@ pub struct Cram {
     pub version: (u8, u8),
     pub references: Vec<(String, u64)>,
     pub groups: Vec<String>,
+    /// The samples of the read groups, from `bam::samples`.
+    pub samples: Vec<String>,
     pub first: u64,
 }
 
@@ -298,11 +300,13 @@ impl Cram {
         let mut text = Bytes::new(&first.data);
         let length = text.u32()? as usize;
         let text = text.take(length.min(text.rest().len()))?;
-        let (references, groups) = parse_header(&String::from_utf8_lossy(text));
+        let text = String::from_utf8_lossy(text);
+        let (references, groups) = parse_header(&text);
         Ok(Self {
             version,
             references,
             groups,
+            samples: crate::bam::samples(&text),
             first: header.end(),
         })
     }
@@ -619,6 +623,7 @@ mod tests {
             ]
         );
         assert_eq!(cram.groups, ["groupA", "groupB"]);
+        assert_eq!(cram.samples, ["A", "B"]);
         assert_eq!(
             Cram::read(&mut open("cram31.cram")).unwrap().version,
             (3, 1)

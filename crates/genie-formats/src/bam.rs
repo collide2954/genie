@@ -26,6 +26,24 @@ const UNMAPPED: u16 = 4;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
     pub references: Vec<(String, u64)>,
+    /// The samples of the read groups, from `samples`.
+    pub samples: Vec<String>,
+}
+
+/// The samples of the read groups of a SAM header text (SM of the @RG lines), once each, in the
+/// order of the lines.
+pub fn samples(text: &str) -> Vec<String> {
+    let mut samples: Vec<String> = Vec::new();
+    for line in text.lines().filter(|line| line.starts_with("@RG\t")) {
+        let sample = line.split('\t').find_map(|field| field.strip_prefix("SM:"));
+        if let Some(sample) = sample.map(|sample| sample.trim_end_matches('\0'))
+            && !sample.is_empty()
+            && !samples.iter().any(|known| known == sample)
+        {
+            samples.push(sample.to_owned());
+        }
+    }
+    samples
 }
 
 pub fn header(reader: &mut impl Read) -> Result<Header, Error> {
@@ -34,10 +52,13 @@ pub fn header(reader: &mut impl Read) -> Result<Header, Error> {
     if &magic != MAGIC {
         return Err(Error::Invalid(Reason::NotBam));
     }
-    let text = count(reader)? as u64;
-    if io::copy(&mut reader.by_ref().take(text), &mut io::sink())? != text {
+    let length = count(reader)?;
+    let mut text = Vec::new();
+    reader.by_ref().take(length as u64).read_to_end(&mut text)?;
+    if text.len() != length {
         return Err(bad());
     }
+    let samples = samples(&String::from_utf8_lossy(&text));
     let references = (0..count(reader)?)
         .map(|_| {
             let mut name = Vec::new();
@@ -50,7 +71,10 @@ pub fn header(reader: &mut impl Read) -> Result<Header, Error> {
             Ok((String::from_utf8_lossy(&name).into_owned(), size))
         })
         .collect::<Result<_, Error>>()?;
-    Ok(Header { references })
+    Ok(Header {
+        references,
+        samples,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,7 +439,7 @@ pub mod tests {
     use genie_core::alignment::{Alignment, Op};
     use genie_core::{Region, Strand};
 
-    use super::{Place, header, place, query, raw, record};
+    use super::{Place, header, place, query, raw, record, samples};
     use crate::{
         Error, Reason,
         bai::{Index, tests::index},
@@ -433,7 +457,10 @@ pub mod tests {
     }
 
     pub fn head(references: &[(&str, u32)]) -> Vec<u8> {
-        let text = b"@HD\tVN:1.6\tSO:coordinate\n";
+        headed(b"@HD\tVN:1.6\tSO:coordinate\n", references)
+    }
+
+    fn headed(text: &[u8], references: &[(&str, u32)]) -> Vec<u8> {
         let mut bytes = b"BAM\x01".to_vec();
         bytes.extend(int(text.len()));
         bytes.extend(text);
@@ -587,6 +614,18 @@ pub mod tests {
             header.references,
             [("chr1".to_owned(), 1_000), ("chr2".to_owned(), 500)]
         );
+    }
+
+    #[test]
+    fn samples_come_from_the_read_groups_once_each_in_order() {
+        let text = "@HD\tVN:1.6\n@RG\tID:a\tSM:NA12878\tPL:ILLUMINA\n@RG\tID:b\tSM:NA12878\n\
+                    @RG\tID:c\tPL:ONT\n@CO\tSM:no\n@RG\tID:d\tSM:HG002\0\0";
+        assert_eq!(samples(text), ["NA12878", "HG002"]);
+        let bytes = headed(text.as_bytes(), &[("chr1", 1_000)]);
+        let header = header(&mut Cursor::new(bytes)).unwrap();
+        assert_eq!(header.samples, ["NA12878", "HG002"]);
+        assert_eq!(header.references, [("chr1".to_owned(), 1_000)]);
+        assert_eq!(samples("@HD\tVN:1.6\n"), Vec::<String>::new());
     }
 
     #[test]
