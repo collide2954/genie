@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -57,6 +57,7 @@
           <li><a href="#isoform-table">Isoform table</a></li>
           <li><a href="#splicing-differences">Splicing differences</a></li>
           <li><a href="#phase-reads">Phase reads</a></li>
+          <li><a href="#epialleles">Epialleles</a></li>
           <li><a href="#single-cell">Single-cell</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
@@ -255,6 +256,16 @@
 <li>Then <b>Group by phase</b> shows the reads of haplotype 1, of haplotype 2 and the reads without a haplotype, and <b>Methylation difference</b> and the <b>DMR table</b> compare the two haplotypes.</li>
 <li>genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.</li>
 <li>Click the variant track again to stop. The palette has <b>Phase the reads by</b> each variant track and <b>Stop phasing the reads</b>. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.</li>
+</ul>
+<h2 id="epialleles">Epialleles</h2>
+<p>An epiallele is a group of reads with the same pattern of methylation at the CpGs that they cover, for example the methylated and the unmethylated copies of an imprinted region in long reads with 5mC calls.</p>
+<ul>
+<li>Right-click a read track with methylation calls (MM and ML tags) and click <b>Group by epiallele</b>. The palette also has <b>Group by epiallele</b>. genie puts the reads in rows by epiallele, the most methylated epiallele first, as &quot;Epiallele 1 · 85 % methylated · 40 reads&quot;. Reads with fewer than 3 calls at CpGs are in &quot;No epiallele&quot;.</li>
+<li><b>Epialleles</b> in the track menu sets how many epialleles genie finds: 2, 3 or 4. The palette has <b>Show 2 epialleles</b>, <b>Show 3 epialleles</b> and <b>Show 4 epialleles</b>.</li>
+<li>genie uses the calls of the modification with the most calls, and 5mC when two have the same number. A call of 50 % or more (ML 128 or more) is methylated. A call of the reverse strand on the G of a CpG counts for its C, and calls off CpGs do not count. genie finds the epialleles by k-modes: the distance of a read to an epiallele is the share of its calls that differ from the pattern of the epiallele, at the CpGs that they share, and the pattern of an epiallele has the call of most of its reads at each CpG. The first patterns are reads: the read with the most calls, then each time the read that differs most from the patterns that it shares 3 CpGs or more with. Thus the same reads give the same epialleles each time.</li>
+<li>When the reads have HP tags, or haplotypes from <b>Phase by</b>, the name of each epiallele gives its reads of each haplotype, as &quot;HP1 38, HP2 2&quot;. With 2 epialleles, Fisher's exact test of the epialleles against the two haplotypes gives p: a small p shows an epiallele of one allele. With a cell table, the name gives the 3 cell types with the most reads of the epiallele.</li>
+<li>The methylation lanes show each epiallele, and <b>Methylation difference</b> and the <b>DMR table</b> compare epiallele 1 with epiallele 2. Put the pointer on a read to see its epiallele in its card.</li>
+<li>genie finds the epialleles of the reads that it loads for the view and that show, so down-sampling can hide some reads. Sessions keep the grouping and the number of epialleles.</li>
 </ul>
 <h2 id="single-cell">Single-cell</h2>
 <p>The reads of single-cell RNA-seq and ATAC-seq have the barcode of their cell: the CB tag of 10x Genomics, or the XC tag of Drop-seq. A table of the cells gives each barcode a cell type.</p>

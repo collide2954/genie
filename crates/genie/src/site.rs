@@ -59,6 +59,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Isoform table",
             "Splicing differences",
             "Phase reads",
+            "Epialleles",
             "Single-cell",
             "Reference tracks",
             "Motif sites",

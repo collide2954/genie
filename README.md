@@ -519,6 +519,17 @@ The reads of a sample can have an HP tag with their haplotype, for example from 
 - genie reads the phased SNVs of the reads in view and of 100 kb on each side. When the records of that region are more than 32 MB (8 MB for a file on the web), the reads get no haplotype from the VCF. genie reads all of a file without an index one time for each sample.
 - Click the variant track again to stop. The palette has **Phase the reads by** each variant track and **Stop phasing the reads**. Sessions, images and undo keep the variant track and the sample. When the variant track closes, the reads lose the haplotypes from it.
 
+## Epialleles
+
+An epiallele is a group of reads with the same pattern of methylation at the CpGs that they cover, for example the methylated and the unmethylated copies of an imprinted region in long reads with 5mC calls.
+
+- Right-click a read track with methylation calls (MM and ML tags) and click **Group by epiallele**. The palette also has **Group by epiallele**. genie puts the reads in rows by epiallele, the most methylated epiallele first, as "Epiallele 1 · 85 % methylated · 40 reads". Reads with fewer than 3 calls at CpGs are in "No epiallele".
+- **Epialleles** in the track menu sets how many epialleles genie finds: 2, 3 or 4. The palette has **Show 2 epialleles**, **Show 3 epialleles** and **Show 4 epialleles**.
+- genie uses the calls of the modification with the most calls, and 5mC when two have the same number. A call of 50 % or more (ML 128 or more) is methylated. A call of the reverse strand on the G of a CpG counts for its C, and calls off CpGs do not count. genie finds the epialleles by k-modes: the distance of a read to an epiallele is the share of its calls that differ from the pattern of the epiallele, at the CpGs that they share, and the pattern of an epiallele has the call of most of its reads at each CpG. The first patterns are reads: the read with the most calls, then each time the read that differs most from the patterns that it shares 3 CpGs or more with. Thus the same reads give the same epialleles each time.
+- When the reads have HP tags, or haplotypes from **Phase by**, the name of each epiallele gives its reads of each haplotype, as "HP1 38, HP2 2". With 2 epialleles, Fisher's exact test of the epialleles against the two haplotypes gives p: a small p shows an epiallele of one allele. With a cell table, the name gives the 3 cell types with the most reads of the epiallele.
+- The methylation lanes show each epiallele, and **Methylation difference** and the **DMR table** compare epiallele 1 with epiallele 2. Put the pointer on a read to see its epiallele in its card.
+- genie finds the epialleles of the reads that it loads for the view and that show, so down-sampling can hide some reads. Sessions keep the grouping and the number of epialleles.
+
 ## Single-cell
 
 The reads of single-cell RNA-seq and ATAC-seq have the barcode of their cell: the CB tag of 10x Genomics, or the XC tag of Drop-seq. A table of the cells gives each barcode a cell type.
