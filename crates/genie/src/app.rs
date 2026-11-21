@@ -67,6 +67,7 @@ mod review;
 mod samples;
 mod sessions;
 pub mod snapshot;
+mod splices;
 mod table;
 mod track_list;
 mod track_settings;
@@ -92,6 +93,7 @@ use orders::Answer;
 pub(crate) use primers::Priming;
 pub(crate) use review::Reviewing;
 pub(crate) use samples::{Arranging, Sampling, active, arranging_words};
+pub(crate) use splices::Splicing;
 pub(crate) use table::Tabling;
 pub(crate) use track_list::Listing;
 use tracks::pick;
@@ -165,6 +167,8 @@ pub struct Genie {
     dmrs: Option<dmrs::DmrTable>,
     /// The table of the isoforms in view of a read track.
     isoforms: Option<isoforms::IsoformTable>,
+    /// The table of the splice junctions in view of the splicing difference of a read track.
+    splices: Option<splices::SpliceTable>,
     field_draft: Option<String>,
     hubs: Vec<Arc<Hub>>,
     hub_view: Option<hubs::View>,
@@ -283,6 +287,7 @@ impl Default for Genie {
             table: None,
             dmrs: None,
             isoforms: None,
+            splices: None,
             field_draft: None,
             hubs: Vec::new(),
             hub_view: None,
@@ -832,6 +837,8 @@ pub enum Message {
     Dmrs(Dmring),
     /// The table of the isoforms of a read track.
     Isoforms(Isoforming),
+    /// The table of the splice junctions of the splicing difference of a read track.
+    Splicing(Splicing),
     /// The cell table of a single-cell track.
     Cells(Celling),
     /// Adds or changes a track that genie makes from the reference.
@@ -1139,6 +1146,7 @@ impl Genie {
         self.refresh_table();
         self.refresh_dmrs();
         self.refresh_isoforms();
+        self.refresh_splices();
         let plot = self.refresh_plot();
         self.answer();
         self.stats.update = started.elapsed();
@@ -1189,6 +1197,7 @@ impl Genie {
             | Message::Plot(_)
             | Message::Dmrs(_)
             | Message::Isoforms(_)
+            | Message::Splicing(_)
             | Message::Cells(_) => {
                 return self.pane_message(message);
             }
@@ -1286,6 +1295,7 @@ impl Genie {
             Message::Plot(plotting) => self.plotting(plotting),
             Message::Dmrs(dmring) => self.dmring(dmring),
             Message::Isoforms(isoforming) => self.isoforming(isoforming),
+            Message::Splicing(splicing) => self.splicing_table(splicing),
             Message::Cells(celling) => self.celling(celling),
             _ => Task::none(),
         }
@@ -1523,8 +1533,8 @@ mod tests {
     use super::{
         Address, Arranging, Caching, Celling, Copying, Drafting, Figuring, Filtering, Genie,
         Isoforming, Lane, Lifting, Message, Offline, Paletting, Paneling, Port, Preparation,
-        Ranging, Regions, Renaming, Reviewing, Sampling, Sweep, Tabling, mouse_button, shortcut,
-        window_event,
+        Ranging, Regions, Renaming, Reviewing, Sampling, Splicing, Sweep, Tabling, mouse_button,
+        shortcut, window_event,
     };
     use crate::card::Changes;
     use crate::export;
@@ -6262,6 +6272,211 @@ ORIGIN
         }
     }
 
+    /// A read of a skipped exon from 10 to 100: with the junctions 20-50 and 60-90, or with the
+    /// junction 20-90 when it skips the exon, and with a haplotype when it has one.
+    fn exon_read(name: &str, skip: bool, phase: Option<i64>) -> genie_core::alignment::Alignment {
+        use genie_core::alignment::{Op, Tags};
+        let cigar = if skip {
+            vec![(Op::Match, 10), (Op::Skip, 70), (Op::Match, 10)]
+        } else {
+            vec![
+                (Op::Match, 10),
+                (Op::Skip, 30),
+                (Op::Match, 10),
+                (Op::Skip, 30),
+                (Op::Match, 10),
+            ]
+        };
+        let bases = if skip { 20 } else { 30 };
+        genie_core::alignment::Alignment {
+            cigar,
+            bases: vec![b'A'; bases],
+            tags: Tags {
+                xs: Some(Strand::Forward),
+                phase,
+                ..Tags::default()
+            },
+            ..read(name, 10)
+        }
+    }
+
+    /// 8 reads with the exon and 2 without it, or with `swap` 2 with it and 8 without it.
+    fn exon_reads(
+        prefix: &str,
+        swap: bool,
+        phase: Option<i64>,
+    ) -> Vec<genie_core::alignment::Alignment> {
+        let (with, without) = if swap { (2, 8) } else { (8, 2) };
+        let with = (0..with).map(|at| exon_read(&format!("{prefix}in{at}"), false, phase));
+        let without = (0..without).map(|at| exon_read(&format!("{prefix}out{at}"), true, phase));
+        with.chain(without).collect()
+    }
+
+    /// A read track grouped by phase: haplotype 1 has the reads of `exon_reads`, and haplotype 2
+    /// the swapped reads.
+    fn with_exon_groups() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(read_source("reads.bam"))));
+        let track = genie.session.as_mut().unwrap().tracks.last_mut().unwrap();
+        track.options.group = Grouping::Phase;
+        let region = Region::between(0, 1_000);
+        track.slot.wanted = Some((0, region));
+        let mut gather = crate::track::Gather::new(region, 0, track.options);
+        let mut reads = exon_reads("a", false, Some(1));
+        reads.extend(exon_reads("b", true, Some(2)));
+        for read in reads {
+            gather.add(read);
+        }
+        let loaded = Loaded::reads(gather, vec![b'A'; 1_000], 0);
+        track.accept_at(0, 0, region, Ok(Arc::new(loaded)));
+        genie
+    }
+
+    /// With the reads grouped by phase, the splicing difference compares haplotype 1 with
+    /// haplotype 2 at each junction: the arcs take the colors of the difference, the card shows
+    /// the PSI of each group and p, and the splicing table lists the junctions in view.
+    #[test]
+    fn splicing_differences_compare_the_first_two_groups() {
+        use crate::track::Splice;
+        use genie_core::methylation::fisher;
+        use genie_render::alignments::ArcLook;
+        use genie_render::scene::Paint;
+
+        let mut genie = with_exon_groups();
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Splicing difference"));
+        assert!(!shows(&genie, "Splicing table"));
+        let _ = genie.update(Message::TrackChanged(0, Change::Splicing(Splice::Groups)));
+        let session = genie.session.as_ref().unwrap();
+        let shown = super::view::shown_splicing(session, &session.tracks[0], 0).unwrap();
+        let (groups, differences) = &*shown;
+        assert_eq!(
+            *groups,
+            ("Haplotype 1".to_owned(), "Haplotype 2".to_owned())
+        );
+        let spans: Vec<Region> = differences.iter().map(|change| change.span).collect();
+        let skip = Region::between(20, 90);
+        assert_eq!(
+            spans,
+            [Region::between(20, 50), skip, Region::between(60, 90)]
+        );
+        assert_eq!(
+            (differences[1].reads, differences[1].totals),
+            ([2, 8], [18, 12])
+        );
+        let Some(Content::Reads(pile)) = session.tracks[0].data(0).map(|data| &data.content) else {
+            panic!("expected reads");
+        };
+        let looks = super::view::splice_looks(&pile.junctions, differences);
+        let look = |paint, words: &str| {
+            Some(ArcLook {
+                paint,
+                words: words.to_owned(),
+            })
+        };
+        assert_eq!(
+            looks,
+            [
+                look(Paint::Change(60), "+60"),
+                look(Paint::Change(-56), "\u{2212}56"),
+                look(Paint::Change(60), "+60")
+            ]
+        );
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(55.0, 4.0))));
+        let p = crate::card::p_value(fisher([[2, 16], [8, 4]]));
+        for line in [
+            "Splice junction",
+            "10 reads · forward strand",
+            "Haplotype 1: 2 of 18 reads · PSI 11 %",
+            "Haplotype 2: 8 of 12 reads · PSI 67 %",
+            &format!("Difference \u{2212}56 points · p = {p}"),
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Splicing table"));
+        let _ = genie.update(Message::Splicing(Splicing::Open(0)));
+        for words in [
+            "Splicing · reads.bam",
+            "3 junctions · 3 differ",
+            "Haplotype 1 − Haplotype 2",
+            "chr1:21-50",
+            "8 of 10",
+            "80.0 %",
+            "+60.0",
+            "chr1:21-90",
+            "2 of 18",
+        ] {
+            assert!(shows(&genie, words), "{words}");
+        }
+        let scratch = crate::scratch::Scratch::new("app-splices");
+        let path = scratch.file("splices.tsv", "");
+        let _ = genie.update(Message::Splicing(Splicing::ExportPicked(Some(
+            path.clone(),
+        ))));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let head = "Chrom\tStart\tEnd\tStrand\tHaplotype 1 reads\tHaplotype 1 site reads\t";
+        assert!(text.starts_with(head), "{text}");
+        assert!(
+            text.contains("chr1\t21\t90\t+\t2\t18\t11.11\t8\t12\t66.67\t-55.6\t"),
+            "{text}"
+        );
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[0].plot.splicing, Some(Splice::Groups));
+        let _ = genie.update(Message::TrackChanged(0, Change::Splicing(Splice::Groups)));
+        assert_eq!(
+            genie.session.as_ref().unwrap().tracks[0].plot.splicing,
+            None
+        );
+    }
+
+    /// A read track compares its splicing with another read track: the card names the two
+    /// tracks, the palette offers it, sessions keep the other track, and the comparison ends when
+    /// the other track closes.
+    #[test]
+    fn read_tracks_compare_their_splicing_with_another_track() {
+        use crate::track::Splice;
+
+        let mut genie = opened();
+        add_named_reads(&mut genie, "tumor.bam", exon_reads("t", false, None));
+        add_named_reads(&mut genie, "normal.bam", exon_reads("n", true, None));
+        let _ = genie.update(Message::TrackMenu(0, Point::new(100.0, 200.0)));
+        assert!(shows(&genie, "Compare splicing with"));
+        assert!(!shows(&genie, "Splicing difference"));
+        let words = "Compare the splicing with normal.bam";
+        assert!(palette_shows(&mut genie, "compare splicing normal", words));
+        let _ = genie.update(Message::TrackChanged(0, Change::Splicing(Splice::Track(1))));
+        let _ = genie.update(Message::TrackHovered(0, 0, Some(over(55.0, 19.0))));
+        for line in [
+            "2 reads · forward strand",
+            "tumor.bam: 2 of 18 reads · PSI 11 %",
+            "normal.bam: 8 of 12 reads · PSI 67 %",
+        ] {
+            assert!(shows(&genie, line), "{line}");
+        }
+        let _ = genie.update(Message::TrackHovered(0, 0, None));
+        let words = "Stop comparing the splicing with normal.bam";
+        assert!(palette_shows(&mut genie, "stop splicing normal", words));
+        let saved = genie.saved().unwrap();
+        assert_eq!(saved.tracks[0].splice_with, Some(1));
+        assert_eq!(saved.tracks[0].plot.splicing, None);
+        let mut restored = Genie::default();
+        let _ = restored.restore(saved);
+        let _ = restored.update(Message::Opened(Ok(reference())));
+        for name in ["tumor.bam", "normal.bam"] {
+            let _ = restored.update(Message::TrackOpened(Ok(read_source(name))));
+        }
+        let session = restored.session.as_ref().unwrap();
+        let normal = session.tracks[1].id;
+        assert_eq!(session.tracks[0].plot.splicing, Some(Splice::Track(normal)));
+        let _ = genie.update(Message::TrackChanged(1, Change::Remove));
+        assert_eq!(
+            genie.session.as_ref().unwrap().tracks[0].plot.splicing,
+            None
+        );
+    }
+
     /// The menu of a read track compares its depth with another read track: the ratio track
     /// comes after the first one, its card shows a bin or a segment, sessions keep its two read
     /// tracks, and the menu removes it again.
@@ -6741,6 +6956,7 @@ ORIGIN
             with_fractions(),
             with_phased_reads(),
             with_ratio(),
+            with_spliced_groups(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));
@@ -6889,6 +7105,15 @@ ORIGIN
     }
 
     /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
+    /// A read track grouped by phase that shows the splicing difference of its groups.
+    fn with_spliced_groups() -> Genie {
+        let mut genie = with_reads();
+        let _ = genie.update(Message::TrackChanged(0, Change::Group(Grouping::Phase)));
+        let splice = Change::Splicing(crate::track::Splice::Groups);
+        let _ = genie.update(Message::TrackChanged(0, splice));
+        genie
+    }
+
     fn with_phased_reads() -> Genie {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));

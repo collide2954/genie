@@ -9,7 +9,7 @@ use crate::location::Location;
 use crate::paths::{self, file_name};
 use crate::saved::{self, Saved, SavedRegion, SavedTrack};
 use crate::settings::Setting;
-use crate::track::{ALL_SAMPLES, Options, Plot, Track};
+use crate::track::{ALL_SAMPLES, Options, Plot, Splice, Track};
 
 use super::{Genie, LAST, Message};
 
@@ -136,7 +136,15 @@ impl Genie {
             },
             plot: Plot {
                 math: None,
+                splicing: track
+                    .plot
+                    .splicing
+                    .filter(|splice| *splice == Splice::Groups),
                 ..track.plot
+            },
+            splice_with: match track.plot.splicing {
+                Some(Splice::Track(other)) => place(other),
+                _ => None,
             },
             filter: track.filter.clone(),
             modification: track.modification.clone(),

@@ -11,7 +11,7 @@ use iced::{Alignment, Element, Length, Point, Size};
 
 use crate::app::{
     Celling, Dmring, Filtering, Isoforming, Lifting, Making, Message, Motifing, Plotting, Ranging,
-    Renaming, Reviewing, Sampling, Tabling, active, arranging_words,
+    Renaming, Reviewing, Sampling, Splicing, Tabling, active, arranging_words,
 };
 use crate::chrome::keys;
 use crate::icon::{self, Icon};
@@ -19,7 +19,7 @@ use crate::style;
 use crate::theme::tokens;
 use crate::track::made::WINDOWS;
 use crate::track::motifs::THRESHOLDS;
-use crate::track::{Change, Format, Grouping, Made, Pick, Toggle, Track, tag_name};
+use crate::track::{Change, Format, Grouping, Made, Pick, Splice, Toggle, Track, tag_name};
 
 pub const WIDTH: f32 = 168.0;
 const FEATURES_HEIGHT: f32 = 267.5;
@@ -173,7 +173,8 @@ pub fn height(track: &Track, sections: &[Section]) -> f32 {
             0.0
         }
         + if track.source.has_reads() {
-            2.0 * LINK_HEIGHT
+            let splices = f32::from(u8::from(track.plot.splicing.is_some()));
+            (2.0 + splices) * LINK_HEIGHT
         } else if track.source.has_fragments() {
             LINK_HEIGHT
         } else {
@@ -485,7 +486,8 @@ fn kind_height(track: &Track) -> f32 {
         // The Sashimi plot, its two rows when it shows, Isoforms, and the lanes of cell types.
         let sashimi =
             if track.plot.sashimi { 4.0 } else { 2.0 } + f32::from(u8::from(track.cells.is_some()));
-        let difference = f32::from(u8::from(compares_groups(track)));
+        let difference = f32::from(u8::from(compares_groups(track)))
+            + f32::from(u8::from(track.options.group != Grouping::None));
         READS_HEIGHT + choices + (tag_items(track) as f32 + sashimi + difference) * LINK_HEIGHT
     } else if track.source.has_variants() {
         let lanes: f32 = [fraction_rows(track), ld_rows(track)]
@@ -755,6 +757,15 @@ fn read_items<'a>(track: &Track, place: &Place) -> Vec<Element<'a, Message>> {
     if track.cells.is_some() {
         let cells = track.plot.cells;
         items.push(item("Coverage by cell type", Change::CellLanes, cells));
+    }
+    if options.group != Grouping::None {
+        let splice = Splice::Groups;
+        let chosen = track.plot.splicing == Some(splice);
+        items.push(item(
+            "Splicing difference",
+            Change::Splicing(splice),
+            chosen,
+        ));
     }
     items.push(separator());
     items.push(self::item(
@@ -1083,6 +1094,10 @@ fn top_items<'a>(track: &Track) -> Column<'a, Message> {
     if track.source.has_reads() {
         let open = Message::Isoforms(Isoforming::Open(id));
         items = items.push(item("Isoform table", open, false, true));
+    }
+    if track.source.has_reads() && track.plot.splicing.is_some() {
+        let open = Message::Splicing(Splicing::Open(id));
+        items = items.push(item("Splicing table", open, false, true));
     }
     if track.source.has_reads() || track.source.has_fragments() {
         let pick = Message::Cells(Celling::Pick(id));

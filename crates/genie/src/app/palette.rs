@@ -9,13 +9,14 @@ use crate::recent::Entry;
 use crate::shortcuts::Command;
 use crate::track::made::{self, WINDOWS};
 use crate::track::motifs::THRESHOLDS;
-use crate::track::{Change, Grouping, Made, Toggle, Track};
+use crate::track::{Change, Grouping, Made, Splice, Toggle, Track};
 use genie_core::grouped;
 
 use super::hubs::Hubbing;
 use super::{
     Arranging, Assembling, Blatting, Celling, Genie, Lifting, Making, Message, Motifing, Paletting,
-    Popup, Ranging, Regions, Renaming, Sampling, Session, Tabling, Updating, arranging_words,
+    Popup, Ranging, Regions, Renaming, Sampling, Session, Splicing, Tabling, Updating,
+    arranging_words,
 };
 
 /// The actions that need no open genome: open files, hubs and assemblies, keys, settings and
@@ -78,7 +79,38 @@ fn read_actions(track: &Track) -> Vec<Action> {
         }));
         actions.push(Action::new("Shared scale", name, change(Change::Link)));
     }
+    if track.options.group != Grouping::None {
+        let splice = change(Change::Splicing(Splice::Groups));
+        actions.push(Action::new("Splicing difference", name, splice));
+    }
+    if track.plot.splicing.is_some() {
+        let open = Message::Splicing(Splicing::Open(id));
+        actions.push(Action::new("Show the splicing table", name, open));
+    }
     actions
+}
+
+/// The actions that compare the splicing of a read track with each other read track, or stop
+/// the comparison with the track that it compares with.
+fn splice_actions(tracks: &[Track], track: &Track) -> Vec<Action> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return Vec::new();
+    }
+    let (id, name) = (track.id, track.name.as_str());
+    tracks
+        .iter()
+        .filter(|other| other.id != id && other.source.has_reads() && other.lift.is_none())
+        .map(|other| {
+            let splice = Splice::Track(other.id);
+            let words = if track.plot.splicing == Some(splice) {
+                format!("Stop comparing the splicing with {}", other.name)
+            } else {
+                format!("Compare the splicing with {}", other.name)
+            };
+            let message = Message::TrackChanged(id, Change::Splicing(splice));
+            Action::new(words, name, message)
+        })
+        .collect()
 }
 
 /// The actions that group, sort and color the samples of a track by the fields of a table.
@@ -125,6 +157,7 @@ fn tracks_actions(session: &Session) -> Vec<Action> {
         actions.extend(track_actions(track, fields));
         actions.extend(phase_actions(&session.tracks, track));
         actions.extend(depth_actions(&session.tracks, track));
+        actions.extend(splice_actions(&session.tracks, track));
     }
     actions
 }

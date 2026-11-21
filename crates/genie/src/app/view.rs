@@ -414,7 +414,8 @@ impl Genie {
             let table = self
                 .table_view(session)
                 .or_else(|| self.dmr_view(session))
-                .or_else(|| self.isoform_view(session));
+                .or_else(|| self.isoform_view(session))
+                .or_else(|| self.splice_view(session));
             if let Some(table) = table {
                 main = main.push(table);
             }
@@ -1299,10 +1300,13 @@ fn reads_body(
     (shape, repack): (Shape, bool),
 ) -> Body {
     let (contig, viewport) = session.view(panel);
+    let looks = shown_splicing(session, track, panel)
+        .map_or_else(Vec::new, |shown| splice_looks(&pile.junctions, &shown.1));
     if track.plot.sashimi {
         let top = sashimi_top(session, track, panel);
         let look = (track.hue, track.plot.junction_reads, top);
-        let primitives = sashimi::scene(viewport, &pile.coverage, &pile.junctions, look);
+        let (coverage, junctions) = (&pile.coverage, &pile.junctions);
+        let primitives = sashimi::scene_looked(viewport, coverage, junctions, look, &looks);
         return Body::Scene(primitives, sashimi::HEIGHT);
     }
     if track.plot.isoforms {
@@ -1323,12 +1327,77 @@ fn reads_body(
         || !pile.junctions.is_empty()
         || lanes_height(track, pile) > 0.0;
     let reads = shown.then(|| {
-        (
-            read_lane(track, panel, pile, viewport, mode, repack),
-            height,
-        )
+        let place = (panel, viewport, mode);
+        (read_lane(track, place, pile, &looks, repack), height)
     });
     Body::Reads { coverage, reads }
+}
+
+/// The pile of a read track in a panel, and the read track that it compares its splicing with
+/// and its pile, when the two have reads in view.
+pub(super) fn splicing_piles<'a>(
+    session: &'a Session,
+    track: &'a Track,
+    panel: usize,
+) -> Option<(&'a Pile, Option<(&'a Track, &'a Pile)>)> {
+    let (contig, _) = session.view(panel);
+    let pile = |track: &'a Track| match &track.slot(panel).data(contig)?.content {
+        Content::Reads(pile) => Some(&**pile),
+        _ => None,
+    };
+    let other = match track.plot.splicing {
+        Some(track::Splice::Track(id)) => {
+            let other = session.tracks.iter().find(|other| other.id == id)?;
+            Some((other, pile(other)?))
+        }
+        _ => None,
+    };
+    Some((pile(track)?, other))
+}
+
+/// The splicing difference that a read track shows in a panel.
+pub(super) fn shown_splicing(
+    session: &Session,
+    track: &Track,
+    panel: usize,
+) -> Option<Arc<track::SpliceDifference>> {
+    track.plot.splicing?;
+    let (pile, other) = splicing_piles(session, track, panel)?;
+    track.splicing_difference(pile, other)
+}
+
+/// The looks of the arcs of junctions for a splicing difference: the color of the difference
+/// for a junction that differs, grey for the others, and the difference in points as the words.
+/// A junction without a difference is grey, without words.
+pub(super) fn splice_looks(
+    junctions: &[genie_core::pileup::Junction],
+    differences: &[genie_core::splicing::Difference],
+) -> Vec<Option<alignments::ArcLook>> {
+    let place = |span: Region| (span.start(), span.end());
+    junctions
+        .iter()
+        .map(|junction| {
+            let at = differences
+                .binary_search_by_key(&place(junction.span), |change| place(change.span))
+                .ok();
+            let found = at.map(|at| &differences[at]);
+            let look = match found.and_then(|change| Some((change, change.points()?))) {
+                Some((change, points)) => alignments::ArcLook {
+                    paint: if change.differs() {
+                        Paint::Change(points.round().clamp(-100.0, 100.0) as i8)
+                    } else {
+                        Paint::Muted
+                    },
+                    words: format!("{points:+.0}").replace('-', "\u{2212}"),
+                },
+                None => alignments::ArcLook {
+                    paint: Paint::Muted,
+                    words: String::new(),
+                },
+            };
+            Some(look)
+        })
+        .collect()
 }
 
 /// The least reads of an isoform with a row of its own.
@@ -1716,12 +1785,13 @@ fn manhattan_body(
     Body::Scene(primitives, height)
 }
 
+/// The lanes of a read track over its reads, its junction arcs with the looks of a splicing
+/// difference, and its reads.
 fn read_lane(
     track: &Track,
-    panel: usize,
+    (panel, viewport, mode): (usize, Viewport, features::Mode),
     pile: &Pile,
-    viewport: Viewport,
-    mode: features::Mode,
+    looks: &[Option<alignments::ArcLook>],
     repack: bool,
 ) -> Vec<Primitive> {
     let (_, lanes) = track.methylation_lanes(pile);
@@ -1733,7 +1803,8 @@ fn read_lane(
         lane.extend(bars.into_iter().map(|primitive| primitive.lowered(above)));
         above += genie_render::difference::HEIGHT + 1.0;
     }
-    let arcs = alignments::arcs(viewport, &pile.junctions);
+    let height = alignments::JUNCTION_HEIGHT;
+    let arcs = alignments::arcs_looked(viewport, &pile.junctions, height, looks);
     lane.extend(arcs.into_iter().map(|primitive| primitive.lowered(above)));
     if mode == features::Mode::Collapsed {
         return lane;
@@ -2424,6 +2495,28 @@ fn depth_section(session: &Session, track: &Track) -> Option<Section> {
     (!section.items.is_empty()).then_some(section)
 }
 
+/// The other read tracks that a read track can compare its splicing with, with the one that it
+/// compares with chosen.
+fn splice_section(session: &Session, track: &Track) -> Option<Section> {
+    if !track.source.has_reads() || track.lift.is_some() {
+        return None;
+    }
+    let mut section = Section::new("Compare splicing with", Vec::new());
+    for other in session
+        .tracks
+        .iter()
+        .filter(|other| other.id != track.id && other.source.has_reads() && other.lift.is_none())
+    {
+        let splice = track::Splice::Track(other.id);
+        if track.plot.splicing == Some(splice) {
+            section.chosen.push(section.items.len());
+        }
+        let message = Message::TrackChanged(track.id, Change::Splicing(splice));
+        section.items.push((other.name.clone(), message));
+    }
+    (!section.items.is_empty()).then_some(section)
+}
+
 fn phase_section(session: &Session, track: &Track) -> Option<Section> {
     if !track.source.has_reads() || track.lift.is_some() {
         return None;
@@ -2509,6 +2602,7 @@ fn kind_links(session: &Session, track: &Track) -> Vec<Section> {
         return phase_section(session, track)
             .into_iter()
             .chain(depth_section(session, track))
+            .chain(splice_section(session, track))
             .chain(cell_section(track))
             .collect();
     }

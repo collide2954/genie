@@ -1335,7 +1335,8 @@ fn detail_fields(
             track::association_fields(&track.source, association)
         }
         Detail::Junction(_) => file_fields,
-        Detail::Methylation { .. }
+        Detail::Splice { .. }
+        | Detail::Methylation { .. }
         | Detail::Difference { .. }
         | Detail::Fraction { .. }
         | Detail::Ld { .. }
@@ -1363,7 +1364,8 @@ fn pile_detail(
     if track.plot.sashimi {
         let least = track.plot.junction_reads;
         let index = sashimi::hit(viewport, &pile.junctions, least, x, y)?;
-        return Some(Detail::Junction(pile.junctions[index]));
+        let junction = Detail::Junction(pile.junctions[index]);
+        return Some(splice_detail(session, track, panel, junction));
     }
     if track.plot.isoforms {
         let shown = super::view::isoforms(session, panel, pile);
@@ -1374,7 +1376,29 @@ fn pile_detail(
     if let Some(lanes) = pile.cells.as_ref().filter(|_| track.plot.cells) {
         return cell_detail(viewport, lanes, (x, y));
     }
-    read_detail(track, panel, contig, pile, viewport, mode, (x, y))
+    let detail = read_detail(track, panel, contig, pile, viewport, mode, (x, y))?;
+    Some(splice_detail(session, track, panel, detail))
+}
+
+/// The card of a junction of a read track that shows a splicing difference gives the
+/// difference of the junction too.
+fn splice_detail(session: &Session, track: &Track, panel: usize, detail: Detail) -> Detail {
+    let Detail::Junction(junction) = detail else {
+        return detail;
+    };
+    let Some(shown) = super::view::shown_splicing(session, track, panel) else {
+        return detail;
+    };
+    let (groups, differences) = &*shown;
+    let place = |span: Region| (span.start(), span.end());
+    match differences.binary_search_by_key(&place(junction.span), |change| place(change.span)) {
+        Ok(at) => Detail::Splice {
+            junction,
+            groups: groups.clone(),
+            difference: differences[at],
+        },
+        Err(_) => detail,
+    }
 }
 
 /// The lane of cell types under the pointer, with its coverage there.
@@ -1625,6 +1649,19 @@ fn relink(tracks: &mut Vec<Track>, saved: &Saved) {
         if let Some(track) = tracks.iter_mut().find(|track| track.id == id) {
             track.options.depths = Some(depths);
             track.forget();
+        }
+    }
+    let splices: Vec<(u64, u64)> = tracks
+        .iter()
+        .filter(|track| track.source.has_reads() && track.plot.splicing.is_none())
+        .filter_map(|track| {
+            let other = saved.tracks[saved_at(&track.source.location)?].splice_with?;
+            Some((track.id, open(tracks, other)?))
+        })
+        .collect();
+    for (id, other) in splices {
+        if let Some(track) = tracks.iter_mut().find(|track| track.id == id) {
+            track.plot.splicing = Some(track::Splice::Track(other));
         }
     }
 }

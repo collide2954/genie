@@ -17,7 +17,7 @@ use crate::export::Figure;
 use crate::location::Location;
 use crate::reading::{Frames, Reading};
 use crate::track::{
-    Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing, tag, tag_name,
+    Declared, Filter, Grouping, Kinds, Methyl, Options, Pick, Plot, Showing, Splice, tag, tag_name,
 };
 
 pub const EXTENSION: &str = "genie";
@@ -107,6 +107,8 @@ pub struct SavedTrack {
     /// The places of the two read tracks of a depth ratio track: the depth of the first over
     /// the depth of the second.
     pub depths: Option<(usize, usize)>,
+    /// The place of the read track that a read track compares its splicing with.
+    pub splice_with: Option<usize>,
 }
 
 impl SavedTrack {
@@ -137,6 +139,7 @@ impl SavedTrack {
             phase: None,
             cells: None,
             depths: None,
+            splice_with: None,
         }
     }
 }
@@ -306,7 +309,18 @@ fn plot(section: &Section) -> Plot {
             .value("viewpoint")
             .and_then(|text| text.parse::<u64>().ok())
             .and_then(|place| place.checked_sub(1)),
+        splicing: (section.value("splicing") == Some("groups")).then_some(Splice::Groups),
     }
+}
+
+/// The place of the read track that a read track compares its splicing with, counted from 1 in
+/// the file.
+fn splice_with(section: &Section) -> Option<usize> {
+    section
+        .value("splicing")?
+        .parse::<usize>()
+        .ok()?
+        .checked_sub(1)
 }
 
 /// The entries of the picked motifs of a motif track and of its threshold of p.
@@ -413,6 +427,7 @@ fn saved_track(section: &Section, base: &Path) -> Option<SavedTrack> {
             .zip(section.value("cell types"))
             .map(|(table, column)| (read(table, base), column.to_owned())),
         depths: depths(section),
+        splice_with: splice_with(section),
     })
 }
 
@@ -471,6 +486,9 @@ fn plot_entries(plot: &Plot) -> Vec<(&'static str, String)> {
     if let Some(viewpoint) = plot.viewpoint {
         entries.push(("viewpoint", (viewpoint + 1).to_string()));
     }
+    if plot.splicing == Some(Splice::Groups) {
+        entries.push(("splicing", "groups".to_owned()));
+    }
     entries
 }
 
@@ -523,6 +541,9 @@ fn track_entries(track: &SavedTrack, base: &Path) -> Vec<(&'static str, String)>
     }
     if let Some((first, second)) = track.depths {
         entries.push(("depths", format!("{} {}", first + 1, second + 1)));
+    }
+    if let Some(other) = track.splice_with {
+        entries.push(("splicing", (other + 1).to_string()));
     }
     if let Some(name) = &track.normalization {
         entries.push(("normalization", name.clone()));
@@ -1093,6 +1114,29 @@ mod tests {
                 format!("[session]\nreference = ref.fa\n[track]\nmade = depth ratio 1\n{broken}\n");
             let parsed = Saved::parse(&text, &base()).unwrap();
             assert_eq!(parsed.tracks[0].depths, None, "{broken}");
+        }
+    }
+
+    /// A read track keeps the splicing difference of its groups, or the place of the read
+    /// track that it compares its splicing with.
+    #[test]
+    fn read_tracks_keep_their_splicing_differences() {
+        let mut groups = saved();
+        groups.tracks[0].plot.splicing = Some(crate::track::Splice::Groups);
+        let text = groups.text(&base());
+        assert!(text.contains("splicing = groups"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(groups));
+        let mut other = saved();
+        other.tracks[0].splice_with = Some(1);
+        let text = other.text(&base());
+        assert!(text.contains("splicing = 2"), "{text}");
+        assert_eq!(Saved::parse(&text, &base()), Ok(other));
+        assert!(!saved().text(&base()).contains("splicing"));
+        for broken in ["splicing = 0", "splicing = all"] {
+            let text = format!("[session]\nreference = ref.fa\n[track]\nfile = a.bam\n{broken}\n");
+            let parsed = Saved::parse(&text, &base()).unwrap();
+            assert_eq!(parsed.tracks[0].splice_with, None, "{broken}");
+            assert_eq!(parsed.tracks[0].plot.splicing, None, "{broken}");
         }
     }
 

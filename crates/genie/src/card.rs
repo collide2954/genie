@@ -50,6 +50,13 @@ pub enum Detail {
         insertion: Option<(u64, u32)>,
     },
     Junction(Junction),
+    /// A junction of a read track that shows a splicing difference: the names of the two groups
+    /// or tracks, and the difference of the junction.
+    Splice {
+        junction: Junction,
+        groups: (String, String),
+        difference: genie_core::splicing::Difference,
+    },
     Methylation {
         name: String,
         position: u64,
@@ -620,6 +627,49 @@ fn difference_content(
     )
 }
 
+/// The card of a splice junction: its reads, its strand and its intron.
+fn junction_content(junction: &Junction) -> (String, Region, Vec<String>) {
+    let lines = vec![
+        junction_facts(junction),
+        format!("Intron {} bp", grouped(junction.span.len())),
+    ];
+    ("Splice junction".to_owned(), junction.span, lines)
+}
+
+/// The card of a junction of a splicing difference: its reads and intron, the reads of the
+/// junction and of its sites in each group with the PSI, and the difference with p.
+fn splice_content(
+    junction: &Junction,
+    (first, second): &(String, String),
+    difference: &genie_core::splicing::Difference,
+) -> (String, Region, Vec<String>) {
+    let group = |label: &str, at: usize| {
+        let (reads, total) = (difference.reads[at], difference.totals[at]);
+        let words = format!(
+            "{label}: {} of {} {}",
+            grouped(u64::from(reads)),
+            grouped(u64::from(total)),
+            plural(total, "read")
+        );
+        match difference.psi(at) {
+            Some(psi) => format!("{words} · PSI {psi:.0} %"),
+            None => words,
+        }
+    };
+    let mut lines = vec![
+        junction_facts(junction),
+        format!("Intron {} bp", grouped(junction.span.len())),
+        group(first, 0),
+        group(second, 1),
+    ];
+    if let Some(points) = difference.points() {
+        let points = format!("{points:+.0}").replace('-', "\u{2212}");
+        let p = p_value(difference.p);
+        lines.push(format!("Difference {points} points · p = {p}"));
+    }
+    ("Splice junction".to_owned(), junction.span, lines)
+}
+
 /// The card of a site of a lane of B-allele frequencies: the fraction and the reads, and the
 /// sample with its call.
 fn fraction_content(sample: &str, fraction: &Fraction) -> (String, Region, Vec<String>) {
@@ -758,13 +808,12 @@ fn content(detail: &Detail) -> (String, Region, Vec<String>) {
             (title, feature.span(), lines)
         }
         Detail::Read { .. } => read_content(detail),
-        Detail::Junction(junction) => {
-            let lines = vec![
-                junction_facts(junction),
-                format!("Intron {} bp", grouped(junction.span.len())),
-            ];
-            ("Splice junction".to_owned(), junction.span, lines)
-        }
+        Detail::Junction(junction) => junction_content(junction),
+        Detail::Splice {
+            junction,
+            groups,
+            difference,
+        } => splice_content(junction, groups, difference),
         Detail::Methylation {
             name,
             position,

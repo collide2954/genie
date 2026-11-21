@@ -456,7 +456,7 @@ impl Genie {
                     .is_some_and(|table| table.track == id);
                 self.isoforms = (!open).then(|| IsoformTable::new(id));
                 if self.isoforms.is_some() {
-                    (self.table, self.dmrs) = (None, None);
+                    (self.table, self.dmrs, self.splices) = (None, None, None);
                 }
             }
             Isoforming::Close => self.isoforms = None,

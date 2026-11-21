@@ -567,7 +567,22 @@ pub struct Plot {
     pub math: Option<Math>,
     /// The place of the viewpoint of the virtual 4C of a Hi-C track.
     pub viewpoint: Option<u64>,
+    /// What the splice junctions of a read track compare with.
+    pub splicing: Option<Splice>,
 }
+
+/// What the splice junctions of a read track compare with, in a splicing difference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Splice {
+    /// The first two groups of the reads of the track.
+    Groups,
+    /// The reads of another read track.
+    Track(u64),
+}
+
+/// The splicing difference of a read track: the names of its two groups or of the two tracks,
+/// and the difference of each junction of the two, in their order on the contig.
+pub type SpliceDifference = ((String, String), Vec<genie_core::splicing::Difference>);
 
 impl Default for Plot {
     fn default() -> Self {
@@ -587,6 +602,7 @@ impl Default for Plot {
             junction_reads: 1,
             math: None,
             viewpoint: None,
+            splicing: None,
         }
     }
 }
@@ -680,6 +696,9 @@ pub struct Pile {
     /// The isoforms of the chains, which genie finds again only when the introns of the open
     /// transcripts change.
     pub isoforms: Memo<Vec<Isoform<GroupKey>>>,
+    /// The splicing difference of the pile, which genie finds again only when what it compares
+    /// with changes.
+    pub splicing: Memo<Option<Arc<SpliceDifference>>>,
     pub methylation: Methylation<GroupKey>,
     pub rows: Vec<usize>,
     pub count: usize,
@@ -921,6 +940,34 @@ impl Annotation {
         }
         (rows, count(&packed))
     }
+}
+
+/// The junctions of all reads of a pile with their reads.
+fn junction_reads(pile: &Pile) -> Vec<(Region, u32)> {
+    pile.junctions
+        .iter()
+        .map(|junction| (junction.span, junction.count))
+        .collect()
+}
+
+/// The splicing difference of the first two groups of the spliced reads of a pile with a
+/// haplotype or a value of the tag, in the order of the groups.
+fn group_splicing(pile: &Pile) -> Option<Arc<SpliceDifference>> {
+    if pile.grouping == Grouping::None {
+        return None;
+    }
+    let chains = &pile.chains.0;
+    let keys: std::collections::BTreeSet<GroupKey> = chains
+        .iter()
+        .flat_map(|chain| chain.reads.iter().map(|read| read.group))
+        .filter(|&key| pile.group_has_value(key))
+        .collect();
+    let mut keys = keys.into_iter();
+    let (first, second) = (keys.next()?, keys.next()?);
+    let reads = |key: GroupKey| genie_core::splicing::group_reads(chains, &key);
+    let differences = genie_core::splicing::differences(&reads(first), &reads(second));
+    let names = (pile.group_name(first), pile.group_name(second));
+    Some(Arc::new((names, differences)))
 }
 
 impl Pile {
@@ -1188,6 +1235,7 @@ impl Loaded {
                 junctions,
                 chains: chains.finish(),
                 isoforms: Memo::default(),
+                splicing: Memo::default(),
                 methylation,
                 rows,
                 count,
@@ -1714,6 +1762,43 @@ impl Track {
         Some(((first.clone(), second.clone()), differences))
     }
 
+    /// The splicing difference that a read track shows: of the first two groups of its reads
+    /// with a haplotype or a value of the tag, or of its reads and the reads of `other`, the
+    /// read track that it compares with and its pile. The pile keeps it until what it compares
+    /// with changes.
+    pub fn splicing_difference(
+        &self,
+        pile: &Pile,
+        other: Option<(&Track, &Pile)>,
+    ) -> Option<Arc<SpliceDifference>> {
+        use std::hash::{Hash as _, Hasher as _};
+        let splice = self.plot.splicing?;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        match (splice, other) {
+            (Splice::Groups, _) => 0_u8.hash(&mut hasher),
+            (Splice::Track(id), Some((track, found))) if track.id == id => {
+                (1_u8, id, std::ptr::from_ref(found) as usize).hash(&mut hasher);
+                (&self.name, &track.name).hash(&mut hasher);
+            }
+            (Splice::Track(_), _) => return None,
+        }
+        let found = pile.splicing.get_or(hasher.finish(), || match splice {
+            Splice::Groups => group_splicing(pile),
+            Splice::Track(_) => {
+                let (track, found) = other?;
+                let differences = genie_core::splicing::differences(
+                    &junction_reads(pile),
+                    &junction_reads(found),
+                );
+                Some(Arc::new((
+                    (self.name.clone(), track.name.clone()),
+                    differences,
+                )))
+            }
+        });
+        (*found).clone()
+    }
+
     pub fn methylation_lanes(&self, pile: &Pile) -> (Vec<GroupKey>, Vec<MethylationLane>) {
         let name = self.methylation_name(pile).filter(|_| self.plot.look.mods);
         let Some(name) = name else {
@@ -2034,6 +2119,9 @@ pub enum Change {
     Visible(bool),
     /// Show the methylation difference of the first two groups of reads, or stop.
     Difference,
+    /// Show the splicing difference of the first two groups of reads, or with another read
+    /// track, or stop when the track shows it.
+    Splicing(Splice),
 }
 
 pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
@@ -2052,6 +2140,7 @@ pub fn change(tracks: &mut Vec<Track>, id: u64, change: Change) {
         | Change::Sashimi
         | Change::Isoforms
         | Change::CellLanes
+        | Change::Splicing(_)
         | Change::JunctionReads(_) => replot(&mut tracks[position].plot, change),
         Change::Modification(index) => {
             let track = &mut tracks[position];
@@ -2151,6 +2240,9 @@ fn replot(plot: &mut Plot, change: Change) {
             plot.isoforms &= !plot.cells;
         }
         Change::JunctionReads(reads) => plot.junction_reads = reads.max(1),
+        Change::Splicing(splice) => {
+            plot.splicing = (plot.splicing != Some(splice)).then_some(splice);
+        }
         _ => {}
     }
 }
@@ -2195,6 +2287,12 @@ fn removed(tracks: &mut [Track], id: u64) {
     }) {
         track.options.depths = None;
         track.forget();
+    }
+    for track in tracks
+        .iter_mut()
+        .filter(|track| track.plot.splicing == Some(Splice::Track(id)))
+    {
+        track.plot.splicing = None;
     }
 }
 
