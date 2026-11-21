@@ -11,6 +11,7 @@ pub mod links;
 pub mod manhattan;
 pub mod matches;
 pub mod overview;
+pub mod ratio;
 pub mod rows;
 pub mod ruler;
 pub mod samples;
