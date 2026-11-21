@@ -36,6 +36,8 @@ fn height_of(value: f32, ceiling: f32, height: f32) -> f32 {
 pub const LEAD: Paint = Paint::Rgb([150, 50, 184]);
 /// The half width of the diamond of the lead variant.
 const DIAMOND: f32 = 5.0;
+/// The width of a dot with a LocusZoom color, wider than a plain dot so that its color shows.
+const ZOOM_DOT: f32 = 4.0;
 
 /// The r² of each association with the lead variant, in the order of the associations, and the
 /// place of the lead, for the LocusZoom colors.
@@ -118,14 +120,15 @@ pub fn scene(
     dots.sort_by_key(|(rank, ..)| std::cmp::Reverse(*rank));
     let mut seen = HashSet::new();
     dots.retain(|(_, x, y, _)| seen.insert((x.floor() as i32, y.floor() as i32)));
+    let size = if zoom.is_some() { ZOOM_DOT } else { DOT };
     primitives.extend(
         dots.into_iter()
             .rev()
             .map(|(_, x, y, paint)| Primitive::Rect {
-                x: x.floor() - DOT / 2.0,
-                y: y.floor() - DOT / 2.0,
-                width: DOT,
-                height: DOT,
+                x: x.floor() - size / 2.0,
+                y: y.floor() - size / 2.0,
+                width: size,
+                height: size,
                 paint,
             }),
     );
@@ -229,6 +232,7 @@ mod tests {
         let zoom = Zoom { r2: &r2, lead: 2 };
         let primitives = scene(view(), &found, 100.0, (Hue::Blue, false), Some(zoom));
         let paints: Vec<Paint> = rects(&primitives).iter().map(|(_, paint)| *paint).collect();
+        assert_eq!(rects(&primitives)[1].0[2], 4.0);
         assert_eq!(
             paints,
             [
