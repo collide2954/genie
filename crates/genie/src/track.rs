@@ -1874,9 +1874,12 @@ impl Track {
         self.slot.data(contig)
     }
 
+    /// The mode of the track in a panel: the mode that somebody chose, else the mode that fits
+    /// its rows. A feature track that needs too many rows for expanded rows shows squished.
     pub fn mode_at(&self, panel: usize, contig: usize) -> Mode {
-        self.mode.unwrap_or_else(|| {
-            let count = self.slot(panel).data(contig).map_or(0, Loaded::count);
+        let data = self.slot(panel).data(contig);
+        let count = data.map_or(0, Loaded::count);
+        let mode = self.mode.unwrap_or_else(|| {
             if self.source.has_reads() {
                 alignments::fit(count)
             } else if self.source.has_variants() {
@@ -1886,7 +1889,12 @@ impl Track {
             } else {
                 Mode::fit(count)
             }
-        })
+        });
+        if data.is_some_and(|data| matches!(data.content, Content::Features(_))) {
+            mode.shown(count)
+        } else {
+            mode
+        }
     }
 
     pub fn needs_at(&self, panel: usize, contig: usize, visible: Region, step: u64) -> bool {
@@ -6051,6 +6059,13 @@ ORIGIN
         let mut track = track();
         track.slot.wanted = Some((0, region(0, 300)));
         track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 20)));
+        assert_eq!(track.mode_at(0, 0), Mode::Squished);
+        track.mode = Some(Mode::Collapsed);
+        assert_eq!(track.mode_at(0, 0), Mode::Collapsed);
+        track.mode = Some(Mode::Expanded);
+        assert_eq!(track.mode_at(0, 0), Mode::Expanded);
+        track.slot.wanted = Some((0, region(0, 300)));
+        track.accept_at(0, 0, region(0, 300), Ok(loaded(region(0, 300), 101)));
         assert_eq!(track.mode_at(0, 0), Mode::Squished);
         track.mode = Some(Mode::Collapsed);
         assert_eq!(track.mode_at(0, 0), Mode::Collapsed);

@@ -3061,6 +3061,7 @@ ORIGIN
         assert!(shows(&genie, "Added"));
     }
 
+    /// A collapsed track draws all its features in one row.
     #[test]
     fn tracks_with_too_much_to_draw_show_a_hint() {
         let mut genie = with_track();
@@ -3072,6 +3073,7 @@ ORIGIN
             })
             .collect();
         let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.mode = Some(Rows::Collapsed);
         track.slot.wanted = Some((0, region));
         track.accept_at(
             0,
@@ -3112,6 +3114,36 @@ ORIGIN
             "{} {}",
             image.height,
             live.height
+        );
+    }
+
+    /// The JASPAR track of UCSC can have hundreds of sites on one place.
+    #[test]
+    fn feature_tracks_show_their_first_rows_and_a_note_of_the_others() {
+        let mut genie = with_track();
+        go(&mut genie, "chr1:481-620");
+        settle(&mut genie);
+        let region = Region::between(0, 1_000);
+        let features = (0..150)
+            .map(|_| Feature::new("site", Region::between(500, 510), Strand::Forward))
+            .collect();
+        let track = &mut genie.session.as_mut().unwrap().tracks[0];
+        track.mode = Some(Rows::Expanded);
+        track.slot.wanted = Some((0, region));
+        track.accept_at(
+            0,
+            0,
+            region,
+            Ok(Arc::new(Loaded::features(region, features))),
+        );
+        let session = genie.session.as_ref().unwrap();
+        assert_eq!(session.tracks[0].mode_at(0, 0), Rows::Squished);
+        let (shapes, _) = super::view::shapes(session, &session.tracks[0], false);
+        let rows = genie_render::features::MOST_ROWS as f32 * Rows::Squished.row_height();
+        assert!(
+            (shapes[0].height - rows - genie_render::features::NOTE_HEIGHT).abs() < 0.01,
+            "{}",
+            shapes[0].height
         );
     }
 

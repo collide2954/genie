@@ -5,8 +5,14 @@ use genie_core::{Feature, Region, Strand, Viewport};
 use crate::scene::{Align, Font, Hue, Paint, Primitive};
 
 pub const LIMIT: usize = 10;
+/// The most rows that a track shows. An expanded track that needs more rows shows squished, and
+/// a note under its rows counts the others.
+pub const MOST_ROWS: usize = 100;
+/// The height of the note under the rows of a track that needs more than `MOST_ROWS` rows.
+pub const NOTE_HEIGHT: f32 = 14.0;
 
 const LABEL_SIZE: f32 = 10.0;
+const NOTE_INSET: f32 = 6.0;
 const LABEL_GAP: f32 = 6.0;
 const GLYPH_WIDTH: f32 = 0.6;
 const CHEVRON_SIZE: f32 = 2.5;
@@ -54,6 +60,17 @@ impl Mode {
         }
     }
 
+    /// The mode in which a track with this mode and rows shows: squished in place of expanded
+    /// when it needs more than `MOST_ROWS` rows.
+    #[must_use]
+    pub fn shown(self, rows: usize) -> Self {
+        if self == Self::Expanded && rows > MOST_ROWS {
+            Self::Squished
+        } else {
+            self
+        }
+    }
+
     pub fn row_height(self) -> f32 {
         self.shape().row
     }
@@ -78,6 +95,9 @@ pub fn hit(
         return None;
     }
     let row = (y / mode.shape().row) as usize;
+    if mode != Mode::Collapsed && row >= MOST_ROWS {
+        return None;
+    }
     let px = |bp: u64| viewport.to_px(bp as f64) as f32;
     features
         .iter()
@@ -126,6 +146,9 @@ pub fn scene(
     for (feature, &row) in features.iter().zip(rows) {
         let span = feature.span();
         if span.start() > visible.end() || span.end() < visible.start() {
+            continue;
+        }
+        if mode != Mode::Collapsed && row >= MOST_ROWS {
             continue;
         }
         let row = if mode == Mode::Collapsed { 0 } else { row };
@@ -187,6 +210,28 @@ pub fn scene(
     }
     primitives.extend(labels.texts);
     primitives
+}
+
+/// The note under the rows of a track that needs more rows than it shows, as "900 more rows ·
+/// zoom in or filter". A collapsed track has no note.
+pub fn more_rows(rows: usize, mode: Mode) -> Option<Primitive> {
+    if mode == Mode::Collapsed || rows <= MOST_ROWS {
+        return None;
+    }
+    let hidden = rows - MOST_ROWS;
+    let noun = if hidden == 1 { "row" } else { "rows" };
+    Some(Primitive::Text {
+        x: NOTE_INSET,
+        y: MOST_ROWS as f32 * mode.row_height() + NOTE_HEIGHT / 2.0,
+        content: Cow::Owned(format!(
+            "{} more {noun} · zoom in or filter",
+            genie_core::grouped(hidden as u64)
+        )),
+        size: LABEL_SIZE,
+        paint: Paint::Muted,
+        font: Font::Ui,
+        align: Align::Start,
+    })
 }
 
 #[derive(Default)]
@@ -273,7 +318,7 @@ fn chevrons(
 mod tests {
     use genie_core::{Feature, Region, Strand, Viewport};
 
-    use super::{LIMIT, Mode, hit, scene};
+    use super::{LIMIT, MOST_ROWS, Mode, NOTE_HEIGHT, hit, more_rows, scene};
     use crate::scene::{Hue, Paint, Primitive};
 
     fn region(start: u64, end: u64) -> Region {
@@ -413,6 +458,43 @@ mod tests {
     fn fit_squishes_rows_past_the_limit() {
         assert_eq!(Mode::fit(LIMIT), Mode::Expanded);
         assert_eq!(Mode::fit(LIMIT + 1), Mode::Squished);
+    }
+
+    #[test]
+    fn tracks_show_their_first_rows_and_a_note_of_the_others() {
+        assert_eq!(Mode::Expanded.shown(MOST_ROWS), Mode::Expanded);
+        assert_eq!(Mode::Expanded.shown(MOST_ROWS + 1), Mode::Squished);
+        assert_eq!(Mode::Squished.shown(1_000), Mode::Squished);
+        assert_eq!(Mode::Collapsed.shown(1_000), Mode::Collapsed);
+        let features: Vec<Feature> = (0..150).map(|_| named("", 10, 20)).collect();
+        let rows: Vec<usize> = (0..150).collect();
+        let found = draw(&features, &rows, Mode::Squished);
+        let bottom = MOST_ROWS as f32 * Mode::Squished.row_height();
+        assert_eq!(found.len(), MOST_ROWS);
+        assert!(found.iter().all(|primitive| match primitive {
+            Primitive::Rect { y, .. } => *y < bottom,
+            _ => false,
+        }));
+        assert_eq!(
+            hit(view(), &features, &rows, Mode::Squished, 15.0, bottom - 1.0),
+            Some(MOST_ROWS - 1)
+        );
+        assert_eq!(
+            hit(view(), &features, &rows, Mode::Squished, 15.0, bottom + 1.0),
+            None
+        );
+        let Some(Primitive::Text { content, y, .. }) = more_rows(150, Mode::Squished) else {
+            panic!("expected a note");
+        };
+        assert_eq!(content, "50 more rows · zoom in or filter");
+        assert!(y > bottom && y < bottom + NOTE_HEIGHT, "{y}");
+        let Some(Primitive::Text { content, .. }) = more_rows(MOST_ROWS + 1, Mode::Squished) else {
+            panic!("expected a note");
+        };
+        assert_eq!(content, "1 more row · zoom in or filter");
+        assert_eq!(more_rows(MOST_ROWS, Mode::Squished), None);
+        assert_eq!(more_rows(1_000, Mode::Collapsed), None);
+        assert_eq!(draw(&features, &rows, Mode::Collapsed).len(), 150);
     }
 
     #[test]

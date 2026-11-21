@@ -1030,13 +1030,13 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
         }
         Some(Content::Features(annotation)) => {
             let packed;
-            let rows = if repack {
-                packed = annotation.packed(viewport.visible()).0;
-                packed.as_slice()
+            let (rows, count) = if repack {
+                packed = annotation.packed(viewport.visible());
+                (packed.0.as_slice(), packed.1)
             } else {
-                annotation.rows.as_slice()
+                (annotation.rows.as_slice(), annotation.count)
             };
-            let primitives = features::scene(
+            let mut primitives = features::scene(
                 viewport,
                 &annotation.features,
                 rows,
@@ -1044,6 +1044,7 @@ fn drawing(session: &Session, track: &Track, panel: usize, shape: Shape, repack:
                 track.hue,
                 track.plot.colors,
             );
+            primitives.extend(features::more_rows(count, mode));
             Body::Scene(primitives, shape.height)
         }
         Some(Content::Reads(pile)) => reads_body(session, track, panel, pile, (shape, repack)),
@@ -2010,9 +2011,15 @@ fn shape(session: &Session, track: &Track, panel: usize, repack: bool) -> Shape 
                 annotation.count.max(1)
             };
             let row_height = mode.row_height();
+            let shown = rows.min(features::MOST_ROWS);
+            let note = if rows > shown {
+                features::NOTE_HEIGHT
+            } else {
+                0.0
+            };
             Shape {
-                height: rows as f32 * row_height,
-                rows,
+                height: shown as f32 * row_height + note,
+                rows: shown,
                 fixed: 0.0,
                 row_height,
             }
