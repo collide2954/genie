@@ -5,6 +5,13 @@ use genie_core::Region;
 use genie_core::signal::Tally;
 
 use crate::{Error, Reason};
+#[cfg(verus_keep_ghost)]
+use vstd::arithmetic::div_mod::{lemma_div_is_ordered, lemma_fundamental_div_mod};
+#[cfg(verus_keep_ghost)]
+use vstd::arithmetic::power2::{lemma_pow2_adds, lemma_pow2_pos, lemma2_to64, pow2};
+#[cfg(verus_keep_ghost)]
+use vstd::bits::{lemma_u32_pow2_no_overflow, lemma_u32_shl_is_mul, lemma_u64_shr_is_div};
+use vstd::prelude::*;
 
 const UNSET: u64 = u64::MAX;
 const MIN_MARKER_DISTANCE: u64 = 0x10000;
@@ -15,12 +22,392 @@ pub struct Chunk {
     pub end: u64,
 }
 
+verus! {
+
+/// The number of bins of a level: 8 to the power of the level.
+pub open spec fn spec_count(level: nat) -> nat
+    decreases level,
+{
+    if level == 0 {
+        1
+    } else {
+        8 * spec_count((level - 1) as nat)
+    }
+}
+
+/// The number of the first bin of a level: the number of bins of all the levels above it.
+pub open spec fn spec_first(level: nat) -> nat
+    decreases level,
+{
+    if level == 0 {
+        0
+    } else {
+        spec_first((level - 1) as nat) + spec_count((level - 1) as nat)
+    }
+}
+
+/// A level has 2 to the power of 3 times the level bins, and 7 times the bins above a level
+/// is one less than its bins.
+proof fn lemma_counts(level: nat)
+    ensures
+        spec_count(level) == pow2(3 * level),
+        7 * spec_first(level) + 1 == spec_count(level),
+    decreases level,
+{
+    lemma2_to64();
+    if level > 0 {
+        let above = (level - 1) as nat;
+        lemma_counts(above);
+        lemma_pow2_adds(3 * above, 3);
+        assert(3 * above + 3 == 3 * level);
+        assert(pow2(3 * level) == pow2(3 * above) * 8);
+    }
+}
+
+/// A number below 2 to the power of `high` divided by 2 to the power of `low` is below 2 to
+/// the power of the difference.
+proof fn lemma_shifted_below(value: nat, low: nat, high: nat)
+    requires
+        low <= high,
+        value < pow2(high),
+    ensures
+        value / pow2(low) < pow2((high - low) as nat),
+{
+    lemma_pow2_pos(low);
+    lemma_pow2_adds(low, (high - low) as nat);
+    let (width, count) = (pow2(low) as int, pow2((high - low) as nat) as int);
+    lemma_fundamental_div_mod(value as int, width);
+    vstd::arithmetic::div_mod::lemma_mod_bound(value as int, width);
+    let (quotient, rest) = (value as int / width, value as int % width);
+    assert(quotient < count) by (nonlinear_arith)
+        requires
+            value == width * quotient + rest,
+            0 <= rest,
+            value < width * count,
+            width > 0,
+    ;
+}
+
+/// A binning scheme of an index: on the lowest level, bins of 2 to the power of `shift` bases;
+/// above it, `depth` levels with bins of 8 times as many bases, up to the one top bin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scheme {
     shift: u32,
     depth: u32,
 }
 
+impl Scheme {
+    /// A scheme has 9 levels or fewer under its top bin, and its top bin has 2 to the power of
+    /// 62 bases or fewer.
+    #[verifier::type_invariant]
+    spec fn fits(self) -> bool {
+        self.depth <= 9 && self.shift + 3 * self.depth <= 62
+    }
+
+    pub closed spec fn spec_shift(self) -> nat {
+        self.shift as nat
+    }
+
+    pub closed spec fn spec_depth(self) -> nat {
+        self.depth as nat
+    }
+
+    /// The bases of each bin of a level, as a power of 2. Level 0 is the top bin.
+    pub open spec fn spec_width(self, level: nat) -> nat {
+        (self.spec_shift() + 3 * (self.spec_depth() - level)) as nat
+    }
+
+    /// True when a bin of a level holds the records from `start` to `end`: their first and
+    /// their last base are in the same bin of the level, and `bin` is the number of that bin.
+    pub open spec fn spec_holds(self, bin: int, level: nat, start: nat, end: nat) -> bool {
+        let width = pow2(self.spec_width(level));
+        level <= self.spec_depth() && start < end && start / width == (end - 1) as nat / width
+            && bin == spec_first(level) + start / width
+    }
+
+    /// The scheme of BAI and TBI indexes: bins of 16 kb on the lowest level, 5 levels under the
+    /// top bin.
+    pub const fn bai() -> (scheme: Self)
+        ensures
+            scheme.spec_shift() == 14 && scheme.spec_depth() == 5,
+    {
+        Self { shift: 14, depth: 5 }
+    }
+
+    /// The scheme of a shift and a depth, if they fit.
+    pub fn checked(shift: i32, depth: i32) -> (scheme: Option<Self>)
+        ensures
+            match scheme {
+                Some(scheme) => scheme.spec_shift() == shift && scheme.spec_depth() == depth,
+                None => !(0 <= depth <= 9 && 0 <= shift && shift + 3 * depth <= 62),
+            },
+    {
+        if shift < 0 || depth < 0 {
+            return None;
+        }
+        let (shift, depth) = (shift as u32, depth as u32);
+        if depth > 9 || shift + 3 * depth > 62 {
+            return None;
+        }
+        Some(Self { shift, depth })
+    }
+
+    /// The scheme with a shift and the fewest levels from `depth` up whose top bin reaches
+    /// `length`, with 9 levels at most.
+    pub fn reaching(shift: u32, depth: u32, length: u64) -> (scheme: Self)
+        ensures
+            shift <= 62 ==> scheme.spec_shift() == shift,
+    {
+        let shift = if shift > 62 {
+            62
+        } else {
+            shift
+        };
+        let mut depth = if depth > 9 {
+            9
+        } else {
+            depth
+        };
+        if shift + 3 * depth > 62 {
+            depth = (62 - shift) / 3;
+        }
+        while depth < 9 && shift + 3 * (depth + 1) <= 62 && length > 1u64 << (shift + 3 * depth)
+            invariant
+                shift <= 62,
+                depth <= 9,
+                shift + 3 * depth <= 62,
+            decreases 9 - depth,
+        {
+            depth += 1;
+        }
+        Self { shift, depth }
+    }
+
+    pub fn shift(self) -> (shift: u32)
+        ensures
+            shift == self.spec_shift(),
+    {
+        self.shift
+    }
+
+    pub fn depth(self) -> (depth: u32)
+        ensures
+            depth == self.spec_depth(),
+            depth <= 9,
+            self.spec_width(0) <= 62,
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.depth
+    }
+
+    fn top(self) -> (top: u32)
+        ensures
+            top == self.spec_width(0),
+            top <= 62,
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        self.shift + 3 * self.depth
+    }
+
+    /// The number of the first bin of a level.
+    fn first(level: u32) -> (first: u32)
+        requires
+            level <= 10,
+        ensures
+            first == spec_first(level as nat),
+            7 * first + 1 == pow2(3 * level as nat),
+    {
+        proof {
+            lemma_counts(level as nat);
+            lemma_u32_pow2_no_overflow((3 * level) as nat);
+            lemma_u32_shl_is_mul(1, (3 * level) as u32);
+        }
+        ((1u32 << (3 * level)) - 1) / 7
+    }
+
+    /// The number of bins of all levels.
+    fn bins(self) -> (bins: u32)
+        ensures
+            bins == spec_first(self.spec_depth() + 1),
+            bins < pow2(30),
+    {
+        proof {
+            use_type_invariant(self);
+            lemma_counts(self.depth as nat + 1);
+            lemma2_to64();
+            vstd::arithmetic::power2::lemma_pow2_strictly_increases(
+                3 * (self.depth as nat + 1),
+                31,
+            );
+        }
+        Self::first(self.depth + 1)
+    }
+
+    /// The number of the pseudo-bin of htslib, after the last bin.
+    fn meta(self) -> (meta: u32)
+        ensures
+            meta == spec_first(self.spec_depth() + 1) + 1,
+    {
+        proof {
+            lemma2_to64();
+        }
+        self.bins() + 1
+    }
+
+    /// The bin of the records from `start` to `end`: the bin of the deepest level that holds
+    /// all their bases. Records without a place, from -1 to 0, get the bin before the first bin
+    /// of the lowest level, and records that end at 0 get the top bin, as in htslib.
+    fn bin(self, start: i64, end: i64) -> (bin: i64)
+        requires
+            (start == -1 && end == 0) || (0 <= start <= pow2(self.spec_width(0)) && 0 <= end
+                <= pow2(self.spec_width(0))),
+        ensures
+            start == -1 ==> bin == spec_first(self.spec_depth()) - 1,
+            0 <= start < end ==> exists|level: nat|
+                {
+                    &&& #[trigger] self.spec_holds(bin as int, level, start as nat, end as nat)
+                    &&& forall|deeper: nat|
+                        level < deeper <= self.spec_depth() ==> !#[trigger] self.spec_holds(
+                            bin as int,
+                            deeper,
+                            start as nat,
+                            end as nat,
+                        )
+                },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        if start < 0 {
+            return i64::from(Self::first(self.depth)) - 1;
+        }
+        if end <= 0 {
+            return 0;
+        }
+        let (low, high) = (start as u64, (end - 1) as u64);
+        let mut level = self.depth;
+        while level > 0
+            invariant
+                level <= self.depth,
+                self.depth <= 9,
+                self.shift + 3 * self.depth <= 62,
+                0 <= start,
+                0 < end <= pow2(self.spec_width(0)),
+                low == start,
+                high == end - 1,
+                forall|deeper: nat|
+                    level < deeper <= self.spec_depth() ==> low as nat / pow2(
+                        #[trigger] self.spec_width(deeper),
+                    ) != high as nat / pow2(self.spec_width(deeper)),
+            decreases level,
+        {
+            let shift = u64::from(self.shift + 3 * (self.depth - level));
+            proof {
+                lemma_u64_shr_is_div(low, shift);
+                lemma_u64_shr_is_div(high, shift);
+            }
+            if low >> shift == high >> shift {
+                proof {
+                    lemma2_to64();
+                    lemma_shifted_below(high as nat, shift as nat, self.spec_width(0));
+                }
+                let bin = i64::from(Self::first(level)) + i64::from((low >> shift) as u32);
+                proof {
+                    if start < end {
+                        assert(self.spec_width(level as nat) == shift);
+                        assert(self.spec_holds(
+                            bin as int,
+                            level as nat,
+                            start as nat,
+                            end as nat,
+                        ));
+                        assert forall|deeper: nat| level < deeper <= self.spec_depth() implies !#[trigger]
+                            self.spec_holds(bin as int, deeper, start as nat, end as nat) by {
+                            assert(low as nat / pow2(self.spec_width(deeper)) != high as nat
+                                / pow2(self.spec_width(deeper)));
+                        }
+                    }
+                }
+                return bin;
+            }
+            level -= 1;
+        }
+        proof {
+            if start < end {
+                lemma_shifted_below(low as nat, self.spec_width(0), self.spec_width(0));
+                lemma_shifted_below(high as nat, self.spec_width(0), self.spec_width(0));
+                lemma2_to64();
+                assert(self.spec_holds(0, 0, start as nat, end as nat));
+                assert forall|deeper: nat| 0 < deeper <= self.spec_depth() implies !#[trigger]
+                    self.spec_holds(0, deeper, start as nat, end as nat) by {
+                    assert(low as nat / pow2(self.spec_width(deeper)) != high as nat / pow2(
+                        self.spec_width(deeper),
+                    ));
+                }
+            }
+        }
+        0
+    }
+
+    /// The first and the last bin of a level that can hold a record with a base from `start`
+    /// to `last`.
+    fn level_bins(self, level: u32, start: u64, last: u64) -> (bins: (u32, u32))
+        requires
+            level <= self.spec_depth(),
+            start <= last < pow2(self.spec_width(0)),
+        ensures
+            bins.0 == spec_first(level as nat) + start as nat / pow2(
+                self.spec_width(level as nat),
+            ),
+            bins.1 == spec_first(level as nat) + last as nat / pow2(
+                self.spec_width(level as nat),
+            ),
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let shift = u64::from(self.top() - 3 * level);
+        let first = Self::first(level);
+        proof {
+            lemma_u64_shr_is_div(start, shift);
+            lemma_u64_shr_is_div(last, shift);
+            lemma_shifted_below(start as nat, shift as nat, self.spec_width(0));
+            lemma_shifted_below(last as nat, shift as nat, self.spec_width(0));
+            lemma2_to64();
+        }
+        (first + (start >> shift) as u32, first + (last >> shift) as u32)
+    }
+
+    /// A record with a base from `start` to `last` has its bin among the bins of its level for
+    /// them: thus a query of a region finds the bin of each record that overlaps the region.
+    pub proof fn lemma_queries_find_records(
+        self,
+        bin: int,
+        level: nat,
+        record: (nat, nat),
+        start: nat,
+        last: nat,
+    )
+        requires
+            self.spec_holds(bin, level, record.0, record.1),
+            record.0 <= last,
+            start < record.1,
+        ensures
+            spec_first(level) + start / pow2(self.spec_width(level)) <= bin <= spec_first(level)
+                + last / pow2(self.spec_width(level)),
+    {
+        let width = pow2(self.spec_width(level));
+        lemma_pow2_pos(self.spec_width(level));
+        lemma_div_is_ordered(record.0 as int, last as int, width as int);
+        lemma_div_is_ordered(start as int, (record.1 - 1) as int, width as int);
+    }
+}
+
+} // verus!
 impl Default for Scheme {
     fn default() -> Self {
         Self::BAI
@@ -28,61 +415,10 @@ impl Default for Scheme {
 }
 
 impl Scheme {
-    pub const BAI: Self = Self {
-        shift: 14,
-        depth: 5,
-    };
+    pub const BAI: Self = Self::bai();
 
     pub fn new(shift: i32, depth: i32) -> Result<Self, Error> {
-        let shift = u32::try_from(shift).map_err(|_| Error::Invalid(Reason::BadIndex))?;
-        let depth = u32::try_from(depth).map_err(|_| Error::Invalid(Reason::BadIndex))?;
-        if depth > 9 || shift + 3 * depth > 62 {
-            return Err(Error::Invalid(Reason::BadIndex));
-        }
-        Ok(Self { shift, depth })
-    }
-
-    pub fn reaching(shift: u32, depth: u32, length: u64) -> Self {
-        let mut depth = depth;
-        while shift + 3 * (depth + 1) <= 62 && length > 1 << (shift + 3 * depth) {
-            depth += 1;
-        }
-        Self { shift, depth }
-    }
-
-    pub fn shift(self) -> u32 {
-        self.shift
-    }
-
-    pub fn depth(self) -> u32 {
-        self.depth
-    }
-
-    fn top(self) -> u32 {
-        self.shift + 3 * self.depth
-    }
-
-    fn first(level: u32) -> u32 {
-        ((1 << (3 * level)) - 1) / 7
-    }
-
-    fn bins(self) -> u32 {
-        Self::first(self.depth + 1)
-    }
-
-    fn meta(self) -> u32 {
-        self.bins() + 1
-    }
-
-    fn bin(self, start: i64, end: i64) -> i64 {
-        let last = end - 1;
-        for level in (1..=self.depth).rev() {
-            let shift = self.shift + 3 * (self.depth - level);
-            if start >> shift == last >> shift {
-                return i64::from(Self::first(level)) + (start >> shift);
-            }
-        }
-        0
+        Self::checked(shift, depth).ok_or(Error::Invalid(Reason::BadIndex))
     }
 
     /// The bases that a bin covers, up to the length of the contig.
@@ -107,7 +443,6 @@ impl Scheme {
         ((bin - Self::first(level)) as usize) << (3 * (self.depth - level))
     }
 }
-
 #[derive(Debug, PartialEq, Eq)]
 struct Bin {
     number: u32,
@@ -465,11 +800,10 @@ impl Bins {
                 .unwrap_or(0),
             None => self.first_offset(start),
         };
-        let mut chunks: Vec<Chunk> = (0..=self.scheme.depth)
+        let mut chunks: Vec<Chunk> = (0..=self.scheme.depth())
             .flat_map(|level| {
-                let offset = Scheme::first(level);
-                let shift = top - 3 * level;
-                offset + (start >> shift) as u32..=offset + (last >> shift) as u32
+                let (first, last_bin) = self.scheme.level_bins(level, start, last);
+                first..=last_bin
             })
             .filter_map(|number| self.find(number))
             .flat_map(|bin| bin.chunks.iter())
@@ -779,6 +1113,22 @@ mod tests {
         assert!(Scheme::new(14, 6).is_ok());
         assert!(Scheme::new(-1, 5).is_err());
         assert!(Scheme::new(14, 20).is_err());
+    }
+
+    /// A contig longer than 9 levels of bins can reach, as a damaged header can give, makes a
+    /// scheme of 9 levels: its records are then too far for the index, not a panic.
+    #[test]
+    fn schemes_stop_at_nine_levels() {
+        let scheme = Scheme::reaching(14, 0, 1 << 50);
+        assert_eq!((scheme.shift(), scheme.depth()), (14, 9));
+        assert_eq!(scheme.bins(), 153_391_689);
+        assert_eq!(Scheme::reaching(14, 0, 1 << 30).depth(), 6);
+        let mut builder = Builder::new(scheme, true, 0);
+        let far = 1 << 42;
+        assert_eq!(
+            builder.push(Some((0, far, far + 5)), 10, true),
+            Err(Disorder::Long)
+        );
     }
 
     #[test]

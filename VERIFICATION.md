@@ -24,6 +24,7 @@ The automatic checks run the proofs on each push. Verus uses Rust 1.99.1, the re
 |---|---|---|
 | The regions of a contig | `crates/genie-core/src/region.rs` | The start of each region is never after its end, and no operation has an overflow. `new` refuses a start after the end, and `between` puts two positions in order. The length is the end minus the start. Two regions with positions overlap exactly when a position is in both. The hull has each position of the two regions. The intersection has exactly the positions that are in both regions, and there is no intersection when no position is in both. `clamp_to` keeps exactly the positions before the length. `expand` gives the region of its specification, also at the limits of 64-bit numbers. |
 | The bytes of the bases of a FASTA file | `crates/genie-formats/src/fasta.rs` | The byte of each base is the byte that the index gives: the offset of the record, all the bytes of each line before the line of the base, and the bases before the base on its line. A later base is at a later byte. For a region, genie reads from the byte of its first base to the byte of its last base: the bases of the region and the line ends between them, and no other bytes. An index that gives no bases on a line, lines with fewer bytes than bases, or a byte past the end of 64-bit numbers gives an error. No arithmetic has an overflow, and no division is by zero. |
+| The bins of BAI, CSI and tabix indexes | `crates/genie-formats/src/binning.rs` | A binning scheme has 9 levels or fewer under its top bin, and its top bin has 2 to the power of 62 bases or fewer. A scheme for a longer contig gets 9 levels, and the records past its top bin are then too far for the index. The number of the first bin of each level is the number of the bins of the levels above it, with no overflow. The bin of a record is the bin of the deepest level that has its first and its last base, as htslib gives it. On each level, the bins of a query go from the bin of its first base to the bin of its last base, and the bin of each record that overlaps the query is among them. Thus the bins that genie reads for a region include the bin of each record that overlaps the region. |
 
 ## Holes
 
@@ -33,7 +34,8 @@ A hole is code or an assumption that has no proof. Each hole is in this list.
 
 | Hole | State |
 |---|---|
-| The bins of the BAI, CSI and tabix indexes, and the virtual offsets of BGZF. | Open |
+| The virtual offsets of BGZF. | Open |
+| The loop of `chunks` over the levels of an index, the filter of its chunks by the linear index, and the level of a bin number (`span`, `bottom`). | Open |
 | The places of amino acids on the exons (`protein_blocks`), the length of a coding part, and the codon table. | Open |
 | The readers of binary numbers: ITF8 and LTF8 of CRAM, the bases of 2bit files, and the rANS decoders of CRAM. | Open |
 | The other code that has only whole numbers and bytes, for example the tandem repeats, the walk along a CIGAR, and the rows of features. | Open |
