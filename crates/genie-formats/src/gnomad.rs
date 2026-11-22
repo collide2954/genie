@@ -117,7 +117,7 @@ pub struct Frequencies {
     pub all: Count,
     /// The samples with two alternate alleles.
     pub homozygotes: u64,
-    /// The counts of each genetic ancestry group, by its name, in the order of [`GROUPS`].
+    /// The counts of each genetic ancestry group, by its name, in the order of `GROUPS`.
     pub groups: Vec<(&'static str, Count)>,
 }
 
