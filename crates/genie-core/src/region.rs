@@ -186,6 +186,22 @@ impl Region {
                 None => forall|position: u64|
                     !(#[trigger] self.has(position) && other.has(position)),
             },
+            ({
+                let start = if self.spec_start() >= other.spec_start() {
+                    self.spec_start()
+                } else {
+                    other.spec_start()
+                };
+                let end = if self.spec_end() <= other.spec_end() {
+                    self.spec_end()
+                } else {
+                    other.spec_end()
+                };
+                match shared {
+                    Some(shared) => shared.spec_start() == start && shared.spec_end() == end,
+                    None => end <= start,
+                }
+            }),
     {
         let start = self.start.max(other.start);
         let end = self.end.min(other.end);

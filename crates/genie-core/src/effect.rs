@@ -280,6 +280,34 @@ pub open spec fn spec_inside(part: Region, whole: Region) -> bool {
     whole.spec_start() <= part.spec_start() && part.spec_end() <= whole.spec_end()
 }
 
+/// The position of the base at the place `index` of regions, one after the other, from 0: the
+/// region of the place, and the position of the place in that region.
+pub open spec fn spec_base(blocks: Seq<Region>, index: int) -> int
+    decreases blocks.len(),
+{
+    if blocks.len() == 0 {
+        0
+    } else {
+        let before = spec_total(blocks.drop_last());
+        if index < before {
+            spec_base(blocks.drop_last(), index)
+        } else {
+            blocks.last().spec_start() + (index - before)
+        }
+    }
+}
+
+/// The position of the base at the place `place` of a coding sequence, from 0, in the order of
+/// the transcript. On the forward strand, the coding sequence has the bases of the coding parts
+/// in the order of the genome. On the reverse strand, it starts at their last base.
+pub open spec fn spec_coding_base(blocks: Seq<Region>, forward: bool, place: int) -> int {
+    if forward {
+        spec_base(blocks, place)
+    } else {
+        spec_base(blocks, spec_total(blocks) - 1 - place)
+    }
+}
+
 /// The bases of the first regions are no more than the bases of all of them.
 proof fn lemma_total_grows(blocks: Seq<Region>, count: int)
     requires
@@ -294,6 +322,68 @@ proof fn lemma_total_grows(blocks: Seq<Region>, count: int)
         assert(blocks.drop_last().subrange(0, count) =~= blocks.subrange(0, count));
     } else {
         assert(blocks.subrange(0, count) =~= blocks);
+    }
+}
+
+/// The base at a place before the end of the first `count` regions is the same for these
+/// regions and for all the regions.
+proof fn lemma_base_prefix(blocks: Seq<Region>, count: int, index: int)
+    requires
+        0 <= count <= blocks.len(),
+        index < spec_total(blocks.subrange(0, count)),
+        forall|at: int| 0 <= at < blocks.len() ==> spec_length(#[trigger] blocks[at]) >= 0,
+    ensures
+        spec_base(blocks.subrange(0, count), index) == spec_base(blocks, index),
+    decreases blocks.len(),
+{
+    if count < blocks.len() {
+        let shorter = blocks.drop_last();
+        assert(shorter.subrange(0, count) =~= blocks.subrange(0, count));
+        lemma_total_grows(shorter, count);
+        lemma_base_prefix(shorter, count, index);
+    } else {
+        assert(blocks.subrange(0, count) =~= blocks);
+    }
+}
+
+/// After the region `at`, the parts of `slice` still have the bases of the regions from `from`
+/// on: the parts before have bases before the region, and a new last part has the bases of the
+/// region from the place `low` on.
+proof fn lemma_slice_bases(
+    blocks: Seq<Region>,
+    at: int,
+    old: Seq<Region>,
+    found: Seq<Region>,
+    from: int,
+    low: int,
+)
+    requires
+        0 <= at < blocks.len(),
+        forall|index: int| 0 <= index < spec_total(old) ==> #[trigger] spec_base(old, index)
+            == spec_base(blocks.subrange(0, at), from + index),
+        spec_total(old) == 0 || from + spec_total(old) <= spec_total(blocks.subrange(0, at)),
+        found == old || ({
+            &&& found.len() > 0
+            &&& found.drop_last() == old
+            &&& spec_total(old) == low - from
+            &&& spec_total(blocks.subrange(0, at)) <= low
+            &&& found.last().spec_start() == blocks[at].spec_start() + low - spec_total(
+                blocks.subrange(0, at),
+            )
+        }),
+    ensures
+        forall|index: int| 0 <= index < spec_total(found) ==> #[trigger] spec_base(found, index)
+            == spec_base(blocks.subrange(0, at + 1), from + index),
+{
+    let upto = blocks.subrange(0, at + 1);
+    assert(upto.drop_last() =~= blocks.subrange(0, at));
+    assert forall|index: int| 0 <= index < spec_total(found) implies #[trigger] spec_base(
+        found,
+        index,
+    ) == spec_base(upto, from + index) by {
+        if index < spec_total(old) {
+            assert(spec_base(old, index) == spec_base(blocks.subrange(0, at), from + index));
+        }
     }
 }
 
@@ -335,7 +425,8 @@ pub fn total(blocks: &[Region]) -> (total: Option<u64>)
 }
 
 /// The parts of regions with the bases from `from` to `to` of the regions, one after the other,
-/// in the order of the regions. Each part is inside its region.
+/// in the order of the regions. Each part is inside its region, and the base at each place of
+/// the parts is the base at the same place plus `from` of the regions.
 pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
     requires
         from <= to <= spec_total(blocks@) <= u64::MAX,
@@ -343,6 +434,11 @@ pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
         spec_total(found@) == to - from,
         forall|at: int| 0 <= at < found@.len() ==> exists|block: int|
             0 <= block < blocks@.len() && spec_inside(#[trigger] found@[at], blocks@[block]),
+        forall|index: int|
+            0 <= index < to - from ==> #[trigger] spec_base(found@, index) == spec_base(
+                blocks@,
+                from + index,
+            ),
 {
     Region::ordered_all(blocks);
     let mut found: Vec<Region> = Vec::new();
@@ -363,6 +459,9 @@ pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
             }),
             forall|part: int| 0 <= part < found@.len() ==> exists|block: int|
                 0 <= block < blocks@.len() && spec_inside(#[trigger] found@[part], blocks@[block]),
+            forall|index: int|
+                0 <= index < spec_total(found@) ==> #[trigger] spec_base(found@, index)
+                    == spec_base(blocks@.subrange(0, at as int), from + index),
         decreases blocks.len() - at,
     {
         let block = blocks[at];
@@ -382,10 +481,10 @@ pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
         } else {
             end
         };
+        let ghost old_found = found@;
         if low < high {
             let start = block.start();
             let part = Region::between(start + (low - before), start + (high - before));
-            let ghost old_found = found@;
             found.push(part);
             proof {
                 assert(found@.drop_last() =~= old_found);
@@ -403,6 +502,9 @@ pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
                 }
             };
         }
+        proof {
+            lemma_slice_bases(blocks@, at as int, old_found, found@, from as int, low as int);
+        }
         before = end;
         at += 1;
     }
@@ -412,7 +514,87 @@ pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
     found
 }
 
-} // verus!
+/// The first and the end position that each exon shares with the coding part, in the order of
+/// the exons, for each exon that shares a position with it.
+pub open spec fn spec_shared(exons: Seq<Region>, coding: Region) -> Seq<(int, int)>
+    decreases exons.len(),
+{
+    if exons.len() == 0 {
+        Seq::empty()
+    } else {
+        let exon = exons.last();
+        let start = if exon.spec_start() >= coding.spec_start() {
+            exon.spec_start()
+        } else {
+            coding.spec_start()
+        };
+        let end = if exon.spec_end() <= coding.spec_end() {
+            exon.spec_end()
+        } else {
+            coding.spec_end()
+        };
+        let before = spec_shared(exons.drop_last(), coding);
+        if start < end {
+            before.push((start as int, end as int))
+        } else {
+            before
+        }
+    }
+}
+
+/// The parts of exons in a coding part: for each exon that shares positions with the coding
+/// part, in the order of the exons, a part with the shared positions.
+fn coding_parts(exons: &[Region], coding: Region) -> (parts: Vec<Region>)
+    ensures
+        parts@.len() == spec_shared(exons@, coding).len(),
+        forall|at: int|
+            0 <= at < parts@.len() ==> (#[trigger] parts@[at]).spec_start() == spec_shared(
+                exons@,
+                coding,
+            )[at].0 && parts@[at].spec_end() == spec_shared(exons@, coding)[at].1,
+{
+    let mut parts: Vec<Region> = Vec::new();
+    let mut at: usize = 0;
+    while at < exons.len()
+        invariant
+            at <= exons.len(),
+            parts@.len() == spec_shared(exons@.subrange(0, at as int), coding).len(),
+            forall|part: int|
+                0 <= part < parts@.len() ==> (#[trigger] parts@[part]).spec_start()
+                    == spec_shared(exons@.subrange(0, at as int), coding)[part].0
+                    && parts@[part].spec_end() == spec_shared(
+                    exons@.subrange(0, at as int),
+                    coding,
+                )[part].1,
+        decreases exons.len() - at,
+    {
+        proof {
+            assert(exons@.subrange(0, at + 1).drop_last() =~= exons@.subrange(0, at as int));
+        }
+        let ghost old_parts = parts@;
+        if let Some(part) = exons[at].intersection(coding) {
+            parts.push(part);
+        }
+        proof {
+            let shared = spec_shared(exons@.subrange(0, at + 1), coding);
+            let before = spec_shared(exons@.subrange(0, at as int), coding);
+            assert(exons@.subrange(0, at + 1).last() == exons@[at as int]);
+            assert forall|part: int| 0 <= part < parts@.len() implies (
+            #[trigger] parts@[part]).spec_start() == shared[part].0 && parts@[part].spec_end()
+                == shared[part].1 by {
+                if part < old_parts.len() {
+                    assert(parts@[part] == old_parts[part]);
+                    assert(shared[part] == before[part]);
+                }
+            }
+        }
+        at += 1;
+    }
+    proof {
+        assert(exons@.subrange(0, exons@.len() as int) =~= exons@);
+    }
+    parts
+}
 
 /// The coding parts of a transcript in genome order, and where the coding sequence of each
 /// genome position is.
@@ -423,43 +605,183 @@ struct Coding {
 }
 
 impl Coding {
-    /// The coding bases of a transcript, or nothing when they are more than 64-bit numbers hold.
-    fn new(transcript: &Feature, coding: Region) -> Option<Self> {
-        let mut blocks: Vec<Region> = transcript
-            .blocks()
-            .iter()
-            .filter_map(|block| block.intersection(coding))
-            .filter(|block| !block.is_empty())
-            .collect();
-        blocks.sort_by_key(|block| block.start());
-        let length = total(&blocks)?;
-        Some(Self {
-            blocks,
-            length,
-            forward: transcript.strand() != Strand::Reverse,
-        })
+    /// The length is the number of bases of the coding parts.
+    #[verifier::type_invariant]
+    spec fn counted(self) -> bool {
+        self.length == spec_total(self.blocks@)
     }
 
-    /// The place of a genome position in the coding bases in genome order.
-    fn index(&self, position: u64) -> Option<u64> {
-        let mut before = 0;
-        for block in &self.blocks {
-            if block.contains(position) {
-                return Some(before + position - block.start());
+    /// The coding bases of coding parts in genome order, or nothing when they are more than
+    /// 64-bit numbers hold.
+    fn with_parts(blocks: Vec<Region>, forward: bool) -> (coding: Option<Self>)
+        ensures
+            match coding {
+                Some(coding) => coding.blocks@ == blocks@ && coding.forward == forward,
+                None => spec_total(blocks@) > u64::MAX,
+            },
+    {
+        let length = total(blocks.as_slice())?;
+        Some(Self { blocks, length, forward })
+    }
+
+    /// The first place of a genome position in the coding bases in genome order.
+    fn index(&self, position: u64) -> (place: Option<u64>)
+        ensures
+            match place {
+                Some(place) => place < spec_total(self.blocks@) && spec_base(
+                    self.blocks@,
+                    place as int,
+                ) == position && forall|other: int|
+                    0 <= other < place ==> #[trigger] spec_base(self.blocks@, other) != position,
+                None => forall|other: int|
+                    0 <= other < spec_total(self.blocks@) ==> #[trigger] spec_base(
+                        self.blocks@,
+                        other,
+                    ) != position,
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let blocks = self.blocks.as_slice();
+        Region::ordered_all(blocks);
+        let mut before: u64 = 0;
+        let mut at: usize = 0;
+        while at < blocks.len()
+            invariant
+                blocks@ == self.blocks@,
+                at <= blocks.len(),
+                spec_total(blocks@) <= u64::MAX,
+                forall|index: int|
+                    0 <= index < blocks@.len() ==> spec_length(#[trigger] blocks@[index]) >= 0,
+                before == spec_total(blocks@.subrange(0, at as int)),
+                forall|other: int|
+                    0 <= other < before ==> #[trigger] spec_base(blocks@, other) != position,
+            decreases blocks.len() - at,
+        {
+            let block = blocks[at];
+            proof {
+                assert(blocks@.subrange(0, at + 1).drop_last() =~= blocks@.subrange(0, at as int));
+                lemma_total_grows(blocks@, at + 1);
             }
-            before += block.len();
+            if block.contains(position) {
+                let place = before + (position - block.start());
+                proof {
+                    lemma_base_prefix(blocks@, at + 1, place as int);
+                    assert forall|other: int| 0 <= other < place implies #[trigger] spec_base(
+                        blocks@,
+                        other,
+                    ) != position by {
+                        if other >= before {
+                            lemma_base_prefix(blocks@, at + 1, other);
+                        }
+                    }
+                }
+                return Some(place);
+            }
+            let length = block.len();
+            proof {
+                assert forall|other: int| 0 <= other < before + length implies #[trigger] spec_base(
+                    blocks@,
+                    other,
+                ) != position by {
+                    if other >= before {
+                        lemma_base_prefix(blocks@, at + 1, other);
+                    }
+                }
+            }
+            before += length;
+            at += 1;
+        }
+        proof {
+            assert(blocks@.subrange(0, blocks@.len() as int) =~= blocks@);
         }
         None
     }
 
-    /// The c. number of a genome position in the coding sequence, from 1.
-    fn number(&self, position: u64) -> Option<u64> {
+    /// The c. number of a genome position in the coding sequence, from 1: the place of its
+    /// coding base in the order of the transcript, plus 1.
+    fn number(&self, position: u64) -> (number: Option<u64>)
+        ensures
+            match number {
+                Some(number) => 1 <= number <= spec_total(self.blocks@) && spec_coding_base(
+                    self.blocks@,
+                    self.forward,
+                    number - 1,
+                ) == position,
+                None => forall|other: int|
+                    0 <= other < spec_total(self.blocks@) ==> #[trigger] spec_base(
+                        self.blocks@,
+                        other,
+                    ) != position,
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
         let index = self.index(position)?;
-        Some(if self.forward {
-            index + 1
+        Some(
+            if self.forward {
+                index + 1
+            } else {
+                self.length - index
+            },
+        )
+    }
+
+    /// The parts of the coding bases of the amino acids `first` to `last` of the protein, from
+    /// 1, in genome order. Nothing when they are not all in the protein.
+    fn aminos(&self, first: u64, last: u64) -> (found: Option<Vec<Region>>)
+        ensures
+            match found {
+                Some(parts) => {
+                    &&& 1 <= first <= last
+                    &&& 3 * last <= spec_total(self.blocks@)
+                    &&& spec_total(parts@) == 3 * (last - first + 1)
+                    &&& forall|index: int|
+                        0 <= index < spec_total(parts@) ==> #[trigger] spec_base(parts@, index)
+                            == spec_coding_base(
+                            self.blocks@,
+                            self.forward,
+                            if self.forward {
+                                3 * (first - 1) + index
+                            } else {
+                                3 * last - 1 - index
+                            },
+                        )
+                },
+                None => !(1 <= first <= last && 3 * last <= spec_total(self.blocks@)),
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        if first == 0 || last < first {
+            return None;
+        }
+        let to = last.checked_mul(3)?;
+        if to > self.length {
+            return None;
+        }
+        let from = (first - 1) * 3;
+        let (from, to) = if self.forward {
+            (from, to)
         } else {
-            self.length - index
-        })
+            (self.length - to, self.length - from)
+        };
+        Some(slice(self.blocks.as_slice(), from, to))
+    }
+}
+
+} // verus!
+
+impl Coding {
+    /// The coding bases of a transcript, or nothing when they are more than 64-bit numbers hold.
+    /// The coding parts go in the order of their start.
+    fn new(transcript: &Feature, coding: Region) -> Option<Self> {
+        let mut blocks = coding_parts(transcript.blocks(), coding);
+        blocks.sort_by_key(|block| block.start());
+        Self::with_parts(blocks, transcript.strand() != Strand::Reverse)
     }
 }
 
@@ -796,20 +1118,10 @@ pub fn coding_length(transcript: &Feature) -> Option<u64> {
 /// transcript with a coding part, as blocks in genome order. Nothing when they are not all in
 /// the protein.
 pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option<Vec<Region>> {
-    if !readable(transcript) || first == 0 || last < first {
+    if !readable(transcript) {
         return None;
     }
-    let coding = Coding::new(transcript, transcript.coding()?)?;
-    let (from, to) = ((first - 1) * 3, last.checked_mul(3)?);
-    if to > coding.length {
-        return None;
-    }
-    let (from, to) = if coding.forward {
-        (from, to)
-    } else {
-        (coding.length - to, coding.length - from)
-    };
-    Some(slice(&coding.blocks, from, to))
+    Coding::new(transcript, transcript.coding()?)?.aminos(first, last)
 }
 
 #[cfg(test)]
