@@ -8,7 +8,6 @@ use vstd::prelude::*;
 use crate::{Error, Reason};
 
 const SIGNATURE: u32 = 0x1A41_2743;
-const CODES: &[u8; 4] = b"TCAG";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Order {
@@ -164,13 +163,8 @@ impl TwoBit {
         let mut packed = vec![0; (last - first + 1) as usize];
         reader.seek(SeekFrom::Start(layout.bases + first))?;
         reader.read_exact(&mut packed)?;
-        let mut bases: Vec<u8> = (region.start()..region.end())
-            .map(|position| {
-                let byte = packed[(position / 4 - first) as usize];
-                let code = (byte >> (6 - 2 * (position % 4))) & 0b11;
-                CODES[usize::from(code)]
-            })
-            .collect();
+        let mut bases = unpack(&packed, region.start(), region.end());
+
         apply(&layout.unknown, region, &mut bases, |base| *base = b'N');
         let length = self.entries[index].length;
         let masked = self.masked(reader, layout.masks, region, length)?;
@@ -354,6 +348,73 @@ fn apply(blocks: &[(u64, u64)], region: Region, bases: &mut [u8], change: impl F
     }
 }
 verus! {
+
+/// The bases of the 2-bit codes 0 to 3.
+const CODES: [u8; 4] = *b"TCAG";
+
+/// The 2-bit code of the base at a position, in the packed bytes from the byte of `start`:
+/// four codes in each byte, the first code in the high bits.
+pub open spec fn spec_code(packed: Seq<u8>, start: int, position: int) -> int {
+    (packed[position / 4 - start / 4] as int / vstd::arithmetic::power2::pow2(
+        (6 - 2 * (position % 4)) as nat,
+    ) as int) % 4
+}
+
+/// The bases from `start` to `end` of the packed bytes of their 2-bit codes, from the byte of
+/// `start` to the byte of the last base.
+fn unpack(packed: &[u8], start: u64, end: u64) -> (bases: Vec<u8>)
+    requires
+        start < end,
+        packed.len() == (end - 1) / 4 - start / 4 + 1,
+    ensures
+        bases.len() == end - start,
+        forall|at: int|
+            0 <= at < bases.len() ==> #[trigger] bases[at] == CODES[spec_code(
+                packed@,
+                start as int,
+                start + at,
+            )],
+{
+    let first = start / 4;
+    let mut bases: Vec<u8> = Vec::new();
+    let mut position = start;
+    while position < end
+        invariant
+            start <= position <= end,
+            first == start / 4,
+            packed.len() == (end - 1) / 4 - first + 1,
+            bases.len() == position - start,
+            forall|at: int|
+                0 <= at < bases.len() ==> #[trigger] bases[at] == CODES[spec_code(
+                    packed@,
+                    start as int,
+                    start + at,
+                )],
+        decreases end - position,
+    {
+        let index = (position / 4 - first) as usize;
+        let byte = packed[index];
+        let shift = (6 - 2 * (position % 4)) as u8;
+        let code = (byte >> shift) & 3;
+        proof {
+            vstd::bits::lemma_u8_shr_is_div(byte, shift);
+            let shifted = byte >> shift;
+            assert(shifted & 3 == shifted % 4) by (bit_vector);
+        }
+        let ghost before = bases@;
+        bases.push(CODES[code as usize]);
+        proof {
+            assert forall|at: int| 0 <= at < bases.len() implies #[trigger] bases[at]
+                == CODES[spec_code(packed@, start as int, start + at)] by {
+                if at < before.len() {
+                    assert(bases[at] == before[at]);
+                }
+            }
+        }
+        position += 1;
+    }
+    bases
+}
 
 /// True when a position is in a block from its start to its end, without the end.
 pub open spec fn spec_in(block: (u64, u64), position: int) -> bool {
