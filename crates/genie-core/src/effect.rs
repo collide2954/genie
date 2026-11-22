@@ -1,6 +1,8 @@
 //! The effect of a variant on a coding transcript in HGVS notation: the change of the coding
 //! sequence (c.) and of the protein (p.).
 
+use vstd::prelude::*;
+
 use crate::codon::{complement, translate};
 use crate::{Feature, Region, Strand};
 
@@ -255,6 +257,163 @@ fn protein_change(reference: &[u8], alternate: &[u8], frameshift: bool, at: usiz
     }
 }
 
+verus! {
+
+/// The number of bases of a region.
+pub open spec fn spec_length(region: Region) -> int {
+    region.spec_end() - region.spec_start()
+}
+
+/// The bases of regions, one after the other.
+pub open spec fn spec_total(blocks: Seq<Region>) -> int
+    decreases blocks.len(),
+{
+    if blocks.len() == 0 {
+        0
+    } else {
+        spec_total(blocks.drop_last()) + spec_length(blocks.last())
+    }
+}
+
+/// A region holds another region.
+pub open spec fn spec_inside(part: Region, whole: Region) -> bool {
+    whole.spec_start() <= part.spec_start() && part.spec_end() <= whole.spec_end()
+}
+
+/// The bases of the first regions are no more than the bases of all of them.
+proof fn lemma_total_grows(blocks: Seq<Region>, count: int)
+    requires
+        0 <= count <= blocks.len(),
+        forall|at: int| 0 <= at < blocks.len() ==> spec_length(#[trigger] blocks[at]) >= 0,
+    ensures
+        spec_total(blocks.subrange(0, count)) <= spec_total(blocks),
+    decreases blocks.len(),
+{
+    if count < blocks.len() {
+        lemma_total_grows(blocks.drop_last(), count);
+        assert(blocks.drop_last().subrange(0, count) =~= blocks.subrange(0, count));
+    } else {
+        assert(blocks.subrange(0, count) =~= blocks);
+    }
+}
+
+/// The bases of regions, or nothing when they are more than 64-bit numbers hold.
+pub fn total(blocks: &[Region]) -> (total: Option<u64>)
+    ensures
+        match total {
+            Some(total) => total == spec_total(blocks@),
+            None => spec_total(blocks@) > u64::MAX,
+        },
+{
+    Region::ordered_all(blocks);
+    let mut sum: u64 = 0;
+    let mut at: usize = 0;
+    while at < blocks.len()
+        invariant
+            at <= blocks.len(),
+            sum == spec_total(blocks@.subrange(0, at as int)),
+            forall|index: int| 0 <= index < blocks@.len() ==> spec_length(#[trigger] blocks@[index]) >= 0,
+        decreases blocks.len() - at,
+    {
+        let length = blocks[at].len();
+        proof {
+            assert(blocks@.subrange(0, at + 1).drop_last() =~= blocks@.subrange(0, at as int));
+        }
+        let Some(next) = sum.checked_add(length) else {
+            proof {
+                lemma_total_grows(blocks@, at + 1);
+            }
+            return None;
+        };
+        sum = next;
+        at += 1;
+    }
+    proof {
+        assert(blocks@.subrange(0, blocks@.len() as int) =~= blocks@);
+    }
+    Some(sum)
+}
+
+/// The parts of regions with the bases from `from` to `to` of the regions, one after the other,
+/// in the order of the regions. Each part is inside its region.
+pub fn slice(blocks: &[Region], from: u64, to: u64) -> (found: Vec<Region>)
+    requires
+        from <= to <= spec_total(blocks@) <= u64::MAX,
+    ensures
+        spec_total(found@) == to - from,
+        forall|at: int| 0 <= at < found@.len() ==> exists|block: int|
+            0 <= block < blocks@.len() && spec_inside(#[trigger] found@[at], blocks@[block]),
+{
+    Region::ordered_all(blocks);
+    let mut found: Vec<Region> = Vec::new();
+    let mut before: u64 = 0;
+    let mut at: usize = 0;
+    while at < blocks.len()
+        invariant
+            at <= blocks.len(),
+            from <= to <= spec_total(blocks@) <= u64::MAX,
+            forall|index: int| 0 <= index < blocks@.len() ==> spec_length(#[trigger] blocks@[index]) >= 0,
+            before == spec_total(blocks@.subrange(0, at as int)),
+            spec_total(found@) == (if to <= before {
+                to - from
+            } else if from <= before {
+                before - from
+            } else {
+                0
+            }),
+            forall|part: int| 0 <= part < found@.len() ==> exists|block: int|
+                0 <= block < blocks@.len() && spec_inside(#[trigger] found@[part], blocks@[block]),
+        decreases blocks.len() - at,
+    {
+        let block = blocks[at];
+        let length = block.len();
+        proof {
+            assert(blocks@.subrange(0, at + 1).drop_last() =~= blocks@.subrange(0, at as int));
+            lemma_total_grows(blocks@, at + 1);
+        }
+        let end = before + length;
+        let low = if from > before {
+            from
+        } else {
+            before
+        };
+        let high = if to < end {
+            to
+        } else {
+            end
+        };
+        if low < high {
+            let start = block.start();
+            let part = Region::between(start + (low - before), start + (high - before));
+            let ghost old_found = found@;
+            found.push(part);
+            proof {
+                assert(found@.drop_last() =~= old_found);
+                assert(spec_inside(part, blocks@[at as int]));
+                assert forall|index: int| 0 <= index < found@.len() implies exists|block: int|
+                    0 <= block < blocks@.len() && spec_inside(
+                        #[trigger] found@[index],
+                        blocks@[block],
+                    ) by {
+                    if index < old_found.len() {
+                        assert(found@[index] == old_found[index]);
+                    } else {
+                        assert(found@[index] == part);
+                    }
+                }
+            };
+        }
+        before = end;
+        at += 1;
+    }
+    proof {
+        assert(blocks@.subrange(0, blocks@.len() as int) =~= blocks@);
+    }
+    found
+}
+
+} // verus!
+
 /// The coding parts of a transcript in genome order, and where the coding sequence of each
 /// genome position is.
 struct Coding {
@@ -264,7 +423,8 @@ struct Coding {
 }
 
 impl Coding {
-    fn new(transcript: &Feature, coding: Region) -> Self {
+    /// The coding bases of a transcript, or nothing when they are more than 64-bit numbers hold.
+    fn new(transcript: &Feature, coding: Region) -> Option<Self> {
         let mut blocks: Vec<Region> = transcript
             .blocks()
             .iter()
@@ -272,12 +432,12 @@ impl Coding {
             .filter(|block| !block.is_empty())
             .collect();
         blocks.sort_by_key(|block| block.start());
-        let length = blocks.iter().map(|block| block.len()).sum();
-        Self {
+        let length = total(&blocks)?;
+        Some(Self {
             blocks,
             length,
             forward: transcript.strand() != Strand::Reverse,
-        }
+        })
     }
 
     /// The place of a genome position in the coding bases in genome order.
@@ -311,7 +471,9 @@ pub fn readable(transcript: &Feature) -> bool {
         return false;
     };
     let shaped = transcript.has_blocks() || coding != transcript.span();
-    let length = Coding::new(transcript, coding).length;
+    let Some(Coding { length, .. }) = Coding::new(transcript, coding) else {
+        return false;
+    };
     transcript.strand() != Strand::Unknown && shaped && length >= 3 && length.is_multiple_of(3)
 }
 
@@ -431,7 +593,7 @@ fn coded(
     bases: &mut dyn FnMut(Region) -> Option<Vec<u8>>,
     places: &Places,
 ) -> Option<Effect> {
-    let numbers = Coding::new(transcript, coding);
+    let numbers = Coding::new(transcript, coding)?;
     let mut genomic = Vec::with_capacity(usize::try_from(numbers.length).ok()?);
     for block in &numbers.blocks {
         genomic.extend(bases(*block)?.to_ascii_uppercase());
@@ -499,11 +661,11 @@ impl Places {
         exons.sort_by_key(|exon| exon.start());
         let forward = transcript.strand() != Strand::Reverse;
         let mut places = Self {
-            total: exons.iter().map(|exon| exon.len()).sum(),
+            total: total(&exons)?,
             exons,
             forward,
             first: 0,
-            coding: Coding::new(transcript, coding).length,
+            coding: Coding::new(transcript, coding)?.length,
         };
         let start = if forward {
             coding.start()
@@ -627,7 +789,7 @@ pub fn coding_length(transcript: &Feature) -> Option<u64> {
     if !readable(transcript) {
         return None;
     }
-    Some(Coding::new(transcript, transcript.coding()?).length)
+    Some(Coding::new(transcript, transcript.coding()?)?.length)
 }
 
 /// The bases on the genome of the amino acids `first` to `last`, from 1, of the protein of a
@@ -637,7 +799,7 @@ pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option
     if !readable(transcript) || first == 0 || last < first {
         return None;
     }
-    let coding = Coding::new(transcript, transcript.coding()?);
+    let coding = Coding::new(transcript, transcript.coding()?)?;
     let (from, to) = ((first - 1) * 3, last.checked_mul(3)?);
     if to > coding.length {
         return None;
@@ -647,18 +809,7 @@ pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option
     } else {
         (coding.length - to, coding.length - from)
     };
-    let mut found = Vec::new();
-    let mut before = 0;
-    for block in &coding.blocks {
-        let (start, end) = (before, before + block.len());
-        let (low, high) = (from.max(start), to.min(end));
-        if low < high {
-            let offset = block.start() - start;
-            found.push(Region::between(offset + low, offset + high));
-        }
-        before = end;
-    }
-    Some(found)
+    Some(slice(&coding.blocks, from, to))
 }
 
 #[cfg(test)]
@@ -702,6 +853,31 @@ mod tests {
         assert_eq!(coding_length(&forward), Some(48));
         assert_eq!(coding_length(&reverse), Some(48));
         assert_eq!(coding_length(&plain), None);
+    }
+
+    /// Exons that overlap, as a damaged file can give, make no panic: the parts of amino acids
+    /// stay in their exons. A coding part too long for 64-bit numbers has no amino acids.
+    #[test]
+    fn overlapping_exons_make_no_panic() {
+        let span = Region::between(0, 99);
+        let overlapping = Feature::new("T", span, Strand::Forward)
+            .with_blocks(vec![Region::between(0, 99), Region::between(10, 40)])
+            .with_coding(Some(span));
+        assert_eq!(coding_length(&overlapping), Some(129));
+        assert_eq!(
+            protein_blocks(&overlapping, (34, 43)),
+            Some(vec![Region::between(10, 40)])
+        );
+        let whole = Region::between(0, u64::MAX);
+        let huge = Feature::new("H", whole, Strand::Forward)
+            .with_blocks(vec![
+                Region::between(0, 1 << 63),
+                Region::between(1, (1 << 63) + 2),
+            ])
+            .with_coding(Some(whole));
+        assert!(!readable(&huge));
+        assert_eq!(coding_length(&huge), None);
+        assert_eq!(protein_blocks(&huge, (1, 2)), None);
     }
 
     /// 20 codons: M K R G F P D W N Q R I V T Y K E L S *.

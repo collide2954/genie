@@ -32,6 +32,32 @@ impl Region {
         self.spec_start() <= position < self.spec_end()
     }
 
+    /// Each region of a slice has its start at or before its end. The function only gives
+    /// this fact to proofs: its loop does nothing.
+    pub fn ordered_all(regions: &[Region])
+        ensures
+            forall|at: int|
+                0 <= at < regions@.len() ==> #[trigger] regions@[at].spec_start()
+                    <= regions@[at].spec_end(),
+    {
+        let mut at: usize = 0;
+        while at < regions.len()
+            invariant
+                at <= regions.len(),
+                forall|done: int|
+                    0 <= done < at ==> #[trigger] regions@[done].spec_start()
+                        <= regions@[done].spec_end(),
+            decreases regions.len() - at,
+        {
+            #[cfg(verus_keep_ghost)]
+            let region = regions[at];
+            proof {
+                use_type_invariant(region);
+            }
+            at += 1;
+        }
+    }
+
     pub const fn new(start: u64, end: u64) -> (region: Option<Self>)
         ensures
             match region {
