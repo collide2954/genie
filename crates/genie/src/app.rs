@@ -7171,6 +7171,7 @@ ORIGIN
             with_spliced_groups(),
             with_epialleles(),
             with_repeat_alleles(),
+            with_domains(),
         ];
         for mut genie in tracks {
             let _ = genie.update(Message::WindowResized(Size::new(1024.0, 768.0)));
@@ -7318,7 +7319,84 @@ ORIGIN
         assert_eq!(genie.session.as_ref().unwrap().tracks[0].options.baf, None);
     }
 
-    /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
+    /// A domain track of InterProScan for the protein of the transcript ENST1 of a gene track.
+    fn domain_source() -> Arc<Source> {
+        let domain = genie_formats::domains::Domain {
+            protein: "ENST1.1".to_owned(),
+            first: 1,
+            last: 6,
+            length: Some(16),
+            database: "Pfam".to_owned(),
+            accession: "PF00001".to_owned(),
+            name: "Kinase".to_owned(),
+            description: "Kinase".to_owned(),
+            interpro: None,
+        };
+        let file = crate::track::DomainFile::new(vec![domain]);
+        Arc::new(Source {
+            location: PathBuf::from("/data/proteins.tsv").into(),
+            name: "proteins.tsv".to_owned(),
+            data: None,
+            format: Format::Features(FeatureFile::Domains(file)),
+        })
+    }
+
+    /// A domain track over a gene track.
+    fn with_domains() -> Genie {
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(domain_source())));
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        genie.session.as_mut().unwrap().tracks[1].contigs = vec![Some("1".to_owned()), None];
+        genie
+    }
+
+    /// A domain track puts the domains of its file on the transcripts of the gene tracks in
+    /// view. It tells when no gene track is open, and when no transcript in view has a protein
+    /// of its file.
+    #[test]
+    fn domain_tracks_follow_the_transcripts_of_the_gene_tracks() {
+        use crate::track::domains::{NO_GENES, NO_MATCH};
+        let mut genie = opened();
+        let _ = genie.update(Message::TrackOpened(Ok(domain_source())));
+        assert!(shows(&genie, NO_GENES));
+        let _ = genie.update(Message::TrackOpened(Ok(source("genes.bed.gz"))));
+        genie.session.as_mut().unwrap().tracks[1].contigs = vec![Some("1".to_owned()), None];
+        let _ = genie.update(Message::Zoom(0, 2.0, 0.0));
+        let (contig, region) = genie.session.as_ref().unwrap().tracks[1]
+            .slot(0)
+            .wanted
+            .unwrap();
+        let land = |genie: &mut Genie, name: &str| {
+            let transcript = Feature::new(name, Region::between(100, 260), Strand::Forward)
+                .with_blocks(vec![Region::between(100, 130), Region::between(200, 260)])
+                .with_coding(Some(Region::between(112, 230)));
+            let genes = &mut genie.session.as_mut().unwrap().tracks[1];
+            genes.slot_mut(0).wanted = Some((contig, region));
+            let loaded = Arc::new(Loaded::features(region, vec![transcript]));
+            let _ = genie.update(Message::TrackLoaded(1, 0, contig, region, Ok(loaded)));
+        };
+        let names = |genie: &Genie| -> Vec<String> {
+            let track = &genie.session.as_ref().unwrap().tracks[0];
+            match track.data(contig).map(|data| &data.content) {
+                Some(Content::Features(annotation)) => annotation
+                    .features
+                    .iter()
+                    .map(|feature| feature.name().to_owned())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        land(&mut genie, "ENST7.1");
+        assert!(shows(&genie, NO_MATCH));
+        assert_eq!(names(&genie), Vec::<String>::new());
+        land(&mut genie, "ENST1.2");
+        assert!(!shows(&genie, NO_MATCH) && !shows(&genie, NO_GENES));
+        assert_eq!(names(&genie), ["Kinase (PF00001)"]);
+        let _ = genie.update(Message::TrackChanged(1, Change::Visible(false)));
+        assert!(shows(&genie, NO_GENES));
+        assert_eq!(names(&genie), Vec::<String>::new());
+    }
+
     /// A read track grouped by the alleles of a repeat of CAG.
     fn with_repeat_alleles() -> Genie {
         let mut genie = with_reads();
@@ -7343,6 +7421,7 @@ ORIGIN
         genie
     }
 
+    /// A read track whose reads take haplotypes from the phased SNVs of NA1 of calls.vcf.
     fn with_phased_reads() -> Genie {
         let mut genie = with_reads();
         let _ = genie.update(Message::TrackOpened(Ok(variant_source())));

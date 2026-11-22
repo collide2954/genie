@@ -100,6 +100,9 @@ pub(super) fn classify(location: &Location) -> Text {
     if header.is_some_and(|line| genie_formats::gwas::Layout::sniff(line).is_some()) {
         return Text::Track;
     }
+    if genie_formats::domains::Layout::sniff(&head).is_some() {
+        return Text::Track;
+    }
     let mut lines = head
         .iter()
         .map(|line| line.trim())
@@ -470,6 +473,11 @@ mod tests {
             "chromosome\tbase_pair_location\tp_value\trsid\n1\t1000\t5e-9\trs1\n",
         );
         assert_eq!(classify(&gwas), Text::Track);
+        let domains = file(
+            "proteins.tsv",
+            "P1\tmd5\t100\tPfam\tPF00001\tKinase\t1\t50\t1e-9\tT\t01-01-2026\n",
+        );
+        assert_eq!(classify(&domains), Text::Track);
     }
 
     #[test]

@@ -35,6 +35,7 @@ use crate::location::{Location, Reader};
 mod cells;
 mod columns;
 mod contacts;
+pub mod domains;
 mod features;
 mod fragments;
 mod gwas;
@@ -52,6 +53,7 @@ mod variants;
 pub use cells::{CellLanes, Cells, barcode};
 pub use columns::{ColumnFile, Pick};
 pub use contacts::{ContactFile, Showing};
+pub use domains::DomainFile;
 pub use features::FeatureFile;
 pub use fragments::FragmentFile;
 pub use gwas::GwasFile;
@@ -207,6 +209,12 @@ impl Source {
         matches!(self.format, Format::Features(_))
     }
 
+    /// True for a track of protein domains, which shows the domains of its file on the
+    /// transcripts of the other feature tracks.
+    pub fn has_domains(&self) -> bool {
+        matches!(self.format, Format::Features(FeatureFile::Domains(_)))
+    }
+
     pub fn has_segments(&self) -> bool {
         matches!(self.format, Format::Segments(_))
     }
@@ -259,7 +267,7 @@ impl Source {
     }
 
     pub fn can_jump(&self) -> bool {
-        matches!(self.format, Format::Features(_) | Format::Variants(_))
+        matches!(self.format, Format::Features(_) | Format::Variants(_)) && !self.has_domains()
     }
 
     pub fn samples(&self) -> &[String] {
@@ -1826,6 +1834,8 @@ pub struct Slot {
     pub wanted: Option<(usize, Region)>,
     pub error: Option<String>,
     pub order: Option<(u64, Vec<usize>)>,
+    /// A key of the data of the other tracks that made the data of a domain track.
+    pub basis: Option<u64>,
 }
 
 static EMPTY: Slot = Slot {
@@ -1834,6 +1844,7 @@ static EMPTY: Slot = Slot {
     wanted: None,
     error: None,
     order: None,
+    basis: None,
 };
 
 impl Slot {
@@ -1912,7 +1923,12 @@ pub fn row_size(source: &Source) -> usize {
 
 impl Track {
     pub fn new(id: u64, source: Arc<Source>, assembly: &Assembly) -> Self {
-        let contigs = contig_names(source.contigs(), assembly);
+        let contigs = if source.has_domains() {
+            let names = assembly.contigs().iter();
+            names.map(|contig| Some(contig.name.clone())).collect()
+        } else {
+            contig_names(source.contigs(), assembly)
+        };
         let range = source.is_bedmethyl().then_some(Scale {
             min: 0.0,
             max: 100.0,
@@ -2376,7 +2392,7 @@ impl Track {
     pub fn drop_data(&mut self) {
         for slot in std::iter::once(&mut self.slot).chain(self.extra.iter_mut()) {
             (slot.loaded, slot.shown, slot.wanted) = (None, None, None);
-            (slot.error, slot.order) = (None, None);
+            (slot.error, slot.order, slot.basis) = (None, None, None);
         }
     }
 
@@ -2791,6 +2807,7 @@ pub fn is_track(location: &Location) -> bool {
         || is_gwas_name(&name)
         || genie_formats::junctions::Layout::of(&name).is_some()
         || genie_formats::genbank::is_name(&name)
+        || domains::is_name(&name)
         || Kind::of(&name).is_some()
 }
 
@@ -3082,6 +3099,10 @@ pub fn open_with(
         Format::Signal(SignalFile::open(reading, &name, index)?)
     } else if is_gwas(reading, &name) {
         Format::Gwas(GwasFile::open(reading, &name, index)?)
+    } else if let Some(layout) = domains::layout(reading, &name) {
+        Format::Features(FeatureFile::Domains(DomainFile::open(
+            reading, &name, layout,
+        )?))
     } else if Kind::of(&name).is_none()
         && is_compressed(&name)
         && (index.is_some() || has_index(reading))
@@ -3185,6 +3206,7 @@ pub fn feature_fields(source: &Source, feature: &Feature) -> Vec<Field> {
         Format::Columns(file) => file.fields(feature.extra()),
         Format::Features(FeatureFile::Made(file)) => file.fields(feature.extra()),
         Format::Features(FeatureFile::Motifs(_)) => MotifFile::fields(feature.extra()),
+        Format::Features(FeatureFile::Domains(_)) => DomainFile::fields(feature.extra()),
         Format::Features(FeatureFile::Records { .. }) => {
             genie_formats::genbank::fields(feature.extra())
         }

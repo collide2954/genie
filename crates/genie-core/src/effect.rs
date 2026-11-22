@@ -621,6 +621,15 @@ impl Places {
     }
 }
 
+/// The bases of the coding part of a transcript on its exons, or nothing for a feature that is
+/// not a transcript with a coding part.
+pub fn coding_length(transcript: &Feature) -> Option<u64> {
+    if !readable(transcript) {
+        return None;
+    }
+    Some(Coding::new(transcript, transcript.coding()?).length)
+}
+
 /// The bases on the genome of the amino acids `first` to `last`, from 1, of the protein of a
 /// transcript with a coding part, as blocks in genome order. Nothing when they are not all in
 /// the protein.
@@ -654,7 +663,7 @@ pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option
 
 #[cfg(test)]
 mod tests {
-    use super::{Effect, effect, protein_blocks, readable};
+    use super::{Effect, coding_length, effect, protein_blocks, readable};
     use crate::codon::complement;
     use crate::{Feature, Region, Strand};
 
@@ -690,6 +699,9 @@ mod tests {
         );
         let plain = Feature::new("P", Region::between(0, 30), Strand::Unknown);
         assert_eq!(protein_blocks(&plain, (1, 2)), None);
+        assert_eq!(coding_length(&forward), Some(48));
+        assert_eq!(coding_length(&reverse), Some(48));
+        assert_eq!(coding_length(&plain), None);
     }
 
     /// 20 codons: M K R G F P D W N Q R I V T Y K E L S *.

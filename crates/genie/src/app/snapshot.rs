@@ -402,6 +402,9 @@ impl Genie {
             .map(Arc::new);
             self.on_session(|session| session.accept((id, 0), contig, region, result));
         }
+        self.on_session(|session| {
+            track::domains::refresh(&mut session.tracks, 0, (contig, viewport));
+        });
     }
 }
 

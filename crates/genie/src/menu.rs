@@ -37,6 +37,8 @@ const SWATCHES_HEIGHT: f32 = 24.0;
 /// separator: the items that every track menu has.
 const PLAIN_HEIGHT: f32 =
     FEATURES_HEIGHT - 5.0 * LINK_HEIGHT - 3.0 * SEPARATOR_HEIGHT - SWATCHES_HEIGHT;
+/// The jumps to the next and the previous feature, with their separator.
+const JUMPS_HEIGHT: f32 = 2.0 * LINK_HEIGHT + SEPARATOR_HEIGHT;
 /// The row of swatches with the space of the menu under it.
 const SWATCH_ROW: f32 = SWATCHES_HEIGHT + 1.0;
 /// The swatches and their separator.
@@ -569,6 +571,14 @@ fn kind_height(track: &Track) -> f32 {
     } else if track.source.has_ratio() {
         // The typed range and the default range, with their separator.
         PLAIN_HEIGHT + RANGE_ROW + LINK_HEIGHT + SEPARATOR_HEIGHT
+    } else if track.source.has_domains() {
+        // A feature track without the jumps, which domain tracks do not have.
+        let features = if track.source.has_colors() {
+            COLORED_HEIGHT
+        } else {
+            FEATURES_HEIGHT
+        };
+        features - JUMPS_HEIGHT
     } else if track.source.has_colors() {
         COLORED_HEIGHT
     } else {
@@ -1238,7 +1248,7 @@ fn lift_height(track: &Track) -> f32 {
         return 0.0;
     }
     let jumps = if track.lift.is_some() && track.source.can_jump() {
-        2.0 * LINK_HEIGHT + SEPARATOR_HEIGHT
+        JUMPS_HEIGHT
     } else {
         0.0
     };

@@ -1433,10 +1433,12 @@ fn introns(feature: &Feature) -> Vec<Region> {
 }
 
 /// The transcripts of the open feature tracks in a panel: their features with two exons or more.
+/// The domains of a domain track are not transcripts.
 fn transcripts(session: &Session, panel: usize, contig: usize) -> Vec<&Feature> {
     session
         .tracks
         .iter()
+        .filter(|track| !track.source.has_domains())
         .filter_map(|track| match &track.slot(panel).data(contig)?.content {
             Content::Features(annotation) => Some(&annotation.features),
             _ => None,

@@ -695,6 +695,7 @@ impl Genie {
         let mut tasks = Vec::new();
         for (panel, contig, viewport) in frames {
             tasks.extend(Self::fetch_panel(session, panel, (contig, viewport), only));
+            track::domains::refresh(&mut session.tracks, panel, (contig, viewport));
         }
         Task::batch(tasks)
     }
@@ -732,7 +733,7 @@ impl Genie {
         session
             .tracks
             .iter_mut()
-            .filter(|track| only.is_none_or(|id| track.id == id))
+            .filter(|track| only.is_none_or(|id| track.id == id) && !track.source.has_domains())
             .filter(|track| !track.hidden && track.over.is_none_or(|base| !hidden.contains(&base)))
             .filter(|track| track.needs_at(panel, contig, visible, step))
             .filter_map(|track| {

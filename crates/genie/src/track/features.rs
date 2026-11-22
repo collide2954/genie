@@ -11,8 +11,8 @@ use genie_formats::table::Table;
 use genie_formats::{bbi, tabix};
 
 use super::{
-    FEATURE_SPAN, Kept, Loaded, MadeFile, MotifFile, PLAIN_LIMIT, Scope, density, is_compressed,
-    plain, tabix_index,
+    DomainFile, FEATURE_SPAN, Kept, Loaded, MadeFile, MotifFile, PLAIN_LIMIT, Scope, density,
+    is_compressed, plain, tabix_index,
 };
 use crate::location::{Location, Reader};
 
@@ -39,6 +39,9 @@ pub enum FeatureFile {
     },
     /// The sites of the motifs of a motif file in the reference.
     Motifs(MotifFile),
+    /// The protein domains of a file on the transcripts of the other feature tracks. Its data
+    /// comes from those tracks, not from a load.
+    Domains(DomainFile),
 }
 
 impl FeatureFile {
@@ -91,6 +94,8 @@ impl FeatureFile {
             Self::BigBed { index } => index.names(),
             Self::Made(file) => file.contigs(),
             Self::Motifs(file) => file.contigs(),
+            // A domain file has no contigs: its track has all contigs of the assembly.
+            Self::Domains(_) => &[],
         }
     }
 
@@ -98,7 +103,7 @@ impl FeatureFile {
     pub fn span(&self) -> u64 {
         match self {
             Self::Indexed { index, .. } if !index.has_counts() => FEATURE_SPAN,
-            Self::Made(_) => FEATURE_SPAN,
+            Self::Made(_) | Self::Domains(_) => FEATURE_SPAN,
             Self::Motifs(file) => file.span(),
             _ => u64::MAX,
         }
@@ -108,6 +113,7 @@ impl FeatureFile {
         match self {
             Self::Made(file) => file.has_colors(),
             Self::Motifs(file) => file.has_colors(),
+            Self::Domains(file) => file.has_colors(),
             Self::Records { .. } => true,
             _ => matches!(
                 self,
@@ -213,6 +219,7 @@ impl FeatureFile {
             }
             Self::Made(file) => file.features(contig, region),
             Self::Motifs(file) => file.features(contig, region),
+            Self::Domains(_) => Ok((region, Vec::new())),
         }
     }
 
@@ -220,7 +227,7 @@ impl FeatureFile {
         match self {
             Self::Indexed { kind, .. } => features::names(*kind, Bgzf::new(location.open()?)),
             Self::Table { names, .. } | Self::Records { names, .. } => Ok(names.clone()),
-            Self::Made(_) | Self::Motifs(_) => Ok(Vec::new()),
+            Self::Made(_) | Self::Motifs(_) | Self::Domains(_) => Ok(Vec::new()),
             Self::BigBed { index } => {
                 let size = location.size().unwrap_or(u64::MAX);
                 if index.has_lookup() || size > PLAIN_LIMIT {

@@ -106,11 +106,16 @@ impl Genie {
     }
 }
 
-/// The transcripts with a coding part at a variant, from all feature tracks of a panel.
+/// The transcripts with a coding part at a variant, from the feature tracks of a panel that are
+/// not domain tracks.
 fn transcripts(session: &Session, panel: usize, contig: usize, span: Region) -> Vec<Feature> {
     let near = Region::between(span.start().saturating_sub(NEAR), span.end() + NEAR);
     let mut found: Vec<Feature> = Vec::new();
-    for track in &session.tracks {
+    for track in session
+        .tracks
+        .iter()
+        .filter(|track| !track.source.has_domains())
+    {
         let Some(data) = track.slot(panel).data(contig) else {
             continue;
         };
