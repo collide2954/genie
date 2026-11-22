@@ -3,6 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, OnceLock};
 
 use genie_core::Region;
+use vstd::prelude::*;
 
 use crate::{Error, Reason};
 
@@ -341,17 +342,105 @@ fn words(bytes: &[u8], order: Order) -> impl Iterator<Item = u64> + '_ {
         .map(move |chunk| u64::from(order.word(*chunk)))
 }
 
+/// Changes the bases of a region, from its start, that are in blocks.
 fn apply(blocks: &[(u64, u64)], region: Region, bases: &mut [u8], change: impl Fn(&mut u8)) {
-    let first = blocks.partition_point(|&(_, end)| end <= region.start());
-    for &(start, end) in &blocks[first..] {
-        if start >= region.end() {
-            break;
+    for (from, to) in parts(blocks, region) {
+        let (Ok(from), Ok(to)) = (usize::try_from(from), usize::try_from(to)) else {
+            continue;
+        };
+        if let Some(part) = bases.get_mut(from..to) {
+            part.iter_mut().for_each(&change);
         }
-        let from = (start.max(region.start()) - region.start()) as usize;
-        let to = (end.min(region.end()) - region.start()) as usize;
-        bases[from..to].iter_mut().for_each(&change);
     }
 }
+verus! {
+
+/// True when a position is in a block from its start to its end, without the end.
+pub open spec fn spec_in(block: (u64, u64), position: int) -> bool {
+    block.0 <= position < block.1
+}
+
+/// True when the parts of a region from `from` to `to`, without `to`, have a place.
+pub open spec fn spec_covers(parts: Seq<(u64, u64)>, place: int) -> bool {
+    exists|at: int| 0 <= at < parts.len() && #[trigger] spec_in(parts[at], place)
+}
+
+/// The parts of a region in blocks, as places from the start of the region: a place of the
+/// region is in a part when its position is in a block. The blocks can come in any order.
+fn parts(blocks: &[(u64, u64)], region: Region) -> (found: Vec<(u64, u64)>)
+    ensures
+        forall|at: int| 0 <= at < found@.len() ==> (#[trigger] found@[at]).0 < found@[at].1 <= region.spec_end() - region.spec_start(),
+        forall|place: int| 0 <= place < region.spec_end() - region.spec_start() ==> (spec_covers(found@, place)
+            <==> exists|block: int| 0 <= block < blocks@.len() && #[trigger] spec_in(blocks@[block], region.spec_start() + place)),
+{
+    let (start, end) = (region.start(), region.end());
+    let mut found: Vec<(u64, u64)> = Vec::new();
+    let mut at: usize = 0;
+    while at < blocks.len()
+        invariant
+            at <= blocks.len(),
+            start == region.spec_start(),
+            end == region.spec_end(),
+            start <= end,
+            forall|part: int| 0 <= part < found@.len() ==> (#[trigger] found@[part]).0 < found@[part].1 <= end - start,
+            forall|place: int| 0 <= place < end - start ==> (spec_covers(found@, place)
+                <==> exists|block: int| 0 <= block < at && #[trigger] spec_in(blocks@[block], start + place)),
+        decreases blocks.len() - at,
+    {
+        let (low, high) = blocks[at];
+        let ghost old_found = found@;
+        if start < end && low < end && start < high && low < high {
+            let from = low.saturating_sub(start);
+            let to = high.min(end) - start;
+            found.push((from, to));
+            proof {
+                assert forall|part: int| 0 <= part < found@.len() implies (#[trigger] found@[part]).0
+                    < found@[part].1 <= end - start by {
+                    if part < old_found.len() {
+                        assert(found@[part] == old_found[part]);
+                    }
+                }
+                assert forall|place: int| 0 <= place < end - start implies (spec_covers(found@, place)
+                    <==> exists|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place)) by {
+                    if spec_covers(found@, place) {
+                        let part = choose|part: int| 0 <= part < found@.len() && #[trigger] spec_in(found@[part], place);
+                        if part < old_found.len() {
+                            assert(found@[part] == old_found[part]);
+                            assert(spec_covers(old_found, place));
+                        } else {
+                            assert(spec_in(blocks@[at as int], start + place));
+                        }
+                    }
+                    if exists|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place) {
+                        let block = choose|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place);
+                        if block < at {
+                            assert(spec_covers(old_found, place));
+                            let part = choose|part: int| 0 <= part < old_found.len() && #[trigger] spec_in(old_found[part], place);
+                            assert(found@[part] == old_found[part]);
+                            assert(spec_in(found@[part], place));
+                        } else {
+                            assert(spec_in(found@[old_found.len() as int], place));
+                        }
+                    }
+                }
+            };
+        } else {
+            proof {
+                assert forall|place: int| 0 <= place < end - start implies (spec_covers(found@, place)
+                    <==> exists|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place)) by {
+                    if exists|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place) {
+                        let block = choose|block: int| 0 <= block < at + 1 && #[trigger] spec_in(blocks@[block], start + place);
+                        assert(block < at);
+                    }
+                }
+            };
+        }
+        at += 1;
+    }
+    found
+}
+
+} // verus!
 
 #[cfg(test)]
 mod tests {
@@ -548,6 +637,23 @@ mod tests {
         let bytes = encode(&[("chr1", "ACNNNTG")], &PLAIN);
         assert_eq!(fetch(&bytes, 0, 0, 7), "ACNNNTG");
         assert_eq!(fetch(&bytes, 0, 3, 6), "NNT");
+    }
+
+    /// Blocks out of order, as a damaged file can give, make no panic: genie changes the bases of
+    /// each block in the region that it finds.
+    #[test]
+    fn blocks_out_of_order_make_no_panic() {
+        let mut bases = *b"AAAAAAAAAA";
+        let region = Region::between(30, 40);
+        super::apply(
+            &[(35, 37), (10, 20), (31, 32)],
+            region,
+            &mut bases,
+            |base| {
+                *base = b'N';
+            },
+        );
+        assert_eq!(&bases, b"ANAAANNAAA");
     }
 
     #[test]
