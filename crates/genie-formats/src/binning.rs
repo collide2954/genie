@@ -8,9 +8,14 @@ use crate::{Error, Reason};
 #[cfg(verus_keep_ghost)]
 use vstd::arithmetic::div_mod::{lemma_div_is_ordered, lemma_fundamental_div_mod};
 #[cfg(verus_keep_ghost)]
-use vstd::arithmetic::power2::{lemma_pow2_adds, lemma_pow2_pos, lemma2_to64, pow2};
+use vstd::arithmetic::power2::{
+    lemma_pow2_adds, lemma_pow2_pos, lemma_pow2_strictly_increases, lemma2_to64, pow2,
+};
 #[cfg(verus_keep_ghost)]
-use vstd::bits::{lemma_u32_pow2_no_overflow, lemma_u32_shl_is_mul, lemma_u64_shr_is_div};
+use vstd::bits::{
+    lemma_u32_pow2_no_overflow, lemma_u32_shl_is_mul, lemma_u64_pow2_no_overflow,
+    lemma_u64_shl_is_mul, lemma_u64_shr_is_div,
+};
 use vstd::prelude::*;
 
 const UNSET: u64 = u64::MAX;
@@ -382,6 +387,132 @@ impl Scheme {
         (first + (start >> shift) as u32, first + (last >> shift) as u32)
     }
 
+    /// The level of a bin number: the level whose bins have the number. Nothing for a number
+    /// past the bins of the scheme.
+    fn level(self, bin: u32) -> (level: Option<u32>)
+        ensures
+            match level {
+                Some(level) => level <= self.spec_depth() && spec_first(level as nat) <= bin
+                    < spec_first(level as nat + 1),
+                None => bin >= spec_first(self.spec_depth() + 1),
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let mut level: u32 = 0;
+        while level < self.depth && bin >= Self::first(level + 1)
+            invariant
+                level <= self.depth,
+                self.depth <= 9,
+                spec_first(level as nat) <= bin,
+            decreases self.depth - level,
+        {
+            level += 1;
+        }
+        if bin >= Self::first(level + 1) {
+            return None;
+        }
+        Some(level)
+    }
+
+    /// The bases that a bin covers, up to the length of the contig when the contig ends inside
+    /// the bin. Nothing for a number past the bins of the scheme.
+    fn span(self, bin: u32, length: u64) -> (span: Option<Region>)
+        ensures
+            match span {
+                Some(span) => exists|level: nat|
+                    #![trigger spec_first(level)]
+                    level <= self.spec_depth() && spec_first(level) <= bin < spec_first(level + 1)
+                        && span.spec_start() == (bin - spec_first(level)) * pow2(
+                        self.spec_width(level),
+                    ) && span.spec_end() == if length > span.spec_start() && length
+                        < span.spec_start() + pow2(self.spec_width(level)) {
+                        length as int
+                    } else {
+                        span.spec_start() + pow2(self.spec_width(level))
+                    },
+                None => bin >= spec_first(self.spec_depth() + 1),
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let level = self.level(bin)?;
+        let index = bin - Self::first(level);
+        let width = u64::from(self.shift + 3 * (self.depth - level));
+        proof {
+            let (count, size) = (pow2(3 * level as nat), pow2(width as nat));
+            lemma_counts(level as nat);
+            lemma_pow2_adds(3 * level as nat, width as nat);
+            lemma_pow2_pos(width as nat);
+            lemma2_to64();
+            vstd::arithmetic::power2::lemma2_to64_rest();
+            if self.spec_width(0) < 62 {
+                lemma_pow2_strictly_increases(self.spec_width(0), 62);
+            }
+            assert(3 * level as nat + width as nat == self.spec_width(0));
+            assert(index < count);
+            assert(index * size + size <= count * size) by (nonlinear_arith)
+                requires
+                    index < count,
+                    size > 0,
+            ;
+            assert(count * size == pow2(self.spec_width(0)));
+            assert(pow2(self.spec_width(0)) <= 0x4000_0000_0000_0000);
+            assert((index as u64) * pow2(width as nat) <= 0x4000_0000_0000_0000);
+            lemma_u64_pow2_no_overflow(width as nat);
+            lemma_u64_shl_is_mul(index as u64, width);
+            lemma_u64_shl_is_mul(1, width);
+            assert(self.spec_width(level as nat) == width);
+        }
+        let start = u64::from(index) << width;
+        let end = start + (1u64 << width);
+        Some(Region::between(start, if length > start { end.min(length) } else { end }))
+    }
+
+    /// The first window of the linear index under a bin: the place of its first bin on the
+    /// lowest level, from the first bin of that level. Nothing for a number past the bins of
+    /// the scheme.
+    fn bottom(self, bin: u32) -> (bottom: Option<usize>)
+        ensures
+            match bottom {
+                Some(bottom) => exists|level: nat|
+                    #![trigger spec_first(level)]
+                    level <= self.spec_depth() && spec_first(level) <= bin < spec_first(level + 1)
+                        && bottom == (bin - spec_first(level)) * pow2(
+                        (3 * (self.spec_depth() - level)) as nat,
+                    ),
+                None => bin >= spec_first(self.spec_depth() + 1),
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let level = self.level(bin)?;
+        let index = bin - Self::first(level);
+        let up = 3 * (self.depth - level);
+        proof {
+            let (count, size) = (pow2(3 * level as nat), pow2(up as nat));
+            lemma_counts(level as nat);
+            lemma_pow2_adds(3 * level as nat, up as nat);
+            lemma_pow2_pos(up as nat);
+            lemma2_to64();
+            if 3 * self.depth < 27 {
+                lemma_pow2_strictly_increases(3 * self.depth as nat, 27);
+            }
+            assert(3 * level as nat + up as nat == 3 * self.depth as nat);
+            assert(index < count);
+            assert(index * size + size <= count * size) by (nonlinear_arith)
+                requires
+                    index < count,
+                    size > 0,
+            ;
+            lemma_u32_shl_is_mul(index, up);
+        }
+        Some((index << up) as usize)
+    }
+
     /// A record with a base from `start` to `last` has its bin among the bins of its level for
     /// them: thus a query of a region finds the bin of each record that overlaps the region.
     pub proof fn lemma_queries_find_records(
@@ -419,28 +550,6 @@ impl Scheme {
 
     pub fn new(shift: i32, depth: i32) -> Result<Self, Error> {
         Self::checked(shift, depth).ok_or(Error::Invalid(Reason::BadIndex))
-    }
-
-    /// The bases that a bin covers, up to the length of the contig.
-    fn span(self, bin: u32, length: u64) -> Region {
-        let (mut level, mut above) = (0, bin);
-        while above != 0 {
-            level += 1;
-            above = (above - 1) >> 3;
-        }
-        let shift = self.shift + 3 * (self.depth - level);
-        let start = u64::from(bin - Self::first(level)) << shift;
-        let end = start + (1 << shift);
-        Region::between(start, if length > start { end.min(length) } else { end })
-    }
-
-    fn bottom(self, bin: u32) -> usize {
-        let (mut level, mut above) = (0, bin);
-        while above != 0 {
-            level += 1;
-            above = (above - 1) >> 3;
-        }
-        ((bin - Self::first(level)) as usize) << (3 * (self.depth - level))
     }
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -633,7 +742,6 @@ impl Building {
     }
 
     fn finish(mut self, scheme: Scheme, csi: bool) -> Bins {
-        let count = scheme.bins();
         let mut next = UNSET;
         for value in self.linear.iter_mut().rev() {
             if *value == UNSET {
@@ -645,7 +753,7 @@ impl Building {
             .bins
             .keys()
             .map(|&number| {
-                let bottom = (number < count).then(|| scheme.bottom(number));
+                let bottom = scheme.bottom(number);
                 let offset = bottom.and_then(|at| self.linear.get(at)).copied();
                 (number, offset.unwrap_or(0))
             })
@@ -867,14 +975,14 @@ impl Bins {
                 let sizes: Vec<(Region, f64)> = self
                     .entries
                     .iter()
-                    .filter(|bin| bin.number < self.scheme.bins())
-                    .map(|bin| {
+                    .filter_map(|bin| {
+                        let span = self.scheme.span(bin.number, length)?;
                         let size: f64 = bin
                             .chunks
                             .iter()
                             .map(|chunk| (bytes(chunk.end) - bytes(chunk.start)).max(0.0))
                             .sum();
-                        (self.scheme.span(bin.number, length), size)
+                        Some((span, size))
                     })
                     .collect();
                 let total: f64 = sizes.iter().map(|(_, size)| size).sum();
@@ -1106,6 +1214,23 @@ mod tests {
             .iter()
             .map(|chunk| chunk.start)
             .collect()
+    }
+
+    /// The bins of a scheme have their places, and a number past them, as a damaged index can
+    /// give, has none: not an underflow.
+    #[test]
+    fn bins_past_the_scheme_have_no_place() {
+        let scheme = Scheme::BAI;
+        assert_eq!(scheme.span(4681, 1_000), Some(Region::between(0, 1_000)));
+        assert_eq!(
+            scheme.span(4682, 1_000_000),
+            Some(Region::between(16_384, 32_768))
+        );
+        assert_eq!(scheme.span(0, 1 << 30), Some(Region::between(0, 1 << 29)));
+        assert_eq!(scheme.bottom(2), Some(4_096));
+        assert_eq!(scheme.bottom(4682), Some(1));
+        assert_eq!(scheme.span(37_450, 1_000), None);
+        assert_eq!(scheme.bottom(37_450), None);
     }
 
     #[test]
