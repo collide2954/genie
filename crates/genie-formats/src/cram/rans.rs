@@ -2,7 +2,7 @@
 
 use vstd::prelude::*;
 
-use super::bits::bad;
+use super::bits::{LIMIT, bad};
 use crate::Error;
 
 pub(crate) fn decode(input: &[u8]) -> Result<Vec<u8>, Error> {
@@ -10,15 +10,29 @@ pub(crate) fn decode(input: &[u8]) -> Result<Vec<u8>, Error> {
         return Err(bad());
     };
     let size = u32::from_le_bytes([*a, *b, *c, *d]) as usize;
+    stream(*order, size, data).ok_or_else(bad)
+}
+verus! {
+
+/// The `size` bytes of the data of a stream of order 0 or 1. A size past `LIMIT`, as a damaged
+/// file can give, gives nothing.
+fn stream(order: u8, size: usize, data: &[u8]) -> (out: Option<Vec<u8>>)
+    ensures
+        match out {
+            Some(out) => out.len() == size && size <= LIMIT,
+            None => true,
+        },
+{
+    if size > LIMIT {
+        return None;
+    }
     let mut input = Input { data, at: 0 };
-    let out = match order {
+    match order {
         0 => order0(&mut input, size),
         1 => order1(&mut input, size),
         _ => None,
-    };
-    out.ok_or_else(bad)
+    }
 }
-verus! {
 
 /// The total of the frequencies of a table, 2 to the power of `SHIFT`.
 const TOTAL: u32 = 4096;
@@ -273,6 +287,7 @@ fn next_symbol(input: &mut Input, symbol: usize, run: u8) -> (next: Option<(usiz
 fn order0(input: &mut Input, size: usize) -> (out: Option<Vec<u8>>)
     requires
         old(input).at <= old(input).data.len(),
+        size <= LIMIT,
     ensures
         match out {
             Some(out) => out.len() == size,
@@ -398,6 +413,7 @@ fn contexts(input: &mut Input) -> (tables: Option<Vec<Option<Table>>>)
 fn order1(input: &mut Input, size: usize) -> (out: Option<Vec<u8>>)
     requires
         old(input).at <= old(input).data.len(),
+        size <= LIMIT,
     ensures
         match out {
             Some(out) => out.len() == size,
@@ -502,6 +518,7 @@ fn order1(input: &mut Input, size: usize) -> (out: Option<Vec<u8>>)
 
 #[cfg(test)]
 mod tests {
+    use super::super::bits::LIMIT;
     use super::decode;
 
     fn stream(order: u8, size: u32, body: &[u8]) -> Vec<u8> {
@@ -553,6 +570,19 @@ mod tests {
         body.extend([0; 16]);
         body.extend([0x80; 64]);
         assert!(decode(&stream(0, 4, &body)).is_err());
+    }
+
+    /// A size past the limit, as a damaged file can give, is an error: genie does not make an
+    /// output of that size.
+    #[test]
+    fn sizes_past_the_limit_are_errors() {
+        let mut body = vec![b'A', 0x90, 0x00, 0];
+        for _ in 0..4 {
+            body.extend(STATE);
+        }
+        let past = u32::try_from(LIMIT + 1).unwrap();
+        assert!(decode(&stream(0, past, &body)).is_err());
+        assert!(decode(&stream(1, past, &body)).is_err());
     }
 
     #[test]
