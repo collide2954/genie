@@ -38,6 +38,8 @@ const FIELDS: [&str; 7] = [
     "InterPro",
     TRANSCRIPTS,
 ];
+/// The databases whose domains name a variant change first, best first.
+const BEST: [&str; 4] = ["Pfam", "SMART", "CDD", "ProSiteProfiles"];
 /// What a domain track says when no other feature track is open.
 pub const NO_GENES: &str =
     "Open a gene track, as GENCODE or RefSeq, to put the domains on the exons of its transcripts.";
@@ -331,6 +333,41 @@ pub fn transcript_id(transcript: &Feature, fields: &[Field]) -> String {
     id.to_owned()
 }
 
+/// The words of a domain in a change line of a variant card, as "in P53 (PF00870, aa 95-289)",
+/// and its rank: the best databases first, then the shorter domains.
+pub fn words(feature: &Feature, fields: &[Field]) -> (String, (usize, u64)) {
+    let field = |label: &str| {
+        fields
+            .iter()
+            .find(|field| field.label == label)
+            .map(|field| field.value.as_str())
+    };
+    let accession = field("Accession").unwrap_or_default();
+    let name = feature
+        .name()
+        .strip_suffix(&format!(" ({accession})"))
+        .unwrap_or(feature.name());
+    let parts: Vec<String> = [
+        (!accession.is_empty() && accession != name).then(|| accession.to_owned()),
+        field("Amino acids").map(|range| format!("aa {range}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let words = if parts.is_empty() {
+        format!("in {name}")
+    } else {
+        format!("in {name} ({})", parts.join(", "))
+    };
+    let database = field("Database").unwrap_or_default();
+    let best = BEST
+        .iter()
+        .position(|known| known.eq_ignore_ascii_case(database))
+        .unwrap_or(BEST.len());
+    let length = feature.blocks().iter().copied().map(Region::len).sum();
+    (words, (best, length))
+}
+
 /// Gives the domain tracks of a panel the domains of the transcripts that the other feature
 /// tracks of the panel show on a contig, when those transcripts or the options of the track
 /// changed.
@@ -429,7 +466,7 @@ mod tests {
     use genie_formats::domains::{Domain, Layout};
     use genie_formats::fields::Field;
 
-    use super::{DomainFile, forms, keys, layout, protein_keys, transcript_id};
+    use super::{DomainFile, forms, keys, layout, protein_keys, transcript_id, words};
     use crate::location::Location;
     use crate::scratch::Scratch;
     use crate::track::made::COLORS;
@@ -637,5 +674,30 @@ mod tests {
                 pair("Transcripts", "ENST1.1, ENST3.1"),
             ]
         );
+    }
+
+    /// A change line names a domain with its accession and its amino acids. Pfam goes before
+    /// the other databases, and a shorter domain before a longer one.
+    #[test]
+    fn words_name_a_domain_for_change_lines() {
+        let kinase = ("Pfam", "PF00001", "Kinase domain");
+        let gene3d = ("Gene3D", "G3DSA:1.10", "G3DSA:1.10");
+        let file = DomainFile::new(vec![
+            domain("ENSP1", (1, 6), kinase),
+            domain("ENSP1", (6, 7), gene3d),
+        ]);
+        let forward = transcript(Strand::Forward, &[("protein_id", "ENSP1")]);
+        let (features, _) = file.features(std::slice::from_ref(&forward));
+        let of = |feature: &Feature| words(feature, &DomainFile::fields(feature.extra()));
+        assert_eq!(
+            of(&features[0]),
+            ("in Kinase domain (PF00001, aa 1-6)".to_owned(), (0, 18))
+        );
+        assert_eq!(
+            of(&features[1]),
+            ("in G3DSA:1.10 (aa 6-7)".to_owned(), (4, 6))
+        );
+        let ucsc = Feature::new("Protein kinase", Region::between(0, 30), Strand::Forward);
+        assert_eq!(words(&ucsc, &[]), ("in Protein kinase".to_owned(), (4, 30)));
     }
 }

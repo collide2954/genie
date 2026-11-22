@@ -1,4 +1,5 @@
-//! The changes of a variant on the transcripts of the open feature tracks, for its card.
+//! The changes of a variant on the transcripts of the open feature tracks, for its card, with
+//! the protein domain of a change of a codon.
 
 use std::cell::OnceCell;
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use iced::Task;
 use super::{Genie, Message, Session};
 use crate::card::{Card, Changes, Detail};
 use crate::reference::Reference;
-use crate::track::Content;
+use crate::track::{self, Content, Source, domains};
 
 /// The lines of transcripts in a card, before a line that counts the others.
 const SHOWN: usize = 3;
@@ -42,13 +43,23 @@ impl Site {
     }
 }
 
-/// The variant of the last card with effects, the transcripts at it, and its changes. The
-/// changes are empty while genie computes them.
+/// A protein domain at a variant: the IDs of the transcripts that it lies on, or none for a
+/// domain of the UniProt track of UCSC, its words in a change line, and its rank.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Place {
+    transcripts: Vec<String>,
+    words: String,
+    rank: (usize, u64),
+}
+
+/// The variant of the last card with effects, the transcripts and the domains at it, and its
+/// changes. The changes are empty while genie computes them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Effects {
     pub(super) generation: u64,
     site: Option<Site>,
     pub(super) transcripts: Vec<Feature>,
+    places: Vec<Place>,
     changes: Changes,
 }
 
@@ -64,8 +75,10 @@ impl Genie {
             return Task::none();
         };
         let (contig, _) = session.view(panel);
-        let transcripts = transcripts(session, panel, contig, site.span);
-        if self.effects.site.as_ref() == Some(&site) && self.effects.transcripts == transcripts {
+        let (transcripts, ids) = transcripts(session, panel, contig, site.span);
+        let places = places(session, panel, contig, site.span);
+        let same = self.effects.transcripts == transcripts && self.effects.places == places;
+        if self.effects.site.as_ref() == Some(&site) && same {
             let card = if pinned {
                 &mut self.pinned
             } else {
@@ -81,6 +94,7 @@ impl Genie {
             generation,
             site: Some(site.clone()),
             transcripts: transcripts.clone(),
+            places: places.clone(),
             changes: Changes::default(),
         };
         if transcripts.is_empty() {
@@ -88,7 +102,7 @@ impl Genie {
         }
         let reference = Arc::clone(&session.reference);
         Task::perform(
-            async move { compute(&reference, contig, &site, &transcripts) },
+            async move { compute(&reference, contig, &site, (&transcripts, &ids), &places) },
             move |changes| Message::Effects(generation, changes),
         )
     }
@@ -107,10 +121,16 @@ impl Genie {
 }
 
 /// The transcripts with a coding part at a variant, from the feature tracks of a panel that are
-/// not domain tracks.
-fn transcripts(session: &Session, panel: usize, contig: usize, span: Region) -> Vec<Feature> {
+/// not domain tracks, and their IDs.
+fn transcripts(
+    session: &Session,
+    panel: usize,
+    contig: usize,
+    span: Region,
+) -> (Vec<Feature>, Vec<String>) {
     let near = Region::between(span.start().saturating_sub(NEAR), span.end() + NEAR);
     let mut found: Vec<Feature> = Vec::new();
+    let mut ids = Vec::new();
     for track in session
         .tracks
         .iter()
@@ -127,11 +147,70 @@ fn transcripts(session: &Session, panel: usize, contig: usize, span: Region) -> 
                 && effect::readable(feature)
                 && !found.contains(feature)
             {
+                let fields = track::feature_fields(&track.source, feature);
+                ids.push(domains::transcript_id(feature, &fields));
                 found.push(feature.clone());
             }
         }
     }
+    (found, ids)
+}
+
+/// True for the UniProt domain track of UCSC, whose features are domains on the genome.
+fn is_uniprot(source: &Source) -> bool {
+    source.is_bigbed() && source.name.to_ascii_lowercase().starts_with("unipdomain")
+}
+
+/// The protein domains on the bases of a variant: of the domain tracks of a panel, and of the
+/// UniProt domain track of UCSC.
+fn places(session: &Session, panel: usize, contig: usize, span: Region) -> Vec<Place> {
+    let bases = Region::between(span.start(), span.end().max(span.start() + 1));
+    let mut found: Vec<Place> = Vec::new();
+    for track in &session.tracks {
+        let ours = track.source.has_domains();
+        if !ours && !is_uniprot(&track.source) {
+            continue;
+        }
+        let Some(data) = track.slot(panel).data(contig) else {
+            continue;
+        };
+        let Content::Features(annotation) = &data.content else {
+            continue;
+        };
+        let at = |feature: &&Feature| feature.blocks().iter().any(|block| block.overlaps(bases));
+        for feature in annotation.features.iter().filter(at) {
+            let fields = track::feature_fields(&track.source, feature);
+            let (words, rank) = domains::words(feature, &fields);
+            let transcripts = fields
+                .iter()
+                .find(|field| ours && field.label == domains::TRANSCRIPTS)
+                .map(|field| field.value.split(", ").map(str::to_owned).collect())
+                .unwrap_or_default();
+            let place = Place {
+                transcripts,
+                words,
+                rank,
+            };
+            if !found.contains(&place) {
+                found.push(place);
+            }
+        }
+    }
     found
+}
+
+/// The words of the best domain at a variant on a transcript: of the domains that lie on the
+/// transcript, else of the domains of UCSC, which lie on no transcript of their own.
+fn best(places: &[Place], id: &str) -> Option<String> {
+    let pick = |keep: &dyn Fn(&Place) -> bool| {
+        places
+            .iter()
+            .filter(|place| keep(place))
+            .min_by_key(|place| place.rank)
+            .map(|place| place.words.clone())
+    };
+    pick(&|place| place.transcripts.iter().any(|known| known == id))
+        .or_else(|| pick(&|place| place.transcripts.is_empty()))
 }
 
 /// Whether an allele is bases, not for example `<DEL>` or `*`.
@@ -139,8 +218,15 @@ fn plain(allele: &str) -> bool {
     !allele.is_empty() && allele.bytes().all(|base| b"ACGTNacgtn".contains(&base))
 }
 
-/// The changes of a variant on transcripts, with the bases of the reference.
-fn compute(reference: &Reference, contig: usize, site: &Site, transcripts: &[Feature]) -> Changes {
+/// The changes of a variant on transcripts with their IDs, with the bases of the reference, and
+/// the domain of each change of a codon.
+fn compute(
+    reference: &Reference,
+    contig: usize,
+    site: &Site,
+    (transcripts, ids): (&[Feature], &[String]),
+    places: &[Place],
+) -> Changes {
     if !plain(&site.reference) {
         return Changes::default();
     }
@@ -161,10 +247,11 @@ fn compute(reference: &Reference, contig: usize, site: &Site, transcripts: &[Fea
             site.reference.as_bytes(),
             alternate.as_bytes(),
         );
-        for transcript in transcripts {
+        for (transcript, id) in transcripts.iter().zip(ids) {
             let mut get = |region| bases.get(region);
             if let Some(effect) = effect::effect(transcript, variant, &mut get) {
-                found.push((transcript.name().to_owned(), effect));
+                let domain = effect.place.is_none().then(|| best(places, id)).flatten();
+                found.push((transcript.name().to_owned(), effect, domain));
             }
         }
     }
@@ -200,11 +287,12 @@ impl Bases<'_> {
     }
 }
 
-/// One line for each different change, protein changes first, and the number of the others.
-fn lines(found: Vec<(String, Effect)>) -> Changes {
+/// One line for each different change, protein changes first, and the number of the others. A
+/// change can have the words of its domain.
+fn lines(found: Vec<(String, Effect, Option<String>)>) -> Changes {
     let mut ranked: Vec<(u8, String)> = Vec::new();
-    for (name, effect) in found {
-        let entry = line(&name, &effect);
+    for (name, effect, domain) in found {
+        let entry = line(&name, &effect, domain.as_deref());
         if !ranked.contains(&entry) {
             ranked.push(entry);
         }
@@ -220,9 +308,10 @@ fn lines(found: Vec<(String, Effect)>) -> Changes {
     }
 }
 
-/// The line of a change, for example "BRCA1 p.Arg1699Trp · c.5095C>T", and its rank: protein
-/// changes, then splice sites and changes of a start or stop codon, then the other places.
-fn line(name: &str, effect: &Effect) -> (u8, String) {
+/// The line of a change, for example "BRCA1 p.Arg1699Trp · c.5095C>T", with the words of its
+/// domain after it, and its rank: protein changes, then splice sites and changes of a start or
+/// stop codon, then the other places.
+fn line(name: &str, effect: &Effect, domain: Option<&str>) -> (u8, String) {
     let (rank, what) = match effect.place {
         None => (0, effect.protein.clone().unwrap_or_default()),
         Some(
@@ -243,6 +332,10 @@ fn line(name: &str, effect: &Effect) -> (u8, String) {
         line.push_str(" · ");
         line.push_str(coding);
     }
+    if let Some(words) = domain {
+        line.push_str(" · ");
+        line.push_str(words);
+    }
     (rank, line)
 }
 
@@ -255,9 +348,46 @@ mod tests {
     use genie_core::effect::{self, Effect};
     use genie_core::{Feature, Region, Strand};
 
-    use super::{Bases, Site, WHOLE, compute, lines};
+    use super::{Bases, Place, Site, WHOLE, best, compute, lines};
     use crate::card::Changes;
     use crate::reference::{self, Reference};
+
+    fn place(transcripts: &[&str], words: &str, rank: (usize, u64)) -> Place {
+        Place {
+            transcripts: transcripts.iter().map(|id| (*id).to_owned()).collect(),
+            words: words.to_owned(),
+            rank,
+        }
+    }
+
+    /// The change line of a transcript names the best domain at the variant that lies on the
+    /// transcript, else the best domain of a track without transcripts, as the UniProt domains
+    /// of UCSC.
+    #[test]
+    fn change_lines_name_the_domain_of_their_transcript() {
+        let places = [
+            place(&["ENST2", "ENST1"], "in G3DSA:1.10 (aa 1-9)", (4, 27)),
+            place(&["ENST1"], "in Kinase (PF00001, aa 1-6)", (0, 18)),
+            place(&[], "in Protein kinase", (4, 30)),
+        ];
+        let kinase = "in Kinase (PF00001, aa 1-6)";
+        assert_eq!(best(&places, "ENST1").as_deref(), Some(kinase));
+        assert_eq!(
+            best(&places, "ENST2").as_deref(),
+            Some("in G3DSA:1.10 (aa 1-9)")
+        );
+        assert_eq!(best(&places, "ENST3").as_deref(), Some("in Protein kinase"));
+        assert_eq!(best(&places[..2], "ENST3"), None);
+        let found = vec![(
+            "T1".to_owned(),
+            change(Some("c.8G>A"), Some("p.Arg3His"), None),
+            Some(kinase.to_owned()),
+        )];
+        assert_eq!(
+            lines(found).lines,
+            ["T1 p.Arg3His · c.8G>A · in Kinase (PF00001, aa 1-6)"]
+        );
+    }
 
     fn change(coding: Option<&str>, protein: Option<&str>, place: Option<&'static str>) -> Effect {
         Effect {
@@ -269,7 +399,7 @@ mod tests {
 
     #[test]
     fn lines_put_protein_changes_first_and_count_the_others() {
-        let named = |name: &str, effect| (name.to_owned(), effect);
+        let named = |name: &str, effect| (name.to_owned(), effect, None);
         let found = vec![
             named("T1", change(None, None, Some("intron"))),
             named(
@@ -376,15 +506,20 @@ mod tests {
             Some(format!("c.5{base}>{other}").as_str())
         );
         let protein = wanted.protein.unwrap();
-        let changes = compute(
-            &reference,
-            0,
-            &site(&[other, "<DEL>"]),
-            slice::from_ref(&transcript),
-        );
+        let ids = ["T1".to_owned()];
+        let found = (slice::from_ref(&transcript), &ids[..]);
+        let changes = compute(&reference, 0, &site(&[other, "<DEL>"]), found, &[]);
         assert_eq!(changes.lines, [format!("T1 {protein} · c.5{base}>{other}")]);
         assert_eq!(changes.others, 0);
-        let changes = compute(&reference, 0, &site(&["*"]), &[transcript]);
+        let places = [place(&["T1"], "in Kinase (PF00001, aa 1-20)", (0, 60))];
+        let changes = compute(&reference, 0, &site(&[other]), found, &places);
+        assert_eq!(
+            changes.lines,
+            [format!(
+                "T1 {protein} · c.5{base}>{other} · in Kinase (PF00001, aa 1-20)"
+            )]
+        );
+        let changes = compute(&reference, 0, &site(&["*"]), found, &[]);
         assert_eq!(changes, Changes::default());
     }
 }
