@@ -52,11 +52,7 @@ impl Index {
     pub fn virtual_offset(&self, position: u64) -> Result<u64, Error> {
         let after = self.blocks.partition_point(|block| block.1 <= position);
         let (offset, start) = after.checked_sub(1).map_or((0, 0), |at| self.blocks[at]);
-        let within = position - start;
-        if within > 0xFFFF {
-            return Err(Error::Invalid(Reason::BadOffset));
-        }
-        Ok(offset << 16 | within)
+        bgzf::pack(offset, position - start).ok_or(Error::Invalid(Reason::BadOffset))
     }
 }
 
@@ -146,6 +142,8 @@ mod tests {
         assert!(matches!(short, Err(Error::Io(_))));
         let far = index(&[(100, 10)]).virtual_offset(10 + 65536);
         assert!(matches!(far, Err(Error::Invalid(Reason::BadOffset))));
+        let huge = index(&[(1 << 48, 10)]).virtual_offset(12);
+        assert!(matches!(huge, Err(Error::Invalid(Reason::BadOffset))));
     }
 
     #[test]

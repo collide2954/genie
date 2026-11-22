@@ -10,6 +10,7 @@ use miniz_oxide::inflate::{
 
 use crate::png::crc;
 use crate::{Error, Reason};
+use vstd::prelude::*;
 
 const MAGIC: [u8; 4] = [31, 139, 8, 4];
 const HEADER: usize = 12;
@@ -21,6 +22,59 @@ const BLOCK_HEADER: [u8; 18] = [
 ];
 const LEVEL: u8 = 6;
 const STORED: u8 = 0;
+
+verus! {
+
+/// The first block offset that a virtual offset cannot hold: 2 to the power of 48.
+pub const BLOCK_LIMIT: u64 = 0x1_0000_0000_0000;
+
+/// The places in a block that a virtual offset can hold: 2 to the power of 16.
+pub const PLACE_LIMIT: u64 = 0x1_0000;
+
+/// The virtual offset of a byte of a BGZF file, from the offset of its block in the file and
+/// its place in the uncompressed block, or nothing when they do not fit: a block at 2 to the
+/// power of 48 or after, or a place of 65,536 or more.
+pub fn pack(block: u64, place: u64) -> (offset: Option<u64>)
+    ensures
+        match offset {
+            Some(offset) => block < BLOCK_LIMIT && place < PLACE_LIMIT && offset == block
+                * PLACE_LIMIT + place && offset / PLACE_LIMIT == block && offset % PLACE_LIMIT
+                == place,
+            None => block >= BLOCK_LIMIT || place >= PLACE_LIMIT,
+        },
+{
+    if block >= BLOCK_LIMIT || place >= PLACE_LIMIT {
+        return None;
+    }
+    let offset = block << 16 | place;
+    assert(offset == block * 0x1_0000 + place) by (bit_vector)
+        requires
+            block < 0x1_0000_0000_0000,
+            place < 0x1_0000,
+            offset == block << 16 | place,
+    ;
+    Some(offset)
+}
+
+/// The offset of the block of a virtual offset in the file, and the place in the uncompressed
+/// block.
+pub fn unpack(offset: u64) -> (parts: (u64, u64))
+    ensures
+        parts.0 == offset / PLACE_LIMIT,
+        parts.1 == offset % PLACE_LIMIT,
+        parts.0 < BLOCK_LIMIT,
+        parts.1 < PLACE_LIMIT,
+{
+    let (block, place) = (offset >> 16, offset & 0xFFFF);
+    assert(block == offset / 0x1_0000 && place == offset % 0x1_0000) by (bit_vector)
+        requires
+            block == offset >> 16,
+            place == offset & 0xFFFF,
+    ;
+    (block, place)
+}
+
+} // verus!
 
 pub struct Writer<W: Write> {
     inner: W,
@@ -127,8 +181,8 @@ impl<R> Bgzf<R> {
 
 impl<R: Read + Seek> Bgzf<R> {
     pub fn seek(&mut self, virtual_offset: u64) -> io::Result<()> {
-        let offset = virtual_offset >> 16;
-        let position = (virtual_offset & 0xFFFF) as usize;
+        let (offset, position) = unpack(virtual_offset);
+        let position = position as usize;
         if offset != self.offset || self.block.is_empty() {
             self.inner.seek(SeekFrom::Start(offset))?;
             self.next = offset;
