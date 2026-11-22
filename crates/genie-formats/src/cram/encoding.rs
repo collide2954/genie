@@ -149,7 +149,8 @@ impl Encoding {
                 let value = if ones == 0 {
                     core.bits(*k)?
                 } else {
-                    let width = ones + k - 1;
+                    let width = k.checked_add(ones - 1).filter(|width| *width < 32);
+                    let width = width.ok_or_else(bad)?;
                     (1 << width) | core.bits(width)?
                 };
                 value.cast_signed().wrapping_sub(*offset)
@@ -269,6 +270,27 @@ mod tests {
         assert_eq!(gamma.int(&mut core).unwrap(), 4);
         assert_eq!(subexp.int(&mut core).unwrap(), 1);
         assert_eq!(subexp.int(&mut core).unwrap(), 5);
+    }
+
+    /// Codes of 32 bits or more, as a damaged header can give, are errors, not overflows.
+    #[test]
+    fn wide_bit_encodings_are_errors() {
+        let data = [0b1000_0000, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let mut core = streams(&data, &[]);
+        let subexp = Encoding::Subexp { offset: 0, k: 40 };
+        assert!(subexp.int(&mut core).is_err());
+        let mut core = streams(&data, &[]);
+        let huge = Encoding::Subexp {
+            offset: 0,
+            k: u32::MAX,
+        };
+        assert!(huge.int(&mut core).is_err());
+        let mut core = streams(&data, &[]);
+        let beta = Encoding::Beta {
+            offset: 0,
+            bits: 40,
+        };
+        assert!(beta.int(&mut core).is_err());
     }
 
     #[test]

@@ -334,6 +334,118 @@ impl<'a> Bytes<'a> {
     }
 }
 
+verus! {
+
+/// The bit at a place of a stream of bytes, the high bit of each byte first.
+pub open spec fn spec_bit(data: Seq<u8>, place: int) -> int {
+    (data[place / 8] as int / vstd::arithmetic::power2::pow2((7 - place % 8) as nat) as int) % 2
+}
+
+/// The number of `count` bits from a place of a stream, the first bit highest.
+pub open spec fn spec_bits(data: Seq<u8>, place: int, count: nat) -> int
+    decreases count,
+{
+    if count == 0 {
+        0
+    } else {
+        spec_bits(data, place, (count - 1) as nat) * 2 + spec_bit(data, place + count - 1)
+    }
+}
+
+/// The bit at the place of a stream, byte `at` with `left` bits not read yet, and the place
+/// after it. Nothing when the stream stops before it.
+pub fn read_bit(data: &[u8], at: usize, left: u32) -> (found: Option<(u32, usize, u32)>)
+    requires
+        1 <= left <= 8,
+    ensures
+        match found {
+            Some((bit, next_at, next_left)) => at < data.len() && bit == spec_bit(
+                data@,
+                8 * at + 8 - left,
+            ) && 1 <= next_left <= 8 && 8 * next_at + 8 - next_left == 8 * at + 8 - left + 1,
+            None => at >= data.len(),
+        },
+{
+    if at >= data.len() {
+        return None;
+    }
+    let byte = data[at];
+    let shift = (left - 1) as u8;
+    let bit = u32::from((byte >> shift) & 1);
+    proof {
+        vstd::bits::lemma_u8_shr_is_div(byte, shift);
+        let shifted = byte >> shift;
+        assert(shifted & 1 == shifted % 2) by (bit_vector);
+        let place = 8 * at + 8 - left;
+        assert(place / 8 == at && place % 8 == 8 - left);
+    }
+    if shift == 0 {
+        Some((bit, at + 1, 8))
+    } else {
+        Some((bit, at, left - 1))
+    }
+}
+
+/// The number of `count` bits from the place of a stream, the first bit highest, and the place
+/// after them. Nothing when they do not fit 32 bits, or when the stream stops before them.
+pub fn read_bits(data: &[u8], at: usize, left: u32, count: u32) -> (found: Option<(u32, usize, u32)>)
+    requires
+        1 <= left <= 8,
+    ensures
+        match found {
+            Some((value, next_at, next_left)) => count <= 32 && value == spec_bits(
+                data@,
+                8 * at + 8 - left,
+                count as nat,
+            ) && 1 <= next_left <= 8 && 8 * next_at + 8 - next_left == 8 * at + 8 - left + count,
+            None => count > 32 || 8 * data.len() < 8 * at + 8 - left + count,
+        },
+{
+    if count > 32 {
+        return None;
+    }
+    let ghost start = 8 * at + 8 - left;
+    let mut value: u32 = 0;
+    let (mut place_at, mut place_left) = (at, left);
+    let mut done: u32 = 0;
+    proof {
+        vstd::arithmetic::power2::lemma2_to64();
+    }
+    while done < count
+        invariant
+            count <= 32,
+            done <= count,
+            1 <= place_left <= 8,
+            start == 8 * at + 8 - left,
+            8 * place_at + 8 - place_left == start + done,
+            value == spec_bits(data@, start, done as nat),
+            value < vstd::arithmetic::power2::pow2(done as nat),
+        decreases count - done,
+    {
+        let (bit, next_at, next_left) = read_bit(data, place_at, place_left)?;
+        proof {
+            vstd::arithmetic::power2::lemma2_to64();
+            vstd::arithmetic::power2::lemma_pow2_adds(done as nat, 1);
+            vstd::arithmetic::div_mod::lemma_mod_bound(
+                data@[(start + done) / 8] as int / vstd::arithmetic::power2::pow2(
+                    (7 - (start + done) % 8) as nat,
+                ) as int,
+                2,
+            );
+            if done + 1 < 32 {
+                vstd::arithmetic::power2::lemma_pow2_strictly_increases((done + 1) as nat, 32);
+            }
+        }
+        value = value * 2 + bit;
+        place_at = next_at;
+        place_left = next_left;
+        done += 1;
+    }
+    Some((value, place_at, place_left))
+}
+
+} // verus!
+
 #[derive(Debug, Clone)]
 pub(crate) struct Bits<'a> {
     data: &'a [u8],
@@ -351,21 +463,15 @@ impl<'a> Bits<'a> {
     }
 
     pub fn bit(&mut self) -> Result<u32, Error> {
-        let byte = *self.data.get(self.at).ok_or_else(bad)?;
-        self.left -= 1;
-        let bit = u32::from(byte >> self.left) & 1;
-        if self.left == 0 {
-            self.at += 1;
-            self.left = 8;
-        }
+        let (bit, at, left) = read_bit(self.data, self.at, self.left).ok_or_else(bad)?;
+        (self.at, self.left) = (at, left);
         Ok(bit)
     }
 
+    /// The next `count` bits as a number, the first bit highest: 32 bits or fewer.
     pub fn bits(&mut self, count: u32) -> Result<u32, Error> {
-        let mut value = 0;
-        for _ in 0..count {
-            value = (value << 1) | self.bit()?;
-        }
+        let (value, at, left) = read_bits(self.data, self.at, self.left, count).ok_or_else(bad)?;
+        (self.at, self.left) = (at, left);
         Ok(value)
     }
 }
