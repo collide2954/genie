@@ -867,6 +867,7 @@ dependencies = [
  "miniz_oxide 0.9.1",
  "rustls",
  "rustls-platform-verifier",
+ "vstd",
 ]
 
 [[package]]

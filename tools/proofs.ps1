@@ -2,7 +2,7 @@
 # With -Required, the script fails when Verus is not on the computer.
 param([switch]$Required)
 
-$crates = @('genie-core')
+$crates = @('genie-core', 'genie-formats')
 
 function Test-Verus {
     $null -ne (Get-Command cargo-verus -ErrorAction SilentlyContinue)

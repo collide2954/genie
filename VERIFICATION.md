@@ -23,6 +23,7 @@ The automatic checks run the proofs on each push. Verus uses Rust 1.99.1, the re
 | Part | File | What the proof shows |
 |---|---|---|
 | The regions of a contig | `crates/genie-core/src/region.rs` | The start of each region is never after its end, and no operation has an overflow. `new` refuses a start after the end, and `between` puts two positions in order. The length is the end minus the start. Two regions with positions overlap exactly when a position is in both. The hull has each position of the two regions. The intersection has exactly the positions that are in both regions, and there is no intersection when no position is in both. `clamp_to` keeps exactly the positions before the length. `expand` gives the region of its specification, also at the limits of 64-bit numbers. |
+| The bytes of the bases of a FASTA file | `crates/genie-formats/src/fasta.rs` | The byte of each base is the byte that the index gives: the offset of the record, all the bytes of each line before the line of the base, and the bases before the base on its line. A later base is at a later byte. For a region, genie reads from the byte of its first base to the byte of its last base: the bases of the region and the line ends between them, and no other bytes. An index that gives no bases on a line, lines with fewer bytes than bases, or a byte past the end of 64-bit numbers gives an error. No arithmetic has an overflow, and no division is by zero. |
 
 ## Holes
 
@@ -32,7 +33,6 @@ A hole is code or an assumption that has no proof. Each hole is in this list.
 
 | Hole | State |
 |---|---|
-| The FASTA offsets of `fai.rs`: the byte of each base. | Open |
 | The bins of the BAI, CSI and tabix indexes, and the virtual offsets of BGZF. | Open |
 | The places of amino acids on the exons (`protein_blocks`), the length of a coding part, and the codon table. | Open |
 | The readers of binary numbers: ITF8 and LTF8 of CRAM, the bases of 2bit files, and the rANS decoders of CRAM. | Open |
@@ -56,4 +56,6 @@ A proof is correct only if these parts are correct:
 
 - Verus and the Z3 solver that it uses.
 - The Rust compiler.
-- The specifications that Verus gets for functions of the Rust standard library, for example `min`, `max`, `saturating_sub` and `saturating_add`.
+- The specifications that Verus gets for functions of the Rust standard library, for example `min`, `max`, `saturating_sub`, `saturating_add`, `checked_add` and `checked_mul`.
+- The lemmas of the Verus library `vstd` about division and multiplication.
+- For the bases of a FASTA file: a file with the lines that its index gives.
