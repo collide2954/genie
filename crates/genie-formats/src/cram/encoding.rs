@@ -2,13 +2,329 @@
 
 use std::collections::HashMap;
 
+#[cfg(verus_keep_ghost)]
+use vstd::arithmetic::power2::{
+    lemma_pow2_strictly_increases, lemma_pow2_unfold, lemma2_to64, pow2,
+};
+#[cfg(verus_keep_ghost)]
+use vstd::bits::{lemma_u32_pow2_no_overflow, lemma_u32_shl_is_mul};
+use vstd::prelude::*;
+
 use super::bits::{Bits, Bytes, bad};
+#[cfg(verus_keep_ghost)]
+use super::bits::{spec_bit, spec_bits};
 use crate::Error;
 
+verus! {
+
+/// The canonical Huffman codes of a data series: the bit length, the code and the symbol of
+/// each code, the shorter codes first.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[verifier::allow(autoderive_clone_without_spec)]
 pub(crate) struct Huffman {
     codes: Vec<(u32, u32, i32)>,
 }
+
+impl Huffman {
+    /// Each code has 31 bits or fewer, and no code is shorter than the code before it.
+    pub(crate) closed spec fn valid(&self) -> bool {
+        &&& forall|index: int|
+            0 <= index < self.codes.len() ==> #[trigger] self.codes[index].0 <= 31
+        &&& forall|index: int|
+            0 < index < self.codes.len() ==> #[trigger] self.codes[index].0 >= self.codes[index
+                - 1].0
+    }
+
+    /// The symbol of the first code whose bits come next in the stream, and the place after
+    /// its bits. Nothing when no code fits, or when the stream stops before the bits.
+    fn decode(&self, bits: &mut Bits) -> (symbol: Option<i32>)
+        requires
+            self.valid(),
+            old(bits).valid(),
+        ensures
+            final(bits).valid(),
+            final(bits).bytes() == old(bits).bytes(),
+            match symbol {
+                Some(symbol) => exists|index: int|
+                    #![trigger self.codes[index]]
+                    0 <= index < self.codes.len() && self.codes[index].2 == symbol
+                        && self.codes[index].1 == spec_bits(
+                        old(bits).bytes(),
+                        old(bits).place(),
+                        self.codes[index].0 as nat,
+                    ) && final(bits).place() == old(bits).place() + self.codes[index].0
+                        && forall|other: int|
+                        0 <= other < index ==> #[trigger] self.codes[other].1 != spec_bits(
+                            old(bits).bytes(),
+                            old(bits).place(),
+                            self.codes[other].0 as nat,
+                        ),
+                None => true,
+            },
+    {
+        let ghost start = bits.place();
+        let ghost bytes = bits.bytes();
+        let mut code: u32 = 0;
+        let mut length: u32 = 0;
+        let mut index: usize = 0;
+        proof {
+            lemma2_to64();
+        }
+        while index < self.codes.len()
+            invariant
+                self.valid(),
+                bits.valid(),
+                bits.bytes() == bytes,
+                bytes == old(bits).bytes(),
+                start == old(bits).place(),
+                bits.place() == start + length,
+                index <= self.codes.len(),
+                length == if index == 0 {
+                    0
+                } else {
+                    self.codes[index - 1].0
+                },
+                length <= 31,
+                code == spec_bits(bytes, start, length as nat),
+                code < pow2(length as nat),
+                forall|other: int|
+                    0 <= other < index ==> #[trigger] self.codes[other].1 != spec_bits(
+                        bytes,
+                        start,
+                        self.codes[other].0 as nat,
+                    ),
+            decreases self.codes.len() - index,
+        {
+            let (size, value, symbol) = self.codes[index];
+            while length < size
+                invariant
+                    bits.valid(),
+                    bits.bytes() == bytes,
+                    bytes == old(bits).bytes(),
+                    bits.place() == start + length,
+                    length <= size,
+                    size <= 31,
+                    code == spec_bits(bytes, start, length as nat),
+                    code < pow2(length as nat),
+                decreases size - length,
+            {
+                let bit = bits.bit()?;
+                proof {
+                    lemma2_to64();
+                    lemma_pow2_unfold((length + 1) as nat);
+                    lemma_pow2_strictly_increases(length as nat, 31);
+                }
+                code = code * 2 + bit;
+                length += 1;
+            }
+            if code == value {
+                assert(self.codes[index as int].1 == spec_bits(
+                    bytes,
+                    start,
+                    self.codes[index as int].0 as nat,
+                ));
+                return Some(symbol);
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+/// Canonical codes for symbols with their bit lengths, the shorter codes first, as CRAM gives
+/// them: within a length the codes count up, and a longer length starts at the next code of
+/// the length before, with 0 bits after it. Lengths of more than 31 bits, lengths out of
+/// order, or more codes than 32 bits can count, give nothing.
+fn canonical(pairs: &[(u32, i32)]) -> (huffman: Option<Huffman>)
+    ensures
+        match huffman {
+            Some(huffman) => huffman.valid() && huffman.codes.len() == pairs.len() && forall|
+                index: int,
+            |
+                0 <= index < pairs.len() ==> #[trigger] huffman.codes[index].0 == pairs[index].0
+                    && huffman.codes[index].2 == pairs[index].1,
+            None => true,
+        },
+{
+    let mut codes: Vec<(u32, u32, i32)> = Vec::with_capacity(pairs.len());
+    let mut code: u32 = 0;
+    let mut last: u32 = 0;
+    let mut index: usize = 0;
+    while index < pairs.len()
+        invariant
+            index <= pairs.len(),
+            codes.len() == index,
+            last <= 31,
+            index > 0 ==> codes[index - 1].0 == last,
+            forall|other: int| 0 <= other < index ==> #[trigger] codes[other].0 <= 31,
+            forall|other: int|
+                0 < other < index ==> #[trigger] codes[other].0 >= codes[other - 1].0,
+            forall|other: int|
+                0 <= other < index ==> #[trigger] codes[other].0 == pairs[other].0
+                    && codes[other].2 == pairs[other].1,
+        decreases pairs.len() - index,
+    {
+        let (length, symbol) = pairs[index];
+        if length > 31 || length < last {
+            return None;
+        }
+        if index > 0 {
+            code = code.checked_add(1)?;
+        }
+        if length > last {
+            code <<= length - last;
+            last = length;
+        }
+        codes.push((length, code, symbol));
+        index += 1;
+    }
+    Some(Huffman { codes })
+}
+
+/// The number of a gamma code: `zeros` 0 bits, then a 1 bit and `zeros` more bits, as the
+/// number 2 to the power of `zeros` plus the number of the bits after the 1 bit. More than 31
+/// zeros, or a stream that stops before the bits, give nothing.
+fn gamma(bits: &mut Bits) -> (value: Option<u32>)
+    requires
+        old(bits).valid(),
+    ensures
+        final(bits).valid(),
+        final(bits).bytes() == old(bits).bytes(),
+        match value {
+            Some(value) => exists|zeros: nat|
+                #![trigger spec_bits(old(bits).bytes(), old(bits).place(), zeros)]
+                zeros <= 31 && spec_bits(old(bits).bytes(), old(bits).place(), zeros) == 0
+                    && spec_bit(old(bits).bytes(), old(bits).place() + zeros) == 1 && value
+                    == pow2(zeros) + spec_bits(
+                    old(bits).bytes(),
+                    old(bits).place() + zeros + 1,
+                    zeros,
+                ) && final(bits).place() == old(bits).place() + 2 * zeros + 1,
+            None => true,
+        },
+{
+    let ghost start = bits.place();
+    let ghost bytes = bits.bytes();
+    let mut zeros: u32 = 0;
+    let mut bit = bits.bit()?;
+    while bit == 0
+        invariant
+            bits.valid(),
+            bits.bytes() == bytes,
+            bytes == old(bits).bytes(),
+            start == old(bits).place(),
+            zeros <= 31,
+            bits.place() == start + zeros + 1,
+            spec_bits(bytes, start, zeros as nat) == 0,
+            bit == spec_bit(bytes, start + zeros),
+            bit <= 1,
+        decreases 31 - zeros,
+    {
+        if zeros == 31 {
+            return None;
+        }
+        zeros += 1;
+        bit = bits.bit()?;
+    }
+    let rest = bits.bits(zeros)?;
+    proof {
+        lemma_u32_pow2_no_overflow(zeros as nat);
+        lemma_u32_shl_is_mul(1, zeros);
+    }
+    let high = 1u32 << zeros;
+    assert(high | rest == high + rest) by (bit_vector)
+        requires
+            rest < high,
+            high == 1u32 << zeros,
+            zeros < 32,
+    ;
+    assert(spec_bits(bytes, start, zeros as nat) == 0);
+    Some(high | rest)
+}
+
+/// The number of a subexponential code with parameter `k`: `ones` 1 bits and a 0 bit, then
+/// with no ones the number of the next `k` bits, and with ones the number 2 to the power of
+/// `k + ones - 1` plus the number of the next `k + ones - 1` bits. More than 31 ones, numbers
+/// of more than 32 bits, or a stream that stops before the bits, give nothing.
+fn subexp(bits: &mut Bits, k: u32) -> (value: Option<u32>)
+    requires
+        old(bits).valid(),
+    ensures
+        final(bits).valid(),
+        final(bits).bytes() == old(bits).bytes(),
+        match value {
+            Some(value) => exists|ones: nat|
+                #![trigger spec_bits(old(bits).bytes(), old(bits).place(), ones)]
+                ones <= 31 && spec_bits(old(bits).bytes(), old(bits).place(), ones) == pow2(ones)
+                    - 1 && spec_bit(old(bits).bytes(), old(bits).place() + ones) == 0 && if ones
+                    == 0 {
+                    value == spec_bits(old(bits).bytes(), old(bits).place() + 1, k as nat)
+                        && final(bits).place() == old(bits).place() + 1 + k
+                } else {
+                    k + ones - 1 < 32 && value == pow2((k + ones - 1) as nat) + spec_bits(
+                        old(bits).bytes(),
+                        old(bits).place() + ones + 1,
+                        (k + ones - 1) as nat,
+                    ) && final(bits).place() == old(bits).place() + 2 * ones + k
+                },
+            None => true,
+        },
+{
+    let ghost start = bits.place();
+    let ghost bytes = bits.bytes();
+    let mut ones: u32 = 0;
+    let mut bit = bits.bit()?;
+    proof {
+        lemma2_to64();
+    }
+    while bit == 1
+        invariant
+            bits.valid(),
+            bits.bytes() == bytes,
+            bytes == old(bits).bytes(),
+            start == old(bits).place(),
+            ones <= 31,
+            bits.place() == start + ones + 1,
+            spec_bits(bytes, start, ones as nat) == pow2(ones as nat) - 1,
+            bit == spec_bit(bytes, start + ones),
+            bit <= 1,
+        decreases 31 - ones,
+    {
+        if ones == 31 {
+            return None;
+        }
+        proof {
+            lemma_pow2_unfold((ones + 1) as nat);
+        }
+        ones += 1;
+        bit = bits.bit()?;
+    }
+    if ones == 0 {
+        let value = bits.bits(k)?;
+        assert(spec_bits(bytes, start, 0) == pow2(0) - 1);
+        return Some(value);
+    }
+    let width = k.checked_add(ones - 1)?;
+    if width >= 32 {
+        return None;
+    }
+    let rest = bits.bits(width)?;
+    proof {
+        lemma_u32_pow2_no_overflow(width as nat);
+        lemma_u32_shl_is_mul(1, width);
+    }
+    let high = 1u32 << width;
+    assert(high | rest == high + rest) by (bit_vector)
+        requires
+            rest < high,
+            high == 1u32 << width,
+            width < 32,
+    ;
+    assert(spec_bits(bytes, start, ones as nat) == pow2(ones as nat) - 1);
+    Some(high | rest)
+}
+
+} // verus!
 
 impl Huffman {
     /// Canonical codes: sorted by bit length, then by symbol, counting up within each length.
@@ -22,36 +338,7 @@ impl Huffman {
             .zip(symbols.iter().copied())
             .collect();
         pairs.sort_unstable();
-        let mut codes = Vec::with_capacity(pairs.len());
-        let (mut code, mut last) = (0_u32, 0_u32);
-        for (index, (length, symbol)) in pairs.into_iter().enumerate() {
-            if length > 31 {
-                return Err(bad());
-            }
-            if index > 0 {
-                code += 1;
-            }
-            if length > last {
-                code <<= length - last;
-                last = length;
-            }
-            codes.push((length, code, symbol));
-        }
-        Ok(Self { codes })
-    }
-
-    fn decode(&self, bits: &mut Bits) -> Result<i32, Error> {
-        let (mut code, mut length) = (0_u32, 0_u32);
-        for &(size, value, symbol) in &self.codes {
-            while length < size {
-                code = (code << 1) | bits.bit()?;
-                length += 1;
-            }
-            if code == value {
-                return Ok(symbol);
-            }
-        }
-        Err(bad())
+        canonical(&pairs).ok_or_else(bad)
     }
 }
 
@@ -121,43 +408,19 @@ impl Encoding {
         })
     }
 
+    /// The value of the next code: the number of a bit coding minus its offset, with the bits
+    /// of the number as a signed number and wrapping arithmetic, as htslib gives it.
     pub fn int(&self, streams: &mut Streams) -> Result<i32, Error> {
         let core = &mut streams.core;
-        let value = match self {
+        let (value, offset) = match self {
             Self::External(id) => return streams.block(*id)?.itf8(),
-            Self::Huffman(huffman) => return huffman.decode(core),
-            Self::Beta { offset, bits } => core.bits(*bits)?.cast_signed().wrapping_sub(*offset),
-            Self::Gamma { offset } => {
-                let mut zeros = 0;
-                while core.bit()? == 0 {
-                    zeros += 1;
-                    if zeros > 31 {
-                        return Err(bad());
-                    }
-                }
-                let value = (1 << zeros) | core.bits(zeros)?;
-                value.cast_signed().wrapping_sub(*offset)
-            }
-            Self::Subexp { offset, k } => {
-                let mut ones = 0;
-                while core.bit()? == 1 {
-                    ones += 1;
-                    if ones > 31 {
-                        return Err(bad());
-                    }
-                }
-                let value = if ones == 0 {
-                    core.bits(*k)?
-                } else {
-                    let width = k.checked_add(ones - 1).filter(|width| *width < 32);
-                    let width = width.ok_or_else(bad)?;
-                    (1 << width) | core.bits(width)?
-                };
-                value.cast_signed().wrapping_sub(*offset)
-            }
+            Self::Huffman(huffman) => return huffman.decode(core).ok_or_else(bad),
+            Self::Beta { offset, bits } => (core.bits(*bits), *offset),
+            Self::Gamma { offset } => (gamma(core), *offset),
+            Self::Subexp { offset, k } => (subexp(core, *k), *offset),
             Self::Null | Self::ByteArrayLen(..) | Self::ByteArrayStop(..) => return Err(bad()),
         };
-        Ok(value)
+        Ok(value.ok_or_else(bad)?.cast_signed().wrapping_sub(offset))
     }
 
     pub fn byte(&self, streams: &mut Streams) -> Result<u8, Error> {
@@ -291,6 +554,23 @@ mod tests {
             bits: 40,
         };
         assert!(beta.int(&mut core).is_err());
+    }
+
+    /// Gamma and Subexp codes with 31 zeros or ones are the longest: 32 are errors.
+    #[test]
+    fn gamma_and_subexp_codes_stop_at_31_bits() {
+        // 31 zeros, the 1 bit, then 31 ones: 2^31 plus 2^31 - 1, which is -1 as a signed number.
+        let gamma = Encoding::Gamma { offset: 0 };
+        let mut core = streams(&[0, 0, 0, 0x01, 0xFF, 0xFF, 0xFF, 0xFE], &[]);
+        assert_eq!(gamma.int(&mut core).unwrap(), -1);
+        let mut core = streams(&[0, 0, 0, 0, 0x80], &[]);
+        assert!(gamma.int(&mut core).is_err());
+        // 31 ones, the 0 bit, then 31 zeros: 2^31 with k = 1, the lowest signed number.
+        let subexp = Encoding::Subexp { offset: 0, k: 1 };
+        let mut core = streams(&[0xFF, 0xFF, 0xFF, 0xFE, 0, 0, 0, 0], &[]);
+        assert_eq!(subexp.int(&mut core).unwrap(), i32::MIN);
+        let mut core = streams(&[0xFF, 0xFF, 0xFF, 0xFF, 0], &[]);
+        assert!(subexp.int(&mut core).is_err());
     }
 
     #[test]

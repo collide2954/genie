@@ -366,7 +366,8 @@ pub fn read_bit(data: &[u8], at: usize, left: u32) -> (found: Option<(u32, usize
             Some((bit, next_at, next_left)) => at < data.len() && bit == spec_bit(
                 data@,
                 8 * at + 8 - left,
-            ) && 1 <= next_left <= 8 && 8 * next_at + 8 - next_left == 8 * at + 8 - left + 1,
+            ) && bit <= 1 && 1 <= next_left <= 8 && 8 * next_at + 8 - next_left == 8 * at + 8
+                - left + 1,
             None => at >= data.len(),
         },
 {
@@ -380,6 +381,7 @@ pub fn read_bit(data: &[u8], at: usize, left: u32) -> (found: Option<(u32, usize
         vstd::bits::lemma_u8_shr_is_div(byte, shift);
         let shifted = byte >> shift;
         assert(shifted & 1 == shifted % 2) by (bit_vector);
+        assert(shifted & 1 <= 1) by (bit_vector);
         let place = 8 * at + 8 - left;
         assert(place / 8 == at && place % 8 == 8 - left);
     }
@@ -401,7 +403,8 @@ pub fn read_bits(data: &[u8], at: usize, left: u32, count: u32) -> (found: Optio
                 data@,
                 8 * at + 8 - left,
                 count as nat,
-            ) && 1 <= next_left <= 8 && 8 * next_at + 8 - next_left == 8 * at + 8 - left + count,
+            ) && value < vstd::arithmetic::power2::pow2(count as nat) && 1 <= next_left <= 8 && 8
+                * next_at + 8 - next_left == 8 * at + 8 - left + count,
             None => count > 32 || 8 * data.len() < 8 * at + 8 - left + count,
         },
 {
@@ -448,9 +451,8 @@ pub fn read_bits(data: &[u8], at: usize, left: u32, count: u32) -> (found: Optio
     Some((value, place_at, place_left))
 }
 
-} // verus!
-
-#[derive(Debug, Clone)]
+/// The core bit stream of a slice: its bytes, the byte of the next bit, and the bits of that
+/// byte that are not read yet.
 pub(crate) struct Bits<'a> {
     data: &'a [u8],
     at: usize,
@@ -458,27 +460,75 @@ pub(crate) struct Bits<'a> {
 }
 
 impl<'a> Bits<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Self {
-            data,
-            at: 0,
-            left: 8,
-        }
+    /// The bytes of the stream.
+    pub closed spec fn bytes(self) -> Seq<u8> {
+        self.data@
     }
 
-    pub fn bit(&mut self) -> Result<u32, Error> {
-        let (bit, at, left) = read_bit(self.data, self.at, self.left).ok_or_else(bad)?;
-        (self.at, self.left) = (at, left);
-        Ok(bit)
+    /// The place of the next bit in the stream.
+    pub closed spec fn place(self) -> int {
+        8 * self.at + 8 - self.left
     }
 
-    /// The next `count` bits as a number, the first bit highest: 32 bits or fewer.
-    pub fn bits(&mut self, count: u32) -> Result<u32, Error> {
-        let (value, at, left) = read_bits(self.data, self.at, self.left, count).ok_or_else(bad)?;
-        (self.at, self.left) = (at, left);
-        Ok(value)
+    /// The byte of the next bit has 1 to 8 bits that are not read yet.
+    pub closed spec fn valid(self) -> bool {
+        1 <= self.left <= 8
+    }
+
+    pub fn new(data: &'a [u8]) -> (bits: Self)
+        ensures
+            bits.valid(),
+            bits.bytes() == data@,
+            bits.place() == 0,
+    {
+        Self { data, at: 0, left: 8 }
+    }
+
+    /// The next bit. Nothing when the stream stops before it.
+    pub fn bit(&mut self) -> (bit: Option<u32>)
+        requires
+            old(self).valid(),
+        ensures
+            final(self).valid(),
+            final(self).bytes() == old(self).bytes(),
+            match bit {
+                Some(bit) => bit == spec_bit(old(self).bytes(), old(self).place()) && bit <= 1
+                    && final(self).place() == old(self).place() + 1,
+                None => true,
+            },
+    {
+        let (bit, at, left) = read_bit(self.data, self.at, self.left)?;
+        self.at = at;
+        self.left = left;
+        Some(bit)
+    }
+
+    /// The next `count` bits as a number, the first bit highest: 32 bits or fewer. Nothing
+    /// when the stream stops before them.
+    pub fn bits(&mut self, count: u32) -> (value: Option<u32>)
+        requires
+            old(self).valid(),
+        ensures
+            final(self).valid(),
+            final(self).bytes() == old(self).bytes(),
+            match value {
+                Some(value) => count <= 32 && value == spec_bits(
+                    old(self).bytes(),
+                    old(self).place(),
+                    count as nat,
+                ) && value < vstd::arithmetic::power2::pow2(count as nat) && final(self).place()
+                    == old(self).place() + count,
+                None => true,
+            },
+    {
+        let (value, at, left) = read_bits(self.data, self.at, self.left, count)?;
+        self.at = at;
+        self.left = left;
+        Some(value)
     }
 }
+
+} // verus!
 
 #[cfg(test)]
 mod tests {
@@ -533,6 +583,6 @@ mod tests {
         assert_eq!(bits.bits(3).unwrap(), 0b011);
         assert_eq!(bits.bits(6).unwrap(), 0b00_0111);
         assert_eq!(bits.bits(6).unwrap(), 0);
-        assert!(bits.bit().is_err());
+        assert!(bits.bit().is_none());
     }
 }
