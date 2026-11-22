@@ -21,12 +21,6 @@ use vstd::prelude::*;
 const UNSET: u64 = u64::MAX;
 const MIN_MARKER_DISTANCE: u64 = 0x10000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Chunk {
-    pub start: u64,
-    pub end: u64,
-}
-
 verus! {
 
 /// The number of bins of a level: 8 to the power of the level.
@@ -536,6 +530,549 @@ impl Scheme {
         lemma_div_is_ordered(record.0 as int, last as int, width as int);
         lemma_div_is_ordered(start as int, (record.1 - 1) as int, width as int);
     }
+
+    /// On a level, the bin of `start` is not after the bin of `last`, and the bins of the
+    /// level have numbers less than 2 to the power of 31.
+    proof fn lemma_level_bins(self, level: nat, start: nat, last: nat)
+        requires
+            self.spec_depth() <= 9,
+            level <= self.spec_depth(),
+            start <= last < pow2(self.spec_width(0)),
+        ensures
+            start / pow2(self.spec_width(level)) <= last / pow2(self.spec_width(level)),
+            spec_first(level) + last / pow2(self.spec_width(level)) < 0x8000_0000,
+    {
+        let width = pow2(self.spec_width(level));
+        lemma_counts(level);
+        lemma_counts(level + 1);
+        lemma_shifted_below(last, self.spec_width(level), self.spec_width(0));
+        lemma2_to64();
+        lemma_pow2_strictly_increases(3 * (level + 1), 31);
+        lemma_pow2_pos(self.spec_width(level));
+        lemma_div_is_ordered(start as int, last as int, width as int);
+        assert(self.spec_width(0) - self.spec_width(level) == 3 * level);
+        assert(spec_first(level + 1) == spec_first(level) + spec_count(level));
+    }
+}
+
+/// The virtual offsets of the start and the end of a part of a BGZF file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Chunk {
+    pub start: u64,
+    pub end: u64,
+}
+
+/// A bin of an index: its number, the virtual offset of a CSI bin, and its chunks.
+#[derive(Debug, PartialEq, Eq)]
+struct Bin {
+    number: u32,
+    offset: u64,
+    chunks: Vec<Chunk>,
+}
+
+/// The bins of the index of a contig, in the order of their numbers, and the linear index of
+/// a BAI or TBI index.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Bins {
+    scheme: Scheme,
+    entries: Vec<Bin>,
+    intervals: Option<Vec<u64>>,
+}
+
+/// A list keeps its chunks when a chunk comes after them, and it has the new chunk.
+proof fn lemma_push_keeps(chunks: Seq<Chunk>, chunk: Chunk)
+    ensures
+        forall|other: Chunk|
+            chunks.contains(other) ==> #[trigger] chunks.push(chunk).contains(other),
+        chunks.push(chunk).contains(chunk),
+{
+    assert(chunks.push(chunk)[chunks.len() as int] == chunk);
+    assert forall|other: Chunk| chunks.contains(other) implies #[trigger] chunks.push(
+        chunk,
+    ).contains(other) by {
+        let at = choose|at: int| 0 <= at < chunks.len() && chunks[at] == other;
+        assert(chunks.push(chunk)[at] == other);
+    }
+}
+
+/// The chunks of a list, then the chunks of a bin that end after `minimum`.
+fn push_after(chunks: &mut Vec<Chunk>, bin: &Bin, minimum: u64)
+    ensures
+        forall|other: Chunk|
+            old(chunks)@.contains(other) ==> #[trigger] final(chunks)@.contains(other),
+        forall|part: int|
+            0 <= part < bin.chunks.len() && #[trigger] bin.chunks[part].end > minimum
+                ==> final(chunks)@.contains(bin.chunks[part]),
+{
+    let mut part: usize = 0;
+    while part < bin.chunks.len()
+        invariant
+            part <= bin.chunks.len(),
+            forall|other: Chunk|
+                old(chunks)@.contains(other) ==> #[trigger] chunks@.contains(other),
+            forall|piece: int|
+                0 <= piece < part && #[trigger] bin.chunks[piece].end > minimum
+                    ==> chunks@.contains(bin.chunks[piece]),
+        decreases bin.chunks.len() - part,
+    {
+        let chunk = bin.chunks[part];
+        if chunk.end > minimum {
+            proof {
+                lemma_push_keeps(chunks@, chunk);
+            }
+            chunks.push(chunk);
+        }
+        part += 1;
+    }
+}
+
+/// True when a chunk is inside one of the chunks of a list.
+spec fn spec_inside(chunks: Seq<Chunk>, chunk: Chunk) -> bool {
+    exists|into: int|
+        #![trigger chunks[into]]
+        0 <= into < chunks.len() && chunks[into].start <= chunk.start && chunk.end
+            <= chunks[into].end
+}
+
+/// Chunks in the order of their start, as fewer chunks: a chunk that starts at or before the
+/// end of the chunk before joins it. Each chunk is inside a joined chunk, and the joined chunks
+/// do not overlap. Nothing when the chunks are not in order.
+fn merge(chunks: &[Chunk]) -> (merged: Option<Vec<Chunk>>)
+    ensures
+        match merged {
+            Some(merged) => forall|at: int|
+                0 <= at < chunks.len() ==> spec_inside(merged@, #[trigger] chunks[at]),
+            None => true,
+        },
+        match merged {
+            Some(merged) => forall|at: int|
+                0 <= at < merged.len() - 1 ==> #[trigger] merged[at].end < merged[at + 1].start,
+            None => true,
+        },
+{
+    let mut merged: Vec<Chunk> = Vec::with_capacity(chunks.len());
+    let ghost mut into: Seq<int> = Seq::empty();
+    let mut at: usize = 0;
+    while at < chunks.len()
+        invariant
+            at <= chunks.len(),
+            into.len() == at,
+            at > 0 <==> merged.len() > 0,
+            at > 0 ==> merged[merged.len() - 1].start <= chunks[at - 1].start,
+            forall|done: int|
+                0 <= done < at ==> 0 <= #[trigger] into[done] < merged.len()
+                    && merged[into[done]].start <= chunks[done].start && chunks[done].end
+                    <= merged[into[done]].end,
+            forall|k: int|
+                0 <= k < merged.len() - 1 ==> #[trigger] merged[k].end < merged[k + 1].start,
+        decreases chunks.len() - at,
+    {
+        let chunk = chunks[at];
+        if at > 0 && chunk.start < chunks[at - 1].start {
+            return None;
+        }
+        let count = merged.len();
+        if count > 0 && chunk.start <= merged[count - 1].end {
+            let last = merged[count - 1];
+            merged.set(count - 1, Chunk { start: last.start, end: last.end.max(chunk.end) });
+            proof {
+                into = into.push((count - 1) as int);
+            };
+        } else {
+            merged.push(chunk);
+            proof {
+                into = into.push(count as int);
+            };
+        }
+        at += 1;
+    }
+    proof {
+        assert forall|done: int| 0 <= done < chunks.len() implies spec_inside(
+            merged@,
+            #[trigger] chunks[done],
+        ) by {
+            assert(merged@[into[done]].start <= chunks[done].start);
+        }
+    }
+    Some(merged)
+}
+
+impl Bins {
+    /// The numbers of the entries go up: no two entries have the same number.
+    #[verifier::type_invariant]
+    spec fn ordered(self) -> bool {
+        forall|before: int, after: int|
+            #![trigger self.entries[before], self.entries[after]]
+            0 <= before < after < self.entries.len() ==> self.entries[before].number
+                < self.entries[after].number
+    }
+
+    /// The bins of an index from entries in the order of their numbers. Nothing when an entry
+    /// does not come after the entry before it, as two entries with one number give.
+    fn ordered_new(scheme: Scheme, entries: Vec<Bin>, intervals: Option<Vec<u64>>) -> (bins:
+        Option<Self>) {
+        let mut index: usize = 1;
+        while index < entries.len()
+            invariant
+                1 <= index,
+                forall|before: int, after: int|
+                    #![trigger entries[before], entries[after]]
+                    0 <= before < after < index && after < entries.len() ==> entries[before].number
+                        < entries[after].number,
+            decreases entries.len() - index,
+        {
+            if entries[index - 1].number >= entries[index].number {
+                return None;
+            }
+            proof {
+                assert forall|before: int, after: int|
+                    #![trigger entries[before], entries[after]]
+                    0 <= before < after < index + 1 && after < entries.len()
+                        implies entries[before].number < entries[after].number by {
+                    if after == index && before < index - 1 {
+                        assert(entries[before].number < entries[index - 1].number);
+                    }
+                }
+            }
+            index += 1;
+        }
+        Some(Bins { scheme, entries, intervals })
+    }
+
+    /// The bins of a contig without records: no entries, and an empty linear index for a BAI
+    /// or TBI index.
+    pub fn empty(scheme: Scheme, csi: bool) -> Self {
+        let intervals = if csi {
+            None
+        } else {
+            Some(Vec::new())
+        };
+        Self { scheme, entries: Vec::new(), intervals }
+    }
+
+    /// The entry with a bin number.
+    fn find(&self, number: u32) -> (found: Option<usize>)
+        ensures
+            match found {
+                Some(index) => index < self.entries.len() && self.entries[index as int].number
+                    == number,
+                None => forall|index: int|
+                    0 <= index < self.entries.len() ==> #[trigger] self.entries[index].number
+                        != number,
+            },
+    {
+        proof {
+            use_type_invariant(self);
+        }
+        let mut low: usize = 0;
+        let mut high: usize = self.entries.len();
+        while low < high
+            invariant
+                self.ordered(),
+                low <= high <= self.entries.len(),
+                forall|index: int|
+                    0 <= index < low ==> #[trigger] self.entries[index].number < number,
+                forall|index: int|
+                    high <= index < self.entries.len() ==> #[trigger] self.entries[index].number
+                        > number,
+            decreases high - low,
+        {
+            let middle = low + (high - low) / 2;
+            let here = self.entries[middle].number;
+            if here == number {
+                return Some(middle);
+            }
+            if here < number {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        None
+    }
+
+    /// The offset of a CSI index for the records from `start` on: the offset of the bin of
+    /// `start` on the lowest level, or else of the bin that a walk finds first, to the left on
+    /// a level and then up to the parent. 0 when the walk finds no bin.
+    fn first_offset(&self, start: u64) -> (offset: u64)
+        requires
+            start < pow2(self.scheme.spec_width(0)),
+        ensures
+            offset == 0 || exists|index: int|
+                0 <= index < self.entries.len() && #[trigger] self.entries[index].offset == offset,
+    {
+        let depth = self.scheme.depth();
+        let shift = u64::from(self.scheme.shift());
+        proof {
+            lemma_u64_shr_is_div(start, shift);
+            lemma_shifted_below(start as nat, shift as nat, self.scheme.spec_width(0));
+            lemma_counts(depth as nat);
+            lemma_counts(depth as nat + 1);
+            lemma2_to64();
+            lemma_pow2_strictly_increases(3 * (depth as nat + 1), 31);
+        }
+        let mut number = Scheme::first(depth) + (start >> shift) as u32;
+        loop
+            decreases number,
+        {
+            if let Some(index) = self.find(number) {
+                return self.entries[index].offset;
+            }
+            if number == 0 {
+                return 0;
+            }
+            let before = number - 1;
+            let parent = before >> 3;
+            assert(parent <= before / 8) by (bit_vector)
+                requires
+                    parent == before >> 3,
+            ;
+            let first = parent * 8 + 1;
+            number = if number > first {
+                number - 1
+            } else {
+                parent
+            };
+        }
+    }
+
+    /// The linear index value of a BAI or TBI index for the records from `start` on: the value
+    /// of the window of `start`, or of the last window when the index has fewer, or 0.
+    spec fn spec_linear(self, start: nat) -> u64 {
+        match self.intervals {
+            Some(intervals) => {
+                let window = start / pow2(self.scheme.spec_shift());
+                if window < intervals.len() {
+                    intervals[window as int]
+                } else if intervals.len() > 0 {
+                    intervals[intervals.len() - 1]
+                } else {
+                    0
+                }
+            },
+            None => 0,
+        }
+    }
+
+    /// The smallest virtual offset of a record from `start` on, by the index: the linear index
+    /// of a BAI or TBI index, or the offset of a CSI index.
+    fn minimum(&self, start: u64) -> (minimum: u64)
+        requires
+            start < pow2(self.scheme.spec_width(0)),
+        ensures
+            self.intervals is Some ==> minimum == self.spec_linear(start as nat),
+    {
+        match self.intervals.as_ref() {
+            Some(intervals) => {
+                let shift = u64::from(self.scheme.shift());
+                proof {
+                    use_type_invariant(self.scheme);
+                    lemma_u64_shr_is_div(start, shift);
+                    lemma_shifted_below(start as nat, shift as nat, self.scheme.spec_width(0));
+                    lemma2_to64();
+                    if 3 * self.scheme.spec_depth() < 31 {
+                        lemma_pow2_strictly_increases(3 * self.scheme.spec_depth(), 31);
+                    }
+                }
+                let (window, count) = ((start >> shift) as usize, intervals.len());
+                if window < count {
+                    intervals[window]
+                } else if count > 0 {
+                    intervals[count - 1]
+                } else {
+                    0
+                }
+            },
+            None => self.first_offset(start),
+        }
+    }
+
+    /// A chunk that a query of the bases from `start` to `last` reads: a chunk of a bin of a
+    /// level, from the bin of `start` to the bin of `last` on the level, that ends after
+    /// `minimum`.
+    spec fn wants(
+        self,
+        start: nat,
+        last: nat,
+        minimum: u64,
+        level: nat,
+        index: int,
+        part: int,
+    ) -> bool {
+        &&& level <= self.scheme.spec_depth()
+        &&& 0 <= index < self.entries.len()
+        &&& 0 <= part < self.entries[index].chunks.len()
+        &&& spec_first(level) + start / pow2(self.scheme.spec_width(level))
+            <= self.entries[index].number
+        &&& self.entries[index].number <= spec_first(level) + last / pow2(
+            self.scheme.spec_width(level),
+        )
+        &&& self.entries[index].chunks[part].end > minimum
+    }
+
+    /// The chunks of a list, then the chunks that a query of the bases from `start` to `last`
+    /// reads on a level.
+    fn level_chunks(&self, chunks: &mut Vec<Chunk>, level: u32, start: u64, last: u64, minimum: u64)
+        requires
+            level <= self.scheme.spec_depth(),
+            start <= last < pow2(self.scheme.spec_width(0)),
+        ensures
+            forall|other: Chunk|
+                old(chunks)@.contains(other) ==> #[trigger] final(chunks)@.contains(other),
+            forall|index: int, part: int|
+                #[trigger] self.wants(start as nat, last as nat, minimum, level as nat, index, part)
+                    ==> final(chunks)@.contains(self.entries[index].chunks[part]),
+    {
+        proof {
+            use_type_invariant(self);
+            use_type_invariant(self.scheme);
+            self.scheme.lemma_level_bins(level as nat, start as nat, last as nat);
+        }
+        let (low, high) = self.scheme.level_bins(level, start, last);
+        proof {
+            let width = pow2(self.scheme.spec_width(level as nat));
+            let (a, b) = (start as nat / width, last as nat / width);
+            let first = spec_first(level as nat);
+            assert(first + a <= first + b) by (nonlinear_arith)
+                requires
+                    a <= b,
+            ;
+        }
+        let mut number = low;
+        while number <= high
+            invariant
+                self.ordered(),
+                low <= number <= high + 1,
+                high < 0x8000_0000,
+                high == spec_first(level as nat) + last as nat / pow2(
+                    self.scheme.spec_width(level as nat),
+                ),
+                forall|other: Chunk|
+                    old(chunks)@.contains(other) ==> #[trigger] chunks@.contains(other),
+                forall|index: int, part: int|
+                    #[trigger] self.wants(
+                        start as nat,
+                        last as nat,
+                        minimum,
+                        level as nat,
+                        index,
+                        part,
+                    ) && self.entries[index].number < number ==> chunks@.contains(
+                        self.entries[index].chunks[part],
+                    ),
+            decreases high + 1 - number,
+        {
+            let found = self.find(number);
+            if let Some(index) = found {
+                push_after(chunks, &self.entries[index], minimum);
+            }
+            proof {
+                assert forall|other: int, part: int|
+                    #[trigger] self.wants(
+                        start as nat,
+                        last as nat,
+                        minimum,
+                        level as nat,
+                        other,
+                        part,
+                    ) && self.entries[other].number < number + 1 implies chunks@.contains(
+                    self.entries[other].chunks[part],
+                ) by {
+                    if let Some(index) = found {
+                        if self.entries[other].number == number && other != index as int {
+                            if other < index as int {
+                                assert(self.entries[other].number
+                                    < self.entries[index as int].number);
+                            } else {
+                                assert(self.entries[index as int].number
+                                    < self.entries[other].number);
+                            }
+                        }
+                    } else {
+                        assert(self.entries[other].number != number);
+                    }
+                }
+            }
+            number += 1;
+        }
+    }
+
+    /// The chunks that a query of the bases from `start` to `last` reads, on each level.
+    fn wanted(&self, start: u64, last: u64, minimum: u64) -> (chunks: Vec<Chunk>)
+        requires
+            start <= last < pow2(self.scheme.spec_width(0)),
+        ensures
+            forall|level: nat, index: int, part: int|
+                #[trigger] self.wants(start as nat, last as nat, minimum, level, index, part)
+                    ==> chunks@.contains(self.entries[index].chunks[part]),
+    {
+        let mut chunks: Vec<Chunk> = Vec::new();
+        let depth = self.scheme.depth();
+        let mut level: u32 = 0;
+        while level <= depth
+            invariant
+                depth == self.scheme.spec_depth(),
+                depth <= 9,
+                start <= last < pow2(self.scheme.spec_width(0)),
+                level <= depth + 1,
+                forall|done: nat, index: int, part: int|
+                    done < level && #[trigger] self.wants(
+                        start as nat,
+                        last as nat,
+                        minimum,
+                        done,
+                        index,
+                        part,
+                    ) ==> chunks@.contains(self.entries[index].chunks[part]),
+            decreases depth + 1 - level,
+        {
+            self.level_chunks(&mut chunks, level, start, last, minimum);
+            level += 1;
+        }
+        chunks
+    }
+
+    /// The last base of a region that the bins of the scheme reach.
+    spec fn spec_last(self, region: Region) -> nat {
+        (if region.spec_end() <= pow2(self.scheme.spec_width(0)) {
+            region.spec_end() as nat
+        } else {
+            pow2(self.scheme.spec_width(0))
+        } - 1) as nat
+    }
+
+    /// The chunks that can hold the records of a region, and the smallest offset of the index
+    /// for the region. No chunks for a region with no bases, or that starts after the top bin.
+    fn selected(&self, region: Region) -> (found: (Vec<Chunk>, u64))
+        ensures
+            region.spec_start() < region.spec_end() && region.spec_start() < pow2(
+                self.scheme.spec_width(0),
+            ) ==> (self.intervals is Some ==> found.1 == self.spec_linear(
+                region.spec_start() as nat,
+            )) && forall|level: nat, index: int, part: int|
+                #[trigger] self.wants(
+                    region.spec_start() as nat,
+                    self.spec_last(region),
+                    found.1,
+                    level,
+                    index,
+                    part,
+                ) ==> found.0@.contains(self.entries[index].chunks[part]),
+    {
+        let top = self.scheme.top();
+        proof {
+            lemma_u64_pow2_no_overflow(top as nat);
+            lemma_u64_shl_is_mul(1, top as u64);
+        }
+        let limit = 1_u64 << u64::from(top);
+        if region.is_empty() || region.start() >= limit {
+            return (Vec::new(), 0);
+        }
+        let start = region.start();
+        let last = region.end().min(limit) - 1;
+        let minimum = self.minimum(start);
+        (self.wanted(start, last, minimum), minimum)
+    }
 }
 
 } // verus!
@@ -551,12 +1088,6 @@ impl Scheme {
     pub fn new(shift: i32, depth: i32) -> Result<Self, Error> {
         Self::checked(shift, depth).ok_or(Error::Invalid(Reason::BadIndex))
     }
-}
-#[derive(Debug, PartialEq, Eq)]
-struct Bin {
-    number: u32,
-    offset: u64,
-    chunks: Vec<Chunk>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -768,7 +1299,9 @@ impl Building {
                 chunks,
             })
             .collect();
+        // The numbers of a map are each different, thus `new` always gives the bins.
         Bins::new(scheme, entries, (!csi).then_some(self.linear))
+            .unwrap_or_else(|| Bins::empty(scheme, csi))
     }
 
     fn compress(&mut self, scheme: Scheme) {
@@ -816,13 +1349,6 @@ impl Building {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Bins {
-    scheme: Scheme,
-    entries: Vec<Bin>,
-    intervals: Option<Vec<u64>>,
-}
-
 impl Bins {
     pub fn read(reader: &mut impl Read) -> Result<Self, Error> {
         let bins = (0..read_count(reader)?)
@@ -839,7 +1365,7 @@ impl Bins {
         let intervals = (0..read_count(reader)?)
             .map(|_| read_u64(reader))
             .collect::<io::Result<_>>()?;
-        Ok(Self::new(Scheme::BAI, bins, Some(intervals)))
+        Self::new(Scheme::BAI, bins, Some(intervals)).ok_or(Error::Invalid(Reason::BadIndex))
     }
 
     pub fn read_csi(reader: &mut impl Read, scheme: Scheme) -> Result<Self, Error> {
@@ -855,20 +1381,14 @@ impl Bins {
                 })
             })
             .collect::<Result<_, Error>>()?;
-        Ok(Self::new(scheme, bins, None))
+        Self::new(scheme, bins, None).ok_or(Error::Invalid(Reason::BadIndex))
     }
 
-    pub fn empty(scheme: Scheme, csi: bool) -> Self {
-        Self::new(scheme, Vec::new(), (!csi).then(Vec::new))
-    }
-
-    fn new(scheme: Scheme, mut entries: Vec<Bin>, intervals: Option<Vec<u64>>) -> Self {
+    /// The bins of an index from entries in any order. Nothing when two entries have one
+    /// number, as a damaged index can give.
+    fn new(scheme: Scheme, mut entries: Vec<Bin>, intervals: Option<Vec<u64>>) -> Option<Self> {
         entries.sort_unstable_by_key(|bin| bin.number);
-        Self {
-            scheme,
-            entries,
-            intervals,
-        }
+        Self::ordered_new(scheme, entries, intervals)
     }
 
     pub fn write(&self, out: &mut Vec<u8>) {
@@ -892,47 +1412,19 @@ impl Bins {
         }
     }
 
+    /// The chunks that can hold the records of a region, in the order of their start, with the
+    /// chunks that overlap or touch joined.
     pub fn chunks(&self, region: Region) -> Vec<Chunk> {
-        let top = self.scheme.top();
-        let limit = 1_u64 << top;
-        if region.is_empty() || region.start() >= limit {
-            return Vec::new();
-        }
-        let start = region.start();
-        let last = region.end().min(limit) - 1;
-        let minimum = match &self.intervals {
-            Some(intervals) => intervals
-                .get((start >> self.scheme.shift) as usize)
-                .or(intervals.last())
-                .copied()
-                .unwrap_or(0),
-            None => self.first_offset(start),
-        };
-        let mut chunks: Vec<Chunk> = (0..=self.scheme.depth())
-            .flat_map(|level| {
-                let (first, last_bin) = self.scheme.level_bins(level, start, last);
-                first..=last_bin
-            })
-            .filter_map(|number| self.find(number))
-            .flat_map(|bin| bin.chunks.iter())
-            .filter(|chunk| chunk.end > minimum)
-            .copied()
-            .collect();
+        let (mut chunks, _) = self.selected(region);
         chunks.sort_unstable_by_key(|chunk| chunk.start);
-        let mut merged: Vec<Chunk> = Vec::with_capacity(chunks.len());
-        for chunk in chunks {
-            match merged.last_mut() {
-                Some(last) if chunk.start <= last.end => last.end = last.end.max(chunk.end),
-                _ => merged.push(chunk),
-            }
-        }
-        merged
+        merge(&chunks).unwrap_or(chunks)
     }
 
     /// What the pseudo-bin of htslib says about the records of the reference: the virtual
     /// offsets of its first record and after its last record, and the number of records.
     fn meta(&self) -> Option<(Chunk, u64)> {
-        match self.find(self.scheme.meta())?.chunks.as_slice() {
+        let index = self.find(self.scheme.meta())?;
+        match self.entries[index].chunks.as_slice() {
             [span, counts, ..] => Some((*span, counts.start)),
             _ => None,
         }
@@ -1017,26 +1509,6 @@ impl Bins {
         gaps.get(gaps.len() / 2)
             .map_or(1.0, |gap| *gap as f64 / 65_536.0)
     }
-
-    fn first_offset(&self, start: u64) -> u64 {
-        let mut number = Scheme::first(self.scheme.depth) + (start >> self.scheme.shift) as u32;
-        loop {
-            if let Some(bin) = self.find(number) {
-                return bin.offset;
-            }
-            if number == 0 {
-                return 0;
-            }
-            let parent = (number - 1) >> 3;
-            let first = (parent << 3) + 1;
-            number = if number > first { number - 1 } else { parent };
-        }
-    }
-
-    fn find(&self, number: u32) -> Option<&Bin> {
-        let found = self.entries.binary_search_by_key(&number, |bin| bin.number);
-        found.ok().map(|index| &self.entries[index])
-    }
 }
 
 fn read_chunks(reader: &mut impl Read) -> Result<Vec<Chunk>, Error> {
@@ -1075,7 +1547,8 @@ pub fn read_count(reader: &mut impl Read) -> Result<usize, Error> {
 mod tests {
     use genie_core::Region;
 
-    use super::{Bin, Bins, Builder, Chunk, Disorder, Scheme};
+    use super::{Bin, Bins, Builder, Chunk, Disorder, Scheme, put};
+    use crate::{Error, Reason};
 
     fn built(number: u32, offset: u64, chunks: &[(u64, u64)]) -> Bin {
         Bin {
@@ -1102,7 +1575,8 @@ mod tests {
                 built(37_450, 0, &[(100, 300), (2, 0)]),
             ],
             Some(vec![100]),
-        );
+        )
+        .unwrap();
         assert_eq!(references, [expected]);
     }
 
@@ -1120,7 +1594,8 @@ mod tests {
                 built(37_450, 0, &[(100, 400), (2, 1)]),
             ],
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(references, [expected]);
     }
 
@@ -1147,7 +1622,8 @@ mod tests {
                 built(37_450, 0, &[(0, 7 * block), (3, 0)]),
             ],
             Some(vec![0, 3 * block]),
-        );
+        )
+        .unwrap();
         assert_eq!(references, [expected]);
     }
 
@@ -1157,10 +1633,7 @@ mod tests {
         builder.push(Some((1, 10, 20)), 50, true).unwrap();
         let (references, _) = builder.finish(50);
         assert_eq!(references.len(), 2);
-        assert_eq!(
-            references[0],
-            Bins::new(Scheme::BAI, Vec::new(), Some(Vec::new()))
-        );
+        assert_eq!(references[0], Bins::empty(Scheme::BAI, false));
     }
 
     #[test]
@@ -1206,7 +1679,7 @@ mod tests {
                 chunks: vec![Chunk { start, end }],
             })
             .collect();
-        Bins::new(scheme, bins, None)
+        Bins::new(scheme, bins, None).unwrap()
     }
 
     fn starts(bins: &Bins, start: u64, end: u64) -> Vec<u64> {
@@ -1231,6 +1704,35 @@ mod tests {
         assert_eq!(scheme.bottom(4682), Some(1));
         assert_eq!(scheme.span(37_450, 1_000), None);
         assert_eq!(scheme.bottom(37_450), None);
+    }
+
+    /// Two bins with one number, as a damaged index can give, are an error, as in htslib: a
+    /// search finds only one of the two, and genie can then miss records.
+    #[test]
+    fn bins_with_one_number_are_errors() {
+        let index = |csi: bool| {
+            let mut bytes = Vec::new();
+            put(&mut bytes, 2);
+            for start in [100_u64, 300] {
+                bytes.extend(4681_u32.to_le_bytes());
+                if csi {
+                    bytes.extend(start.to_le_bytes());
+                }
+                put(&mut bytes, 1);
+                bytes.extend(start.to_le_bytes());
+                bytes.extend((start + 100).to_le_bytes());
+            }
+            if !csi {
+                put(&mut bytes, 0);
+            }
+            bytes
+        };
+        let bad = |read: Result<Bins, Error>| matches!(read, Err(Error::Invalid(Reason::BadIndex)));
+        assert!(bad(Bins::read(&mut index(false).as_slice())));
+        assert!(bad(Bins::read_csi(
+            &mut index(true).as_slice(),
+            Scheme::BAI
+        )));
     }
 
     #[test]
