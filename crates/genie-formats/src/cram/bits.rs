@@ -10,6 +10,10 @@ pub(crate) fn bad() -> Error {
 
 verus! {
 
+/// The largest size of a block that genie decodes, and of a read: 2 to the power of 30 bytes
+/// or bases. A larger size from a file is an error.
+pub(crate) const LIMIT: usize = 0x4000_0000;
+
 /// The bytes of an ITF8 number from its first byte: 1 to 5, by the 1 bits at its high end.
 pub open spec fn spec_itf8_length(first: u8) -> int {
     if first < 0x80 {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use genie_core::Region;
 use genie_core::alignment::{Alignment, Mate, Op, REVERSE};
 
-use super::bits::{Bits, Bytes, bad};
+use super::bits::{Bits, Bytes, LIMIT, bad};
 use super::encoding::Streams;
 use super::{Block, CORE, Compression, Cram, EXTERNAL, Fetch, Slice};
 use crate::{Error, Reason, bam, md5};
@@ -188,7 +188,9 @@ fn raw_records(header: &Compression, slice: &Slice, blocks: &[Block]) -> Result<
             external,
         },
     };
-    let mut records = Vec::with_capacity(slice.records);
+    // Do not reserve memory for the count of the slice header: a damaged header can give 2^31
+    // records.
+    let mut records = Vec::new();
     let mut last = slice.start;
     for index in 0..slice.records {
         let flags = u16::try_from(series.int(*b"BF")?).map_err(|_| bad())?;
@@ -199,6 +201,9 @@ fn raw_records(header: &Compression, slice: &Slice, blocks: &[Block]) -> Result<
             slice.reference
         };
         let length = size(series.int(*b"RL")?)?;
+        if length > LIMIT {
+            return Err(bad());
+        }
         let step = i64::from(series.int(*b"AP")?);
         let position = if header.delta {
             last += step;
@@ -268,6 +273,10 @@ fn tags_and_bases(series: &mut Series, record: &mut Raw) -> Result<(), Error> {
         for _ in 0..series.int(*b"FN")? {
             let kind = series.byte(*b"FC")?;
             at += size(series.int(*b"FP")?)?;
+            // A feature is at a base of the read, or just after its last base.
+            if at > length + 1 {
+                return Err(bad());
+            }
             record.features.push((at, feature(series, kind)?));
         }
         record.mapq = u8::try_from(series.int(*b"MQ")?).unwrap_or(u8::MAX);
@@ -649,4 +658,91 @@ pub(crate) fn decode(
         reads.push((raw.reference, alignment));
     }
     Ok(reads)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::super::bits::LIMIT;
+    use super::super::encoding::{Encoding, Huffman};
+    use super::super::{Compression, Slice};
+    use super::raw_records;
+
+    /// A compression header that gives each data series one value, with codes of no bits.
+    fn header(values: &[([u8; 2], i32)]) -> Compression {
+        let series = values
+            .iter()
+            .map(|(key, value)| {
+                let code = Huffman::new(&[*value], &[0]).unwrap();
+                (*key, Encoding::Huffman(code))
+            })
+            .collect();
+        Compression {
+            names: false,
+            delta: true,
+            reference: true,
+            substitutions: [[b'N'; 4]; 5],
+            dictionary: vec![Vec::new()],
+            series,
+            tags: HashMap::new(),
+        }
+    }
+
+    fn slice(records: usize) -> Slice {
+        Slice {
+            reference: 0,
+            start: 1,
+            span: 1,
+            records,
+            blocks: 0,
+            embedded: -1,
+            md5: [0; 16],
+        }
+    }
+
+    /// The header of mapped reads of `length` bases, each with a deletion at `position` when
+    /// there is one.
+    fn reads(length: i32, position: Option<i32>) -> Compression {
+        let mut values = vec![
+            (*b"BF", 0),
+            (*b"CF", 0),
+            (*b"RL", length),
+            (*b"AP", 0),
+            (*b"RG", -1),
+            (*b"TL", 0),
+            (*b"FN", i32::from(position.is_some())),
+            (*b"MQ", 60),
+        ];
+        if let Some(position) = position {
+            values.extend([(*b"FC", i32::from(b'D')), (*b"FP", position), (*b"DL", 1)]);
+        }
+        header(&values)
+    }
+
+    #[test]
+    fn reads_take_their_length_and_features() {
+        let records = raw_records(&reads(4, Some(5)), &slice(2), &[]).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].length, 4);
+        assert_eq!(records[0].features.len(), 1);
+    }
+
+    /// A slice header that gives more records than the slice holds, as a damaged file can give,
+    /// is an error, not a request for the memory of all of them.
+    #[test]
+    fn record_counts_past_the_data_are_errors() {
+        let count = usize::try_from(i32::MAX).unwrap();
+        assert!(raw_records(&header(&[]), &slice(count), &[]).is_err());
+    }
+
+    /// Reads longer than the limit, and features after the end of their read, as a damaged file
+    /// can give, are errors: genie does not fill such reads with bases of the reference.
+    #[test]
+    fn reads_past_the_limit_are_errors() {
+        let past = i32::try_from(LIMIT + 1).unwrap();
+        assert!(raw_records(&reads(past, None), &slice(1), &[]).is_err());
+        assert!(raw_records(&reads(4, Some(6)), &slice(1), &[]).is_err());
+        assert!(raw_records(&reads(4, Some(i32::MAX)), &slice(1), &[]).is_err());
+    }
 }

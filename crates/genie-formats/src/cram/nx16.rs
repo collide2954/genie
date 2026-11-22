@@ -17,7 +17,7 @@ use vstd::bits::{
 use vstd::prelude::*;
 use vstd::slice::{slice_subrange, slice_to_vec};
 
-use super::bits::bad;
+use super::bits::{LIMIT, bad};
 use crate::Error;
 
 pub(crate) fn decode(input: &[u8], size: Option<usize>) -> Result<Vec<u8>, Error> {
@@ -38,8 +38,6 @@ const LOW: u32 = 0x8000;
 /// The total of the frequencies of an order-0 table: 2 to the power of `SHIFT`.
 const TOTAL: u32 = 0x1000;
 const SHIFT: u32 = 12;
-/// The largest size of an output: 2 to the power of 30 bytes.
-const LIMIT: usize = 0x4000_0000;
 /// The most levels of stripes in stripes.
 const DEPTH: usize = 4;
 
