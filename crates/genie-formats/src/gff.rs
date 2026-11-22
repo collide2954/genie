@@ -152,8 +152,22 @@ pub fn assemble(records: &[Record]) -> Vec<Feature> {
         .filter(|(index, _)| !consumed[*index] && (!parts[*index].is_empty() || !grouping[*index]))
         .map(|(index, record)| {
             let parent = parents[index].map(|parent| &records[parent]);
-            let feature = Feature::new(label(record, parent), record.span, record.strand)
-                .with_extra(record.text.clone());
+            let mut extra = record.text.clone();
+            if record.get("protein_id").is_none()
+                && let Some(protein) = parts[index]
+                    .iter()
+                    .map(|child| &records[*child])
+                    .filter(|child| CODING.contains(&child.kind.as_str()))
+                    .find_map(|child| child.get("protein_id"))
+            {
+                if !extra.is_empty() {
+                    extra.push('\t');
+                }
+                extra.push_str("protein_id=");
+                extra.push_str(&protein.replace('\t', " "));
+            }
+            let feature =
+                Feature::new(label(record, parent), record.span, record.strand).with_extra(extra);
             if parts[index].is_empty() {
                 return feature;
             }
@@ -327,6 +341,30 @@ mod tests {
             .with_extra("ID=t1\tParent=g1\tName=ABC-201");
         let lines = [GENE, MRNA, EXONS[0], EXONS[1], CDS[0], CDS[1]];
         assert_eq!(features(&lines), [expected]);
+    }
+
+    /// A transcript without a protein ID takes the protein ID of its CDS lines, as in the GFF3
+    /// and GTF files of Ensembl and RefSeq.
+    #[test]
+    fn transcripts_take_the_protein_id_of_their_cds() {
+        let cds = [
+            "chr1\tsrc\tCDS\t1101\t1200\t.\t+\t0\tID=CDS:P1;Parent=t1;protein_id=P1.2",
+            "chr1\tsrc\tCDS\t1801\t1900\t.\t+\t2\tID=CDS:P1;Parent=t1;protein_id=P1.2",
+        ];
+        let lines = [GENE, MRNA, EXONS[0], EXONS[1], cds[0], cds[1]];
+        assert_eq!(
+            features(&lines)[0].extra(),
+            "ID=t1\tParent=g1\tName=ABC-201\tprotein_id=P1.2"
+        );
+        let own = "chr1\tsrc\tmRNA\t1001\t2000\t.\t+\t.\tID=t1;Parent=g1;protein_id=P9";
+        assert_eq!(
+            features(&[GENE, own, EXONS[0], cds[0]])[0].extra(),
+            "ID=t1\tParent=g1\tprotein_id=P9"
+        );
+        assert_eq!(
+            features(&[GENE, MRNA, EXONS[0], CDS[0]])[0].extra(),
+            "ID=t1\tParent=g1\tName=ABC-201"
+        );
     }
 
     #[test]

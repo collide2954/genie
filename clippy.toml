@@ -1,1 +1,1 @@
-doc-valid-idents = ["CpG", "CpGs", "InterPro", "InterProScan", "GenBank", "SnapGene", "ApE", "EcoRI", "SantaLucia", "LocusZoom", ".."]
+doc-valid-idents = ["CpG", "CpGs", "InterPro", "InterProScan", "RefSeq", "GenBank", "SnapGene", "ApE", "EcoRI", "SantaLucia", "LocusZoom", ".."]
