@@ -1,3 +1,8 @@
+use vstd::prelude::*;
+
+verus! {
+
+/// A region of a contig: the positions from its start to its end, without the end.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Region {
@@ -6,7 +11,35 @@ pub struct Region {
 }
 
 impl Region {
-    pub const fn new(start: u64, end: u64) -> Option<Self> {
+    /// The start of a region is never after its end.
+    #[verifier::type_invariant]
+    spec fn ordered(self) -> bool {
+        self.start <= self.end
+    }
+
+    /// The first position of a region.
+    pub closed spec fn spec_start(self) -> u64 {
+        self.start
+    }
+
+    /// The position after the last position of a region.
+    pub closed spec fn spec_end(self) -> u64 {
+        self.end
+    }
+
+    /// True when a position is in a region.
+    pub open spec fn has(self, position: u64) -> bool {
+        self.spec_start() <= position < self.spec_end()
+    }
+
+    pub const fn new(start: u64, end: u64) -> (region: Option<Self>)
+        ensures
+            match region {
+                Some(region) => start <= end && region.spec_start() == start
+                    && region.spec_end() == end,
+                None => start > end,
+            },
+    {
         if start <= end {
             Some(Self { start, end })
         } else {
@@ -14,7 +47,11 @@ impl Region {
         }
     }
 
-    pub const fn between(a: u64, b: u64) -> Self {
+    pub const fn between(a: u64, b: u64) -> (region: Self)
+        ensures
+            region.spec_start() == if a <= b { a } else { b },
+            region.spec_end() == if a <= b { b } else { a },
+    {
         if a <= b {
             Self { start: a, end: b }
         } else {
@@ -22,57 +59,167 @@ impl Region {
         }
     }
 
-    pub const fn start(self) -> u64 {
+    #[verifier::when_used_as_spec(spec_start)]
+    pub const fn start(self) -> (start: u64)
+        ensures
+            start == self.spec_start(),
+            start <= self.spec_end(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.start
     }
 
-    pub const fn end(self) -> u64 {
+    #[verifier::when_used_as_spec(spec_end)]
+    pub const fn end(self) -> (end: u64)
+        ensures
+            end == self.spec_end(),
+            self.spec_start() <= end,
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.end
     }
 
-    pub const fn len(self) -> u64 {
+    pub const fn len(self) -> (length: u64)
+        ensures
+            length == self.spec_end() - self.spec_start(),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         self.end - self.start
     }
 
-    pub const fn is_empty(self) -> bool {
+    pub const fn is_empty(self) -> (empty: bool)
+        ensures
+            empty == (self.spec_start() == self.spec_end()),
+    {
         self.start == self.end
     }
 
-    pub const fn contains(self, position: u64) -> bool {
+    pub const fn contains(self, position: u64) -> (inside: bool)
+        ensures
+            inside == self.has(position),
+    {
         self.start <= position && position < self.end
     }
 
-    pub const fn overlaps(self, other: Self) -> bool {
+    /// True when two regions share a position, or when an empty region is inside the other
+    /// region.
+    pub const fn overlaps(self, other: Self) -> (overlaps: bool)
+        ensures
+            overlaps == (self.spec_start() < other.spec_end() && other.spec_start()
+                < self.spec_end()),
+            self.spec_start() < self.spec_end() && other.spec_start() < other.spec_end() ==> (
+            overlaps == exists|position: u64| #[trigger] self.has(position) && other.has(position)),
+    {
+        proof {
+            let position = if self.start >= other.start {
+                self.start
+            } else {
+                other.start
+            };
+            let full = self.start < self.end && other.start < other.end;
+            if full && self.start < other.end && other.start < self.end {
+                assert(self.has(position) && other.has(position));
+            }
+        }
         self.start < other.end && other.start < self.end
     }
 
-    pub fn hull(self, other: Self) -> Self {
-        Self {
-            start: self.start.min(other.start),
-            end: self.end.max(other.end),
+    pub fn hull(self, other: Self) -> (hull: Self)
+        ensures
+            hull.spec_start() == if self.spec_start() <= other.spec_start() {
+                self.spec_start()
+            } else {
+                other.spec_start()
+            },
+            hull.spec_end() == if self.spec_end() >= other.spec_end() {
+                self.spec_end()
+            } else {
+                other.spec_end()
+            },
+            forall|position: u64|
+                self.has(position) || other.has(position) ==> #[trigger] hull.has(position),
+    {
+        proof {
+            use_type_invariant(self);
+            use_type_invariant(other);
+        }
+        Self { start: self.start.min(other.start), end: self.end.max(other.end) }
+    }
+
+    pub fn intersection(self, other: Self) -> (shared: Option<Self>)
+        ensures
+            match shared {
+                Some(shared) => shared.spec_start() < shared.spec_end() && forall|position: u64|
+                    #[trigger] shared.has(position) == (self.has(position) && other.has(position)),
+                None => forall|position: u64|
+                    !(#[trigger] self.has(position) && other.has(position)),
+            },
+    {
+        let start = self.start.max(other.start);
+        let end = self.end.min(other.end);
+        if start < end {
+            Some(Self { start, end })
+        } else {
+            None
         }
     }
 
-    pub fn intersection(self, other: Self) -> Option<Self> {
-        let start = self.start.max(other.start);
-        let end = self.end.min(other.end);
-        (start < end).then_some(Self { start, end })
-    }
-
-    pub fn expand(self, amount: u64, limit: u64) -> Self {
+    pub fn expand(self, amount: u64, limit: u64) -> (expanded: Self)
+        ensures
+            ({
+                let start: int = if self.spec_start() >= amount {
+                    self.spec_start() - amount
+                } else {
+                    0
+                };
+                let end: int = if self.spec_end() + amount <= u64::MAX {
+                    self.spec_end() + amount
+                } else {
+                    u64::MAX as int
+                };
+                let low: int = if start <= limit { start } else { limit as int };
+                let high: int = if end <= limit { end } else { limit as int };
+                expanded.spec_start() == low && expanded.spec_end() == high
+            }),
+    {
+        proof {
+            use_type_invariant(self);
+        }
         Self::between(
             self.start.saturating_sub(amount).min(limit),
             self.end.saturating_add(amount).min(limit),
         )
     }
 
-    pub fn clamp_to(self, length: u64) -> Self {
-        Self {
-            start: self.start.min(length),
-            end: self.end.min(length),
+    pub fn clamp_to(self, length: u64) -> (clamped: Self)
+        ensures
+            clamped.spec_start() == if self.spec_start() <= length {
+                self.spec_start()
+            } else {
+                length
+            },
+            clamped.spec_end() == if self.spec_end() <= length {
+                self.spec_end()
+            } else {
+                length
+            },
+            forall|position: u64|
+                #[trigger] clamped.has(position) == (self.has(position) && position < length),
+    {
+        proof {
+            use_type_invariant(self);
         }
+        Self { start: self.start.min(length), end: self.end.min(length) }
     }
 }
+
+} // verus!
 
 #[cfg(test)]
 mod tests {

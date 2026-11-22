@@ -34,6 +34,28 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
 
+  proofs:
+    runs-on: ubuntu-latest
+    env:
+      VERUS_RELEASE: 0.2026.11.02.8bf68ee
+      VERUS_SHA256: f3a0119292df8855e4435da8130bee1873b0e6a60c306accf81a08ea687bba3c
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - uses: actions/cache@v6
+        id: verus
+        with:
+          path: ~/tools/verus
+          key: verus-${{ runner.os }}-${{ env.VERUS_RELEASE }}
+      - if: steps.verus.outputs.cache-hit != 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL -o verus.zip "https://github.com/verus-lang/verus/releases/download/release/$VERUS_RELEASE/verus-$VERUS_RELEASE-x86-linux.zip"
+          echo "$VERUS_SHA256  verus.zip" | sha256sum --check
+          mkdir -p "$HOME/tools/verus"
+          unzip -q verus.zip -d "$HOME/tools/verus"
+      - uses: Swatinem/rust-cache@v2
+      - run: pwsh tools/proofs.ps1 -Required
+
   build:
     name: build (${{ matrix.os }})
     if: github.event_name == 'push'

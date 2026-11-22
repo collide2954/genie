@@ -8,3 +8,9 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+vstd.workspace = true
+
+[package.metadata.verus]
+verify = true

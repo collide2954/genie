@@ -21,9 +21,11 @@ log = "0.4"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 rustls-platform-verifier = "0.7.1"
 fontdb = { version = "0.23", default-features = false }
+vstd = "=0.0.0-2026-11-01-0251"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_only)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
