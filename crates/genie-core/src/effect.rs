@@ -621,11 +621,76 @@ impl Places {
     }
 }
 
+/// The bases on the genome of the amino acids `first` to `last`, from 1, of the protein of a
+/// transcript with a coding part, as blocks in genome order. Nothing when they are not all in
+/// the protein.
+pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option<Vec<Region>> {
+    if !readable(transcript) || first == 0 || last < first {
+        return None;
+    }
+    let coding = Coding::new(transcript, transcript.coding()?);
+    let (from, to) = ((first - 1) * 3, last.checked_mul(3)?);
+    if to > coding.length {
+        return None;
+    }
+    let (from, to) = if coding.forward {
+        (from, to)
+    } else {
+        (coding.length - to, coding.length - from)
+    };
+    let mut found = Vec::new();
+    let mut before = 0;
+    for block in &coding.blocks {
+        let (start, end) = (before, before + block.len());
+        let (low, high) = (from.max(start), to.min(end));
+        if low < high {
+            let offset = block.start() - start;
+            found.push(Region::between(offset + low, offset + high));
+        }
+        before = end;
+    }
+    Some(found)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Effect, effect, readable};
+    use super::{Effect, effect, protein_blocks, readable};
     use crate::codon::complement;
     use crate::{Feature, Region, Strand};
+
+    /// A transcript with exons at 100-130 and 200-260 and a coding part from 112 to 230: 16
+    /// codons, 6 in the first exon and 10 in the second. On the reverse strand the protein
+    /// starts at 230.
+    #[test]
+    fn amino_acids_lie_on_the_coding_exons() {
+        let transcript = |strand| {
+            Feature::new("T", Region::between(100, 260), strand)
+                .with_blocks(vec![Region::between(100, 130), Region::between(200, 260)])
+                .with_coding(Some(Region::between(112, 230)))
+        };
+        let forward = transcript(Strand::Forward);
+        let blocks = |first, last| protein_blocks(&forward, (first, last));
+        assert_eq!(blocks(1, 6), Some(vec![Region::between(112, 130)]));
+        assert_eq!(
+            blocks(6, 7),
+            Some(vec![Region::between(127, 130), Region::between(200, 203)])
+        );
+        assert_eq!(blocks(16, 16), Some(vec![Region::between(227, 230)]));
+        assert_eq!(blocks(16, 17), None);
+        assert_eq!(blocks(0, 3), None);
+        assert_eq!(blocks(5, 4), None);
+        let reverse = transcript(Strand::Reverse);
+        assert_eq!(
+            protein_blocks(&reverse, (1, 6)),
+            Some(vec![Region::between(212, 230)])
+        );
+        assert_eq!(
+            protein_blocks(&reverse, (16, 16)),
+            Some(vec![Region::between(112, 115)])
+        );
+        let plain = Feature::new("P", Region::between(0, 30), Strand::Unknown);
+        assert_eq!(protein_blocks(&plain, (1, 2)), None);
+    }
 
     /// 20 codons: M K R G F P D W N Q R I V T Y K E L S *.
     const CDS: &[u8; 60] = b"ATGAAACGTGGCTTTCCCGATTGGAACCAGCGCATTGTTACCTACAAGGAACTGTCTTAA";
