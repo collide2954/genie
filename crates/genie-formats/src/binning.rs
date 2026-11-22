@@ -63,6 +63,19 @@ proof fn lemma_counts(level: nat)
     }
 }
 
+/// The first bin of a level is not after the first bin of a deeper level.
+proof fn lemma_first_grows(level: nat, deeper: nat)
+    requires
+        level <= deeper,
+    ensures
+        spec_first(level) <= spec_first(deeper),
+    decreases deeper,
+{
+    if level < deeper {
+        lemma_first_grows(level, (deeper - 1) as nat);
+    }
+}
+
 /// A number below 2 to the power of `high` divided by 2 to the power of `low` is below 2 to
 /// the power of the difference.
 proof fn lemma_shifted_below(value: nat, low: nat, high: nat)
@@ -553,6 +566,145 @@ impl Scheme {
         assert(self.spec_width(0) - self.spec_width(level) == 3 * level);
         assert(spec_first(level + 1) == spec_first(level) + spec_count(level));
     }
+
+    /// True when a bin of a level is on the walk of a CSI index for the records from `start`
+    /// on: the bin of `start` on the level, or a bin on its left with the same parent. On the
+    /// level, these bins have the places from the place of the bin of `start` divided by 8 and
+    /// times 8, to the place of the bin of `start`.
+    pub open spec fn spec_walks(self, level: nat, number: nat, start: nat) -> bool {
+        let place = start / pow2(self.spec_width(level));
+        &&& level <= self.spec_depth()
+        &&& spec_first(level) + place / 8 * 8 <= number
+        &&& number <= spec_first(level) + place
+    }
+
+    /// Each bin of the walk starts at or before `start`: the first base of a bin is its place
+    /// on its level times the bases of each bin of the level.
+    pub proof fn lemma_walk_starts_before(self, level: nat, number: nat, start: nat)
+        requires
+            self.spec_walks(level, number, start),
+        ensures
+            (number - spec_first(level)) * pow2(self.spec_width(level)) <= start,
+    {
+        let width = pow2(self.spec_width(level));
+        lemma_pow2_pos(self.spec_width(level));
+        lemma_fundamental_div_mod(start as int, width as int);
+        vstd::arithmetic::div_mod::lemma_mod_bound(start as int, width as int);
+        let (place, rest) = (start / width, start % width);
+        let low = number - spec_first(level);
+        assert(low * width <= start) by (nonlinear_arith)
+            requires
+                0 <= low <= place,
+                start == width * place + rest,
+                0 <= rest,
+                width > 0,
+        ;
+    }
+
+    /// On a level, the place of the bin of `start` is less than the number of bins of the
+    /// level: thus a bin of the walk on a level is before the first bin of each deeper level.
+    proof fn lemma_walk_below(self, level: nat, deeper: nat, number: nat, start: nat)
+        requires
+            level < deeper,
+            self.spec_walks(level, number, start),
+            start < pow2(self.spec_width(0)),
+        ensures
+            number < spec_first(deeper),
+    {
+        lemma_counts(level);
+        lemma_shifted_below(start, self.spec_width(level), self.spec_width(0));
+        assert(((self.spec_width(0) - self.spec_width(level)) as nat) == 3 * level);
+        assert(spec_first(level + 1) == spec_first(level) + spec_count(level));
+        lemma_first_grows(level + 1, deeper);
+        let place = start / pow2(self.spec_width(level));
+        assert(number < spec_first(deeper)) by (nonlinear_arith)
+            requires
+                number <= spec_first(level) + place,
+                place < spec_count(level),
+                spec_first(level + 1) == spec_first(level) + spec_count(level),
+                spec_first(level + 1) <= spec_first(deeper),
+        ;
+    }
+
+    /// The bin of the walk on the top level is the top bin, with the number 0: thus a bin of
+    /// the walk with another number is not on the top level, and the first bin of its level is
+    /// 8 times the first bin of the level above, plus 1.
+    proof fn lemma_walk_deeper(self, level: nat, number: nat, start: nat)
+        requires
+            self.spec_walks(level, number, start),
+            start < pow2(self.spec_width(0)),
+            number > 0,
+        ensures
+            level > 0,
+            spec_first(level) == 8 * spec_first((level - 1) as nat) + 1,
+    {
+        lemma_shifted_below(start, self.spec_width(0), self.spec_width(0));
+        lemma2_to64();
+        let above = (level - 1) as nat;
+        lemma_counts(above);
+        assert(spec_first(above + 1) == spec_first(above) + spec_count(above));
+    }
+
+    /// The bin on the left of a bin of the walk is on the walk when the bin is not the first
+    /// child of its parent.
+    proof fn lemma_walk_left(self, level: nat, number: nat, start: nat)
+        requires
+            self.spec_walks(level, number, start),
+            start < pow2(self.spec_width(0)),
+            number > 0,
+            (number - 1) % 8 != 0,
+        ensures
+            self.spec_walks(level, (number - 1) as nat, start),
+    {
+        self.lemma_walk_deeper(level, number, start);
+        let place = start / pow2(self.spec_width(level));
+        let low = spec_first(level) + place / 8 * 8;
+        if number == low {
+            let parent = spec_first((level - 1) as nat) + place / 8;
+            assert(parent * 8 == number - 1) by (nonlinear_arith)
+                requires
+                    number == low,
+                    low == spec_first(level) + place / 8 * 8,
+                    spec_first(level) == 8 * spec_first((level - 1) as nat) + 1,
+                    parent == spec_first((level - 1) as nat) + place / 8,
+            ;
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(parent as int, 8);
+        }
+        assert(low <= number - 1 <= spec_first(level) + place) by (nonlinear_arith)
+            requires
+                low <= number,
+                low != number,
+                number <= spec_first(level) + place,
+        ;
+    }
+
+    /// A first child on the walk is the first bin of the walk on its level, and its parent is
+    /// the bin of `start` on the level above, on the walk.
+    proof fn lemma_walk_parent(self, level: nat, number: nat, start: nat)
+        requires
+            self.spec_walks(level, number, start),
+            start < pow2(self.spec_width(0)),
+            number > 0,
+            (number - 1) % 8 == 0,
+        ensures
+            level > 0,
+            number == spec_first(level) + start / pow2(self.spec_width(level)) / 8 * 8,
+            (number - 1) / 8 == spec_first((level - 1) as nat) + start / pow2(
+                self.spec_width((level - 1) as nat),
+            ),
+            self.spec_walks((level - 1) as nat, ((number - 1) / 8) as nat, start),
+    {
+        self.lemma_walk_deeper(level, number, start);
+        let above = (level - 1) as nat;
+        let width = self.spec_width(level);
+        assert(self.spec_width(above) == width + 3);
+        lemma2_to64();
+        lemma_pow2_adds(width, 3);
+        lemma_pow2_pos(width);
+        vstd::arithmetic::div_mod::lemma_div_denominator(start as int, pow2(width) as int, 8);
+        let place = start / pow2(width);
+        assert(start / pow2(self.spec_width(above)) == place / 8);
+    }
 }
 
 /// The virtual offsets of the start and the end of a part of a BGZF file.
@@ -791,15 +943,36 @@ impl Bins {
         None
     }
 
-    /// The offset of a CSI index for the records from `start` on: the offset of the bin of
-    /// `start` on the lowest level, or else of the bin that a walk finds first, to the left on
-    /// a level and then up to the parent. 0 when the walk finds no bin.
-    fn first_offset(&self, start: u64) -> (offset: u64)
+    /// True when the entry at `index` has a bin of the walk for the records from `start` on.
+    spec fn spec_walked(self, index: int, start: nat) -> bool {
+        &&& 0 <= index < self.entries.len()
+        &&& exists|level: nat|
+            #[trigger] self.scheme.spec_walks(level, self.entries[index].number as nat, start)
+    }
+
+    /// True when the entry at `index` has the bin of the walk that the walk finds first. The
+    /// walk goes to its bins in the order of their numbers, from the highest: thus this bin
+    /// has the highest number of the bins of the walk in the index.
+    spec fn spec_found(self, index: int, start: nat) -> bool {
+        &&& self.spec_walked(index, start)
+        &&& forall|other: int|
+            #[trigger] self.spec_walked(other, start) ==> self.entries[other].number
+                <= self.entries[index].number
+    }
+
+    /// The entry of the bin of the walk of a CSI index that the walk finds first, for the
+    /// records from `start` on. The walk starts at the bin of `start` on the lowest level. From
+    /// a bin, it goes to the bin on its left with the same parent, or to the parent after the
+    /// first child of the parent, up to the top bin, as in htslib. Nothing when the index has
+    /// no bin of the walk.
+    fn first_bin(&self, start: u64) -> (found: Option<usize>)
         requires
             start < pow2(self.scheme.spec_width(0)),
         ensures
-            offset == 0 || exists|index: int|
-                0 <= index < self.entries.len() && #[trigger] self.entries[index].offset == offset,
+            match found {
+                Some(index) => self.spec_found(index as int, start as nat),
+                None => forall|index: int| !#[trigger] self.spec_walked(index, start as nat),
+            },
     {
         let depth = self.scheme.depth();
         let shift = u64::from(self.scheme.shift());
@@ -812,33 +985,84 @@ impl Bins {
             lemma_pow2_strictly_increases(3 * (depth as nat + 1), 31);
         }
         let mut number = Scheme::first(depth) + (start >> shift) as u32;
+        let ghost mut level = depth as nat;
+        proof {
+            assert(self.scheme.spec_width(level) == shift);
+            assert(self.scheme.spec_walks(level, number as nat, start as nat));
+            assert forall|index: int| #[trigger]
+                self.spec_walked(index, start as nat) implies self.entries[index].number
+                <= number by {
+                let bin = self.entries[index].number as nat;
+                let other = choose|other: nat| self.scheme.spec_walks(other, bin, start as nat);
+                if other < level {
+                    self.scheme.lemma_walk_below(other, level, bin, start as nat);
+                }
+            }
+        }
         loop
+            invariant
+                start < pow2(self.scheme.spec_width(0)),
+                self.scheme.spec_walks(level, number as nat, start as nat),
+                forall|index: int| #[trigger]
+                    self.spec_walked(index, start as nat) ==> self.entries[index].number
+                        <= number,
             decreases number,
         {
             if let Some(index) = self.find(number) {
-                return self.entries[index].offset;
+                proof {
+                    assert(self.scheme.spec_walks(
+                        level,
+                        self.entries[index as int].number as nat,
+                        start as nat,
+                    ));
+                }
+                return Some(index);
             }
             if number == 0 {
-                return 0;
+                return None;
             }
             let before = number - 1;
             let parent = before >> 3;
-            assert(parent <= before / 8) by (bit_vector)
+            assert(parent == before / 8) by (bit_vector)
                 requires
                     parent == before >> 3,
             ;
             let first = parent * 8 + 1;
-            number = if number > first {
-                number - 1
+            if number > first {
+                proof {
+                    self.scheme.lemma_walk_left(level, number as nat, start as nat);
+                }
+                number -= 1;
             } else {
-                parent
-            };
+                proof {
+                    self.scheme.lemma_walk_parent(level, number as nat, start as nat);
+                    self.scheme.lemma_walk_below(level, level + 1, number as nat, start as nat);
+                    assert forall|index: int| #[trigger]
+                        self.spec_walked(index, start as nat) implies self.entries[index].number
+                        <= parent by {
+                        let bin = self.entries[index].number as nat;
+                        let other = choose|other: nat|
+                            self.scheme.spec_walks(other, bin, start as nat);
+                        if other > level {
+                            lemma_first_grows(level + 1, other);
+                        } else if other + 1 < level {
+                            let above = (level - 1) as nat;
+                            self.scheme.lemma_walk_below(other, above, bin, start as nat);
+                        }
+                    }
+                    level = (level - 1) as nat;
+                }
+                number = parent;
+            }
         }
     }
 
-    /// The linear index value of a BAI or TBI index for the records from `start` on: the value
-    /// of the window of `start`, or of the last window when the index has fewer, or 0.
-    spec fn spec_linear(self, start: nat) -> u64 {
+    /// The smallest virtual offset of a record from `start` on, by the index. For a BAI or TBI
+    /// index: the value of the window of `start` in the linear index, or of the last window
+    /// when the linear index has fewer windows, or 0 when it has none. For a CSI index: the
+    /// offset of the bin of the walk that the walk finds first, or 0 when the index has no bin
+    /// of the walk.
+    spec fn spec_minimum(self, start: nat) -> u64 {
         match self.intervals {
             Some(intervals) => {
                 let window = start / pow2(self.scheme.spec_shift());
@@ -850,17 +1074,21 @@ impl Bins {
                     0
                 }
             },
-            None => 0,
+            None => if exists|index: int| #[trigger] self.spec_found(index, start) {
+                self.entries[choose|index: int| #[trigger] self.spec_found(index, start)].offset
+            } else {
+                0
+            },
         }
     }
 
     /// The smallest virtual offset of a record from `start` on, by the index: the linear index
-    /// of a BAI or TBI index, or the offset of a CSI index.
+    /// of a BAI or TBI index, or the offset of a bin of a CSI index.
     fn minimum(&self, start: u64) -> (minimum: u64)
         requires
             start < pow2(self.scheme.spec_width(0)),
         ensures
-            self.intervals is Some ==> minimum == self.spec_linear(start as nat),
+            minimum == self.spec_minimum(start as nat),
     {
         match self.intervals.as_ref() {
             Some(intervals) => {
@@ -883,7 +1111,26 @@ impl Bins {
                     0
                 }
             },
-            None => self.first_offset(start),
+            None => match self.first_bin(start) {
+                Some(index) => {
+                    proof {
+                        use_type_invariant(self);
+                        let at = index as int;
+                        let chosen = choose|chosen: int| #[trigger]
+                            self.spec_found(chosen, start as nat);
+                        assert(self.spec_found(chosen, start as nat));
+                        assert(self.spec_walked(at, start as nat));
+                        assert(self.spec_walked(chosen, start as nat));
+                        if chosen < at {
+                            assert(self.entries[chosen].number < self.entries[at].number);
+                        } else if chosen > at {
+                            assert(self.entries[at].number < self.entries[chosen].number);
+                        }
+                    }
+                    self.entries[index].offset
+                },
+                None => 0,
+            },
         }
     }
 
@@ -1047,9 +1294,10 @@ impl Bins {
         ensures
             region.spec_start() < region.spec_end() && region.spec_start() < pow2(
                 self.scheme.spec_width(0),
-            ) ==> (self.intervals is Some ==> found.1 == self.spec_linear(
-                region.spec_start() as nat,
-            )) && forall|level: nat, index: int, part: int|
+            ) ==> found.1 == self.spec_minimum(region.spec_start() as nat),
+            region.spec_start() < region.spec_end() && region.spec_start() < pow2(
+                self.scheme.spec_width(0),
+            ) ==> forall|level: nat, index: int, part: int|
                 #[trigger] self.wants(
                     region.spec_start() as nat,
                     self.spec_last(region),
