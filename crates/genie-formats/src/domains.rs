@@ -2,14 +2,15 @@
 //! domain is a run of amino acids of a protein, with the database and the signature that found
 //! it.
 
-/// A domain of a protein: the protein, its first and its last amino acid from 1, the database,
-/// the accession and the name of the signature, a description, and the InterPro entry when the
-/// file gives one.
+/// A domain of a protein: the protein, its first and its last amino acid from 1, the length of
+/// the protein when the file gives it, the database, the accession and the name of the
+/// signature, a description, and the InterPro entry when the file gives one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Domain {
     pub protein: String,
     pub first: u64,
     pub last: u64,
+    pub length: Option<u64>,
     pub database: String,
     pub accession: String,
     pub name: String,
@@ -50,7 +51,7 @@ fn interpro_line(line: &str) -> Option<Domain> {
     if columns.len() < 11 || columns[0].is_empty() || columns[3].is_empty() {
         return None;
     }
-    number(columns[2])?;
+    let length = number(columns[2])?;
     let (first, last) = (number(columns[6])?, number(columns[7])?);
     if first == 0 || last < first {
         return None;
@@ -75,6 +76,7 @@ fn interpro_line(line: &str) -> Option<Domain> {
         protein: columns[0].to_owned(),
         first,
         last,
+        length: Some(length),
         database: columns[3].to_owned(),
         name: if description.is_empty() {
             accession.clone()
@@ -111,6 +113,7 @@ fn pfam_line(line: &str) -> Option<Domain> {
         protein: columns[0].to_owned(),
         first,
         last,
+        length: None,
         database: "Pfam".to_owned(),
         accession,
         name: columns[6].to_owned(),
@@ -177,6 +180,7 @@ ENSP00000269305.4    319    356    318    358 PF07710.16  P53_tetramer      Doma
                 protein: "P04637".to_owned(),
                 first: 95,
                 last: 289,
+                length: Some(393),
                 database: "Pfam".to_owned(),
                 accession: "PF00870".to_owned(),
                 name: "P53 DNA-binding domain".to_owned(),
@@ -220,6 +224,7 @@ ENSP00000269305.4    319    356    318    358 PF07710.16  P53_tetramer      Doma
             (found[0].database.as_str(), found[0].description.as_str()),
             ("Pfam", "Domain")
         );
+        assert_eq!(found[0].length, None);
     }
 
     #[test]
