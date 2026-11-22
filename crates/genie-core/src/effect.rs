@@ -1,6 +1,8 @@
 //! The effect of a variant on a coding transcript in HGVS notation: the change of the coding
 //! sequence (c.) and of the protein (p.).
 
+use std::fmt;
+
 use vstd::prelude::*;
 
 use crate::codon::{complement, translate};
@@ -596,23 +598,23 @@ fn coding_parts(exons: &[Region], coding: Region) -> (parts: Vec<Region>)
     parts
 }
 
-/// The coding parts of a transcript in genome order, and where the coding sequence of each
-/// genome position is.
-struct Coding {
+/// The bases of regions one after the other, as a transcript splices its exons or its coding
+/// parts: the regions in genome order, the number of their bases, and the strand.
+struct Spliced {
     blocks: Vec<Region>,
     length: u64,
     forward: bool,
 }
 
-impl Coding {
-    /// The length is the number of bases of the coding parts.
+impl Spliced {
+    /// The length is the number of bases of the regions.
     #[verifier::type_invariant]
     spec fn counted(self) -> bool {
         self.length == spec_total(self.blocks@)
     }
 
-    /// The coding bases of coding parts in genome order, or nothing when they are more than
-    /// 64-bit numbers hold.
+    /// The bases of regions in genome order, or nothing when they are more than 64-bit numbers
+    /// hold.
     fn with_parts(blocks: Vec<Region>, forward: bool) -> (coding: Option<Self>)
         ensures
             match coding {
@@ -624,7 +626,8 @@ impl Coding {
         Some(Self { blocks, length, forward })
     }
 
-    /// The first place of a genome position in the coding bases in genome order.
+    /// The first place of a genome position in the bases in genome order. Nothing when no
+    /// region has the position.
     fn index(&self, position: u64) -> (place: Option<u64>)
         ensures
             match place {
@@ -633,11 +636,14 @@ impl Coding {
                     place as int,
                 ) == position && forall|other: int|
                     0 <= other < place ==> #[trigger] spec_base(self.blocks@, other) != position,
-                None => forall|other: int|
+                None => (forall|other: int|
                     0 <= other < spec_total(self.blocks@) ==> #[trigger] spec_base(
                         self.blocks@,
                         other,
-                    ) != position,
+                    ) != position) && forall|block: int|
+                    0 <= block < self.blocks@.len() ==> !(#[trigger] self.blocks@[block]).has(
+                        position,
+                    ),
             },
     {
         proof {
@@ -657,6 +663,7 @@ impl Coding {
                 before == spec_total(blocks@.subrange(0, at as int)),
                 forall|other: int|
                     0 <= other < before ==> #[trigger] spec_base(blocks@, other) != position,
+                forall|block: int| 0 <= block < at ==> !(#[trigger] blocks@[block]).has(position),
             decreases blocks.len() - at,
         {
             let block = blocks[at];
@@ -699,8 +706,9 @@ impl Coding {
         None
     }
 
-    /// The c. number of a genome position in the coding sequence, from 1: the place of its
-    /// coding base in the order of the transcript, plus 1.
+    /// The number of a genome position, from 1: the place of its base in the order of the
+    /// transcript, plus 1. For the coding parts, this is its c. number. Nothing when no region
+    /// has the position.
     fn number(&self, position: u64) -> (number: Option<u64>)
         ensures
             match number {
@@ -709,11 +717,14 @@ impl Coding {
                     self.forward,
                     number - 1,
                 ) == position,
-                None => forall|other: int|
+                None => (forall|other: int|
                     0 <= other < spec_total(self.blocks@) ==> #[trigger] spec_base(
                         self.blocks@,
                         other,
-                    ) != position,
+                    ) != position) && forall|block: int|
+                    0 <= block < self.blocks@.len() ==> !(#[trigger] self.blocks@[block]).has(
+                        position,
+                    ),
             },
     {
         proof {
@@ -773,15 +784,348 @@ impl Coding {
     }
 }
 
+/// The place of an exon base from the coding sequence, in the order of the transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exonic {
+    /// c.-N: N bases before the first coding base.
+    Before(u64),
+    /// c.N: the coding base N, from 1.
+    Coding(u64),
+    /// c.*N: N bases after the last coding base.
+    After(u64),
+}
+
+/// The c. name of a position: an exon base, or a position of an intron N bases after an exon
+/// base (c.X+N) or N bases before it (c.X-N), in the order of the transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Name {
+    Exon(Exonic),
+    After(Exonic, u64),
+    Before(Exonic, u64),
+}
+
+/// True when a name is the name of the place `place` of the exon bases, in the order of the
+/// transcript, with the first coding base at the place `first` and `coding` coding bases.
+spec fn spec_names(name: Exonic, place: int, first: int, coding: int) -> bool {
+    match name {
+        Exonic::Before(count) => count >= 1 && place == first - count,
+        Exonic::Coding(number) => 1 <= number <= coding && place == first + number - 1,
+        Exonic::After(count) => count >= 1 && place == first + coding + count - 1,
+    }
+}
+
+/// True when an exon has a position.
+spec fn spec_exon(exons: Seq<Region>, position: int) -> bool {
+    exists|block: int|
+        #![trigger exons[block]]
+        0 <= block < exons.len() && exons[block].spec_start() <= position < exons[block].spec_end()
+}
+
+/// True when `left` and `right` are the exon bases nearest a position that no exon has: before
+/// it and after it, in the order of the genome.
+spec fn spec_sides(exons: Seq<Region>, position: int, left: int, right: int) -> bool {
+    &&& !spec_exon(exons, position)
+    &&& spec_exon(exons, left) && left < position
+    &&& spec_exon(exons, right) && position < right
+    &&& forall|base: int| #[trigger] spec_exon(exons, base) && base < position ==> base <= left
+    &&& forall|base: int| #[trigger] spec_exon(exons, base) && position < base ==> right <= base
+}
+
+/// The number of bases from one position to another.
+spec fn spec_distance(a: int, b: int) -> int {
+    if a <= b {
+        b - a
+    } else {
+        a - b
+    }
+}
+
+/// Of the exon bases nearest a position, the base before it in the order of the transcript.
+spec fn spec_up(forward: bool, left: int, right: int) -> int {
+    if forward {
+        left
+    } else {
+        right
+    }
+}
+
+/// Of the exon bases nearest a position, the base after it in the order of the transcript.
+spec fn spec_down(forward: bool, left: int, right: int) -> int {
+    if forward {
+        right
+    } else {
+        left
+    }
+}
+
+/// The c. names of the positions of a transcript: a number in the coding sequence, -N before
+/// it and *N after it in the exons, and in an intron the nearest exon base with the distance
+/// from it.
+struct Places {
+    /// The exons in genome order, and the strand.
+    exons: Spliced,
+    /// The place of the first coding base among the exon bases, in transcript order.
+    first: u64,
+    /// The number of coding bases.
+    coding: u64,
+}
+
+impl Places {
+    /// True when a name is a c. name of the exon base at a position: the name of a place of the
+    /// exon bases, in the order of the transcript, whose base is at the position.
+    spec fn spec_exonic(self, name: Exonic, position: int) -> bool {
+        exists|place: int|
+            #![trigger spec_coding_base(self.exons.blocks@, self.exons.forward, place)]
+            0 <= place < spec_total(self.exons.blocks@) && spec_coding_base(
+                self.exons.blocks@,
+                self.exons.forward,
+                place,
+            ) == position && spec_names(name, place, self.first as int, self.coding as int)
+    }
+
+    /// The names of the positions of exons, for a coding sequence of `coding` bases that starts
+    /// at the position `start`. Nothing when no exon has `start`.
+    fn with_start(exons: Spliced, start: u64, coding: u64) -> (places: Option<Self>)
+        ensures
+            match places {
+                Some(places) => {
+                    &&& places.exons.blocks@ == exons.blocks@
+                    &&& places.exons.forward == exons.forward
+                    &&& places.coding == coding
+                    &&& places.first < spec_total(exons.blocks@)
+                    &&& spec_coding_base(exons.blocks@, exons.forward, places.first as int)
+                        == start
+                },
+                None => !spec_exon(exons.blocks@, start as int),
+            },
+    {
+        let first = exons.number(start)? - 1;
+        Some(Self { exons, first, coding })
+    }
+
+    /// The c. name of an exon base. Nothing for a position that no exon has.
+    fn exonic(&self, position: u64) -> (found: Option<Exonic>)
+        ensures
+            match found {
+                Some(name) => self.spec_exonic(name, position as int),
+                None => !spec_exon(self.exons.blocks@, position as int),
+            },
+    {
+        let at = self.exons.number(position)? - 1;
+        Some(
+            if at < self.first {
+                Exonic::Before(self.first - at)
+            } else if at - self.first < self.coding {
+                Exonic::Coding(at - self.first + 1)
+            } else {
+                Exonic::After(at - self.first - self.coding + 1)
+            },
+        )
+    }
+
+    /// The exon bases nearest a position before it and after it, in the order of the genome:
+    /// the last base of the exons that end at or before the position, and the first base of the
+    /// exons that start after it, for a position that no exon has.
+    fn sides(&self, position: u64) -> (found: (Option<u64>, Option<u64>))
+        requires
+            !spec_exon(self.exons.blocks@, position as int),
+        ensures
+            match found.0 {
+                Some(left) => spec_exon(self.exons.blocks@, left as int) && left < position
+                    && forall|base: int| #[trigger]
+                        spec_exon(self.exons.blocks@, base) && base < position ==> base <= left,
+                None => forall|base: int| #[trigger]
+                    spec_exon(self.exons.blocks@, base) ==> position < base,
+            },
+            match found.1 {
+                Some(right) => spec_exon(self.exons.blocks@, right as int) && position < right
+                    && forall|base: int| #[trigger]
+                        spec_exon(self.exons.blocks@, base) && position < base ==> right <= base,
+                None => forall|base: int| #[trigger]
+                    spec_exon(self.exons.blocks@, base) ==> base < position,
+            },
+    {
+        let blocks = self.exons.blocks.as_slice();
+        Region::ordered_all(blocks);
+        let mut left: Option<u64> = None;
+        let mut right: Option<u64> = None;
+        let mut at: usize = 0;
+        while at < blocks.len()
+            invariant
+                blocks@ == self.exons.blocks@,
+                at <= blocks.len(),
+                !spec_exon(blocks@, position as int),
+                forall|index: int|
+                    0 <= index < blocks@.len() ==> #[trigger] blocks@[index].spec_start()
+                        <= blocks@[index].spec_end(),
+                match left {
+                    Some(left) => left < position && spec_exon(blocks@, left as int) && forall|
+                        block: int,
+                    |
+                        0 <= block < at && (#[trigger] blocks@[block]).spec_start()
+                            < blocks@[block].spec_end() && blocks@[block].spec_end() <= position
+                            ==> blocks@[block].spec_end() - 1 <= left,
+                    None => forall|block: int|
+                        0 <= block < at && (#[trigger] blocks@[block]).spec_start()
+                            < blocks@[block].spec_end() ==> position < blocks@[block].spec_end(),
+                },
+                match right {
+                    Some(right) => position < right && spec_exon(blocks@, right as int) && forall|
+                        block: int,
+                    |
+                        0 <= block < at && (#[trigger] blocks@[block]).spec_start()
+                            < blocks@[block].spec_end() && position < blocks@[block].spec_start()
+                            ==> right <= blocks@[block].spec_start(),
+                    None => forall|block: int|
+                        0 <= block < at && (#[trigger] blocks@[block]).spec_start()
+                            < blocks@[block].spec_end() ==> blocks@[block].spec_start() <= position,
+                },
+            decreases blocks.len() - at,
+        {
+            let exon = blocks[at];
+            if exon.start() < exon.end() {
+                if exon.end() <= position {
+                    let last = exon.end() - 1;
+                    left = Some(
+                        match left {
+                            Some(left) => left.max(last),
+                            None => last,
+                        },
+                    );
+                } else if exon.start() > position {
+                    right = Some(
+                        match right {
+                            Some(right) => right.min(exon.start()),
+                            None => exon.start(),
+                        },
+                    );
+                }
+            }
+            at += 1;
+        }
+        proof {
+            let exons = blocks@;
+            assert forall|base: int| #[trigger] spec_exon(exons, base) implies (base < position
+                ==> left.is_some() && base <= left->Some_0) && (position < base ==> right.is_some()
+                && right->Some_0 <= base) && (left is None ==> position < base) && (right is None
+                ==> base < position) by {
+                let block = choose|block: int|
+                    #![trigger exons[block]]
+                    0 <= block < exons.len() && exons[block].spec_start() <= base
+                        < exons[block].spec_end();
+                assert(!(exons[block].spec_start() <= position < exons[block].spec_end()));
+            }
+        }
+        (left, right)
+    }
+
+    /// The c. name of a position of the transcript. A position of an intron takes the nearest
+    /// exon base before it or after it in the order of the transcript, and the base before it
+    /// in the middle of the intron, as HGVS asks. Nothing for a position before all the exon
+    /// bases or after them.
+    fn place(&self, position: u64) -> (found: Option<Name>)
+        ensures
+            match found {
+                Some(Name::Exon(name)) => self.spec_exonic(name, position as int),
+                Some(Name::After(name, distance)) => exists|left: int, right: int|
+                    #![trigger spec_sides(self.exons.blocks@, position as int, left, right)]
+                    {
+                        let (up, down) = (
+                            spec_up(self.exons.forward, left, right),
+                            spec_down(self.exons.forward, left, right),
+                        );
+                        &&& spec_sides(self.exons.blocks@, position as int, left, right)
+                        &&& distance == spec_distance(up, position as int)
+                        &&& distance <= spec_distance(down, position as int)
+                        &&& self.spec_exonic(name, up)
+                    },
+                Some(Name::Before(name, distance)) => exists|left: int, right: int|
+                    #![trigger spec_sides(self.exons.blocks@, position as int, left, right)]
+                    {
+                        let (up, down) = (
+                            spec_up(self.exons.forward, left, right),
+                            spec_down(self.exons.forward, left, right),
+                        );
+                        &&& spec_sides(self.exons.blocks@, position as int, left, right)
+                        &&& distance == spec_distance(down, position as int)
+                        &&& distance < spec_distance(up, position as int)
+                        &&& self.spec_exonic(name, down)
+                    },
+                None => !spec_exon(self.exons.blocks@, position as int) && forall|
+                    left: int,
+                    right: int,
+                | !#[trigger] spec_sides(self.exons.blocks@, position as int, left, right),
+            },
+    {
+        if let Some(name) = self.exonic(position) {
+            return Some(Name::Exon(name));
+        }
+        let (left, right) = self.sides(position);
+        let (left, right) = (left?, right?);
+        proof {
+            assert(spec_sides(self.exons.blocks@, position as int, left as int, right as int));
+        }
+        let forward = self.exons.forward;
+        let (to_up, to_down) = if forward {
+            (position - left, right - position)
+        } else {
+            (right - position, position - left)
+        };
+        if to_up <= to_down {
+            let up = if forward {
+                left
+            } else {
+                right
+            };
+            Some(Name::After(self.exonic(up)?, to_up))
+        } else {
+            let down = if forward {
+                right
+            } else {
+                left
+            };
+            Some(Name::Before(self.exonic(down)?, to_down))
+        }
+    }
+}
+
 } // verus!
 
-impl Coding {
+impl Spliced {
     /// The coding bases of a transcript, or nothing when they are more than 64-bit numbers hold.
     /// The coding parts go in the order of their start.
-    fn new(transcript: &Feature, coding: Region) -> Option<Self> {
+    fn coding(transcript: &Feature, coding: Region) -> Option<Self> {
         let mut blocks = coding_parts(transcript.blocks(), coding);
         blocks.sort_by_key(|block| block.start());
         Self::with_parts(blocks, transcript.strand() != Strand::Reverse)
+    }
+
+    /// The exon bases of a transcript, or nothing when they are more than 64-bit numbers hold.
+    /// The exons go in the order of their start.
+    fn exons(transcript: &Feature) -> Option<Self> {
+        let mut exons = transcript.blocks().to_vec();
+        exons.sort_by_key(|exon| exon.start());
+        Self::with_parts(exons, transcript.strand() != Strand::Reverse)
+    }
+}
+
+impl fmt::Display for Exonic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Before(count) => write!(formatter, "-{count}"),
+            Self::Coding(number) => write!(formatter, "{number}"),
+            Self::After(count) => write!(formatter, "*{count}"),
+        }
+    }
+}
+
+impl fmt::Display for Name {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exon(name) => write!(formatter, "{name}"),
+            Self::After(name, distance) => write!(formatter, "{name}+{distance}"),
+            Self::Before(name, distance) => write!(formatter, "{name}-{distance}"),
+        }
     }
 }
 
@@ -793,7 +1137,7 @@ pub fn readable(transcript: &Feature) -> bool {
         return false;
     };
     let shaped = transcript.has_blocks() || coding != transcript.span();
-    let Some(Coding { length, .. }) = Coding::new(transcript, coding) else {
+    let Some(Spliced { length, .. }) = Spliced::coding(transcript, coding) else {
         return false;
     };
     transcript.strand() != Strand::Unknown && shaped && length >= 3 && length.is_multiple_of(3)
@@ -915,7 +1259,7 @@ fn coded(
     bases: &mut dyn FnMut(Region) -> Option<Vec<u8>>,
     places: &Places,
 ) -> Option<Effect> {
-    let numbers = Coding::new(transcript, coding)?;
+    let numbers = Spliced::coding(transcript, coding)?;
     let mut genomic = Vec::with_capacity(usize::try_from(numbers.length).ok()?);
     for block in &numbers.blocks {
         genomic.extend(bases(*block)?.to_ascii_uppercase());
@@ -962,115 +1306,38 @@ fn coded(
     })
 }
 
-/// The c. names of the positions of a transcript: a number in the coding sequence, -N before
-/// it and *N after it in the exons, and in an intron the nearest exon base with the distance
-/// from it.
-struct Places {
-    /// The exons in genome order.
-    exons: Vec<Region>,
-    forward: bool,
-    /// The number of exon bases.
-    total: u64,
-    /// The place of the first coding base among the exon bases, in transcript order.
-    first: u64,
-    /// The number of coding bases.
-    coding: u64,
-}
-
 impl Places {
     fn new(transcript: &Feature, coding: Region) -> Option<Self> {
-        let mut exons = transcript.blocks().to_vec();
-        exons.sort_by_key(|exon| exon.start());
-        let forward = transcript.strand() != Strand::Reverse;
-        let mut places = Self {
-            total: total(&exons)?,
-            exons,
-            forward,
-            first: 0,
-            coding: Coding::new(transcript, coding)?.length,
-        };
-        let start = if forward {
+        let exons = Spliced::exons(transcript)?;
+        let length = Spliced::coding(transcript, coding)?.length;
+        let start = if exons.forward {
             coding.start()
         } else {
             coding.end().checked_sub(1)?
         };
-        places.first = places.order(start)?;
-        Some(places)
+        Self::with_start(exons, start, length)
     }
 
-    /// The place of an exon base among the exon bases, in transcript order.
-    fn order(&self, position: u64) -> Option<u64> {
-        let mut before = 0;
-        for exon in &self.exons {
-            if exon.contains(position) {
-                let at = before + position - exon.start();
-                return Some(if self.forward {
-                    at
-                } else {
-                    self.total - 1 - at
-                });
-            }
-            before += exon.len();
-        }
-        None
-    }
-
-    fn exonic(&self, position: u64) -> Option<String> {
-        let at = self.order(position)?;
-        Some(if at < self.first {
-            format!("-{}", self.first - at)
-        } else if at - self.first < self.coding {
-            (at - self.first + 1).to_string()
-        } else {
-            format!("*{}", at - self.first - self.coding + 1)
-        })
-    }
-
-    /// The name of a position of the transcript. A base in the middle of an intron takes the
-    /// exon before it, as HGVS asks.
+    /// The c. name of a position of the transcript, as text.
     fn name(&self, position: u64) -> Option<String> {
-        if let Some(name) = self.exonic(position) {
-            return Some(name);
-        }
-        let left = self
-            .exons
-            .iter()
-            .filter(|exon| exon.end() <= position)
-            .map(|exon| exon.end() - 1)
-            .max()?;
-        let right = self
-            .exons
-            .iter()
-            .filter(|exon| exon.start() > position)
-            .map(|exon| exon.start())
-            .min()?;
-        let (up, down) = if self.forward {
-            (left, right)
-        } else {
-            (right, left)
-        };
-        let (to_up, to_down) = (up.abs_diff(position), down.abs_diff(position));
-        Some(if to_up <= to_down {
-            format!("{}+{to_up}", self.exonic(up)?)
-        } else {
-            format!("{}-{to_down}", self.exonic(down)?)
-        })
+        self.place(position).map(|name| name.to_string())
     }
 
     /// The HGVS change of an edit, with the bases on the strand of the transcript.
     fn change(&self, edit: &Edit) -> Option<String> {
+        let forward = self.exons.forward;
         let strand = |bases: &[u8]| -> String {
-            let bases = if self.forward {
+            let bases = if forward {
                 bases.to_vec()
             } else {
                 reverse_complement(bases)
             };
             String::from_utf8_lossy(&bases).into_owned()
         };
-        let ordered = |a: String, b: String| if self.forward { (a, b) } else { (b, a) };
+        let ordered = |a: String, b: String| if forward { (a, b) } else { (b, a) };
         if edit.duplicate {
             let length = edit.inserted.len() as u64;
-            let (first, last) = if self.forward {
+            let (first, last) = if forward {
                 (edit.start.checked_sub(length)?, edit.start.checked_sub(1)?)
             } else {
                 (edit.start, edit.start + length - 1)
@@ -1111,7 +1378,7 @@ pub fn coding_length(transcript: &Feature) -> Option<u64> {
     if !readable(transcript) {
         return None;
     }
-    Some(Coding::new(transcript, transcript.coding()?)?.length)
+    Some(Spliced::coding(transcript, transcript.coding()?)?.length)
 }
 
 /// The bases on the genome of the amino acids `first` to `last`, from 1, of the protein of a
@@ -1121,7 +1388,7 @@ pub fn protein_blocks(transcript: &Feature, (first, last): (u64, u64)) -> Option
     if !readable(transcript) {
         return None;
     }
-    Coding::new(transcript, transcript.coding()?)?.aminos(first, last)
+    Spliced::coding(transcript, transcript.coding()?)?.aminos(first, last)
 }
 
 #[cfg(test)]
