@@ -64,6 +64,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
             "Single-cell",
             "Reference tracks",
             "Motif sites",
+            "Protein domains",
             "Dot plot",
             "Liftover",
             "Sample groups",

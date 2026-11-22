@@ -120,6 +120,7 @@ A dialog shows the tracks of the hub for the open genome, in their groups: super
 | Copy number track | SEG (`.seg`, as from TCGA, DNAcopy or GISTIC); CNVkit (`.cns`, `.cnr`); GATK ModelSegments (`.seg`). Plain or gzip, up to 50 MB |
 | GenBank and EMBL | GenBank (`.gb`, `.gbk`, `.gbff`, `.genbank`) and EMBL (`.embl`, `.emb`) files, plain or gzip, up to 512 MB: the sequence and a feature track (see [GenBank and EMBL files](#genbank-and-embl-files)) |
 | Motifs | MEME (`.meme`), JASPAR (`.jaspar`, `.pfm`, and the `.txt` files of JASPAR) and HOMER (`.motif`) files of DNA motifs, plain or gzip, up to 64 MB (see [Motif sites](#motif-sites)) |
+| Protein domains | The TSV output of InterProScan (`.tsv`) and the output of `pfam_scan.pl` (`.pfam`, `.out`, `.txt`), plain or gzip, up to 512 MB (see [Protein domains](#protein-domains)) |
 | Sample table | Tab or comma separated text with a header line (`.tsv`, `.csv`, `.txt`, `.panel` from the 1000 Genomes Project); clinical files from cBioPortal; IGV sample information files; PLINK `.fam` and `.ped`. Plain or gzip, up to 64 MB |
 | Cell table | The cells of single-cell data, as the meta.data of Seurat or the obs of Scanpy written as CSV or TSV, plain or gzip, up to 256 MB. Open it from the menu of a track (see [Single-cell](#single-cell)) |
 | Session | genie session (`.genie`) |
@@ -576,6 +577,19 @@ A motif file has the weight matrices of DNA motifs, for example the binding site
 - Click **1e-3**, **1e-4** or **1e-5** next to **p <** in the track menu to show more or fewer sites. Click **Motifs…** to change the motifs.
 - The card of a site shows the motif ID, the score in bits, the p-value and the bases of the site on the strand of the motif. Filters work on these fields, for example to keep the sites with p at most 0.00001.
 - Sessions keep the picked motifs and the threshold of each motif track.
+
+## Protein domains
+
+A domain file gives the domains of proteins in amino acids, for example the output of InterProScan or of `pfam_scan.pl` for the proteins of GENCODE or RefSeq. genie puts the domains on the coding exons of the transcripts in view.
+
+- Open the domain file as a track: the TSV output of InterProScan (`.tsv`), or the output of `pfam_scan.pl` (`.pfam`, `.out` or `.txt`), plain or gzip, up to 512 MB. Also open a gene track with the transcripts of the proteins, for example the GTF file of GENCODE.
+- A transcript gets the domains of its protein when its protein ID or its transcript ID is the ID of the protein in the file. genie compares the IDs with their versions first, and then without them, in upper or lower case. For example, the domains of `ENSP00000269305.4` go on the transcript with `protein_id "ENSP00000269305.8"`, and the domains of `sp|P04637|P53_HUMAN` go on a transcript with `P04637` in its fields. genie takes the protein ID of a transcript also from its CDS lines, as in the GTF and GFF3 files of Ensembl and RefSeq.
+- InterProScan gives the length of each protein. A domain goes on a transcript only when the coding part of the transcript has that number of codons, or one more for the stop codon. Thus the domains of another isoform or of another version of the protein do not go on the wrong bases.
+- Each domain shows as a feature on the coding bases of its amino acids, with a thin line over the introns, as "Pkinase (PF00069)". When the domains come from more than one database, each database has its own color. When two transcripts have the same coding exons, a domain shows one time.
+- The card of a domain gives the protein, the amino acids, the database, the accession, the description, the InterPro entry and the transcripts. Filters work on these fields, for example to keep the domains of Pfam.
+- The track shows domains when the view is 10 Mb or less, on the transcripts that the gene tracks show. When no gene track is open, or when no transcript in view has a protein of the file, the track tells you.
+- When a variant changes a codon in a domain, the card of the variant gives the domain after the change, as "TP53 p.Arg248Trp · c.742C>T · in P53 (PF00870, aa 95-289)". genie names a domain of Pfam, SMART, CDD or PROSITE first, and else the shortest domain. The UniProt domain track of UCSC (`unipDomain.bb`) names its domains in the same way.
+- Sessions, images and undo keep domain tracks.
 
 ## Dot plot
 

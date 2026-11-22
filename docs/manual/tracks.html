@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracks · genie</title>
-<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta name="description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, protein domains, dot plot, liftover, sample groups.">
 <meta property="og:title" content="Tracks · genie">
-<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, dot plot, liftover, sample groups.">
+<meta property="og:description" content="The genie manual: tracks, variant table, b-allele frequency, depth ratio, variant review, ld, sashimi plots, isoforms, isoform table, splicing differences, phase reads, epialleles, repeat expansions, single-cell, reference tracks, motif sites, protein domains, dot plot, liftover, sample groups.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/tracks.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -62,6 +62,7 @@
           <li><a href="#single-cell">Single-cell</a></li>
           <li><a href="#reference-tracks">Reference tracks</a></li>
           <li><a href="#motif-sites">Motif sites</a></li>
+          <li><a href="#protein-domains">Protein domains</a></li>
           <li><a href="#dot-plot">Dot plot</a></li>
           <li><a href="#liftover">Liftover</a></li>
           <li><a href="#sample-groups">Sample groups</a></li>
@@ -310,6 +311,18 @@
 <li>Click <b>1e-3</b>, <b>1e-4</b> or <b>1e-5</b> next to <b>p &lt;</b> in the track menu to show more or fewer sites. Click <b>Motifs…</b> to change the motifs.</li>
 <li>The card of a site shows the motif ID, the score in bits, the p-value and the bases of the site on the strand of the motif. Filters work on these fields, for example to keep the sites with p at most 0.00001.</li>
 <li>Sessions keep the picked motifs and the threshold of each motif track.</li>
+</ul>
+<h2 id="protein-domains">Protein domains</h2>
+<p>A domain file gives the domains of proteins in amino acids, for example the output of InterProScan or of <code>pfam_scan.pl</code> for the proteins of GENCODE or RefSeq. genie puts the domains on the coding exons of the transcripts in view.</p>
+<ul>
+<li>Open the domain file as a track: the TSV output of InterProScan (<code>.tsv</code>), or the output of <code>pfam_scan.pl</code> (<code>.pfam</code>, <code>.out</code> or <code>.txt</code>), plain or gzip, up to 512 MB. Also open a gene track with the transcripts of the proteins, for example the GTF file of GENCODE.</li>
+<li>A transcript gets the domains of its protein when its protein ID or its transcript ID is the ID of the protein in the file. genie compares the IDs with their versions first, and then without them, in upper or lower case. For example, the domains of <code>ENSP00000269305.4</code> go on the transcript with <code>protein_id &quot;ENSP00000269305.8&quot;</code>, and the domains of <code>sp|P04637|P53_HUMAN</code> go on a transcript with <code>P04637</code> in its fields. genie takes the protein ID of a transcript also from its CDS lines, as in the GTF and GFF3 files of Ensembl and RefSeq.</li>
+<li>InterProScan gives the length of each protein. A domain goes on a transcript only when the coding part of the transcript has that number of codons, or one more for the stop codon. Thus the domains of another isoform or of another version of the protein do not go on the wrong bases.</li>
+<li>Each domain shows as a feature on the coding bases of its amino acids, with a thin line over the introns, as &quot;Pkinase (PF00069)&quot;. When the domains come from more than one database, each database has its own color. When two transcripts have the same coding exons, a domain shows one time.</li>
+<li>The card of a domain gives the protein, the amino acids, the database, the accession, the description, the InterPro entry and the transcripts. Filters work on these fields, for example to keep the domains of Pfam.</li>
+<li>The track shows domains when the view is 10 Mb or less, on the transcripts that the gene tracks show. When no gene track is open, or when no transcript in view has a protein of the file, the track tells you.</li>
+<li>When a variant changes a codon in a domain, the card of the variant gives the domain after the change, as &quot;TP53 p.Arg248Trp · c.742C&gt;T · in P53 (PF00870, aa 95-289)&quot;. genie names a domain of Pfam, SMART, CDD or PROSITE first, and else the shortest domain. The UniProt domain track of UCSC (<code>unipDomain.bb</code>) names its domains in the same way.</li>
+<li>Sessions, images and undo keep domain tracks.</li>
 </ul>
 <h2 id="dot-plot">Dot plot</h2>
 <p>A dot plot compares two assemblies with the alignments of a <a href="files.html#paf-alignments">PAF file</a>, for example from <code>minimap2 -cx asm5 genome.fa other.fa</code>. The target sequences, which are the sequences of the reference in view, go across. The query sequences go down.</p>
