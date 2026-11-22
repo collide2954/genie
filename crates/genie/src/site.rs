@@ -88,7 +88,7 @@ const MANUAL: [(&str, &str, &[&str]); 9] = [
     (
         "development",
         "Development",
-        &["Test", "Website", "Crates", "License"],
+        &["Test", "Proofs", "Website", "Crates", "License"],
     ),
 ];
 

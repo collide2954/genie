@@ -771,6 +771,14 @@ The tests give cut and damaged copies of each test file to the readers: 3 copies
 cargo test -p genie --bin genie sweep -- --ignored
 ```
 
+## Proofs
+
+Verus proves parts of genie for all inputs, for example the regions of a contig. [VERIFICATION.md](VERIFICATION.md) tells what each proof shows, how to run the proofs, and which parts have no proof yet. With Verus 0.2026.11.02.8bf68ee in `~/tools/verus`:
+
+```bash
+powershell -File tools/proofs.ps1
+```
+
 ## Website
 
 The project page in `docs/` comes from the pages in `site/`, this README (the manual), the changelog, the keys of genie and its logo. A test fails when a file in `docs/` is out of date. To write the files again:

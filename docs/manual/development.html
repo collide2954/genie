@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Development · genie</title>
-<meta name="description" content="The genie manual: test, website, crates, license.">
+<meta name="description" content="The genie manual: test, proofs, website, crates, license.">
 <meta property="og:title" content="Development · genie">
-<meta property="og:description" content="The genie manual: test, website, crates, license.">
+<meta property="og:description" content="The genie manual: test, proofs, website, crates, license.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://collide2954.github.io/genie/manual/development.html">
 <meta property="og:image" content="https://collide2954.github.io/genie/images/card.png">
@@ -51,6 +51,7 @@
       <li><a href="development.html" aria-current="page">Development</a>
         <ul>
           <li><a href="#test">Test</a></li>
+          <li><a href="#proofs">Proofs</a></li>
           <li><a href="#website">Website</a></li>
           <li><a href="#crates">Crates</a></li>
           <li><a href="#license">License</a></li>
@@ -65,6 +66,9 @@
 <pre><code>cargo test --workspace</code></pre>
 <p>The tests give cut and damaged copies of each test file to the readers: 3 copies of each file. Each reader must give an error or data, and must not panic or hang. The full sweep makes about 24 copies of each file and takes a few minutes:</p>
 <pre><code>cargo test -p genie --bin genie sweep -- --ignored</code></pre>
+<h2 id="proofs">Proofs</h2>
+<p>Verus proves parts of genie for all inputs, for example the regions of a contig. <a href="https://github.com/collide2954/genie/blob/main/VERIFICATION.md">VERIFICATION.md</a> tells what each proof shows, how to run the proofs, and which parts have no proof yet. With Verus 0.2026.11.02.8bf68ee in <code>~/tools/verus</code>:</p>
+<pre><code>powershell -File tools/proofs.ps1</code></pre>
 <h2 id="website">Website</h2>
 <p>The project page in <code>docs/</code> comes from the pages in <code>site/</code>, this README (the manual), the changelog, the keys of genie and its logo. A test fails when a file in <code>docs/</code> is out of date. To write the files again:</p>
 <pre><code>GENIE_WRITE_SITE=1 cargo test -p genie --bin genie site</code></pre>
