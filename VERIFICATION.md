@@ -32,6 +32,7 @@ The automatic checks run the proofs on each push. Verus uses Rust 1.99.1, the re
 | The numbers of CRAM files | `crates/genie-formats/src/cram/bits.rs` | An ITF8 number has 1 to 5 bytes and an LTF8 number 1 to 9 bytes, by the 1 bits at the high end of the first byte. The readers give the value of the bytes by the CRAM format: the value bits of the first byte, then the next bytes with the high bits first, and of the fifth byte of an ITF8 number only its low 4 bits. They give the number of bytes that they read. When the bytes stop before the end of a number, they give nothing, with no panic and no overflow. |
 | The bit stream of CRAM files | `crates/genie-formats/src/cram/bits.rs` | The bit at each place is the bit of its byte, the high bit of each byte first. A number of `count` bits has the first bit highest, and it has 32 bits or fewer: for more bits, or when the stream stops before them, the reader gives nothing. The place after the bits is the place of the next bit. |
 | The rANS 4x8 decoder of CRAM | `crates/genie-formats/src/cram/rans.rs` | For all input bytes, the decoder of order 0 and of order 1 has no panic and no overflow, and each of its loops comes to an end. A frequency table has a symbol for each of its 4,096 places, frequencies of 4,096 or less, and the first place of the symbol of each place at or before the place. A table that gives a symbol two times, as a damaged file can give, is an error. The output has the size that the stream gives. |
+| The rANS Nx16 decoder of CRAM 3.1 | `crates/genie-formats/src/cram/nx16.rs` | For all input bytes, the decoder of order 0 and of order 1, with the transforms PACK, RLE, CAT and STRIPE, has no panic and no overflow, and each of its loops comes to an end. A stripe can hold stripes to 4 levels. More levels, as a damaged file can give, are an error: thus the decoder calls itself 4 times or fewer, and the stack cannot overflow. Before genie makes an output of a size that the stream gives, it compares the size with the limit of 2 to the power of 30 bytes, thus no output has more bytes. A number of more than 32 bits is an error. A frequency table has a symbol for each of its places, frequencies of its number of places or less, and the first place of the symbol of each place at or before the place. The output of order 0, order 1, PACK and STRIPE has the size that the stream gives. |
 | The virtual offsets of BGZF files | `crates/genie-formats/src/bgzf.rs` | A virtual offset is the offset of a block in the file times 65,536, plus a place in the uncompressed block. `pack` makes the virtual offset of a block before 2 to the power of 48 and a place before 65,536, and `unpack` gives the two parts back exactly. A `.gzi` index that gives a block at 2 to the power of 48 or after gives an error, not a virtual offset of a wrong block. |
 
 ## Holes
@@ -46,7 +47,6 @@ A hole is code or an assumption that has no proof. Each hole is in this list.
 | The loop of `chunks` over the levels of an index, the filter of its chunks by the linear index, and the level of a bin number (`span`, `bottom`). | Open |
 | Which bases of the coding parts the parts of `slice` are. The reverse strand and the numbers of `protein_blocks`, and the coding parts that `Coding::new` takes from a transcript. | Open |
 | The facts of the code table, for example its three stop codons TAA, TAG and TGA. Verus 0.2026.11.02 stops with an internal error when it computes with the bytes of a text constant. | Open, waits for Verus |
-| The rANS Nx16 decoder of CRAM 3.1. | Open |
 | The codings of CRAM that read the bit stream: Huffman, Beta, Gamma and Subexp. | Open |
 | The other code that has only whole numbers and bytes, for example the tandem repeats, the walk along a CIGAR, and the rows of features. | Open |
 
@@ -68,6 +68,6 @@ A proof is correct only if these parts are correct:
 
 - Verus and the Z3 solver that it uses.
 - The Rust compiler.
-- The specifications that Verus gets for functions of the Rust standard library, for example `min`, `max`, `saturating_sub`, `saturating_add`, `checked_add` and `checked_mul`.
-- The lemmas of the Verus library `vstd` about division and multiplication.
+- The specifications that Verus gets for functions of the Rust standard library and of `vstd`, for example `min`, `max`, `saturating_sub`, `saturating_add`, `checked_add`, `checked_mul` and `slice_subrange`.
+- The lemmas of the Verus library `vstd` about division, multiplication, powers of two and bits.
 - For the bases of a FASTA file: a file with the lines that its index gives.
